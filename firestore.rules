@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ⚠️ WARNING: These rules are VERY permissive!
+    // Current implementation: Anyone can read all data; any authenticated user can write/delete ANYTHING
+    // This means any signed-in user can delete other users' teams, games, players, etc.
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Users collection - users should only write their own profile
+    match /users/{userId} {
+      allow read: if true;  // Public profiles
+      allow write: if isOwner(userId);  // Only owner can update their profile
+    }
+
+    // Access codes - allow public read for validation during signup
+    match /accessCodes/{codeId} {
+      // Allow anyone to read for code validation (needed for unauthenticated signup)
+      // This is secure because users can only query by exact code match
+      allow read: if true;
+      allow create: if isSignedIn() && request.resource.data.generatedBy == request.auth.uid;
+      // Only allow the code generator to update/delete, OR allow system to mark as used during signup
+      allow update: if isSignedIn() &&
+                       (resource.data.generatedBy == request.auth.uid ||
+                        // Allow marking as used only if setting these specific fields
+                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+                         request.resource.data.usedBy == request.auth.uid));
+      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
+    }
+
+    // Teams - only owner or admins can modify
+    match /teams/{teamId} {
+      allow read: if true;  // Public teams for browsing
+      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isSignedIn() &&
+                               (resource.data.ownerId == request.auth.uid ||
+                                (request.auth.token.email != null &&
+                                 resource.data.adminEmails != null &&
+                                 request.auth.token.email.lower() in resource.data.adminEmails));
+
+      // Players subcollection
+      match /players/{playerId} {
+        allow read: if true;  // Public player stats
+        allow write: if isSignedIn() &&
+                        (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
+                         (request.auth.token.email != null &&
+                          request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])));
+      }
+
+      // Games subcollection
+      match /games/{gameId} {
+        allow read: if true;  // Public game data
+        allow write: if isSignedIn() &&
+                        (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
+                         (request.auth.token.email != null &&
+                          request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])));
+
+        // Events subcollection
+        match /events/{eventId} {
+          allow read: if true;
+          allow write: if isSignedIn() &&
+                          (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
+                           (request.auth.token.email != null &&
+                            request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])));
+        }
+
+        // Aggregated stats subcollection
+        match /aggregatedStats/{statId} {
+          allow read: if true;
+          allow write: if isSignedIn() &&
+                          (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
+                           (request.auth.token.email != null &&
+                            request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])));
+        }
+      }
+
+      // Stat tracker configs subcollection
+      match /statTrackerConfigs/{configId} {
+        allow read: if true;
+        allow write: if isSignedIn() &&
+                        (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
+                         (request.auth.token.email != null &&
+                          request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])));
+      }
+    }
+
+    // Deny all other paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

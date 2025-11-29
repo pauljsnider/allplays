@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+
+# Archive
+_archive/
+
+# System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+.playwright-mcp/
+
+# Project notes and planning docs
+cleanup.md
+_project-docs/
+
+# Firebase - NEVER commit these
+.firebaserc
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+.firebase/
+
+# Secrets - NEVER commit these
+*.key
+*.pem
+service-account-*.json
+.env
+.env.local
+.env.*.local
+
+# Security
+*.private

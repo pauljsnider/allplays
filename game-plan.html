@@ -1,0 +1,1011 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Game Day Planner - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .position-slot {
+            transition: all 0.3s ease;
+        }
+        .position-slot.drag-over {
+            transform: scale(1.05);
+            border-color: #4f46e5;
+            background-color: #eef2ff;
+        }
+        .player-assigned {
+            cursor: pointer;
+        }
+        .sub-cell {
+            min-width: 140px;
+            transition: background-color 0.2s;
+        }
+        .sub-cell:hover {
+            background-color: #f9fafb;
+        }
+        .player-chip {
+            cursor: grab;
+        }
+        .player-chip:active {
+            cursor: grabbing;
+        }
+        .player-chip.new-assignment {
+            box-shadow: 0 0 0 2px #f59e0b;
+            animation: pulse-amber 1.5s ease-in-out 2;
+        }
+        @keyframes pulse-amber {
+            0%, 100% { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.6); }
+            50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.2); }
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="mb-6">
+            <a id="back-link" href="#" class="inline-flex items-center text-primary-600 hover:text-primary-700 font-medium transition group">
+                <svg class="w-5 h-5 mr-2 group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+                Back to Team
+            </a>
+        </div>
+
+        <!-- Page Header -->
+        <div class="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-lg p-6 md:p-8 mb-8 border border-gray-200">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-gray-900 mb-2">Game Day Planner</h1>
+                    <p class="text-gray-600">Plan formations, lineups, substitutions, and playing time</p>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="save-plan-btn" class="hidden px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition shadow-md font-semibold">
+                        Save Plan
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Selector -->
+        <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-200">
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Select Game</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Upcoming Games</label>
+                    <select id="game-selector" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        <option value="">Select a game...</option>
+                    </select>
+                </div>
+                <div id="selected-game-info" class="hidden">
+                    <div class="bg-gradient-to-br from-primary-50 to-white p-4 rounded-lg border border-primary-200">
+                        <div class="text-sm font-semibold text-gray-600 mb-1">Selected Game</div>
+                        <div id="game-details" class="text-lg font-bold text-gray-900"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step-by-step Planning Wizard -->
+        <div id="planning-wizard" class="hidden">
+            <!-- Step 1: Choose Formation -->
+            <div id="step-formation" class="step-content">
+                <div class="bg-white rounded-2xl shadow-lg p-8 mb-8 border border-gray-200">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-full bg-primary-600 text-white flex items-center justify-center font-bold">1</div>
+                        <h2 class="text-2xl font-bold text-gray-900">Choose Formation</h2>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div class="formation-card cursor-pointer border-2 border-gray-300 rounded-xl p-6 hover:border-primary-500 hover:bg-primary-50 transition"
+                             data-formation="soccer-9v9">
+                            <div class="text-center">
+                                <div class="text-4xl mb-3">⚽</div>
+                                <h3 class="text-xl font-bold text-gray-900 mb-2">Soccer 9v9</h3>
+                                <p class="text-sm text-gray-600">9 field positions + bench</p>
+                            </div>
+                        </div>
+                        <div class="formation-card cursor-pointer border-2 border-gray-300 rounded-xl p-6 hover:border-primary-500 hover:bg-primary-50 transition"
+                             data-formation="basketball-5v5">
+                            <div class="text-center">
+                                <div class="text-4xl mb-3">🏀</div>
+                                <h3 class="text-xl font-bold text-gray-900 mb-2">Basketball 5v5</h3>
+                                <p class="text-sm text-gray-600">5 court positions + bench</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: Configure Periods -->
+            <div id="step-periods" class="step-content hidden">
+                <div class="bg-white rounded-2xl shadow-lg p-8 mb-8 border border-gray-200">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="w-10 h-10 rounded-full bg-primary-600 text-white flex items-center justify-center font-bold">2</div>
+                        <h2 class="text-2xl font-bold text-gray-900">Configure Game Periods</h2>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Number of Periods</label>
+                            <input type="number" id="num-periods" min="2" max="4" value="2"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
+                            <p class="text-xs text-gray-500 mt-1">Typically 2 halves or 4 quarters</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Minutes per Period</label>
+                            <input type="number" id="period-duration" min="5" max="45" value="25"
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
+                        </div>
+                    </div>
+
+                    <div id="sub-times-config" class="mb-6">
+                        <label class="block text-sm font-semibold text-gray-700 mb-3">Substitution Times (minutes into each period)</label>
+                        <div class="flex gap-2 mb-2">
+                            <input type="text" id="sub-times-input" placeholder="e.g., 7,14,21"
+                                   class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
+                            <button id="add-sub-time-btn" class="px-4 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 font-medium">
+                                Set Times
+                            </button>
+                        </div>
+                        <div id="sub-times-display" class="flex flex-wrap gap-2"></div>
+                        <p class="text-xs text-gray-500 mt-2">Enter comma-separated minutes (e.g., 7,14,21 for subs at those times)</p>
+                    </div>
+
+                    <div class="flex gap-3">
+                        <button id="back-to-formation" class="px-6 py-3 bg-gray-200 text-gray-700 rounded-xl hover:bg-gray-300 transition font-semibold">
+                            ← Back
+                        </button>
+                        <button id="next-to-lineup" class="px-8 py-3 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl hover:from-primary-700 hover:to-primary-800 transition shadow-md font-semibold">
+                            Next: Build Lineups →
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: Build Initial Lineup & Subs -->
+            <div id="step-lineup" class="step-content hidden">
+                <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-200">
+                    <div class="flex items-center justify-between mb-6">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-primary-600 text-white flex items-center justify-center font-bold">3</div>
+                            <h2 class="text-2xl font-bold text-gray-900">Build Lineups & Substitutions</h2>
+                        </div>
+                        <button id="back-to-periods" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-medium">
+                            ← Back
+                        </button>
+                    </div>
+
+                    <div id="plan-summary" class="mb-6 hidden">
+                        <div class="bg-primary-50 border border-primary-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
+                            <div class="text-sm text-gray-700"><span class="font-semibold">Formation:</span> <span id="plan-summary-formation">—</span></div>
+                            <div class="text-sm text-gray-700"><span class="font-semibold">Periods:</span> <span id="plan-summary-periods">—</span></div>
+                            <div class="text-sm text-gray-700"><span class="font-semibold">Minutes/Period:</span> <span id="plan-summary-duration">—</span></div>
+                            <div class="text-sm text-gray-700"><span class="font-semibold">Sub times:</span> <span id="plan-summary-subs">—</span></div>
+                        </div>
+                    </div>
+
+                    <!-- Substitution Matrix -->
+                    <div class="overflow-x-auto mb-8">
+                        <div class="inline-block min-w-full">
+                            <div class="border border-gray-300 rounded-xl overflow-hidden">
+                                <table class="min-w-full divide-y divide-gray-300">
+                                    <thead class="bg-gradient-to-r from-gray-100 to-gray-50">
+                                        <tr id="sub-matrix-header">
+                                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider sticky left-0 bg-gray-100 z-10">Position</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sub-matrix-body" class="bg-white divide-y divide-gray-200">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Available Players Pool -->
+                    <div class="bg-gradient-to-br from-gray-50 to-white rounded-xl p-6 border-2 border-dashed border-gray-300">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <h3 class="text-lg font-bold text-gray-900">Available Players (Drag to assign)</h3>
+                            <div id="selected-player-label" class="text-sm text-gray-600"></div>
+                        </div>
+                        <div id="player-pool" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
+                        <p class="text-xs text-gray-500 mt-3">Tip: You can also drag directly from the bench row per interval.</p>
+                    </div>
+                </div>
+
+                <!-- Playing Time Summary -->
+                <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 border border-gray-200">
+                    <h2 class="text-2xl font-bold text-gray-900 mb-6">Playing Time Summary</h2>
+                    <div id="playing-time-summary" class="space-y-3">
+                        <!-- Playing time bars will be rendered here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=6';
+        import { checkAuth } from './js/auth.js';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        // Formation definitions
+        const FORMATIONS = {
+            'soccer-9v9': {
+                name: 'Soccer 9v9',
+                positions: [
+                    { id: 'keeper', name: 'Keeper' },
+                    { id: 'right-defense', name: 'Right - Defense' },
+                    { id: 'sweeper', name: 'Sweeper' },
+                    { id: 'left-defense', name: 'Left - Defense' },
+                    { id: 'left-mid', name: 'Left Mid' },
+                    { id: 'center-mid-1', name: 'Center Mid' },
+                    { id: 'center-mid-2', name: 'Center Mid' },
+                    { id: 'right-mid', name: 'Right Mid' },
+                    { id: 'striker', name: 'Striker' }
+                ]
+            },
+            'basketball-5v5': {
+                name: 'Basketball 5v5',
+                positions: [
+                    { id: 'pg', name: 'Point Guard (PG)' },
+                    { id: 'sg', name: 'Shooting Guard (SG)' },
+                    { id: 'sf', name: 'Small Forward (SF)' },
+                    { id: 'pf', name: 'Power Forward (PF)' },
+                    { id: 'c', name: 'Center (C)' }
+                ]
+            }
+        };
+
+        let currentTeam = null;
+        let currentTeamId = null;
+        let currentGameId = null;
+        let currentGame = null;
+        let currentUser = null;
+        let players = [];
+        let lastSelectedPlayerId = null;
+        let intervalsCache = [];
+        const recentAssignments = new Map(); // cellKey -> timestamp
+        let dragSourceCellKey = null;
+        let combinedGames = [];
+        function hasAccess(team, user) {
+            if (!team || !user) return false;
+            if (team.ownerId === user.uid) return true;
+            const email = (user.email || '').toLowerCase();
+            return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
+        }
+
+        // Game plan state
+        let gamePlan = {
+            numPeriods: 2,
+            periodDuration: 25,
+            subTimes: [7, 14, 21],
+            formationId: null,
+            lineups: {} // { 'period-time': { positionId: playerId } }
+        };
+
+        let draggedPlayerId = null;
+
+        checkAuth((user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+        });
+
+        async function loadGamePlanner() {
+            const { teamId, gameId } = getUrlParams();
+            if (!teamId) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            currentTeamId = teamId;
+            document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
+
+            try {
+                const [team, allPlayers, games, trackedUids] = await Promise.all([
+                    getTeam(teamId),
+                    getPlayers(teamId),
+                    getGames(teamId),
+                    getTrackedCalendarEventUids(teamId)
+                ]);
+
+                currentTeam = team;
+                if (!hasAccess(currentTeam, currentUser)) {
+                    alert("You don't have permission to manage this team.");
+                    window.location.href = 'dashboard.html';
+                    return;
+                }
+                players = allPlayers;
+
+                const calendarGames = [];
+                if (team.calendarUrls && team.calendarUrls.length > 0) {
+                    for (const calendarUrl of team.calendarUrls) {
+                        try {
+                            const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+                            calendarEvents.forEach(event => {
+                                if (trackedUids && trackedUids.includes(event.uid)) return;
+                                const isPractice = isPracticeEvent(event.summary);
+                                if (isPractice) return;
+                                const opponent = extractOpponent(event.summary, team.name);
+                                const date = event.dtstart;
+                                // Skip if conflicts with db game at same minute
+                                const hasConflict = games.some(dbGame => {
+                                    const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                                    return Math.abs(dbDate - date) < 60000;
+                                });
+                                if (hasConflict) return;
+                                calendarGames.push({
+                                    id: `cal-${event.uid || date.getTime()}`,
+                                    source: 'calendar',
+                                    date,
+                                    opponent: opponent || event.summary || 'Opponent',
+                                    location: event.location || 'TBD',
+                                    status: 'scheduled',
+                                    isCalendar: true
+                                });
+                            });
+                        } catch (err) {
+                            console.error('Error reading calendar', calendarUrl, err);
+                        }
+                    }
+                }
+
+                // Get all games sorted by date (newest first)
+                combinedGames = [...games.map(g => ({ ...g, source: 'db' })), ...calendarGames]
+                    .sort((a, b) => {
+                        const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
+                        const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
+                        return bDate - aDate;
+                    });
+
+                // Populate game selector
+                const gameSelector = document.getElementById('game-selector');
+                gameSelector.innerHTML = '<option value="">Select a game...</option>' +
+                    combinedGames.map(g => {
+                        const date = g.date.toDate ? g.date.toDate() : new Date(g.date);
+                        const statusLabel = g.status === 'completed' ? ' (Completed)' : (g.isCalendar ? ' (Calendar)' : '');
+                        return `<option value="${g.id}">${formatDate(date)} - vs ${g.opponent}${statusLabel}</option>`;
+                    }).join('');
+
+                // Auto-select game if provided in URL
+                if (gameId) {
+                    gameSelector.value = gameId;
+                    const game = combinedGames.find(g => g.id === gameId);
+                    if (game) {
+                        await loadGame(game);
+                    }
+                }
+
+                gameSelector.addEventListener('change', async (e) => {
+                    const selectedGameId = e.target.value;
+                    if (selectedGameId) {
+                        const game = combinedGames.find(g => g.id === selectedGameId);
+                        await loadGame(game);
+                    } else {
+                        document.getElementById('planning-wizard').classList.add('hidden');
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error loading game planner:', error);
+            }
+        }
+
+        async function loadGame(game) {
+            currentGameId = game.id;
+            currentGame = game;
+
+            const date = game.date.toDate ? game.date.toDate() : new Date(game.date);
+
+            document.getElementById('selected-game-info').classList.remove('hidden');
+            document.getElementById('game-details').innerHTML = `
+                ${game.isCalendar ? '<span class="text-xs text-indigo-600 font-semibold mr-1">Calendar</span>' : ''}
+                vs ${game.opponent}<br>
+                <span class="text-sm text-gray-600">${formatDate(date)} @ ${formatTime(date)}</span>
+            `;
+
+            // Load existing game plan if it exists
+            if (game.gamePlan) {
+                gamePlan = { ...gamePlan, ...game.gamePlan };
+            } else {
+                // Set defaults based on team sport
+                if (currentTeam.sport) {
+                    const sport = currentTeam.sport.toLowerCase();
+                    if (sport === 'basketball') {
+                        gamePlan.numPeriods = 4;
+                        gamePlan.periodDuration = 8;
+                        gamePlan.subTimes = [4];
+                        gamePlan.formationId = 'basketball-5v5';
+                    } else if (sport === 'soccer') {
+                        gamePlan.numPeriods = 2;
+                        gamePlan.periodDuration = 25;
+                        gamePlan.subTimes = [7, 14, 21];
+                        gamePlan.formationId = 'soccer-9v9';
+                    }
+                }
+            }
+
+            recentAssignments.clear();
+            intervalsCache = [];
+            lastSelectedPlayerId = null;
+            dragSourceCellKey = null;
+            document.getElementById('save-plan-btn').disabled = !!game.isCalendar;
+            document.getElementById('save-plan-btn').title = game.isCalendar ? 'Create this as a scheduled game to save the plan' : '';
+
+            // Update UI with game plan data
+            document.getElementById('num-periods').value = gamePlan.numPeriods;
+            document.getElementById('period-duration').value = gamePlan.periodDuration;
+            document.getElementById('sub-times-input').value = gamePlan.subTimes.join(',');
+            renderSubTimesDisplay();
+
+            const hasPlan = gamePlan.formationId && (gamePlan.subTimes || []).length > 0;
+
+            document.getElementById('planning-wizard').classList.remove('hidden');
+            document.getElementById('save-plan-btn').classList.remove('hidden');
+
+            if (hasPlan) {
+                // Skip setup steps; go straight to lineup
+                document.getElementById('step-formation').classList.add('hidden');
+                document.getElementById('step-periods').classList.add('hidden');
+                document.getElementById('step-lineup').classList.remove('hidden');
+                renderPlayerPool();
+                renderSubMatrix();
+                renderPlayingTimeSummary();
+                updatePlanSummary();
+            } else {
+                // Require formation selection
+                document.getElementById('step-formation').classList.remove('hidden');
+                document.getElementById('step-periods').classList.add('hidden');
+                document.getElementById('step-lineup').classList.add('hidden');
+            }
+        }
+
+        function renderPlayerPool() {
+            const poolDiv = document.getElementById('player-pool');
+            poolDiv.innerHTML = players
+                .sort((a, b) => (a.number || 999) - (b.number || 999))
+                .map(p => `
+                    <div class="player-card cursor-grab active:cursor-grabbing bg-gradient-to-br from-white to-gray-50 border-2 border-gray-300 hover:border-primary-400 rounded-lg p-2 transition text-center ${p.id === lastSelectedPlayerId ? 'border-primary-500 ring-2 ring-primary-200' : ''}"
+                         draggable="true"
+                         data-player-id="${p.id}">
+                        <div class="w-10 h-10 mx-auto rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-primary-300 mb-1">
+                            <span class="font-bold text-primary-700 text-sm">${p.number || '?'}</span>
+                        </div>
+                        <div class="text-xs font-semibold text-gray-900 truncate">${p.name}</div>
+                    </div>
+                `).join('');
+
+            // Add drag event listeners
+            document.querySelectorAll('.player-card').forEach(card => {
+                card.addEventListener('dragstart', (e) => {
+                    draggedPlayerId = e.target.closest('.player-card').dataset.playerId;
+                    lastSelectedPlayerId = draggedPlayerId;
+                    e.target.closest('.player-card').classList.add('opacity-50');
+                    renderPlayerPool();
+                });
+                card.addEventListener('dragend', (e) => {
+                    e.target.closest('.player-card').classList.remove('opacity-50');
+                });
+                card.addEventListener('click', (e) => {
+                    const pid = e.currentTarget.dataset.playerId;
+                    lastSelectedPlayerId = pid;
+                    renderPlayerPool();
+                });
+            });
+
+            const selectedLabel = document.getElementById('selected-player-label');
+            if (selectedLabel) {
+                const player = players.find(p => p.id === lastSelectedPlayerId);
+                selectedLabel.textContent = player ? `Last selected: #${player.number || '?'} ${player.name}` : 'Click or drag a player to select';
+            }
+        }
+
+        function renderSubTimesDisplay() {
+            const display = document.getElementById('sub-times-display');
+            display.innerHTML = gamePlan.subTimes.map(time => `
+                <span class="inline-flex items-center gap-1 px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm font-semibold">
+                    ${time} min
+                </span>
+            `).join('');
+        }
+
+        function updatePlanSummary() {
+            const summary = document.getElementById('plan-summary');
+            if (!summary) return;
+            const formation = FORMATIONS[gamePlan.formationId];
+            const subTimesText = (gamePlan.subTimes && gamePlan.subTimes.length > 0)
+                ? gamePlan.subTimes.join(', ')
+                : '—';
+            document.getElementById('plan-summary-formation').textContent = formation ? formation.name : 'Not set';
+            document.getElementById('plan-summary-periods').textContent = gamePlan.numPeriods || '—';
+            document.getElementById('plan-summary-duration').textContent = gamePlan.periodDuration || '—';
+            document.getElementById('plan-summary-subs').textContent = subTimesText;
+
+            const ready = formation && subTimesText !== '—';
+            summary.classList.toggle('hidden', !ready);
+        }
+
+        function renderSubMatrix() {
+            if (!gamePlan.formationId) return;
+
+            const formation = FORMATIONS[gamePlan.formationId];
+            const header = document.getElementById('sub-matrix-header');
+            const body = document.getElementById('sub-matrix-body');
+
+            // Build header with all time intervals
+            const intervals = [];
+            for (let period = 1; period <= gamePlan.numPeriods; period++) {
+                const periodName = gamePlan.numPeriods === 2 ? `H${period}` : `Q${period}`;
+                const periodLabel = gamePlan.numPeriods === 2 ? `Half ${period}` : `Quarter ${period}`;
+                gamePlan.subTimes.forEach(time => {
+                    intervals.push({ period, periodName, periodLabel, time, key: `${period}-${time}` });
+                });
+            }
+            intervalsCache = intervals;
+
+            header.innerHTML = `
+                <th class="px-4 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider sticky left-0 bg-gray-100 z-10 border-r border-gray-300">Position</th>
+                ${intervals.map(int => `
+                    <th class="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase tracking-wider whitespace-nowrap">
+                        <div class="flex items-center justify-center gap-2">
+                            <span>${int.periodName}: ${int.time}'</span>
+                            <button class="push-forward-btn text-gray-500 hover:text-primary-700 text-lg leading-none"
+                                    title="Push assignments to next interval"
+                                    data-interval="${int.key}">⇢</button>
+                        </div>
+                    </th>
+                `).join('')}
+            `;
+
+            // Helper function to check if player changed position from previous interval
+            const getPlayerPreviousPosition = (playerId, currentIntervalIndex, currentPosId) => {
+                if (currentIntervalIndex === 0) return null;
+                const prevInterval = intervals[currentIntervalIndex - 1];
+                for (const pos of formation.positions) {
+                    const prevCellKey = `${prevInterval.key}-${pos.id}`;
+                    if (gamePlan.lineups[prevCellKey] === playerId) {
+                        return pos.id !== currentPosId ? pos.name : null;
+                    }
+                }
+                return null;
+            };
+
+            // Build rows for each position
+            body.innerHTML = formation.positions.map(position => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 text-sm font-semibold text-gray-900 sticky left-0 bg-white z-10 border-r border-gray-300">
+                        <div class="flex items-center justify-between gap-2">
+                            <span>${position.name}</span>
+                            <button class="fill-row-btn text-xs text-primary-700 hover:text-primary-900 bg-primary-50 px-2 py-1 rounded"
+                                    data-position="${position.id}"
+                                    title="Fill empty cells in this row with last selected player">Fill</button>
+                        </div>
+                    </td>
+                    ${intervals.map((int, intIdx) => {
+                        const cellKey = `${int.key}-${position.id}`;
+                        const assignedPlayer = gamePlan.lineups[cellKey];
+                        const player = assignedPlayer ? players.find(p => p.id === assignedPlayer) : null;
+                        const prevPosition = player ? getPlayerPreviousPosition(player.id, intIdx, position.id) : null;
+                        const ts = recentAssignments.get(cellKey);
+                        const isNew = player && ts && (Date.now() - ts < 2000);
+                        const prevCellKey = intIdx > 0 ? `${intervals[intIdx - 1].key}-${position.id}` : null;
+                        const prevCellPlayer = prevCellKey ? gamePlan.lineups[prevCellKey] : null;
+                        const changedFromPrevCell = player && prevCellKey && prevCellPlayer !== player.id;
+                        const chipTone = (prevPosition || changedFromPrevCell)
+                            ? 'bg-amber-100 text-amber-800 border-2 border-amber-400'
+                            : 'bg-primary-100 text-primary-700';
+
+                        return `
+                            <td class="sub-cell px-2 py-2 text-sm text-center border-l border-gray-200"
+                                data-cell-key="${cellKey}"
+                                data-position="${position.id}"
+                                data-interval="${int.key}">
+                                ${player ? `
+                                    <div class="player-chip inline-flex items-center gap-1 px-2 py-1 ${chipTone} rounded-lg hover:bg-primary-200 transition relative ${isNew ? 'new-assignment' : ''}"
+                                         draggable="true"
+                                         data-player-id="${player.id}"
+                                         data-cell-key="${cellKey}"
+                                         onclick="window.removePlayerFromCell('${cellKey}')"
+                                         title="${prevPosition ? `Moved from ${prevPosition}` : ''}">
+                                        ${changedFromPrevCell && !prevPosition ? '<span class="absolute -top-1 -right-1 text-[10px] bg-amber-500 text-white px-1 rounded">chg</span>' : ''}
+                                        ${prevPosition ? '<span class="text-xs mr-0.5">↔</span>' : ''}
+                                        <span class="font-bold text-xs">#${player.number || '?'}</span>
+                                        <span class="text-xs font-semibold">${player.name}</span>
+                                        <span class="text-xs">×</span>
+                                    </div>
+                                ` : `
+                                    <div class="text-gray-400 text-xs py-1">—</div>
+                                `}
+                            </td>
+                        `;
+                    }).join('')}
+                </tr>
+            `).join('');
+
+            // Add bench row with draggable chips for unassigned players
+            body.innerHTML += `
+                <tr class="bg-gray-50 border-t-2 border-gray-300">
+                    <td class="px-4 py-3 text-sm font-bold text-gray-700 sticky left-0 bg-gray-100 z-10 border-r border-gray-300">
+                        Bench (drag to place)
+                    </td>
+                    ${intervals.map(int => `
+                        <td class="px-2 py-2 text-xs text-gray-600 border-l border-gray-200">
+                            <div id="bench-${int.key}" class="flex flex-wrap gap-2 text-xs"></div>
+                        </td>
+                    `).join('')}
+                </tr>
+            `;
+
+            // Add drop zone listeners
+            document.querySelectorAll('.sub-cell').forEach(cell => {
+                cell.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    cell.classList.add('bg-primary-50');
+                });
+                cell.addEventListener('dragleave', (e) => {
+                    cell.classList.remove('bg-primary-50');
+                });
+                cell.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    cell.classList.remove('bg-primary-50');
+
+                    const cellKey = cell.dataset.cellKey;
+                    const intervalKey = cell.dataset.interval;
+
+                    if (draggedPlayerId && cellKey) {
+                        const targetPlayer = gamePlan.lineups[cellKey];
+                        const sourceKey = dragSourceCellKey;
+                        const sourceInterval = sourceKey ? sourceKey.split('-').slice(0,2).join('-') : null;
+
+                        // Swap within the same interval (column) to avoid duplicates
+                        if (sourceKey && sourceInterval === intervalKey) {
+                            gamePlan.lineups[cellKey] = draggedPlayerId;
+                            if (sourceKey !== cellKey) {
+                                gamePlan.lineups[sourceKey] = targetPlayer || null;
+                                if (!targetPlayer) delete gamePlan.lineups[sourceKey];
+                            }
+                        } else {
+                            // Prevent duplicate assignment in same interval/column
+                            if (playerAssignedInInterval(draggedPlayerId, intervalKey) && targetPlayer !== draggedPlayerId) {
+                                alert('That player is already in this column. Use another player or clear first.');
+                                return;
+                            }
+
+                            gamePlan.lineups[cellKey] = draggedPlayerId;
+                        }
+
+                        recentAssignments.set(cellKey, Date.now());
+                        if (sourceKey) recentAssignments.set(sourceKey, Date.now());
+                        dragSourceCellKey = null;
+                        lastSelectedPlayerId = draggedPlayerId;
+                        renderSubMatrix();
+                        renderPlayingTimeSummary();
+                    }
+                });
+            });
+
+            // Draggable chips inside cells
+            document.querySelectorAll('.player-chip').forEach(chip => {
+                chip.addEventListener('dragstart', (e) => {
+                    draggedPlayerId = e.currentTarget.dataset.playerId;
+                    dragSourceCellKey = e.currentTarget.dataset.cellKey || null;
+                    lastSelectedPlayerId = draggedPlayerId;
+                });
+                chip.addEventListener('click', (e) => {
+                    const pid = e.currentTarget.dataset.playerId;
+                    lastSelectedPlayerId = pid;
+                    renderPlayerPool();
+                    e.stopPropagation();
+                });
+            });
+
+            // Push-forward buttons
+            document.querySelectorAll('.push-forward-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    pushColumnForward(btn.dataset.interval);
+                });
+            });
+
+            // Row fill buttons
+            document.querySelectorAll('.fill-row-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    fillRowWithLastSelected(btn.dataset.position);
+                });
+            });
+
+            // Render bench chips after layout so they pick up latest assignments
+            intervals.forEach(int => {
+                const benchDiv = document.getElementById(`bench-${int.key}`);
+                if (!benchDiv) return;
+                benchDiv.innerHTML = getBenchPlayersForInterval(int.key).map(p => `
+                    <div class="player-chip inline-flex items-center gap-1 px-2 py-1 bg-white border border-gray-300 rounded-lg shadow-sm cursor-grab active:cursor-grabbing"
+                         draggable="true"
+                         data-player-id="${p.id}">
+                        <span class="font-bold text-xs text-gray-700">#${p.number || '?'}</span>
+                        <span class="text-xs text-gray-800">${p.name}</span>
+                    </div>
+                `).join('') || '<span class="text-gray-400 text-xs">All assigned</span>';
+
+                benchDiv.querySelectorAll('.player-chip').forEach(chip => {
+                    chip.addEventListener('dragstart', (e) => {
+                        draggedPlayerId = e.currentTarget.dataset.playerId;
+                        dragSourceCellKey = null;
+                        lastSelectedPlayerId = draggedPlayerId;
+                    });
+                    chip.addEventListener('click', (e) => {
+                        lastSelectedPlayerId = e.currentTarget.dataset.playerId;
+                        renderPlayerPool();
+                    });
+                });
+            });
+
+            // Clean up stale highlights
+            const now = Date.now();
+            Array.from(recentAssignments.keys()).forEach(key => {
+                if (now - recentAssignments.get(key) > 2000) {
+                    recentAssignments.delete(key);
+                }
+            });
+        }
+
+        function getBenchPlayersForInterval(intervalKey) {
+            const formation = FORMATIONS[gamePlan.formationId];
+            const assignedPlayerIds = new Set();
+
+            // Get all players assigned in this interval
+            formation.positions.forEach(pos => {
+                const cellKey = `${intervalKey}-${pos.id}`;
+                const playerId = gamePlan.lineups[cellKey];
+                if (playerId) {
+                    assignedPlayerIds.add(playerId);
+                }
+            });
+
+            // Return players not assigned
+            return players.filter(p => !assignedPlayerIds.has(p.id));
+        }
+
+        function renderPlayingTimeSummary() {
+            if (!gamePlan.formationId) return;
+
+            const summaryDiv = document.getElementById('playing-time-summary');
+            const formation = FORMATIONS[gamePlan.formationId];
+            if (!formation) {
+                summaryDiv.innerHTML = '<div class="text-sm text-gray-500">Select a formation to see playing time.</div>';
+                return;
+            }
+            if (players.length === 0) {
+                summaryDiv.innerHTML = '<div class="text-sm text-gray-500">Add players to see playing time.</div>';
+                return;
+            }
+
+            // Calculate playing time for each player
+            const playingTime = {};
+            players.forEach(p => {
+                playingTime[p.id] = 0;
+            });
+
+            // Count intervals each player is in
+            const intervalsPerPeriod = Math.max(1, gamePlan.subTimes.length || 0);
+            const minutesPerInterval = gamePlan.periodDuration / intervalsPerPeriod;
+            const intervalTimes = intervalsPerPeriod === 1 ? ['full'] : gamePlan.subTimes;
+
+            for (let period = 1; period <= gamePlan.numPeriods; period++) {
+                intervalTimes.forEach(time => {
+                    const intervalKey = `${period}-${time}`;
+
+                    formation.positions.forEach(pos => {
+                        const cellKey = `${intervalKey}-${pos.id}`;
+                        const playerId = gamePlan.lineups[cellKey];
+                        if (playerId) {
+                            playingTime[playerId] += minutesPerInterval;
+                        }
+                    });
+                });
+            }
+
+            const totalPlayerMinutes = gamePlan.numPeriods * gamePlan.periodDuration * formation.positions.length;
+            const targetTime = totalPlayerMinutes / players.length;
+
+            summaryDiv.innerHTML = players
+                .sort((a, b) => playingTime[b.id] - playingTime[a.id])
+                .map(p => {
+                    const minutes = playingTime[p.id].toFixed(0);
+                    const percentage = (playingTime[p.id] / targetTime) * 100;
+
+                    // Color code based on utilization
+                    let statusColor = 'primary';
+                    let statusText = 'Good';
+                    if (playingTime[p.id] < targetTime * 0.7) {
+                        statusColor = 'red';
+                        statusText = 'Under-utilized';
+                    } else if (playingTime[p.id] > targetTime * 1.3) {
+                        statusColor = 'orange';
+                        statusText = 'Over-utilized';
+                    } else if (playingTime[p.id] >= targetTime * 0.85 && playingTime[p.id] <= targetTime * 1.15) {
+                        statusColor = 'green';
+                        statusText = 'Balanced';
+                    }
+
+                    return `
+                        <div class="playing-time-row bg-gradient-to-r from-gray-50 to-white p-4 rounded-xl border border-gray-200">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-full bg-${statusColor}-100 flex items-center justify-center">
+                                        <span class="text-sm font-bold text-${statusColor}-700">${p.number || '?'}</span>
+                                    </div>
+                                    <div>
+                                        <span class="font-semibold text-gray-900">${p.name}</span>
+                                        <div class="text-xs text-${statusColor}-600 font-medium">${statusText}</div>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                <div class="text-2xl font-bold text-${statusColor}-600">${minutes}</div>
+                                    <div class="text-xs text-gray-600">minutes vs target ${targetTime.toFixed(0)}</div>
+                                </div>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                                <div class="h-full bg-gradient-to-r from-${statusColor}-400 to-${statusColor}-600 rounded-full transition-all duration-500"
+                                     style="width: ${Math.min(100, Math.max(0, percentage))}%"></div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+        }
+
+        window.removePlayerFromCell = function(cellKey) {
+            delete gamePlan.lineups[cellKey];
+            recentAssignments.delete(cellKey);
+            renderSubMatrix();
+            renderPlayingTimeSummary();
+        };
+
+        function playerAssignedInInterval(playerId, intervalKey) {
+            const formation = FORMATIONS[gamePlan.formationId];
+            let found = false;
+            formation.positions.forEach(pos => {
+                const checkKey = `${intervalKey}-${pos.id}`;
+                if (gamePlan.lineups[checkKey] === playerId) {
+                    found = true;
+                }
+            });
+            return found;
+        }
+
+        function pushColumnForward(intervalKey) {
+            const idx = intervalsCache.findIndex(int => int.key === intervalKey);
+            if (idx === -1 || idx === intervalsCache.length - 1) return;
+            const nextInterval = intervalsCache[idx + 1];
+            const formation = FORMATIONS[gamePlan.formationId];
+
+            formation.positions.forEach(pos => {
+                const sourceKey = `${intervalKey}-${pos.id}`;
+                const targetKey = `${nextInterval.key}-${pos.id}`;
+                const playerId = gamePlan.lineups[sourceKey];
+                if (playerId && !gamePlan.lineups[targetKey] && !playerAssignedInInterval(playerId, nextInterval.key)) {
+                    gamePlan.lineups[targetKey] = playerId;
+                    recentAssignments.set(targetKey, Date.now());
+                }
+            });
+
+            renderSubMatrix();
+            renderPlayingTimeSummary();
+            updatePlanSummary();
+        }
+
+        function fillRowWithLastSelected(positionId) {
+            if (!lastSelectedPlayerId) {
+                alert('Select or drag a player first, then try filling.');
+                return;
+            }
+
+            intervalsCache.forEach(int => {
+                const cellKey = `${int.key}-${positionId}`;
+                if (!gamePlan.lineups[cellKey] && !playerAssignedInInterval(lastSelectedPlayerId, int.key)) {
+                    gamePlan.lineups[cellKey] = lastSelectedPlayerId;
+                    recentAssignments.set(cellKey, Date.now());
+                }
+            });
+
+            renderSubMatrix();
+            renderPlayingTimeSummary();
+            updatePlanSummary();
+        }
+
+        // Step navigation
+        document.getElementById('add-sub-time-btn')?.addEventListener('click', () => {
+            const input = document.getElementById('sub-times-input').value;
+            const times = input.split(',').map(t => parseInt(t.trim())).filter(t => !isNaN(t) && t > 0);
+            if (times.length > 0) {
+                gamePlan.subTimes = times.sort((a, b) => a - b);
+                renderSubTimesDisplay();
+            }
+        });
+
+        // Formation selection (Step 1 -> Step 2)
+        document.querySelectorAll('.formation-card').forEach(card => {
+            card.addEventListener('click', () => {
+                gamePlan.formationId = card.dataset.formation;
+
+                document.getElementById('step-formation').classList.add('hidden');
+                document.getElementById('step-periods').classList.remove('hidden');
+            });
+        });
+
+        // From Step 2 (Periods) back to Step 1 (Formation)
+        document.querySelectorAll('#back-to-formation').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('step-periods').classList.add('hidden');
+                document.getElementById('step-formation').classList.remove('hidden');
+            });
+        });
+
+        // From Step 2 (Periods) to Step 3 (Lineup)
+        document.getElementById('next-to-lineup')?.addEventListener('click', () => {
+            gamePlan.numPeriods = parseInt(document.getElementById('num-periods').value);
+            gamePlan.periodDuration = parseInt(document.getElementById('period-duration').value);
+
+            document.getElementById('step-periods').classList.add('hidden');
+            document.getElementById('step-lineup').classList.remove('hidden');
+
+            renderSubMatrix();
+            renderPlayingTimeSummary();
+            updatePlanSummary();
+        });
+
+        // From Step 3 (Lineup) back to Step 2 (Periods)
+        document.querySelectorAll('#back-to-periods').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('step-lineup').classList.add('hidden');
+                document.getElementById('step-periods').classList.remove('hidden');
+            });
+        });
+
+        // Save game plan
+        document.getElementById('save-plan-btn')?.addEventListener('click', async () => {
+            try {
+                await updateGame(currentTeamId, currentGameId, { gamePlan });
+                alert('Game plan saved successfully!');
+            } catch (error) {
+                console.error('Error saving game plan:', error);
+                alert('Error saving game plan. Please try again.');
+            }
+        });
+
+        loadGamePlanner();
+    </script>
+</body>
+
+</html>

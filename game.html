@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Match Report - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="mb-6">
+            <a id="back-link" href="#"
+                class="inline-flex items-center text-primary-600 hover:text-primary-700 font-medium transition group">
+                <svg class="w-5 h-5 mr-2 group-hover:-translate-x-1 transition-transform" fill="none"
+                    stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+                Back to Team
+            </a>
+        </div>
+
+        <div id="game-header"
+            class="bg-gradient-to-br from-white to-gray-50 rounded-2xl shadow-lg p-8 md:p-12 mb-8 md:mb-12 text-center border border-gray-200">
+            <div class="animate-pulse h-8 bg-gray-200 w-1/2 mx-auto mb-4 rounded"></div>
+            <div class="animate-pulse h-12 bg-gray-200 w-1/4 mx-auto rounded"></div>
+        </div>
+
+        <!-- Game Summary Section -->
+        <div class="mb-8 md:mb-10">
+            <button id="summary-toggle" class="w-full text-left group">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Match Summary</h2>
+                    </div>
+                    <svg id="summary-chevron" class="w-6 h-6 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </div>
+            </button>
+            <div id="game-summary" class="bg-white shadow-lg rounded-2xl p-6 md:p-8 text-gray-700 leading-relaxed border border-gray-200 overflow-hidden transition-all duration-300">
+                <p class="text-gray-500 italic">No summary available.</p>
+            </div>
+        </div>
+
+        <!-- Player Stats Section -->
+        <div class="mb-8 md:mb-10">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Player Performance</h2>
+            </div>
+            <div class="bg-white shadow-lg rounded-2xl overflow-hidden border border-gray-200">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gradient-to-r from-gray-50 to-gray-100 text-gray-700 uppercase text-xs font-semibold">
+                            <tr id="stats-header-row">
+                                <th class="px-4 py-4 text-left">#</th>
+                                <th class="px-4 py-4 text-left">Player</th>
+                                <!-- Dynamic Stat Columns -->
+                            </tr>
+                        </thead>
+                        <tbody id="stats-body" class="divide-y divide-gray-100">
+                            <!-- Player Rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Log and Opponent Stats Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+            <div>
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Play-by-Play</h2>
+                </div>
+                <div id="game-log" class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200 h-[500px] overflow-y-auto">
+                    <div class="text-gray-500 text-sm">No events logged.</div>
+                </div>
+            </div>
+            <div>
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Opponent Stats</h2>
+                </div>
+                <div class="bg-white shadow-lg rounded-2xl overflow-hidden border border-gray-200 h-[500px] overflow-y-auto">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead class="bg-gradient-to-r from-gray-50 to-gray-100 text-gray-700 uppercase text-xs font-semibold sticky top-0">
+                                <tr id="opponent-stats-header-row">
+                                    <th class="px-4 py-4 text-left">#</th>
+                                    <th class="px-4 py-4 text-left">Player</th>
+                                    <!-- Dynamic Stat Columns -->
+                                </tr>
+                            </thead>
+                            <tbody id="opponent-stats-body" class="divide-y divide-gray-100">
+                                <!-- Opponent Rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getTeam, getGame, getPlayers } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, escapeHtml } from './js/utils.js?v=6';
+        import { checkAuth } from './js/auth.js';
+        import { collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { db } from './js/firebase.js';
+
+        checkAuth((user) => {
+            // Allow viewing without login - user can be null
+            renderHeader(document.getElementById('header-container'), user);
+        });
+
+        renderFooter(document.getElementById('footer-container'));
+
+        // Summary toggle functionality
+        let summaryExpanded = true;
+        const summaryToggle = document.getElementById('summary-toggle');
+        const summaryContent = document.getElementById('game-summary');
+        const summaryChevron = document.getElementById('summary-chevron');
+
+        summaryToggle.addEventListener('click', () => {
+            summaryExpanded = !summaryExpanded;
+            if (summaryExpanded) {
+                summaryContent.style.maxHeight = summaryContent.scrollHeight + 'px';
+                summaryChevron.style.transform = 'rotate(0deg)';
+            } else {
+                summaryContent.style.maxHeight = '0px';
+                summaryChevron.style.transform = 'rotate(-90deg)';
+            }
+        });
+
+        async function loadGame() {
+            const { teamId, gameId } = getUrlParams();
+            if (!teamId || !gameId) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
+
+            try {
+                const [team, game, players] = await Promise.all([
+                    getTeam(teamId),
+                    getGame(teamId, gameId),
+                    getPlayers(teamId)
+                ]);
+
+                if (!game) {
+                    document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Game not found</div>';
+                    return;
+                }
+
+                // Render Header
+                const isWin = (game.homeScore || 0) > (game.awayScore || 0);
+                const isLoss = (game.homeScore || 0) < (game.awayScore || 0);
+                const isTie = (game.homeScore || 0) === (game.awayScore || 0) && game.status === 'completed';
+
+                document.getElementById('game-header').innerHTML = `
+                    <div class="inline-flex items-center gap-2 mb-4">
+                        <div class="px-4 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider ${isWin ? 'bg-green-100 text-green-700' :
+                        isLoss ? 'bg-red-100 text-red-700' :
+                            isTie ? 'bg-gray-100 text-gray-700' :
+                                'bg-primary-100 text-primary-700'
+                    }">
+                            ${isWin ? 'Victory' : isLoss ? 'Defeat' : isTie ? 'Tie' : 'Match Report'}
+                        </div>
+                        <div class="text-gray-500 font-medium text-sm">${formatDate(game.date)}</div>
+                    </div>
+                    <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 md:mb-8 text-gray-900">
+                        ${escapeHtml(team.name)} <span class="text-gray-400 mx-2 md:mx-3">vs</span> ${escapeHtml(game.opponent)}
+                    </h1>
+                    <div class="flex justify-center items-center gap-6 md:gap-8 mb-6">
+                        <div class="text-center">
+                            <div class="text-sm text-gray-500 mb-2 font-medium">${escapeHtml(team.name)}</div>
+                            <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isWin ? 'text-green-600' : 'text-primary-600'
+                    }">${game.homeScore || 0}</div>
+                        </div>
+                        <div class="text-3xl md:text-4xl text-gray-300 font-light">-</div>
+                        <div class="text-center">
+                            <div class="text-sm text-gray-500 mb-2 font-medium">${escapeHtml(game.opponent)}</div>
+                            <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isLoss ? 'text-red-600' : 'text-gray-600'
+                    }">${game.awayScore || 0}</div>
+                        </div>
+                    </div>
+                    ${game.location ? `
+                        <div class="flex items-center justify-center gap-2 text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                            <span>${escapeHtml(game.location)}</span>
+                        </div>
+                    ` : ''}
+                `;
+
+                // Render Summary
+                const summaryDiv = document.getElementById('game-summary');
+                if (game.summary) {
+                    summaryDiv.innerHTML = `<div class="prose prose-gray max-w-none">${escapeHtml(game.summary).replace(/\n/g, '<br>')}</div>`;
+                } else {
+                    summaryDiv.innerHTML = '<p class="text-gray-500 italic">No summary available.</p>';
+                }
+                // Set initial max-height for collapse animation
+                setTimeout(() => {
+                    summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
+                }, 100);
+
+                // Fetch Aggregated Stats
+                // We need to fetch from subcollection: teams/{teamId}/games/{gameId}/aggregatedStats
+                const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                const statsMap = {};
+                statsSnapshot.forEach(doc => {
+                    statsMap[doc.id] = doc.data().stats;
+                });
+
+                // Determine columns from data if config not available, or just show all keys found
+                // Ideally we fetch the config used.
+                // For now, let's collect all unique keys from statsMap
+                const allKeys = new Set();
+                Object.values(statsMap).forEach(stats => {
+                    Object.keys(stats).forEach(k => allKeys.add(k));
+                });
+                const statKeys = Array.from(allKeys).sort();
+
+                // Render Table Header
+                const headerRow = document.getElementById('stats-header-row');
+                statKeys.forEach(key => {
+                    const th = document.createElement('th');
+                    th.className = "px-4 py-4 text-center";
+                    th.textContent = key; // Could map to friendly name if we had config
+                    headerRow.appendChild(th);
+                });
+
+                // Render Table Body
+                const tbody = document.getElementById('stats-body');
+                if (players.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="100%" class="p-8 text-center"><div class="text-gray-400 text-sm">No players found.</div></td></tr>';
+                } else {
+                    tbody.innerHTML = players.map(p => {
+                        const pStats = statsMap[p.id] || {};
+                        const statCells = statKeys.map(key => `
+                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${pStats[key] || 0}</td>
+                        `).join('');
+                        return `
+                            <tr class="bg-white hover:bg-gray-50 transition">
+                                    <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number || '-')}</td>
+                                    <td class="px-4 py-4 font-medium">
+                                        <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
+                                           class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
+                                            <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                                                ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                                                    <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                                                    </svg>
+                                                `}
+                                            </span>
+                                            <span>${escapeHtml(p.name)}</span>
+                                        </a>
+                                    </td>
+                                ${statCells}
+                            </tr>
+                        `;
+                    }).join('');
+                }
+
+                // Render Opponent Stats
+                if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
+                    const opponentHeaderRow = document.getElementById('opponent-stats-header-row');
+                    const opponentTbody = document.getElementById('opponent-stats-body');
+
+                    // Get stat keys from opponent stats
+                    const opponentStatKeys = new Set();
+                    Object.values(game.opponentStats).forEach(stats => {
+                        Object.keys(stats).forEach(k => opponentStatKeys.add(k));
+                    });
+                    const oppKeys = Array.from(opponentStatKeys).sort();
+
+                    // Render header
+                    oppKeys.forEach(key => {
+                        const th = document.createElement('th');
+                        th.className = "px-4 py-4 text-center";
+                        th.textContent = key.toUpperCase();
+                        opponentHeaderRow.appendChild(th);
+                    });
+
+                    // Render rows
+                    const opponentPlayers = Object.entries(game.opponentStats).map(([id, stats]) => ({
+                        id,
+                        number: stats.number || id,
+                        name: stats.name || `Player ${id}`,
+                        stats
+                    }));
+
+                    opponentTbody.innerHTML = opponentPlayers.map(p => {
+                        const statCells = oppKeys.map(key => `
+                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${p.stats[key] || 0}</td>
+                        `).join('');
+                        return `
+                            <tr class="bg-white hover:bg-gray-50 transition">
+                                <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number)}</td>
+                                <td class="px-4 py-4 font-medium text-gray-900">${escapeHtml(p.name)}</td>
+                                ${statCells}
+                            </tr>
+                        `;
+                    }).join('');
+                } else {
+                    document.getElementById('opponent-stats-body').innerHTML =
+                        '<tr><td colspan="100%" class="p-8 text-center"><div class="text-gray-400 text-sm">No opponent stats available.</div></td></tr>';
+                }
+
+                // Fetch and render game log (events)
+                const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
+                const eventsSnapshot = await getDocs(eventsQuery);
+                const events = eventsSnapshot.docs.map(doc => doc.data());
+
+                if (events.length > 0) {
+                    const gameLogDiv = document.getElementById('game-log');
+                    gameLogDiv.innerHTML = `
+                        <div class="space-y-2">
+                            ${events.map((event, index) => {
+                                const timestamp = event.timestamp ? new Date(event.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                                const period = event.period || 'Q1';
+                                const gameTime = event.gameTime || '';
+                                return `
+                                    <div class="flex items-start gap-3 py-3 px-3 border-l-4 border-primary-500 bg-gray-50 rounded-r hover:bg-gray-100 transition">
+                                        <div class="flex-shrink-0 pt-0.5">
+                                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-primary-600 text-white shadow-sm">${escapeHtml(period)}</span>
+                                        </div>
+                                        <div class="flex-grow min-w-0">
+                                            <div class="text-sm text-gray-900 font-medium leading-relaxed">${escapeHtml(event.text || event.message || 'Event logged')}</div>
+                                            <div class="flex items-center gap-3 mt-1">
+                                                ${gameTime ? `<span class="text-xs text-gray-600 font-mono font-semibold">${escapeHtml(gameTime)}</span>` : ''}
+                                                ${timestamp ? `<span class="text-xs text-gray-500">${timestamp}</span>` : ''}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                } else {
+                    document.getElementById('game-log').innerHTML = `
+                        <div class="flex flex-col items-center justify-center h-full text-center py-12">
+                            <svg class="w-16 h-16 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <p class="text-gray-400 font-medium">No events logged</p>
+                            <p class="text-gray-400 text-sm mt-1">Play-by-play will appear here during the game</p>
+                        </div>
+                    `;
+                }
+
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        loadGame();
+    </script>
+</body>
+
+</html>

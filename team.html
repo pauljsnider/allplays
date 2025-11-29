@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Team Details - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8">
+        <!-- Team Header -->
+        <div id="team-header" class="mb-8 bg-white rounded-2xl shadow-lg p-6 md:p-8 border border-gray-200">
+            <div class="animate-pulse flex items-center gap-6">
+                <div class="w-24 h-24 bg-gray-200 rounded-full"></div>
+                <div class="flex-grow space-y-3">
+                    <div class="h-8 bg-gray-200 rounded w-1/3"></div>
+                    <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Season Overview Cards -->
+        <div id="season-overview" class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
+            <!-- Loading placeholders -->
+            <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200 animate-pulse">
+                <div class="h-4 bg-gray-200 rounded w-2/3 mb-4"></div>
+                <div class="h-10 bg-gray-200 rounded w-1/2"></div>
+            </div>
+            <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200 animate-pulse">
+                <div class="h-4 bg-gray-200 rounded w-2/3 mb-4"></div>
+                <div class="h-10 bg-gray-200 rounded w-1/2"></div>
+            </div>
+            <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200 animate-pulse">
+                <div class="h-4 bg-gray-200 rounded w-2/3 mb-4"></div>
+                <div class="h-10 bg-gray-200 rounded w-1/2"></div>
+            </div>
+        </div>
+
+        <!-- Advanced Team Analytics (Premium Feature Preview) -->
+        <div class="mb-8">
+            <div
+                class="relative bg-gradient-to-br from-primary-50 via-white to-primary-50 rounded-2xl shadow-lg border-2 border-primary-200 overflow-hidden">
+                <!-- Premium Badge -->
+                <div class="absolute top-4 right-4 z-10">
+                    <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-400 to-amber-500 text-white shadow-lg">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path
+                                d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z">
+                            </path>
+                        </svg>
+                        Premium
+                    </span>
+                </div>
+
+                <div class="p-6 md:p-8">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="h-1 w-12 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Team Analytics & Insights</h2>
+                    </div>
+
+                    <div id="team-advanced-stats" class="space-y-6">
+                        <!-- Advanced team stats will be rendered here -->
+                        <div class="text-center py-8 text-gray-500">
+                            <svg class="w-16 h-16 text-primary-300 mx-auto mb-4" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                                </path>
+                            </svg>
+                            <p class="text-lg font-medium">Team analytics loading...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Schedule Section -->
+            <section class="lg:col-span-2">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900 flex items-center gap-2">
+                        Schedule
+                        <button id="download-ics"
+                            class="text-sm px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:text-primary-700 hover:border-primary-300 transition flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
+                                </path>
+                            </svg>
+                            Download .ics
+                        </button>
+                    </h2>
+                    <div class="flex gap-3 w-full sm:w-auto flex-wrap">
+                        <label
+                            class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer bg-white px-4 py-2 rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                            <input type="checkbox" id="show-practices"
+                                class="rounded text-primary-600 focus:ring-primary-500">
+                            <span class="font-medium">Show Practices</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="schedule-list" class="space-y-4">
+                    <!-- Games will be displayed here -->
+                </div>
+            </section>
+
+            <!-- Roster Section -->
+            <section>
+                <h2 class="text-2xl md:text-3xl font-bold mb-6 text-gray-900">Roster</h2>
+                <div class="bg-white shadow-lg rounded-2xl overflow-hidden border border-gray-200">
+                    <div class="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                        <div class="grid grid-cols-3 p-4">
+                            <div class="text-xs md:text-sm font-semibold text-gray-600 uppercase tracking-wide">#</div>
+                            <div
+                                class="col-span-2 text-xs md:text-sm font-semibold text-gray-600 uppercase tracking-wide">
+                                Name</div>
+                        </div>
+                    </div>
+                    <div id="roster-list" class="divide-y divide-gray-200">
+                        <!-- Players -->
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=6';
+        import { checkAuth } from './js/auth.js';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        let currentUser = null;
+        let currentTeam = null;
+        let currentTeamId = null;
+        let showPractices = false;
+        let latestGameId = null;
+        let nextGameCountdown = null;
+        let teamGames = [];
+
+        function mapLink(locationText) {
+            if (!locationText) return null;
+            return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
+        }
+
+        function calculateSeasonRecord(games) {
+            let wins = 0;
+            let losses = 0;
+            let ties = 0;
+
+            games.forEach(game => {
+                if (game.status === 'completed' && game.homeScore !== undefined && game.awayScore !== undefined) {
+                    if (game.homeScore > game.awayScore) {
+                        wins++;
+                    } else if (game.homeScore < game.awayScore) {
+                        losses++;
+                    } else {
+                        ties++;
+                    }
+                }
+            });
+
+            return { wins, losses, ties };
+        }
+
+        function getNextGame(allEvents) {
+            const now = new Date();
+            const upcomingEvents = allEvents
+                .filter(event => {
+                    if (event.type === 'db' && event.status === 'completed') return false;
+                    if (event.isPractice && !showPractices) return false;
+                    return event.date > now;
+                })
+                .sort((a, b) => a.date - b.date);
+
+            return upcomingEvents[0] || null;
+        }
+
+        function updateCountdown() {
+            const countdownEl = document.getElementById('next-game-countdown');
+            if (!countdownEl || !nextGameCountdown) return;
+
+            const now = new Date();
+            const diff = nextGameCountdown.date - now;
+
+            if (diff <= 0) {
+                countdownEl.innerHTML = '<span class="text-primary-600 font-semibold">Game Time!</span>';
+                return;
+            }
+
+            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+            if (days > 0) {
+                countdownEl.innerHTML = `<span class="text-2xl md:text-3xl font-bold text-primary-600">${days}</span><span class="text-sm text-gray-600 ml-1">day${days === 1 ? '' : 's'}</span>`;
+            } else if (hours > 0) {
+                countdownEl.innerHTML = `<span class="text-2xl md:text-3xl font-bold text-primary-600">${hours}</span><span class="text-sm text-gray-600 ml-1">hour${hours === 1 ? '' : 's'}</span>`;
+            } else {
+                countdownEl.innerHTML = `<span class="text-2xl md:text-3xl font-bold text-primary-600">${minutes}</span><span class="text-sm text-gray-600 ml-1">minute${minutes === 1 ? '' : 's'}</span>`;
+            }
+        }
+
+        checkAuth((user) => {
+            // Allow viewing without login - user can be null
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+            loadTeam();
+        });
+
+        async function loadTeam() {
+            const { teamId } = getUrlParams();
+            if (!teamId) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            currentTeamId = teamId;
+
+            try {
+                const [team, players, dbGames] = await Promise.all([
+                    getTeam(teamId),
+                    getPlayers(teamId),
+                    getGames(teamId)
+                ]);
+
+                teamGames = dbGames;
+                teamGames = dbGames;
+                const sortedGames = [...dbGames].sort((a, b) => {
+                    const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
+                    const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
+                    return bDate - aDate;
+                });
+                latestGameId = sortedGames[0]?.id || null;
+
+                if (!team) {
+                    document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Team not found</div>';
+                    return;
+                }
+
+                currentTeam = team;
+
+                // Calculate season record
+                const record = calculateSeasonRecord(dbGames);
+
+                // Render Header
+                document.getElementById('team-header').innerHTML = `
+                    <div class="flex flex-col md:flex-row items-start md:items-center gap-6">
+                        ${team.photoUrl
+                        ? `<img src="${escapeHtml(team.photoUrl)}" alt="${escapeHtml(team.name)}" class="w-24 h-24 md:w-32 md:h-32 rounded-2xl object-cover border-4 border-white shadow-lg">`
+                        : `<div class="w-24 h-24 md:w-32 md:h-32 rounded-2xl bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-4 border-white shadow-lg">
+                                <span class="text-4xl md:text-5xl font-bold text-primary-600">${escapeHtml(team.name.charAt(0))}</span>
+                            </div>`
+                    }
+                        <div class="flex-grow">
+                            <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold text-gray-900 mb-2">${escapeHtml(team.name)}</h1>
+                            <div class="flex flex-wrap items-center gap-3 mb-3">
+                                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-primary-100 text-primary-800">
+                                    ${escapeHtml(team.sport || 'Sport not set')}
+                                </span>
+                                ${team.zip
+                        ? `<a class="inline-flex items-center gap-1 text-sm text-gray-600 hover:text-primary-600 transition" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(team.zip)}">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                        </svg>
+                                        ${escapeHtml(team.zip)}
+                                    </a>`
+                        : ''
+                    }
+                            </div>
+                            ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
+                        </div>
+                    </div>
+                `;
+
+                // Render Season Overview Cards
+                const totalGames = dbGames.filter(g => g.status === 'completed').length;
+                const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+
+                // Fetch calendar events and render schedule
+                await renderSchedule(team, dbGames);
+
+                // After schedule is rendered, update season overview with next game info
+                let nextGame = null;
+                try {
+                    const allEventsForOverview = await getAllEvents(team, dbGames);
+
+                    nextGame = getNextGame(allEventsForOverview);
+
+                    nextGameCountdown = nextGame;
+
+                    document.getElementById('season-overview').innerHTML = `
+                    <!-- Season Record -->
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record</h3>
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
+                            ${totalGames > 0
+                            ? `<span class="text-sm text-gray-500">(${winPercentage}%)</span>`
+                            : ''
+                        }
+                        </div>
+                        ${totalGames === 0
+                            ? `<p class="text-xs text-gray-500 mt-2">No games completed yet</p>`
+                            : `<p class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
+                        }
+                    </div>
+
+                    <!-- Next Game Countdown -->
+                    <div class="bg-gradient-to-br from-primary-50 to-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-primary-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Next Game</h3>
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                        </div>
+                        ${nextGame
+                            ? `<div id="next-game-countdown" class="mb-2"></div>
+                               <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
+                               <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>`
+                            : `<p class="text-sm text-gray-500">No upcoming games</p>`
+                        }
+                    </div>
+
+                    <!-- Total Players -->
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Roster Size</h3>
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                            </svg>
+                        </div>
+                        <div class="text-3xl md:text-4xl font-bold text-gray-900">${players.length}</div>
+                        <p class="text-xs text-gray-500 mt-2">Active player${players.length === 1 ? '' : 's'}</p>
+                    </div>
+                `;
+                } catch (err) {
+                    console.error('Error updating season overview:', err);
+                }
+
+                // Start countdown updates
+                if (nextGame) {
+                    updateCountdown();
+                    setInterval(updateCountdown, 60000); // Update every minute
+                }
+
+                // Render Team Advanced Stats
+                const teamAdvancedStatsDiv = document.getElementById('team-advanced-stats');
+                const completedGames = dbGames.filter(g => g.status === 'completed');
+                if (completedGames.length >= 3) {
+                    // Calculate win/loss trend (recent vs earlier)
+                    const sortedGames = [...completedGames].sort((a, b) => {
+                        const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
+                        const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
+                        return aDate - bDate;
+                    });
+
+                    const recentGames = sortedGames.slice(-5);
+                    const recentWins = recentGames.filter(g => g.homeScore > g.awayScore).length;
+                    const recentLosses = recentGames.filter(g => g.homeScore < g.awayScore).length;
+                    const recentForm = recentGames.map(g => {
+                        if (g.homeScore > g.awayScore) return 'W';
+                        if (g.homeScore < g.awayScore) return 'L';
+                        return 'T';
+                    });
+
+                    // Calculate scoring stats
+                    let totalGoalsFor = 0;
+                    let totalGoalsAgainst = 0;
+                    completedGames.forEach(g => {
+                        totalGoalsFor += g.homeScore || 0;
+                        totalGoalsAgainst += g.awayScore || 0;
+                    });
+                    const avgGoalsFor = (totalGoalsFor / completedGames.length).toFixed(1);
+                    const avgGoalsAgainst = (totalGoalsAgainst / completedGames.length).toFixed(1);
+                    const goalDifferential = totalGoalsFor - totalGoalsAgainst;
+
+                    teamAdvancedStatsDiv.innerHTML = `
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Team Form -->
+                            <div class="bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    Recent Form (Last 5 Games)
+                                </h3>
+                                <div class="flex items-center justify-around gap-2 mb-6">
+                                    ${recentForm.map(result => `
+                                        <div class="flex-1 text-center">
+                                            <div class="w-full h-12 rounded-lg flex items-center justify-center text-lg font-bold ${result === 'W' ? 'bg-green-100 text-green-700' :
+                            result === 'L' ? 'bg-red-100 text-red-700' :
+                                'bg-gray-100 text-gray-700'
+                        }">
+                                                ${result}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg">
+                                        <div class="text-3xl font-bold text-green-600">${recentWins}</div>
+                                        <div class="text-xs text-green-700 font-medium mt-1">Wins</div>
+                                    </div>
+                                    <div class="text-center p-4 bg-gradient-to-br from-red-50 to-red-100 rounded-lg">
+                                        <div class="text-3xl font-bold text-red-600">${recentLosses}</div>
+                                        <div class="text-xs text-red-700 font-medium mt-1">Losses</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Scoring Stats -->
+                            <div class="bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                                    </svg>
+                                    Scoring Analysis
+                                </h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <div class="flex justify-between items-center mb-2">
+                                            <span class="text-sm font-semibold text-gray-700">Goals Per Game</span>
+                                            <span class="text-lg font-bold text-green-600">${avgGoalsFor}</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-3">
+                                            <div class="bg-gradient-to-r from-green-400 to-green-600 h-full rounded-full"
+                                                 style="width: ${Math.min(100, (avgGoalsFor / 5) * 100)}%"></div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div class="flex justify-between items-center mb-2">
+                                            <span class="text-sm font-semibold text-gray-700">Goals Conceded</span>
+                                            <span class="text-lg font-bold text-red-600">${avgGoalsAgainst}</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-3">
+                                            <div class="bg-gradient-to-r from-red-400 to-red-600 h-full rounded-full"
+                                                 style="width: ${Math.min(100, (avgGoalsAgainst / 5) * 100)}%"></div>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-gray-200">
+                                        <div class="flex justify-between items-center">
+                                            <span class="text-sm font-semibold text-gray-700">Goal Differential</span>
+                                            <span class="text-xl font-bold ${goalDifferential >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                                ${goalDifferential >= 0 ? '+' : ''}${goalDifferential}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Season Progression Chart -->
+                            <div class="lg:col-span-2 bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path>
+                                    </svg>
+                                    Season Win/Loss Progression
+                                </h3>
+                                <div class="flex items-end justify-around gap-1 h-48 bg-gradient-to-t from-gray-50 to-transparent rounded-lg p-4">
+                                    ${sortedGames.slice(0, 10).map((g, idx) => {
+                            const isWin = g.homeScore > g.awayScore;
+                            const isLoss = g.homeScore < g.awayScore;
+                            const date = g.date.toDate ? g.date.toDate() : new Date(g.date);
+                            return `
+                                            <div class="flex-1 flex flex-col items-center gap-2">
+                                                <div class="text-xs font-bold ${isWin ? 'text-green-600' : isLoss ? 'text-red-600' : 'text-gray-600'}">
+                                                    ${g.homeScore}-${g.awayScore}
+                                                </div>
+                                                <div class="w-full rounded-t-lg transition-all duration-700 ${isWin ? 'bg-gradient-to-t from-green-600 to-green-400 hover:from-green-700 hover:to-green-500' :
+                                    isLoss ? 'bg-gradient-to-t from-red-600 to-red-400 hover:from-red-700 hover:to-red-500' :
+                                        'bg-gradient-to-t from-gray-600 to-gray-400 hover:from-gray-700 hover:to-gray-500'
+                                }" style="height: ${isWin ? '80%' : isLoss ? '40%' : '60%'}"></div>
+                                                <div class="text-xs text-gray-500 text-center mt-1">
+                                                    <div class="font-semibold">${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+                                                </div>
+                                            </div>
+                                        `;
+                        }).join('')}
+                                </div>
+                                <div class="text-center mt-2 text-sm text-gray-600">
+                                    Game-by-game results (first 10 games)
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    teamAdvancedStatsDiv.innerHTML = `
+                        <div class="text-center py-12">
+                            <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <p class="text-gray-500 text-lg font-medium mb-2">Not Enough Data</p>
+                            <p class="text-gray-400 text-sm">Team analytics require at least 3 completed games</p>
+                        </div>
+                    `;
+                }
+
+                // Render Roster
+                const rosterBody = document.getElementById('roster-list');
+                if (players.length === 0) {
+                    rosterBody.innerHTML = `
+                        <div class="p-6 text-center text-gray-500">
+                            <svg class="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                            </svg>
+                            <p class="text-sm">No players added yet</p>
+                        </div>
+                    `;
+                } else {
+                    rosterBody.innerHTML = players.map(p => {
+                        const href = latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`;
+                        return `
+                    <div class="grid grid-cols-3 p-4 hover:bg-primary-50 transition group">
+                        <div class="font-mono text-gray-600 group-hover:text-primary-700 font-semibold">
+                            <a href="${href}">${escapeHtml(p.number || '-')}</a>
+                        </div>
+                        <div class="col-span-2 font-medium">
+                            <a href="${href}" class="flex items-center gap-3 text-gray-900 group-hover:text-primary-600 transition">
+                                <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                                            ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                                                <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                                                </svg>
+                                            `}
+                                </span>
+                                <span>${escapeHtml(p.name)}</span>
+                            </a>
+                        </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        async function getAllEvents(team, dbGames) {
+            let allEvents = [];
+
+            const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
+
+            if (team.calendarUrls && team.calendarUrls.length > 0) {
+                for (const calendarUrl of team.calendarUrls) {
+                    try {
+                        const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+
+                        calendarEvents.forEach(event => {
+                            if (trackedUids.includes(event.uid)) return;
+
+                            const hasConflict = dbGames.some(dbGame => {
+                                const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                                const eventDate = event.dtstart;
+                                return Math.abs(dbDate - eventDate) < 60000;
+                            });
+
+                            if (hasConflict) return;
+
+                            const isPractice = isPracticeEvent(event.summary);
+                            const opponent = extractOpponent(event.summary, team.name);
+
+                            allEvents.push({
+                                type: 'calendar',
+                                date: event.dtstart,
+                                opponent: opponent,
+                                location: event.location || 'TBD',
+                                isPractice: isPractice,
+                                calendarEvent: event
+                            });
+                        });
+                    } catch (error) {
+                        console.error('Error fetching calendar:', calendarUrl, error);
+                    }
+                }
+            }
+
+            dbGames.forEach(game => {
+                const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
+                allEvents.push({
+                    type: 'db',
+                    date: gameDate,
+                    opponent: game.opponent,
+                    location: game.location || 'TBD',
+                    status: game.status,
+                    homeScore: game.homeScore,
+                    awayScore: game.awayScore,
+                    gameId: game.id,
+                    isPractice: false
+                });
+            });
+
+            allEvents.sort((a, b) => a.date - b.date);
+            return allEvents;
+        }
+
+        async function renderSchedule(team, dbGames) {
+            const allEvents = await getAllEvents(team, dbGames);
+            renderScheduleList(allEvents);
+        }
+
+        function renderScheduleList(events) {
+            const scheduleList = document.getElementById('schedule-list');
+
+            const filteredEvents = events.filter(event => {
+                if (event.isPractice && !showPractices) return false;
+                return true;
+            });
+
+            if (filteredEvents.length === 0) {
+                scheduleList.innerHTML = `
+                    <div class="bg-white p-8 rounded-2xl shadow-md text-center border border-gray-200">
+                        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                        </svg>
+                        <p class="text-gray-500">No games scheduled</p>
+                    </div>
+                `;
+                return;
+            }
+
+            scheduleList.innerHTML = filteredEvents.map(event => {
+                if (event.type === 'calendar') {
+                    return renderCalendarEvent(event);
+                } else {
+                    return renderDbGame(event);
+                }
+            }).join('');
+        }
+
+        function renderCalendarEvent(event) {
+            const isPractice = event.isPractice;
+            const isUpcoming = event.date > new Date();
+
+            return `
+                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${isPractice ? 'border-yellow-400' : (isUpcoming ? 'border-primary-500' : 'border-gray-300')} overflow-hidden border border-gray-200">
+                    <div class="p-5">
+                        <div class="flex flex-col sm:flex-row justify-between items-start gap-4">
+                            <div class="flex-grow">
+                                <div class="flex flex-wrap items-center gap-2 mb-2">
+                                    <span class="text-xs bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded-full font-semibold">📅 Calendar</span>
+                                    ${isPractice ? '<span class="text-xs bg-yellow-100 text-yellow-800 px-2.5 py-0.5 rounded-full font-semibold">Practice</span>' : ''}
+                                    ${isUpcoming ? '<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>' : ''}
+                                </div>
+                                <div class="text-sm text-gray-500 font-semibold mb-2">${formatDate(event.date)} • ${formatTime(event.date)}</div>
+                                <div class="text-lg md:text-xl font-bold text-gray-900 mb-2">
+                                    ${isPractice ? escapeHtml(event.opponent) : `vs. ${escapeHtml(event.opponent)}`}
+                                </div>
+                                <div class="flex items-center text-sm text-gray-600">
+                                    <svg class="w-4 h-4 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    </svg>
+                                    ${mapLink(event.location)
+                    ? `<a class="hover:text-primary-600 transition truncate" target="_blank" rel="noopener noreferrer" href="${mapLink(event.location)}">${escapeHtml(event.location)}</a>`
+                    : `<span class="truncate">${escapeHtml(event.location)}</span>`
+                }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDbGame(game) {
+            const isCompleted = game.status === 'completed';
+            const isUpcoming = !isCompleted && game.date > new Date();
+            const won = isCompleted && game.homeScore > game.awayScore;
+            const lost = isCompleted && game.homeScore < game.awayScore;
+            const tied = isCompleted && game.homeScore === game.awayScore;
+
+            return `
+                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${won ? 'border-green-500' : (lost ? 'border-red-500' : (tied ? 'border-yellow-500' : 'border-primary-500'))
+                } overflow-hidden border border-gray-200">
+                    <div class="p-5">
+                        <div class="flex flex-col md:flex-row justify-between items-start gap-4">
+                            <div class="flex-grow">
+                                <div class="flex flex-wrap items-center gap-2 mb-2">
+                                    ${isCompleted
+                    ? `<span class="text-xs ${won ? 'bg-green-100 text-green-800' : (lost ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800')} px-2.5 py-0.5 rounded-full font-semibold">
+                                            ${won ? 'W' : (lost ? 'L' : 'T')}
+                                          </span>`
+                    : `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
+                }
+                                </div>
+                                <div class="text-sm text-gray-500 font-semibold mb-2">${formatDate(game.date)} • ${formatTime(game.date)}</div>
+                                <div class="text-lg md:text-xl font-bold text-gray-900 mb-2">vs. ${escapeHtml(game.opponent)}</div>
+                                <div class="flex items-center text-sm text-gray-600">
+                                    <svg class="w-4 h-4 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    </svg>
+                                    ${mapLink(game.location)
+                    ? `<a class="hover:text-primary-600 transition truncate" target="_blank" rel="noopener noreferrer" href="${mapLink(game.location)}">${escapeHtml(game.location)}</a>`
+                    : `<span class="truncate">${escapeHtml(game.location)}</span>`
+                }
+                                </div>
+                            </div>
+                            <div class="flex flex-col items-end gap-2">
+                                ${isCompleted
+                    ? `<div class="flex items-center gap-2 text-center">
+                                        <div class="bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+                                            <div class="text-2xl md:text-3xl font-bold font-mono ${won ? 'text-green-600' : 'text-gray-900'}">${game.homeScore}</div>
+                                        </div>
+                                        <div class="text-xl text-gray-400 font-bold">-</div>
+                                        <div class="bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+                                            <div class="text-2xl md:text-3xl font-bold font-mono ${lost ? 'text-red-600' : 'text-gray-700'}">${game.awayScore}</div>
+                                        </div>
+                                      </div>
+                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.gameId}"
+                                         class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 transition font-medium">
+                                        <span>View Report</span>
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                        </svg>
+                                      </a>`
+                    : ''
+                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ICS export helpers
+        function formatIcsDate(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+        }
+
+        function buildIcs(games) {
+            const teamName = currentTeam?.name || 'Team';
+            const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
+
+            games.forEach((game) => {
+                const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+                const start = formatIcsDate(date);
+                const endDate = new Date(date.getTime() + 60 * 60 * 1000); // default 1 hour
+                const end = formatIcsDate(endDate);
+                const summary = `${teamName} vs ${game.opponent || 'TBD'}`;
+                const uid = `${game.id || summary}-${currentTeamId}@gameflow`;
+                lines.push(
+                    'BEGIN:VEVENT',
+                    `UID:${uid}`,
+                    `DTSTAMP:${formatIcsDate(new Date())}`,
+                    `DTSTART:${start}`,
+                    `DTEND:${end}`,
+                    `SUMMARY:${summary}`,
+                    `LOCATION:${(game.location || 'TBD').replace(/,/g, '\\,')}`,
+                    `DESCRIPTION:Status: ${game.status || 'scheduled'}`,
+                    'END:VEVENT'
+                );
+            });
+
+            lines.push('END:VCALENDAR');
+            return lines.join('\r\n');
+        }
+
+        document.getElementById('download-ics')?.addEventListener('click', () => {
+            if (!teamGames || teamGames.length === 0) {
+                alert('No games to export yet.');
+                return;
+            }
+            const ics = buildIcs(teamGames);
+            const blob = new Blob([ics], { type: 'text/calendar' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            const safeName = (currentTeam?.name || 'team').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+            link.download = `${safeName}-schedule.ics`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        });
+
+        // Practice filter
+        document.getElementById('show-practices').addEventListener('change', (e) => {
+            showPractices = e.target.checked;
+            loadTeam();
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Player Details - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8">
+        <div class="mb-6">
+            <a id="back-link" href="#"
+                class="inline-flex items-center gap-2 text-primary-600 hover:text-primary-700 transition font-medium">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+                Back to Game
+            </a>
+        </div>
+
+        <!-- Player Header -->
+        <div id="player-header" class="bg-white rounded-2xl shadow-lg p-6 md:p-8 mb-8 border border-gray-200">
+            <div class="animate-pulse">
+                <div class="h-8 bg-gray-200 w-1/2 mx-auto mb-4 rounded"></div>
+                <div class="h-12 bg-gray-200 w-1/4 mx-auto rounded"></div>
+            </div>
+        </div>
+
+        <!-- Season Overview -->
+        <div id="season-overview" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <!-- Will be populated with season stats -->
+        </div>
+
+        <!-- Advanced Stats Section (Premium Feature Preview) -->
+        <div class="mb-8">
+            <div
+                class="relative bg-gradient-to-br from-primary-50 via-white to-primary-50 rounded-2xl shadow-lg border-2 border-primary-200 overflow-hidden">
+                <!-- Premium Badge -->
+                <div class="absolute top-4 right-4 z-10">
+                    <span
+                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-gradient-to-r from-amber-400 to-amber-500 text-white shadow-lg">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path
+                                d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z">
+                            </path>
+                        </svg>
+                        Premium
+                    </span>
+                </div>
+
+                <div class="p-6 md:p-8">
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="h-1 w-12 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Advanced Performance Analytics</h2>
+                    </div>
+
+                    <div id="advanced-stats" class="space-y-6">
+                        <!-- Advanced stats will be rendered here -->
+                        <div class="text-center py-8 text-gray-500">
+                            <svg class="w-16 h-16 text-primary-300 mx-auto mb-4" fill="none" stroke="currentColor"
+                                viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                                </path>
+                            </svg>
+                            <p class="text-lg font-medium">Advanced analytics loading...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Tabs -->
+        <div class="mb-8">
+            <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+                <div class="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+                    <div class="flex gap-2 p-4 overflow-x-auto">
+                        <button id="tab-games"
+                            class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
+                            Game Stats
+                        </button>
+                        <button id="tab-season"
+                            class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
+                            Season Averages
+                        </button>
+                        <button id="tab-events"
+                            class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
+                            Game Events
+                        </button>
+                    </div>
+                </div>
+
+                <div class="p-6">
+                    <!-- Game Stats Tab -->
+                    <div id="content-games" class="tab-content">
+                        <div id="game-stats" class="space-y-4">
+                            <div class="text-gray-500 text-sm">Loading statistics...</div>
+                        </div>
+                    </div>
+
+                    <!-- Season Averages Tab -->
+                    <div id="content-season" class="tab-content hidden">
+                        <div id="season-stats">
+                            <div class="text-gray-500 text-sm">Loading season stats...</div>
+                        </div>
+                    </div>
+
+                    <!-- Game Events Tab -->
+                    <div id="content-events" class="tab-content hidden">
+                        <div id="player-events">
+                            <div class="text-gray-500 text-sm">Loading events...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getTeam, getGame, getPlayers, getGames } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=6';
+        import { checkAuth } from './js/auth.js';
+        import { collection, getDocs, doc, getDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { db } from './js/firebase.js';
+
+        checkAuth((user) => {
+            // Allow viewing without login - user can be null
+            renderHeader(document.getElementById('header-container'), user);
+        });
+
+        renderFooter(document.getElementById('footer-container'));
+
+        // Tab switching
+        const tabs = ['games', 'season', 'events'];
+        tabs.forEach(tab => {
+            document.getElementById(`tab-${tab}`).addEventListener('click', () => {
+                tabs.forEach(t => {
+                    const btn = document.getElementById(`tab-${t}`);
+                    const content = document.getElementById(`content-${t}`);
+                    if (t === tab) {
+                        btn.classList.add('bg-primary-100', 'text-primary-700');
+                        btn.classList.remove('text-gray-600', 'hover:bg-gray-100');
+                        content.classList.remove('hidden');
+                    } else {
+                        btn.classList.remove('bg-primary-100', 'text-primary-700');
+                        btn.classList.add('text-gray-600', 'hover:bg-gray-100');
+                        content.classList.add('hidden');
+                    }
+                });
+            });
+        });
+
+        // Set initial active tab
+        document.getElementById('tab-games').click();
+
+        async function loadPlayerDetails() {
+            const { teamId, gameId, playerId } = getUrlParams();
+            if (!teamId || !playerId) {
+                window.location.href = 'index.html';
+                return;
+            }
+
+            try {
+                const [team, players, games] = await Promise.all([
+                    getTeam(teamId),
+                    getPlayers(teamId),
+                    getGames(teamId)
+                ]);
+
+                const player = players.find(p => p.id === playerId);
+                if (!player) {
+                    document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Player not found</div>';
+                    return;
+                }
+
+                // Build per-game stats across all games
+                const perGameStats = [];
+                let gamesPlayed = 0;
+                const seasonTotals = {};
+                const allEvents = [];
+
+                for (const game of games) {
+                    const gameIdIter = game.id;
+                    const statsDoc = await getDoc(doc(db, `teams/${teamId}/games/${gameIdIter}/aggregatedStats`, playerId));
+                    if (statsDoc.exists()) {
+                        const stats = statsDoc.data().stats || {};
+                        gamesPlayed++;
+                        Object.entries(stats).forEach(([stat, value]) => {
+                            seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
+                        });
+                        perGameStats.push({
+                            gameId: gameIdIter,
+                            date: game.date.toDate ? game.date.toDate() : new Date(game.date),
+                            opponent: game.opponent || 'Opponent',
+                            stats
+                        });
+
+                        // Collect events for this game
+                        const eventsQuery = query(
+                            collection(db, `teams/${teamId}/games/${gameIdIter}/events`),
+                            orderBy('timestamp', 'asc')
+                        );
+                        const eventsSnapshot = await getDocs(eventsQuery);
+                        eventsSnapshot.docs.forEach(docSnap => {
+                            const ev = docSnap.data();
+                            if (ev.playerId === playerId || (ev.text && ev.text.includes(player.name))) {
+                                allEvents.push({
+                                    ...ev,
+                                    gameId: gameIdIter,
+                                    opponent: game.opponent || 'Opponent'
+                                });
+                            }
+                        });
+                    }
+                }
+
+                // Choose a primary game for back link
+                const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
+                    ? gameId
+                    : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
+                document.getElementById('back-link').href = selectedGameId
+                    ? `game.html#teamId=${teamId}&gameId=${selectedGameId}`
+                    : `team.html#teamId=${teamId}`;
+
+                // Render Player Header
+                document.getElementById('player-header').innerHTML = `
+                    <div class="text-center">
+                        <div class="text-gray-500 font-semibold uppercase tracking-wider text-sm mb-3">${escapeHtml(team.name)}</div>
+                        <div class="flex justify-center mb-4">
+                            <span class="inline-flex h-28 w-28 rounded-full bg-gray-100 overflow-hidden border-2 border-gray-200">
+                                ${player.photoUrl ? `<img src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `<span class="m-auto text-gray-400 text-sm">No Img</span>`}
+                            </span>
+                        </div>
+                        <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold mb-3 text-gray-900">${escapeHtml(player.name)}</h1>
+                        <div class="flex items-center justify-center gap-4 mb-4">
+                            <div class="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-br from-primary-100 to-primary-200 rounded-2xl border-2 border-primary-300 shadow-lg">
+                                <span class="text-sm font-semibold text-primary-700 uppercase tracking-wide">Number</span>
+                                <span class="text-4xl font-mono font-bold text-primary-600">${escapeHtml(player.number || '-')}</span>
+                            </div>
+                        </div>
+                        ${player.position ? `<div class="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-medium">${escapeHtml(player.position)}</div>` : ''}
+                    </div>
+                `;
+
+                // Calculate key stats for overview
+                const statKeys = Object.keys(seasonTotals);
+                const averages = {};
+                Object.entries(seasonTotals).forEach(([stat, total]) => {
+                    averages[stat] = (total / gamesPlayed).toFixed(1);
+                });
+
+                // Render Season Overview Cards (top 4 stats)
+                const topStats = statKeys.slice(0, 4);
+                document.getElementById('season-overview').innerHTML = topStats.map(stat => `
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">${stat}</div>
+                        <div class="text-3xl md:text-4xl font-bold text-primary-600">${averages[stat]}</div>
+                        <div class="text-xs text-gray-500 mt-1">per game</div>
+                    </div>
+                `).join('');
+
+                // Render Advanced Stats Visualizations
+                const advancedStatsDiv = document.getElementById('advanced-stats');
+                if (perGameStats.length >= 2 && statKeys.length > 0) {
+                    // Calculate team averages for comparison
+                    const teamAverages = {};
+                    statKeys.forEach(stat => {
+                        teamAverages[stat] = parseFloat(averages[stat]);
+                    });
+
+                    // Calculate trends (last 3 games vs first 3 games)
+                    const sortedByDate = [...perGameStats].sort((a, b) => a.date - b.date);
+                    const recentGames = sortedByDate.slice(-3);
+                    const earlierGames = sortedByDate.slice(0, 3);
+                    const trends = {};
+
+                    statKeys.forEach(stat => {
+                        const recentAvg = recentGames.reduce((sum, g) => sum + (g.stats[stat] || 0), 0) / recentGames.length;
+                        const earlierAvg = earlierGames.reduce((sum, g) => sum + (g.stats[stat] || 0), 0) / earlierGames.length;
+                        const change = recentAvg - earlierAvg;
+                        trends[stat] = {
+                            direction: change > 0 ? 'up' : change < 0 ? 'down' : 'neutral',
+                            percentage: earlierAvg > 0 ? ((change / earlierAvg) * 100).toFixed(0) : 0
+                        };
+                    });
+
+                    // Find max value for each stat to normalize progress bars
+                    const maxValues = {};
+                    statKeys.forEach(stat => {
+                        maxValues[stat] = Math.max(...perGameStats.map(g => g.stats[stat] || 0), parseFloat(averages[stat]));
+                    });
+
+                    advancedStatsDiv.innerHTML = `
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Performance Trends -->
+                            <div class="bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                                    </svg>
+                                    Performance Trends
+                                </h3>
+                                <div class="space-y-4">
+                                    ${statKeys.slice(0, 5).map(stat => `
+                                        <div>
+                                            <div class="flex justify-between items-center mb-2">
+                                                <span class="text-sm font-semibold text-gray-700 uppercase">${stat}</span>
+                                                <div class="flex items-center gap-2">
+                                                    ${trends[stat].direction === 'up'
+                            ? `<svg class="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L11 7.414V15a1 1 0 11-2 0V7.414L6.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd"></path></svg>
+                                                          <span class="text-sm font-bold text-green-600">+${trends[stat].percentage}%</span>`
+                            : trends[stat].direction === 'down'
+                                ? `<svg class="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 12.586V5a1 1 0 012 0v7.586l2.293-2.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>
+                                                          <span class="text-sm font-bold text-red-600">${trends[stat].percentage}%</span>`
+                                : `<span class="text-sm font-medium text-gray-500">—</span>`
+                        }
+                                                </div>
+                                            </div>
+                                            <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                                                <div class="h-full rounded-full transition-all duration-500 ${trends[stat].direction === 'up' ? 'bg-gradient-to-r from-green-400 to-green-600' :
+                            trends[stat].direction === 'down' ? 'bg-gradient-to-r from-red-400 to-red-600' :
+                                'bg-gradient-to-r from-gray-400 to-gray-600'
+                        }" style="width: ${Math.min(100, (parseFloat(averages[stat]) / maxValues[stat]) * 100)}%"></div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Performance Distribution -->
+                            <div class="bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                    </svg>
+                                    Stat Comparison
+                                </h3>
+                                <div class="space-y-4">
+                                    ${statKeys.slice(0, 5).map(stat => {
+                            const playerValue = parseFloat(averages[stat]);
+                            const maxValue = maxValues[stat];
+                            const percentage = (playerValue / maxValue) * 100;
+                            return `
+                                        <div>
+                                            <div class="flex justify-between items-center mb-2">
+                                                <span class="text-sm font-semibold text-gray-700 uppercase">${stat}</span>
+                                                <span class="text-sm font-bold text-primary-600">${averages[stat]}</span>
+                                            </div>
+                                            <div class="relative w-full bg-gray-200 rounded-full h-6 overflow-hidden">
+                                                <div class="absolute inset-0 bg-gradient-to-r from-primary-400 to-primary-600 rounded-full transition-all duration-700"
+                                                     style="width: ${percentage}%"></div>
+                                                <div class="absolute inset-0 flex items-center justify-center">
+                                                    <span class="text-xs font-bold text-white drop-shadow">${percentage.toFixed(0)}%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        `;
+                        }).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Game-by-Game Performance Chart (Last 5 Games) -->
+                            <div class="lg:col-span-2 bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path>
+                                    </svg>
+                                    Recent Performance (Last 5 Games)
+                                </h3>
+                                ${(() => {
+                            const recent5 = [...perGameStats].sort((a, b) => b.date - a.date).slice(0, 5).reverse();
+                            const primaryStat = statKeys[0];
+                            const maxInRecent = Math.max(...recent5.map(g => g.stats[primaryStat] || 0));
+                            return `
+                                        <div class="flex items-end justify-around gap-2 h-48 bg-gradient-to-t from-gray-50 to-transparent rounded-lg p-4">
+                                            ${recent5.map((g, idx) => {
+                                const value = g.stats[primaryStat] || 0;
+                                const height = maxInRecent > 0 ? (value / maxInRecent) * 100 : 0;
+                                return `
+                                                    <div class="flex-1 flex flex-col items-center gap-2">
+                                                        <div class="text-xs font-bold text-primary-600">${value}</div>
+                                                        <div class="w-full bg-gradient-to-t from-primary-600 to-primary-400 rounded-t-lg transition-all duration-700 hover:from-primary-700 hover:to-primary-500"
+                                                             style="height: ${height}%"></div>
+                                                        <div class="text-xs text-gray-500 text-center mt-1">
+                                                            <div class="font-semibold">${g.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+                                                            <div class="truncate max-w-[60px]">${escapeHtml(g.opponent.split(' ')[0])}</div>
+                                                        </div>
+                                                    </div>
+                                                `;
+                            }).join('')}
+                                        </div>
+                                        <div class="text-center mt-2 text-sm text-gray-600">
+                                            <span class="font-semibold text-primary-600">${primaryStat}</span> per game
+                                        </div>
+                                    `;
+                        })()}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    advancedStatsDiv.innerHTML = `
+                        <div class="text-center py-12">
+                            <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <p class="text-gray-500 text-lg font-medium mb-2">Not Enough Data</p>
+                            <p class="text-gray-400 text-sm">Advanced analytics require at least 2 games with stats</p>
+                        </div>
+                    `;
+                }
+
+                // Render per-game stats
+                const gameStatsDiv = document.getElementById('game-stats');
+                if (perGameStats.length > 0) {
+                    const sortedGames = perGameStats.sort((a, b) => b.date - a.date);
+                    gameStatsDiv.innerHTML = sortedGames.map(g => `
+                        <div class="group bg-gradient-to-br from-gray-50 to-white rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-md transition">
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                                <div>
+                                    <div class="text-sm text-gray-500 font-semibold mb-1">${g.date.toLocaleDateString()}</div>
+                                    <div class="text-lg font-bold text-gray-900">vs. ${escapeHtml(g.opponent)}</div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    ${g.gameId === selectedGameId ? '<span class="text-xs px-3 py-1 rounded-full bg-primary-100 text-primary-700 font-semibold">Current</span>' : ''}
+                                    <a class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 transition font-medium"
+                                       href="game.html#teamId=${teamId}&gameId=${g.gameId}"
+                                       target="_blank"
+                                       rel="noopener noreferrer">
+                                        Match Report
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                        </svg>
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                                ${Object.entries(g.stats).map(([stat, value]) => `
+                                    <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                                        <div class="text-2xl md:text-3xl font-bold text-primary-600">${value}</div>
+                                        <div class="text-xs text-gray-600 uppercase mt-1 font-medium">${stat}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    gameStatsDiv.innerHTML = `
+                        <div class="text-center py-12 bg-white rounded-xl border border-gray-200">
+                            <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <p class="text-gray-500">No statistics available</p>
+                        </div>
+                    `;
+                }
+
+                // Season totals/averages
+                const seasonStatsDiv = document.getElementById('season-stats');
+                if (gamesPlayed > 0) {
+                    seasonStatsDiv.innerHTML = `
+                        <div class="mb-6">
+                            <div class="inline-flex items-center gap-3 bg-gradient-to-r from-primary-50 to-primary-100 px-6 py-3 rounded-xl border border-primary-200">
+                                <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span class="font-semibold text-gray-700">Games Played:</span>
+                                <span class="text-xl font-bold text-primary-600">${gamesPlayed}</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            ${Object.entries(averages).map(([stat, avg]) => `
+                                <div class="bg-gradient-to-br from-white to-gray-50 rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-lg transition text-center">
+                                    <div class="text-3xl md:text-4xl font-bold text-primary-600 mb-2">${avg}</div>
+                                    <div class="text-sm text-gray-600 uppercase font-semibold tracking-wide">${stat}</div>
+                                    <div class="text-xs text-gray-400 mt-1">avg</div>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <div class="mt-8 p-6 bg-gradient-to-r from-gray-50 to-white rounded-xl border border-gray-200">
+                            <h3 class="text-lg font-bold text-gray-900 mb-4">Season Totals</h3>
+                            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                ${Object.entries(seasonTotals).map(([stat, total]) => `
+                                    <div class="text-center">
+                                        <div class="text-2xl font-bold text-gray-900">${total}</div>
+                                        <div class="text-xs text-gray-500 uppercase mt-1">${stat}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    seasonStatsDiv.innerHTML = `
+                        <div class="text-center py-12 bg-white rounded-xl border border-gray-200">
+                            <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <p class="text-gray-500">No season statistics available</p>
+                        </div>
+                    `;
+                }
+
+                // Render events across all games
+                const playerEvents = allEvents.sort((a, b) => {
+                    const aT = a.timestamp?.seconds || 0;
+                    const bT = b.timestamp?.seconds || 0;
+                    return bT - aT; // Most recent first
+                });
+                const playerEventsDiv = document.getElementById('player-events');
+                if (playerEvents.length > 0) {
+                    // Group events by game
+                    const eventsByGame = {};
+                    playerEvents.forEach(event => {
+                        if (!eventsByGame[event.gameId]) {
+                            eventsByGame[event.gameId] = {
+                                opponent: event.opponent,
+                                events: []
+                            };
+                        }
+                        eventsByGame[event.gameId].events.push(event);
+                    });
+
+                    playerEventsDiv.innerHTML = Object.entries(eventsByGame).map(([gameId, data]) => `
+                        <div class="mb-6 bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition">
+                            <div class="bg-gradient-to-r from-gray-50 to-white px-6 py-4 border-b border-gray-200">
+                                <div class="flex justify-between items-center">
+                                    <h3 class="font-bold text-gray-900">vs. ${escapeHtml(data.opponent)}</h3>
+                                    <a href="game.html#teamId=${teamId}&gameId=${gameId}"
+                                       class="text-sm text-primary-600 hover:text-primary-700 transition font-medium">
+                                        View Game →
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="divide-y divide-gray-100">
+                                ${data.events.map(event => {
+                        const timestamp = event.timestamp ? new Date(event.timestamp.seconds * 1000).toLocaleTimeString() : '';
+                        const period = event.period || 'Q1';
+                        const gameTime = event.gameTime || '';
+                        return `
+                                        <div class="px-6 py-3 hover:bg-gray-50 transition">
+                                            <div class="flex items-start gap-3">
+                                                <div class="flex-shrink-0">
+                                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary-100 text-primary-800">${escapeHtml(period)}</span>
+                                                </div>
+                                                <div class="flex-grow">
+                                                    <div class="text-sm text-gray-900">${escapeHtml(event.text || event.message || 'Event logged')}</div>
+                                                    <div class="text-xs text-gray-500 mt-1 font-mono">${escapeHtml(gameTime)}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `;
+                    }).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    playerEventsDiv.innerHTML = `
+                        <div class="text-center py-12 bg-white rounded-xl border border-gray-200">
+                            <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <p class="text-gray-500">No events recorded for this player</p>
+                        </div>
+                    `;
+                }
+
+            } catch (error) {
+                console.error('Error loading player details:', error);
+                document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Error loading player details</div>';
+            }
+        }
+
+        loadPlayerDetails();
+    </script>
+</body>
+
+</html>

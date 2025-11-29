@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Profile - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-10 max-w-3xl">
+        <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <p class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Profile</p>
+                    <h1 class="text-3xl font-bold text-gray-900">Your Account</h1>
+                </div>
+                <div class="text-xs text-gray-500">Last updated: <span id="profile-updated">—</span></div>
+            </div>
+
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Email (from login)</label>
+                    <input type="email" id="email" disabled
+                        class="mt-1 block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm text-gray-600 cursor-not-allowed border p-2">
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Full Name</label>
+                        <input type="text" id="fullName"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="Your name">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Phone</label>
+                        <input type="tel" id="phone"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="123-456-7890">
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button id="save-profile"
+                        class="px-5 py-2.5 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        Save Profile
+                    </button>
+                    <span id="profile-status" class="text-sm text-gray-500"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Access Codes Section -->
+        <div class="bg-gradient-to-br from-primary-50 to-white rounded-2xl shadow-lg border-2 border-primary-100 p-8 mt-6 relative overflow-hidden">
+            <!-- Background decoration -->
+            <div class="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br from-primary-100 to-transparent rounded-full blur-3xl opacity-30 -mr-32 -mt-32"></div>
+
+            <div class="relative mb-8">
+                <div class="flex items-start gap-4">
+                    <div class="flex-shrink-0">
+                        <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center shadow-lg">
+                            <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex-1">
+                        <div class="inline-flex items-center gap-2 bg-primary-600 text-white px-3 py-1 rounded-full text-xs font-bold mb-3">
+                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"></path>
+                            </svg>
+                            SHARE THE LOVE
+                        </div>
+                        <h2 class="text-3xl font-extrabold text-gray-900 mb-2">Invite Your Coaching Squad! 🎉</h2>
+                        <p class="text-lg text-gray-700 leading-relaxed">
+                            Know a coach, parent, or league admin who'd love ALL PLAYS? Generate a personalized invite code and bring them into the game!
+                            <span class="font-semibold text-primary-700">The more coaches who join, the stronger our community gets.</span>
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Fun stats/badges -->
+                <div class="mt-6 flex flex-wrap gap-3">
+                    <div class="inline-flex items-center gap-2 bg-white border-2 border-primary-200 px-4 py-2 rounded-full shadow-sm">
+                        <span class="text-2xl">⚡</span>
+                        <span class="text-sm font-semibold text-gray-700">Instant Setup</span>
+                    </div>
+                    <div class="inline-flex items-center gap-2 bg-white border-2 border-primary-200 px-4 py-2 rounded-full shadow-sm">
+                        <span class="text-2xl">🔒</span>
+                        <span class="text-sm font-semibold text-gray-700">Exclusive Access</span>
+                    </div>
+                    <div class="inline-flex items-center gap-2 bg-white border-2 border-primary-200 px-4 py-2 rounded-full shadow-sm">
+                        <span class="text-2xl">🏆</span>
+                        <span class="text-sm font-semibold text-gray-700">Help Coaches Win</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="relative space-y-6">
+                <!-- Generate Code Form -->
+                <div class="bg-white border-2 border-primary-200 rounded-2xl p-8 shadow-lg relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-primary-200 to-transparent rounded-full opacity-20 -mr-16 -mt-16"></div>
+
+                    <div class="relative">
+                        <div class="flex items-center gap-3 mb-6">
+                            <div class="w-10 h-10 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 class="text-xl font-bold text-gray-900">Create Your Magic Code ✨</h3>
+                                <p class="text-sm text-gray-600">Who are you inviting to join the revolution?</p>
+                            </div>
+                        </div>
+
+                        <div class="bg-gradient-to-r from-primary-50 to-blue-50 border border-primary-200 rounded-lg p-4 mb-6">
+                            <div class="flex items-start gap-3">
+                                <span class="text-2xl">💡</span>
+                                <div class="text-sm">
+                                    <p class="font-semibold text-gray-900 mb-1">Pro Tip:</p>
+                                    <p class="text-gray-700">Add their contact info so you can remember who you invited! Perfect for following up and helping them get started.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Email Address
+                                </label>
+                                <input type="email" id="access-code-email"
+                                    class="block w-full rounded-lg border-2 border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 p-3 text-base transition"
+                                    placeholder="coach@example.com">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path>
+                                    </svg>
+                                    Phone Number
+                                </label>
+                                <input type="tel" id="access-code-phone"
+                                    class="block w-full rounded-lg border-2 border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 p-3 text-base transition"
+                                    placeholder="(555) 123-4567">
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 mb-6 italic">* At least one contact method required</p>
+
+                        <div class="flex items-center gap-3">
+                            <button id="generate-code-btn"
+                                class="flex-1 md:flex-none px-8 py-4 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl text-base font-bold hover:from-primary-700 hover:to-primary-800 focus:outline-none focus:ring-4 focus:ring-primary-300 shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                </svg>
+                                Generate Code
+                            </button>
+                            <span id="generate-status" class="text-sm font-medium"></span>
+                        </div>
+
+                        <!-- Generated Code Display -->
+                        <div id="generated-code-display" class="hidden mt-6 p-6 bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 rounded-2xl shadow-lg animate-pulse">
+                            <div class="text-center mb-4">
+                                <div class="inline-flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-full text-sm font-bold mb-3">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                    </svg>
+                                    Success! Your code is ready! 🎊
+                                </div>
+                                <p class="text-lg text-green-800 font-semibold">Share this code and spread the coaching love!</p>
+                            </div>
+                            <div class="flex flex-col sm:flex-row items-stretch gap-3">
+                                <code id="generated-code-text" class="flex-1 px-6 py-5 bg-white border-2 border-green-400 rounded-xl text-3xl md:text-4xl font-black text-gray-900 tracking-widest text-center shadow-inner"></code>
+                                <button id="copy-code-btn"
+                                    class="px-6 py-5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl font-bold hover:from-green-700 hover:to-green-800 shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center gap-2 whitespace-nowrap">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Copy Code
+                                </button>
+                            </div>
+                            <div class="mt-4 text-center">
+                                <p class="text-sm text-green-700">
+                                    <span class="font-semibold">💬 Share it via text, email, or carrier pigeon!</span> (Okay, maybe skip the pigeon)
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Access Codes List -->
+                <div class="bg-white border-2 border-gray-200 rounded-2xl p-8 shadow-lg">
+                    <div class="flex items-center justify-between mb-6">
+                        <div>
+                            <h3 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                                <span class="text-2xl">📋</span>
+                                Your Invite History
+                            </h3>
+                            <p class="text-sm text-gray-600 mt-1">Track all the codes you've created and shared</p>
+                        </div>
+                    </div>
+                    <div id="access-codes-list" class="space-y-3">
+                        <p class="text-gray-500 text-sm">Loading codes...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { renderHeader, renderFooter } from './js/utils.js?v=6';
+        import { checkAuth } from './js/auth.js';
+        import { getUserProfile, updateUserProfile, generateAccessCode, createAccessCode, getUserAccessCodes } from './js/db.js';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        let currentUser = null;
+
+        checkAuth(async (user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+            document.getElementById('email').value = user.email || '';
+            await loadProfile();
+            await loadAccessCodes();
+        });
+
+        async function loadProfile() {
+            try {
+                const profile = await getUserProfile(currentUser.uid);
+                if (profile) {
+                    document.getElementById('fullName').value = profile.fullName || '';
+                    document.getElementById('phone').value = profile.phone || '';
+                    document.getElementById('profile-updated').textContent = profile.updatedAt?.toDate ? profile.updatedAt.toDate().toLocaleString() : '—';
+                } else {
+                    document.getElementById('profile-updated').textContent = '—';
+                }
+            } catch (e) {
+                console.error('Error loading profile', e);
+                document.getElementById('profile-status').textContent = 'Error loading profile';
+                document.getElementById('profile-status').className = 'text-sm text-red-600';
+            }
+        }
+
+        async function loadAccessCodes() {
+            try {
+                const codes = await getUserAccessCodes(currentUser.uid);
+                const listDiv = document.getElementById('access-codes-list');
+
+                if (codes.length === 0) {
+                    listDiv.innerHTML = '<p class="text-gray-500 text-sm">No codes generated yet</p>';
+                    return;
+                }
+
+                listDiv.innerHTML = codes.map(code => `
+                    <div class="group relative bg-gradient-to-r from-white to-gray-50 border-2 ${code.used ? 'border-gray-300' : 'border-primary-200'} rounded-xl p-5 hover:shadow-lg transition-all duration-200 ${code.used ? '' : 'hover:border-primary-400'}">
+                        ${!code.used ? '<div class="absolute top-3 right-3"><span class="relative flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span></span></div>' : ''}
+
+                        <div class="flex items-start justify-between gap-4">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-3 mb-3">
+                                    <div class="flex items-center gap-2 bg-gradient-to-r ${code.used ? 'from-gray-100 to-gray-200' : 'from-primary-100 to-primary-200'} px-4 py-2 rounded-lg">
+                                        <span class="text-xl">${code.used ? '✓' : '🎫'}</span>
+                                        <code class="text-xl font-black ${code.used ? 'text-gray-700' : 'text-primary-900'} tracking-wider">${code.code}</code>
+                                    </div>
+                                    <button onclick="copyHistoryCode('${code.code}')" class="px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 shadow-sm hover:shadow">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                        </svg>
+                                        Copy
+                                    </button>
+                                    ${code.used
+                                        ? '<span class="px-3 py-1 bg-gray-200 text-gray-700 text-xs font-bold rounded-full border border-gray-300 flex items-center gap-1"><svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>Used</span>'
+                                        : '<span class="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full border border-green-300 flex items-center gap-1 animate-pulse"><span class="w-2 h-2 bg-green-500 rounded-full"></span>Active</span>'
+                                    }
+                                </div>
+
+                                <div class="space-y-2">
+                                    <div class="flex flex-wrap items-center gap-3 text-sm">
+                                        ${code.email ? `
+                                            <div class="flex items-center gap-2 text-gray-700">
+                                                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                                                </svg>
+                                                <span class="font-medium">${code.email}</span>
+                                            </div>
+                                        ` : ''}
+                                        ${code.phone ? `
+                                            <div class="flex items-center gap-2 text-gray-700">
+                                                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path>
+                                                </svg>
+                                                <span class="font-medium">${code.phone}</span>
+                                            </div>
+                                        ` : ''}
+                                        ${!code.email && !code.phone ? '<span class="text-gray-500 italic">No contact info saved</span>' : ''}
+                                    </div>
+
+                                    <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                                        <div class="flex items-center gap-1">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                            </svg>
+                                            <span>Created ${code.createdAt?.toDate ? code.createdAt.toDate().toLocaleDateString() : 'N/A'}</span>
+                                        </div>
+                                        ${code.used && code.usedAt ? `
+                                            <div class="flex items-center gap-1 text-green-600 font-medium">
+                                                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                                </svg>
+                                                <span>Used ${code.usedAt.toDate().toLocaleDateString()}</span>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Error loading access codes:', e);
+                document.getElementById('access-codes-list').innerHTML = '<p class="text-red-500 text-sm">Error loading codes</p>';
+            }
+        }
+
+        document.getElementById('save-profile').addEventListener('click', async () => {
+            const status = document.getElementById('profile-status');
+            status.textContent = '';
+            const fullName = document.getElementById('fullName').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            try {
+                await updateUserProfile(currentUser.uid, { fullName, phone, email: currentUser.email });
+                status.textContent = 'Saved';
+                status.className = 'text-sm text-green-600';
+                await loadProfile();
+            } catch (e) {
+                console.error('Error saving profile', e);
+                status.textContent = 'Save failed';
+                status.className = 'text-sm text-red-600';
+            }
+        });
+
+        // Generate Access Code
+        document.getElementById('generate-code-btn').addEventListener('click', async () => {
+            const email = document.getElementById('access-code-email').value.trim();
+            const phone = document.getElementById('access-code-phone').value.trim();
+            const status = document.getElementById('generate-status');
+            const display = document.getElementById('generated-code-display');
+
+            if (!email && !phone) {
+                status.textContent = 'Please enter an email or phone number';
+                status.className = 'text-sm text-red-600';
+                return;
+            }
+
+            try {
+                status.textContent = 'Generating...';
+                status.className = 'text-sm text-gray-500';
+
+                const code = generateAccessCode();
+                await createAccessCode(currentUser.uid, email, phone, code);
+
+                // Display the generated code
+                document.getElementById('generated-code-text').textContent = code;
+                display.classList.remove('hidden');
+
+                // Remove pulse animation after 3 seconds
+                setTimeout(() => {
+                    display.classList.remove('animate-pulse');
+                }, 3000);
+
+                // Clear inputs
+                document.getElementById('access-code-email').value = '';
+                document.getElementById('access-code-phone').value = '';
+
+                status.textContent = '';
+                await loadAccessCodes();
+            } catch (e) {
+                console.error('Error generating code', e);
+                status.textContent = 'Failed to generate code';
+                status.className = 'text-sm text-red-600';
+            }
+        });
+
+        // Copy Code
+        document.getElementById('copy-code-btn').addEventListener('click', async () => {
+            const code = document.getElementById('generated-code-text').textContent;
+            try {
+                await navigator.clipboard.writeText(code);
+                const btn = document.getElementById('copy-code-btn');
+                const originalText = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            } catch (e) {
+                console.error('Failed to copy', e);
+            }
+        });
+
+        // Copy Historical Code - Global function for onclick handler
+        window.copyHistoryCode = async function(code) {
+            try {
+                await navigator.clipboard.writeText(code);
+                // Find the button that was clicked and update its text
+                const buttons = document.querySelectorAll('button[onclick*="' + code + '"]');
+                buttons.forEach(btn => {
+                    const originalHTML = btn.innerHTML;
+                    btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg> Copied!';
+                    setTimeout(() => {
+                        btn.innerHTML = originalHTML;
+                    }, 2000);
+                });
+            } catch (e) {
+                console.error('Failed to copy code:', e);
+            }
+        };
+    </script>
+</body>
+
+</html>

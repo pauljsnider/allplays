@@ -1,0 +1,338 @@
+export function getUrlParams() {
+    const hash = window.location.hash.substring(1); // Remove #
+    const params = new URLSearchParams(hash);
+    return Object.fromEntries(params.entries());
+}
+
+export function setUrlParams(params) {
+    const searchParams = new URLSearchParams(params);
+    window.location.hash = searchParams.toString();
+}
+
+export function escapeHtml(unsafe) {
+    if (unsafe === null || unsafe === undefined) return '';
+    return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+export function formatDate(timestamp) {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleDateString();
+}
+
+export function formatTime(timestamp) {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export function renderHeader(container, user) {
+    container.innerHTML = `
+      <header class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50 border-b border-gray-200">
+        <nav class="container mx-auto px-4 py-4">
+          <div class="flex items-center justify-between">
+            <a href="index.html" class="flex items-center space-x-3 hover:opacity-80 transition">
+              <div class="w-10 h-10 rounded-lg overflow-hidden border border-gray-200">
+                <img src="img/logo_small.png" alt="ALL PLAYS" class="w-full h-full object-cover">
+              </div>
+              <div>
+                <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">ALL PLAYS</h1>
+                <p class="text-xs text-gray-500 hidden sm:block">Modern Team Management</p>
+              </div>
+            </a>
+            <div class="flex items-center gap-2 sm:gap-4" id="nav-auth-actions">
+              <a href="teams.html" class="text-sm sm:text-base text-gray-600 hover:text-primary-600 transition font-medium">Browse Teams</a>
+              <a id="nav-profile" href="profile.html" class="hidden text-sm sm:text-base text-gray-600 hover:text-primary-700 transition font-medium">Profile</a>
+              <a id="nav-signin" href="login.html" class="text-sm sm:text-base px-3 sm:px-4 py-2 text-primary-600 hover:text-primary-700 transition font-medium">Sign In</a>
+              <a id="nav-cta" href="login.html#signup" class="text-sm sm:text-base px-3 sm:px-6 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg font-medium">Get Started</a>
+              <button id="nav-logout" class="hidden text-sm sm:text-base px-3 sm:px-4 py-2 text-gray-600 hover:text-primary-700 transition font-medium" type="button">Log out</button>
+            </div>
+          </div>
+        </nav>
+      </header>
+    `;
+
+    // Update navigation based on auth state
+    const navSignIn = container.querySelector('#nav-signin');
+    const navCta = container.querySelector('#nav-cta');
+    const navLogout = container.querySelector('#nav-logout');
+    const navProfile = container.querySelector('#nav-profile');
+
+    if (user) {
+        navSignIn.textContent = 'Dashboard';
+        navSignIn.href = 'dashboard.html';
+
+        navCta.textContent = 'Go to Dashboard';
+        navCta.href = 'dashboard.html';
+
+        navLogout.classList.remove('hidden');
+        navProfile.classList.remove('hidden');
+    } else {
+        navSignIn.textContent = 'Sign In';
+        navSignIn.href = 'login.html';
+
+        navCta.textContent = 'Get Started';
+        navCta.href = 'login.html#signup';
+
+        navLogout.classList.add('hidden');
+        navProfile.classList.add('hidden');
+    }
+
+    // Add logout handler
+    navLogout.addEventListener('click', async () => {
+        const { logout } = await import('./auth.js');
+        await logout();
+        window.location.href = 'index.html';
+    });
+}
+
+export function renderFooter(container) {
+    container.innerHTML = `
+      <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
+        <div class="container mx-auto px-4">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+            <div class="col-span-1 md:col-span-2">
+              <div class="flex items-center space-x-3 mb-4">
+                <div class="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                  </svg>
+                </div>
+                <h3 class="text-xl font-bold text-white">ALL PLAYS</h3>
+              </div>
+              <p class="text-sm max-w-md">Modern team management and statistics platform for coaches. Track stats, manage schedules, and build winning teams—completely free.</p>
+            </div>
+
+            <div>
+              <h4 class="text-white font-semibold mb-4">Platform</h4>
+              <ul class="space-y-2 text-sm">
+                <li><a href="teams.html" class="hover:text-white transition">Browse Teams</a></li>
+                <li><a href="dashboard.html" class="hover:text-white transition">Dashboard</a></li>
+                <li><a href="login.html" class="hover:text-white transition">Sign In</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <h4 class="text-white font-semibold mb-4">Support</h4>
+              <ul class="space-y-2 text-sm">
+                <li><a href="#" class="hover:text-white transition">Help Center</a></li>
+                <li><a href="#" class="hover:text-white transition">Contact</a></li>
+                <li><a href="https://github.com/pauljsnider/paulsnidernet" class="hover:text-white transition" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-800 pt-8 text-center text-sm space-y-1">
+            <p>&copy; 2025 ALL PLAYS. Built with ❤️ for coaches everywhere.</p>
+            <p>Created by <a href="https://paulsnider.net" class="text-gray-200 hover:text-white underline">Paul Snider</a>.</p>
+          </div>
+        </div>
+      </footer>
+    `;
+}
+
+// Calendar / ICS Parsing Functions
+
+/**
+ * Fetch and parse an ICS calendar file
+ * @param {string} url - URL to the .ics file
+ * @returns {Promise<Array>} Array of parsed calendar events
+ */
+export async function fetchAndParseCalendar(url) {
+    try {
+        // Try direct fetch first
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        let response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        // If CORS error, use proxy
+        if (!response.ok && (response.status === 0 || response.type === 'opaque')) {
+            console.log('CORS issue detected, using proxy...');
+            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+            response = await fetch(proxyUrl);
+        }
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch calendar: ${response.statusText}`);
+        }
+        const icsText = await response.text();
+        return parseICS(icsText);
+    } catch (error) {
+        // If direct fetch fails, try with CORS proxy
+        if (error.message.includes('fetch') || error.message.includes('CORS')) {
+            try {
+                console.log('Direct fetch failed, trying CORS proxy...');
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+                const proxyController = new AbortController();
+                const proxyTimeoutId = setTimeout(() => proxyController.abort(), 5000);
+                const response = await fetch(proxyUrl, { signal: proxyController.signal });
+                clearTimeout(proxyTimeoutId);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch calendar via proxy: ${response.statusText}`);
+                }
+                const icsText = await response.text();
+                return parseICS(icsText);
+            } catch (proxyError) {
+                console.error('Proxy fetch also failed:', proxyError);
+                throw new Error(`Cannot fetch calendar. CORS blocked and proxy failed: ${proxyError.message}`);
+            }
+        }
+        console.error('Error fetching calendar:', error);
+        throw error;
+    }
+}
+
+/**
+ * Parse ICS calendar text into event objects
+ * @param {string} icsText - Raw ICS file content
+ * @returns {Array} Array of parsed events
+ */
+export function parseICS(icsText) {
+    const events = [];
+    const lines = icsText.split(/\r\n|\n|\r/);
+
+    let currentEvent = null;
+    let currentField = null;
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i].trim();
+
+        // Handle line continuation (lines starting with space/tab)
+        while (i + 1 < lines.length && (lines[i + 1].startsWith(' ') || lines[i + 1].startsWith('\t'))) {
+            i++;
+            line += lines[i].trim();
+        }
+
+        if (line === 'BEGIN:VEVENT') {
+            currentEvent = {};
+        } else if (line === 'END:VEVENT' && currentEvent) {
+            if (currentEvent.dtstart && currentEvent.summary) {
+                events.push(currentEvent);
+            }
+            currentEvent = null;
+        } else if (currentEvent) {
+            const colonIndex = line.indexOf(':');
+            if (colonIndex > 0) {
+                const field = line.substring(0, colonIndex);
+                const value = line.substring(colonIndex + 1);
+
+                const fieldName = field.split(';')[0]; // Handle fields like DTSTART;TZID=...
+
+                switch (fieldName) {
+                    case 'DTSTART':
+                        currentEvent.dtstart = parseICSDate(value);
+                        break;
+                    case 'DTEND':
+                        currentEvent.dtend = parseICSDate(value);
+                        break;
+                    case 'SUMMARY':
+                        currentEvent.summary = value;
+                        break;
+                    case 'DESCRIPTION':
+                        currentEvent.description = value;
+                        break;
+                    case 'LOCATION':
+                        currentEvent.location = value.replace(/\\n/g, '\n').replace(/\\,/g, ',');
+                        break;
+                    case 'UID':
+                        currentEvent.uid = value;
+                        break;
+                    case 'STATUS':
+                        currentEvent.status = value;
+                        break;
+                }
+            }
+        }
+    }
+
+    return events;
+}
+
+/**
+ * Parse ICS date format to JavaScript Date
+ * @param {string} icsDate - Date string from ICS file
+ * @returns {Date} JavaScript Date object
+ */
+function parseICSDate(icsDate) {
+    // ICS dates are in format: 20251115T020000Z or 20251115
+    const year = parseInt(icsDate.substring(0, 4));
+    const month = parseInt(icsDate.substring(4, 6)) - 1; // JS months are 0-indexed
+    const day = parseInt(icsDate.substring(6, 8));
+
+    if (icsDate.length > 8) {
+        // Has time component
+        const hour = parseInt(icsDate.substring(9, 11));
+        const minute = parseInt(icsDate.substring(11, 13));
+        const second = parseInt(icsDate.substring(13, 15));
+
+        if (icsDate.endsWith('Z')) {
+            // UTC time
+            return new Date(Date.UTC(year, month, day, hour, minute, second));
+        } else {
+            // Local time
+            return new Date(year, month, day, hour, minute, second);
+        }
+    } else {
+        // Date only
+        return new Date(year, month, day);
+    }
+}
+
+/**
+ * Extract opponent name from event summary
+ * Patterns: "Team @ Opponent", "Team vs Opponent", "Opponent vs Team"
+ * @param {string} summary - Event summary/title
+ * @param {string} teamName - Name of the team (optional)
+ * @returns {string} Opponent name or summary if no pattern matched
+ */
+export function extractOpponent(summary, teamName = '') {
+    if (!summary) return 'Unknown';
+
+    // Check for "@ Opponent" pattern
+    const atMatch = summary.match(/@\s*(.+)/);
+    if (atMatch) {
+        return atMatch[1].trim();
+    }
+
+    // Check for "vs Opponent" pattern
+    const vsMatch = summary.match(/vs\.?\s+(.+)/i);
+    if (vsMatch) {
+        const opponent = vsMatch[1].trim();
+        // If team name is provided, exclude it from opponent
+        if (teamName && opponent.toLowerCase().includes(teamName.toLowerCase())) {
+            return opponent.replace(new RegExp(teamName, 'gi'), '').trim();
+        }
+        return opponent;
+    }
+
+    // Check for "Opponent vs Team" pattern (reverse)
+    const reverseVsMatch = summary.match(/(.+?)\s+vs\.?\s+/i);
+    if (reverseVsMatch && teamName && summary.toLowerCase().includes(teamName.toLowerCase())) {
+        const opponent = reverseVsMatch[1].trim();
+        if (!opponent.toLowerCase().includes(teamName.toLowerCase())) {
+            return opponent;
+        }
+    }
+
+    // No pattern matched, return summary
+    return summary;
+}
+
+/**
+ * Check if event is a practice (not a game)
+ * @param {string} summary - Event summary/title
+ * @returns {boolean} True if event is a practice
+ */
+export function isPracticeEvent(summary) {
+    if (!summary) return false;
+    const lowerSummary = summary.toLowerCase();
+    return lowerSummary.includes('practice') ||
+        lowerSummary.includes('training') ||
+        lowerSummary.includes('skills club');
+}

@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Edit Roster - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8">
+        <div class="mb-4">
+            <a href="dashboard.html" class="text-indigo-600 hover:underline">&larr; Back to Dashboard</a>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <!-- Add Player Form -->
+            <div class="md:col-span-1">
+                <div class="bg-white rounded-lg shadow-md p-6 sticky top-8">
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="text-xl font-bold">Player</h2>
+                        <button id="cancel-edit" type="button" class="text-sm text-gray-500 hover:text-gray-700 hidden">Cancel</button>
+                    </div>
+                    <p id="form-subtitle" class="text-xs text-gray-500 mb-4">Add a new player to the roster.</p>
+                    <form id="add-player-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Name</label>
+                            <input type="text" id="playerName" required
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Number</label>
+                            <input type="text" id="playerNumber"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Player Photo (optional)</label>
+                            <input type="file" id="playerPhoto" accept="image/*"
+                                class="mt-1 block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                            <p class="text-xs text-gray-500 mt-1">JPG/PNG up to 5MB.</p>
+                            <div id="player-photo-preview" class="mt-2 flex items-center gap-3 hidden">
+                                <span class="inline-flex h-12 w-12 rounded-full bg-gray-100 overflow-hidden border border-gray-200" id="player-photo-thumb"></span>
+                                <label class="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                                    <input type="checkbox" id="removePhoto" class="rounded text-indigo-600 focus:ring-indigo-500">
+                                    <span>Remove photo</span>
+                                </label>
+                            </div>
+                        </div>
+                        <button type="submit" id="submit-player"
+                            class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
+                            Player</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Roster List -->
+            <div class="md:col-span-2">
+                <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div class="p-6 border-b border-gray-200 flex justify-between items-center">
+                        <h2 class="text-xl font-bold">Current Roster</h2>
+                        <span id="team-name-display" class="text-gray-500"></span>
+                    </div>
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th
+                                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    #</th>
+                                <th
+                                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Name</th>
+                                <th
+                                    class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="roster-list" class="bg-white divide-y divide-gray-200">
+                            <!-- Players -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=6';
+        import { checkAuth } from './js/auth.js';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        let currentTeamId = null;
+        let currentUser = null;
+        let editingPlayerId = null;
+        let editingPhotoUrl = null;
+        function hasAccess(team, user) {
+            if (!team || !user) return false;
+            if (team.ownerId === user.uid) return true;
+            const email = (user.email || '').toLowerCase();
+            return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
+        }
+
+        checkAuth((user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+            init();
+        });
+
+        async function init() {
+            const { teamId } = getUrlParams();
+            if (!teamId) {
+                window.location.href = 'dashboard.html';
+                return;
+            }
+            currentTeamId = teamId;
+
+            const team = await getTeam(teamId);
+            if (!hasAccess(team, currentUser)) {
+                alert("Team not found or access denied.");
+                window.location.href = 'dashboard.html';
+                return;
+            }
+
+            document.getElementById('team-name-display').textContent = team.name;
+            loadRoster();
+        }
+
+        async function loadRoster() {
+            const [players, games] = await Promise.all([
+                getPlayers(currentTeamId),
+                getGames(currentTeamId)
+            ]);
+            const latestGameId = [...games].sort((a, b) => {
+                const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
+                const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
+                return bDate - aDate;
+            })[0]?.id || null;
+            const tbody = document.getElementById('roster-list');
+
+            if (players.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">No players yet.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = players.map(p => `
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono align-middle">
+                        <a class="text-gray-600 hover:text-indigo-700" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">${p.number || '-'}</a>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-indigo-700 hover:underline">
+                            <a class="flex items-center gap-3 text-indigo-700 hover:underline" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">
+                                <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                                ${p.photoUrl ? `<img src="${p.photoUrl}" alt="${p.name}" class="w-full h-full object-cover">` : `
+                                    <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                                    </svg>
+                                `}
+                                </span>
+                                <span>${p.name}</span>
+                            </a>
+                        </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div class="flex items-center gap-3 justify-end">
+                            <button data-id="${p.id}" class="text-indigo-600 hover:text-indigo-800 edit-btn">Edit</button>
+                            <button data-id="${p.id}" class="text-red-600 hover:text-red-900 delete-btn">Delete</button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+
+            document.querySelectorAll('.delete-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    if (confirm('Are you sure you want to remove this player?')) {
+                        await deletePlayer(currentTeamId, e.target.dataset.id);
+                        loadRoster();
+                    }
+                });
+            });
+
+            document.querySelectorAll('.edit-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => startEditPlayer(players.find(p => p.id === e.target.dataset.id)));
+            });
+        }
+
+        function resetForm() {
+            editingPlayerId = null;
+            editingPhotoUrl = null;
+            document.getElementById('add-player-form').reset();
+            document.getElementById('submit-player').textContent = 'Add Player';
+            document.getElementById('form-subtitle').textContent = 'Add a new player to the roster.';
+            document.getElementById('cancel-edit').classList.add('hidden');
+            document.getElementById('player-photo-preview').classList.add('hidden');
+            document.getElementById('player-photo-thumb').innerHTML = '';
+            document.getElementById('removePhoto').checked = false;
+        }
+
+        function startEditPlayer(player) {
+            editingPlayerId = player.id;
+            editingPhotoUrl = player.photoUrl || null;
+            document.getElementById('playerName').value = player.name || '';
+            document.getElementById('playerNumber').value = player.number || '';
+            document.getElementById('submit-player').textContent = 'Save Changes';
+            document.getElementById('form-subtitle').textContent = 'Editing player — save or cancel changes.';
+            document.getElementById('cancel-edit').classList.remove('hidden');
+            document.getElementById('playerPhoto').value = '';
+            document.getElementById('removePhoto').checked = false;
+
+            const previewWrap = document.getElementById('player-photo-preview');
+            const thumb = document.getElementById('player-photo-thumb');
+            if (editingPhotoUrl) {
+                thumb.innerHTML = `<img src="${editingPhotoUrl}" alt="${player.name}" class="w-full h-full object-cover">`;
+            } else {
+                thumb.innerHTML = `
+                    <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                    </svg>`;
+            }
+            previewWrap.classList.remove('hidden');
+        }
+
+        document.getElementById('cancel-edit').addEventListener('click', () => resetForm());
+
+        document.getElementById('add-player-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('playerName').value;
+            const number = document.getElementById('playerNumber').value;
+            const photoInput = document.getElementById('playerPhoto');
+            const removePhoto = document.getElementById('removePhoto').checked;
+
+            try {
+                let photoUrl = editingPhotoUrl;
+
+                if (removePhoto) {
+                    photoUrl = null;
+                }
+
+                if (photoInput.files.length > 0) {
+                    const file = photoInput.files[0];
+
+                    if (!file.type.startsWith('image/')) {
+                        alert('Please select an image file.');
+                        return;
+                    }
+                    if (file.size > 5 * 1024 * 1024) {
+                        alert('Image must be smaller than 5MB.');
+                        return;
+                    }
+
+                    photoUrl = await uploadPlayerPhoto(file);
+                }
+
+                if (editingPlayerId) {
+                    await updatePlayer(currentTeamId, editingPlayerId, { name, number, photoUrl });
+                } else {
+                    await addPlayer(currentTeamId, { name, number, photoUrl });
+                }
+
+                resetForm();
+                loadRoster();
+            } catch (error) {
+                console.error(error);
+                alert('Error adding player.');
+            }
+        });
+    </script>
+</body>
+
+</html>
