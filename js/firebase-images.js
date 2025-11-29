@@ -3,7 +3,7 @@ import { getStorage } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-s
 import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 
 const imgConfig = {
-    apiKey: "AIzaSyBIbeXjbxPU02R23SgBFgRPxcqfzJ1KizA",
+    apiKey: "AIzaSyCxeLIe1ZcbX_GH5TEg1MBo8vmxGs6cttE",
     authDomain: "game-flow-img.firebaseapp.com",
     projectId: "game-flow-img",
     storageBucket: "game-flow-img.firebasestorage.app",
