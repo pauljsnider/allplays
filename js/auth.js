@@ -156,5 +156,11 @@ export function checkAuth(callback) {
 }
 
 export function resetPassword(email) {
-    return sendPasswordResetEmail(auth, email);
+    const actionCodeSettings = {
+        // URL to redirect back to after password reset
+        url: 'https://pauljsnider.github.io/allplays/reset-password.html',
+        handleCodeInApp: true
+    };
+
+    return sendPasswordResetEmail(auth, email, actionCodeSettings);
 }

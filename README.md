@@ -74,6 +74,21 @@ Admin users have access to:
 
 **Note**: Admin access is enforced through Firestore security rules. The `isAdmin` field is checked server-side for all admin operations.
 
+## Password Reset
+
+Password reset functionality is implemented with Firebase Authentication. If users report not receiving password reset emails:
+
+1. **Check spam/junk folder** - This is where most Firebase emails end up initially
+2. Verify Firebase Console email templates are customized (Authentication → Templates)
+3. Ensure authorized domains include your deployment URL
+4. See [password-reset.md](password-reset.md) for complete troubleshooting guide
+
+The password reset flow:
+- User enters email on login page
+- Receives email with reset link (check spam!)
+- Clicks link → redirected to branded reset-password.html page
+- Enters new password → redirected to login
+
 ## Security Features
 
 - **Firestore Security Rules**: Multi-level access control with owner, team admin, and global admin permissions

@@ -216,16 +216,31 @@
                 }
 
                 await resetPassword(email);
+
+                // Clear the email field for security
+                document.getElementById('email').value = '';
+
                 errorDiv.classList.remove('hidden');
                 errorDiv.classList.remove('text-red-500');
                 errorDiv.classList.add('text-green-600');
-                errorDiv.textContent = 'Password reset email sent! Check your inbox.';
+                errorDiv.textContent = 'Password reset email sent! Please check your inbox and spam folder.';
             } catch (error) {
                 errorDiv.classList.remove('text-green-600');
                 errorDiv.classList.add('text-red-500');
-                errorDiv.textContent = error.message;
+
+                // Handle specific Firebase error codes
+                let errorMessage = error.message;
+                if (error.code === 'auth/invalid-email') {
+                    errorMessage = 'Invalid email address format.';
+                } else if (error.code === 'auth/user-not-found') {
+                    errorMessage = 'No account found with this email address.';
+                } else if (error.code === 'auth/too-many-requests') {
+                    errorMessage = 'Too many requests. Please try again later.';
+                }
+
+                errorDiv.textContent = errorMessage;
                 errorDiv.classList.remove('hidden');
-                console.error(error);
+                console.error('Password reset error:', error);
             }
         });
     </script>
