@@ -1131,10 +1131,17 @@ Write the match report now:`;
 
         // Navigation warning for unsaved changes
         window.addEventListener('beforeunload', (event) => {
-            const gameInProgress = gameState.isRunning || (gameState.gameLog && gameState.gameLog.length > 0);
-            if (gameInProgress) {
+            // Warn if game has started or any stats have been tracked
+            const hasGameActivity = gameState.startTime !== null || // Timer was started
+                                   gameState.elapsed > 0 || // Game has elapsed time
+                                   (gameState.gameLog && gameState.gameLog.length > 0) || // Has log entries
+                                   homeScore > 0 || // Home team scored
+                                   awayScore > 0; // Away team scored
+
+            if (hasGameActivity) {
                 event.preventDefault();
                 event.returnValue = ''; // Required for Chrome
+                return ''; // For older browsers
             }
         });
     </script>
