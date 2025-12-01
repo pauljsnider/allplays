@@ -96,6 +96,19 @@ export async function updateUserProfile(userId, profile) {
     await setDoc(docRef, profile, { merge: true });
 }
 
+export async function getAllUsers() {
+    const q = query(collection(db, "users"), orderBy("email"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+export async function getUserByEmail(email) {
+    const q = query(collection(db, "users"), where("email", "==", email));
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return null;
+    return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+}
+
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();

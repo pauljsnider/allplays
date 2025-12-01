@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <title>ALL PLAYS - Modern Team Management & Statistics Platform</title>
-  <meta name="description" content="ALL PLAYS is a modern, free team management platform for coaches. Track stats in real-time, manage schedules, and build winning teams.">
+  <meta name="description"
+    content="ALL PLAYS is a modern, free team management platform for coaches. Track stats in real-time, manage schedules, and build winning teams.">
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="css/styles.css">
   <script>
@@ -32,28 +33,7 @@
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900 antialiased">
   <!-- Header -->
-  <header class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50 border-b border-gray-200">
-    <nav class="container mx-auto px-4 py-4">
-      <div class="flex items-center justify-between">
-        <a href="index.html" class="flex items-center space-x-3 hover:opacity-80 transition">
-          <div class="w-10 h-10 rounded-lg overflow-hidden border border-gray-200">
-            <img src="img/logo_small.png" alt="ALL PLAYS" class="w-full h-full object-cover">
-          </div>
-          <div>
-            <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">ALL PLAYS</h1>
-            <p class="text-xs text-gray-500 hidden sm:block">Modern Team Management</p>
-          </div>
-        </a>
-        <div class="flex items-center gap-2 sm:gap-4" id="nav-auth-actions">
-          <a href="teams.html" class="text-sm sm:text-base text-gray-600 hover:text-primary-600 transition font-medium">Browse Teams</a>
-          <a id="nav-profile" href="profile.html" class="hidden text-sm sm:text-base text-gray-600 hover:text-primary-700 transition font-medium">Profile</a>
-          <a id="nav-signin" href="login.html" class="text-sm sm:text-base px-3 sm:px-4 py-2 text-primary-600 hover:text-primary-700 transition font-medium">Sign In</a>
-          <a id="nav-cta" href="login.html#signup" class="text-sm sm:text-base px-3 sm:px-6 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg font-medium">Get Started</a>
-          <button id="nav-logout" class="hidden text-sm sm:text-base px-3 sm:px-4 py-2 text-gray-600 hover:text-primary-700 transition font-medium" type="button">Log out</button>
-        </div>
-      </div>
-    </nav>
-  </header>
+  <div id="header-container"></div>
 
   <!-- Hero Section -->
   <section class="relative overflow-hidden bg-gradient-to-br from-primary-50 via-white to-primary-100">
@@ -63,7 +43,8 @@
     </div>
     <div class="container mx-auto px-4 pt-16 md:pt-24 pb-20 md:pb-28 relative">
       <div class="max-w-5xl mx-auto text-center">
-        <div class="inline-flex items-center gap-2 bg-white/80 backdrop-blur-sm text-primary-700 px-5 py-2.5 rounded-full text-sm font-semibold mb-8 border border-primary-200 shadow-sm">
+        <div
+          class="inline-flex items-center gap-2 bg-white/80 backdrop-blur-sm text-primary-700 px-5 py-2.5 rounded-full text-sm font-semibold mb-8 border border-primary-200 shadow-sm">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
           </svg>
@@ -72,25 +53,30 @@
 
         <h1 class="text-5xl md:text-6xl lg:text-7xl font-extrabold mb-6 leading-tight text-gray-900">
           Run your youth sports program like the
-          <span class="bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent block mt-2">pros</span>
+          <span
+            class="bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent block mt-2">pros</span>
         </h1>
 
         <p class="text-xl md:text-2xl text-gray-700 mb-10 max-w-4xl mx-auto leading-relaxed font-medium">
-          ALL PLAYS uses AI to handle lineups, game recaps, season insights, and communication—so coaches, parents, and admins can focus on what matters most.
+          ALL PLAYS uses AI to handle lineups, game recaps, season insights, and communication—so coaches, parents, and
+          admins can focus on what matters most.
         </p>
 
         <div class="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
-          <a id="hero-cta" href="login.html#signup" class="w-full sm:w-auto px-10 py-5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl hover:from-primary-700 hover:to-primary-800 transition shadow-xl hover:shadow-2xl font-bold text-lg transform hover:scale-105">
+          <a id="hero-cta" href="login.html#signup"
+            class="w-full sm:w-auto px-10 py-5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl hover:from-primary-700 hover:to-primary-800 transition shadow-xl hover:shadow-2xl font-bold text-lg transform hover:scale-105">
             Get Started Now
           </a>
-          <a href="teams.html" class="w-full sm:w-auto px-10 py-5 bg-white text-gray-700 rounded-xl hover:bg-gray-50 transition shadow-lg border-2 border-gray-200 font-bold text-lg">
+          <a href="teams.html"
+            class="w-full sm:w-auto px-10 py-5 bg-white text-gray-700 rounded-xl hover:bg-gray-50 transition shadow-lg border-2 border-gray-200 font-bold text-lg">
             Explore Teams
           </a>
         </div>
 
         <!-- Logo showcase -->
         <div class="mt-16 w-full max-w-4xl mx-auto">
-          <img src="img/logo_large.png" alt="ALL PLAYS Platform" class="w-full h-auto rounded-2xl shadow-2xl border-4 border-white/50">
+          <img src="img/logo_large.png" alt="ALL PLAYS Platform"
+            class="w-full h-auto rounded-2xl shadow-2xl border-4 border-white/50">
         </div>
       </div>
     </div>
@@ -100,7 +86,8 @@
   <section class="py-12 md:py-16 bg-white border-y border-gray-200">
     <div class="container mx-auto px-4">
       <div class="max-w-6xl mx-auto">
-        <p class="text-center text-sm uppercase tracking-widest text-gray-500 font-semibold mb-8">Trusted by coaches across all youth sports</p>
+        <p class="text-center text-sm uppercase tracking-widest text-gray-500 font-semibold mb-8">Trusted by coaches
+          across all youth sports</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 text-center">
           <div>
             <div class="text-3xl md:text-4xl font-bold text-primary-600 mb-2">10K+</div>
@@ -128,74 +115,102 @@
     <div class="container mx-auto px-4">
       <div class="text-center mb-16">
         <h2 class="text-4xl md:text-5xl font-bold mb-4 text-gray-900">Everything you need in one platform</h2>
-        <p class="text-xl text-gray-600 max-w-3xl mx-auto">Real-time tracking meets AI-powered insights for complete team management</p>
+        <p class="text-xl text-gray-600 max-w-3xl mx-auto">Real-time tracking meets AI-powered insights for complete
+          team management</p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
         <!-- Feature 1 -->
-        <div class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
-          <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
+          <div
+            class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3 text-gray-900">Real-Time Game Tracking</h3>
-          <p class="text-gray-600 text-lg leading-relaxed">Track every stat as it happens with an intuitive interface that works on any device during the game.</p>
+          <p class="text-gray-600 text-lg leading-relaxed">Track every stat as it happens with an intuitive interface
+            that works on any device during the game.</p>
         </div>
 
         <!-- Feature 2 -->
-        <div class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
-          <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
+          <div
+            class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3 text-gray-900">Smart Scheduling</h3>
-          <p class="text-gray-600 text-lg leading-relaxed">Create and share schedules that sync with calendars. Everyone stays on the same page automatically.</p>
+          <p class="text-gray-600 text-lg leading-relaxed">Create and share schedules that sync with calendars. Everyone
+            stays on the same page automatically.</p>
         </div>
 
         <!-- Feature 3 -->
-        <div class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
-          <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
+          <div
+            class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3 text-gray-900">Player Analytics</h3>
-          <p class="text-gray-600 text-lg leading-relaxed">Deep dive into individual and team performance with charts, trends, and season-long comparisons.</p>
+          <p class="text-gray-600 text-lg leading-relaxed">Deep dive into individual and team performance with charts,
+            trends, and season-long comparisons.</p>
         </div>
 
         <!-- Feature 4 -->
-        <div class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
-          <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
+          <div
+            class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3 text-gray-900">Team Communication</h3>
-          <p class="text-gray-600 text-lg leading-relaxed">Send updates, reminders, and game summaries to parents and players with one tap.</p>
+          <p class="text-gray-600 text-lg leading-relaxed">Send updates, reminders, and game summaries to parents and
+            players with one tap.</p>
         </div>
 
         <!-- Feature 5 -->
-        <div class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
-          <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
+          <div
+            class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3 text-gray-900">Roster Management</h3>
-          <p class="text-gray-600 text-lg leading-relaxed">Organize players, track attendance, manage positions, and keep everyone's information up to date.</p>
+          <p class="text-gray-600 text-lg leading-relaxed">Organize players, track attendance, manage positions, and
+            keep everyone's information up to date.</p>
         </div>
 
         <!-- Feature 6 -->
-        <div class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
-          <div class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="group bg-gradient-to-br from-gray-50 to-white p-8 rounded-2xl border-2 border-gray-200 hover:border-primary-300 hover:shadow-xl transition duration-300">
+          <div
+            class="w-16 h-16 bg-gradient-to-br from-primary-500 to-primary-700 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3 text-gray-900">Cloud Synced</h3>
-          <p class="text-gray-600 text-lg leading-relaxed">Access your team data from anywhere, on any device. Everything stays in sync automatically.</p>
+          <p class="text-gray-600 text-lg leading-relaxed">Access your team data from anywhere, on any device.
+            Everything stays in sync automatically.</p>
         </div>
       </div>
     </div>
@@ -209,9 +224,12 @@
     </div>
     <div class="container mx-auto px-4 relative">
       <div class="text-center mb-16">
-        <div class="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm px-5 py-2.5 rounded-full text-sm font-semibold mb-6">
+        <div
+          class="inline-flex items-center gap-2 bg-white/20 backdrop-blur-sm px-5 py-2.5 rounded-full text-sm font-semibold mb-6">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z">
+            </path>
           </svg>
           Your AI Assistant for Every Practice and Game
         </div>
@@ -219,52 +237,73 @@
           What makes ALL PLAYS<br />
           <span class="text-primary-100">AI-first</span>
         </h2>
-        <p class="text-xl text-primary-50 max-w-3xl mx-auto">Let AI handle the busywork while you focus on coaching, connecting, and winning.</p>
+        <p class="text-xl text-primary-50 max-w-3xl mx-auto">Let AI handle the busywork while you focus on coaching,
+          connecting, and winning.</p>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8 max-w-7xl mx-auto">
         <!-- AI Lineup Planner -->
-        <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
-          <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
+          <div
+            class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3">AI Lineup Planner</h3>
-          <p class="text-primary-50 leading-relaxed">Automatically generate balanced lineups and rotations based on player stats, matchups, and playing time equity.</p>
+          <p class="text-primary-50 leading-relaxed">Automatically generate balanced lineups and rotations based on
+            player stats, matchups, and playing time equity.</p>
         </div>
 
         <!-- AI Game Recaps -->
-        <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
-          <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
+          <div
+            class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3">AI Game Recaps</h3>
-          <p class="text-primary-50 leading-relaxed">Get shareable game summaries with key moments, player highlights, and momentum shifts—ready minutes after the final whistle.</p>
+          <p class="text-primary-50 leading-relaxed">Get shareable game summaries with key moments, player highlights,
+            and momentum shifts—ready minutes after the final whistle.</p>
         </div>
 
         <!-- Smart Season Insights -->
-        <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
-          <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
+          <div
+            class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3">Smart Season AI Insights</h3>
-          <p class="text-primary-50 leading-relaxed">Surface trends, hot streaks, and improvement areas across your entire season without digging through spreadsheets.</p>
+          <p class="text-primary-50 leading-relaxed">Surface trends, hot streaks, and improvement areas across your
+            entire season without digging through spreadsheets.</p>
         </div>
 
         <!-- AI Powered Communication -->
-        <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
-          <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
+        <div
+          class="bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl p-8 hover:bg-white/15 transition group">
+          <div
+            class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition">
             <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z">
+              </path>
             </svg>
           </div>
           <h3 class="text-2xl font-bold mb-3">AI Powered Communication</h3>
-          <p class="text-primary-50 leading-relaxed">Draft team updates, parent newsletters, and game reminders in seconds—then send to everyone with one click.</p>
+          <p class="text-primary-50 leading-relaxed">Draft team updates, parent newsletters, and game reminders in
+            seconds—then send to everyone with one click.</p>
         </div>
       </div>
     </div>
@@ -282,37 +321,47 @@
         <!-- Step 1 -->
         <div class="relative">
           <div class="text-center md:text-left">
-            <div class="w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center mx-auto md:mx-0 mb-6 shadow-xl">
+            <div
+              class="w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center mx-auto md:mx-0 mb-6 shadow-xl">
               <span class="text-4xl font-bold text-white">1</span>
             </div>
             <h3 class="text-2xl font-bold mb-4 text-gray-900">Set up your program</h3>
-            <p class="text-lg text-gray-600 leading-relaxed">Create your team or club, import your players, and drop in your season dates.</p>
+            <p class="text-lg text-gray-600 leading-relaxed">Create your team or club, import your players, and drop in
+              your season dates.</p>
           </div>
           <!-- Connecting line (hidden on mobile) -->
-          <div class="hidden md:block absolute top-10 left-full w-16 h-0.5 bg-gradient-to-r from-primary-300 to-transparent"></div>
+          <div
+            class="hidden md:block absolute top-10 left-full w-16 h-0.5 bg-gradient-to-r from-primary-300 to-transparent">
+          </div>
         </div>
 
         <!-- Step 2 -->
         <div class="relative">
           <div class="text-center md:text-left">
-            <div class="w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center mx-auto md:mx-0 mb-6 shadow-xl">
+            <div
+              class="w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center mx-auto md:mx-0 mb-6 shadow-xl">
               <span class="text-4xl font-bold text-white">2</span>
             </div>
             <h3 class="text-2xl font-bold mb-4 text-gray-900">Let AI do the busy work</h3>
-            <p class="text-lg text-gray-600 leading-relaxed">Generate schedules, lineups, and reminders. Turn game logs into stats and summaries automatically.</p>
+            <p class="text-lg text-gray-600 leading-relaxed">Generate schedules, lineups, and reminders. Turn game logs
+              into stats and summaries automatically.</p>
           </div>
           <!-- Connecting line (hidden on mobile) -->
-          <div class="hidden md:block absolute top-10 left-full w-16 h-0.5 bg-gradient-to-r from-primary-300 to-transparent"></div>
+          <div
+            class="hidden md:block absolute top-10 left-full w-16 h-0.5 bg-gradient-to-r from-primary-300 to-transparent">
+          </div>
         </div>
 
         <!-- Step 3 -->
         <div>
           <div class="text-center md:text-left">
-            <div class="w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center mx-auto md:mx-0 mb-6 shadow-xl">
+            <div
+              class="w-20 h-20 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center mx-auto md:mx-0 mb-6 shadow-xl">
               <span class="text-4xl font-bold text-white">3</span>
             </div>
             <h3 class="text-2xl font-bold mb-4 text-gray-900">Share with families</h3>
-            <p class="text-lg text-gray-600 leading-relaxed">Send the app invite or share a public schedule link so parents and grandparents always know where to be.</p>
+            <p class="text-lg text-gray-600 leading-relaxed">Send the app invite or share a public schedule link so
+              parents and grandparents always know where to be.</p>
           </div>
         </div>
       </div>
@@ -324,18 +373,22 @@
     <div class="container mx-auto px-4">
       <div class="text-center mb-16">
         <h2 class="text-4xl md:text-5xl font-bold mb-4 text-gray-900">Built for everyone on your team</h2>
-        <p class="text-xl text-gray-600 max-w-3xl mx-auto">Whether you're coaching, cheering from the sidelines, or running the whole league</p>
+        <p class="text-xl text-gray-600 max-w-3xl mx-auto">Whether you're coaching, cheering from the sidelines, or
+          running the whole league</p>
       </div>
 
       <div class="max-w-7xl mx-auto">
         <!-- Tab-style cards -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <!-- For Coaches -->
-          <div class="bg-white rounded-2xl shadow-xl border-2 border-primary-200 overflow-hidden group hover:shadow-2xl transition">
+          <div
+            class="bg-white rounded-2xl shadow-xl border-2 border-primary-200 overflow-hidden group hover:shadow-2xl transition">
             <div class="bg-gradient-to-br from-primary-600 to-primary-700 p-8 text-white">
               <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-4">
                 <svg class="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z">
+                  </path>
                 </svg>
               </div>
               <h3 class="text-3xl font-bold">For Coaches</h3>
@@ -343,25 +396,32 @@
             <div class="p-8">
               <ul class="space-y-4 text-gray-700">
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">AI-driven insights and metric collections for every player and game</span>
+                  <span class="text-lg leading-relaxed">AI-driven insights and metric collections for every player and
+                    game</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">See the whole season at a glance with automated schedules and stats</span>
+                  <span class="text-lg leading-relaxed">See the whole season at a glance with automated schedules and
+                    stats</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Let AI handle lineups and rotations to balance playing time</span>
+                  <span class="text-lg leading-relaxed">Let AI handle lineups and rotations to balance playing
+                    time</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
                   <span class="text-lg leading-relaxed">Keep everyone updated with one message to all families</span>
@@ -371,11 +431,14 @@
           </div>
 
           <!-- For Parents -->
-          <div class="bg-white rounded-2xl shadow-xl border-2 border-primary-200 overflow-hidden group hover:shadow-2xl transition">
+          <div
+            class="bg-white rounded-2xl shadow-xl border-2 border-primary-200 overflow-hidden group hover:shadow-2xl transition">
             <div class="bg-gradient-to-br from-primary-600 to-primary-700 p-8 text-white">
               <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-4">
                 <svg class="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z">
+                  </path>
                 </svg>
               </div>
               <h3 class="text-3xl font-bold">For Parents</h3>
@@ -383,39 +446,50 @@
             <div class="p-8">
               <ul class="space-y-4 text-gray-700">
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">One app for all your kids and all their teams in every sport</span>
+                  <span class="text-lg leading-relaxed">One app for all your kids and all their teams in every
+                    sport</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Never miss a game, time change, or field update with instant notifications</span>
+                  <span class="text-lg leading-relaxed">Never miss a game, time change, or field update with instant
+                    notifications</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Get fun AI-written recaps to share with family and grandparents</span>
+                  <span class="text-lg leading-relaxed">Get fun AI-written recaps to share with family and
+                    grandparents</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Track your player's stats and development throughout the season</span>
+                  <span class="text-lg leading-relaxed">Track your player's stats and development throughout the
+                    season</span>
                 </li>
               </ul>
             </div>
           </div>
 
           <!-- For Clubs & Schools -->
-          <div class="bg-white rounded-2xl shadow-xl border-2 border-primary-200 overflow-hidden group hover:shadow-2xl transition">
+          <div
+            class="bg-white rounded-2xl shadow-xl border-2 border-primary-200 overflow-hidden group hover:shadow-2xl transition">
             <div class="bg-gradient-to-br from-primary-600 to-primary-700 p-8 text-white">
               <div class="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mb-4">
                 <svg class="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
+                  </path>
                 </svg>
               </div>
               <h3 class="text-3xl font-bold">For Clubs & Schools</h3>
@@ -423,28 +497,36 @@
             <div class="p-8">
               <ul class="space-y-4 text-gray-700">
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Manage multiple teams and sports in one centralized platform</span>
+                  <span class="text-lg leading-relaxed">Manage multiple teams and sports in one centralized
+                    platform</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Standardized communication templates and consistent messaging</span>
+                  <span class="text-lg leading-relaxed">Standardized communication templates and consistent
+                    messaging</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">High-level view of schedules, participation, and program analytics</span>
+                  <span class="text-lg leading-relaxed">High-level view of schedules, participation, and program
+                    analytics</span>
                 </li>
                 <li class="flex gap-3">
-                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-6 h-6 text-primary-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                    viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                   </svg>
-                  <span class="text-lg leading-relaxed">Streamline admin work with AI-powered automation across all teams</span>
+                  <span class="text-lg leading-relaxed">Streamline admin work with AI-powered automation across all
+                    teams</span>
                 </li>
               </ul>
             </div>
@@ -462,12 +544,15 @@
     </div>
     <div class="container mx-auto px-4 text-center relative">
       <h2 class="text-4xl md:text-5xl lg:text-6xl font-extrabold mb-6">Ready to transform your program?</h2>
-      <p class="text-xl md:text-2xl text-primary-50 mb-10 max-w-3xl mx-auto leading-relaxed">Join thousands of coaches using AI to run better practices, make smarter decisions, and keep families connected.</p>
+      <p class="text-xl md:text-2xl text-primary-50 mb-10 max-w-3xl mx-auto leading-relaxed">Join thousands of coaches
+        using AI to run better practices, make smarter decisions, and keep families connected.</p>
       <div class="flex flex-col sm:flex-row gap-6 justify-center items-center">
-        <a href="login.html#signup" class="w-full sm:w-auto px-12 py-6 bg-white text-primary-600 rounded-xl hover:bg-gray-50 transition shadow-2xl font-bold text-xl transform hover:scale-105">
+        <a href="login.html#signup"
+          class="w-full sm:w-auto px-12 py-6 bg-white text-primary-600 rounded-xl hover:bg-gray-50 transition shadow-2xl font-bold text-xl transform hover:scale-105">
           Get Started Today
         </a>
-        <a href="teams.html" class="w-full sm:w-auto px-12 py-6 bg-primary-700/50 backdrop-blur-sm text-white rounded-xl hover:bg-primary-700 transition border-2 border-white/30 font-bold text-xl">
+        <a href="teams.html"
+          class="w-full sm:w-auto px-12 py-6 bg-primary-700/50 backdrop-blur-sm text-white rounded-xl hover:bg-primary-700 transition border-2 border-white/30 font-bold text-xl">
           Explore Teams
         </a>
       </div>
@@ -480,14 +565,18 @@
       <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
         <div class="col-span-1 md:col-span-2">
           <div class="flex items-center space-x-3 mb-4">
-            <div class="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg flex items-center justify-center">
+            <div
+              class="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg flex items-center justify-center">
               <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z">
+                </path>
               </svg>
             </div>
             <h3 class="text-xl font-bold text-white">ALL PLAYS</h3>
           </div>
-          <p class="text-sm max-w-md">AI-powered team management and statistics platform for youth sports. Track stats, manage schedules, and build winning teams.</p>
+          <p class="text-sm max-w-md">AI-powered team management and statistics platform for youth sports. Track stats,
+            manage schedules, and build winning teams.</p>
         </div>
 
         <div>
@@ -505,58 +594,36 @@
           <ul class="space-y-2 text-sm">
             <li><a href="#" class="hover:text-white transition">Help Center</a></li>
             <li><a href="#" class="hover:text-white transition">Contact</a></li>
-            <li><a href="https://github.com/pauljsnider/paulsnidernet" class="hover:text-white transition" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            <li><a href="https://github.com/pauljsnider/paulsnidernet" class="hover:text-white transition"
+                target="_blank" rel="noopener noreferrer">GitHub</a></li>
           </ul>
         </div>
       </div>
 
       <div class="border-t border-gray-800 pt-8 text-center text-sm space-y-1">
         <p>&copy; 2025 ALL PLAYS. Built with ❤️ for coaches everywhere.</p>
-        <p>Created by <a href="https://paulsnider.net" class="text-gray-200 hover:text-white underline">Paul Snider</a>.</p>
+        <p>Created by <a href="https://paulsnider.net" class="text-gray-200 hover:text-white underline">Paul Snider</a>.
+        </p>
       </div>
     </div>
   </footer>
 
   <script type="module">
     import { checkAuth, logout } from './js/auth.js';
+    import { renderHeader } from './js/utils.js?v=7';
 
-    const navSignIn = document.getElementById('nav-signin');
-    const navCta = document.getElementById('nav-cta');
-    const navLogout = document.getElementById('nav-logout');
-    const navProfile = document.getElementById('nav-profile');
     const heroCta = document.getElementById('hero-cta');
 
     checkAuth((user) => {
+      renderHeader(document.getElementById('header-container'), user);
+
       if (user) {
-        navSignIn.textContent = 'Dashboard';
-        navSignIn.href = 'dashboard.html';
-
-        navCta.textContent = 'Go to Dashboard';
-        navCta.href = 'dashboard.html';
-
         heroCta.textContent = 'Go to Dashboard';
         heroCta.href = 'dashboard.html';
-
-        navLogout.classList.remove('hidden');
-        navProfile.classList.remove('hidden');
       } else {
-        navSignIn.textContent = 'Sign In';
-        navSignIn.href = 'login.html';
-
-        navCta.textContent = 'Get Started';
-        navCta.href = 'login.html#signup';
-
         heroCta.textContent = 'Create Your Team';
         heroCta.href = 'login.html#signup';
-
-        navLogout.classList.add('hidden');
-        navProfile.classList.add('hidden');
       }
-    });
-
-    navLogout?.addEventListener('click', async () => {
-      await logout();
-      window.location.href = 'index.html';
     });
   </script>
 </body>

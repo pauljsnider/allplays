@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" type="image/png" href="img/logo_small.png">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Edit Team - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
@@ -57,7 +57,8 @@
                         <option value="Basketball">Basketball — PTS/REB/AST/STL/TO template</option>
                         <option value="Soccer">Soccer — GOALS/SHOTS/PASSES/BLOCKS/HUSTLE template</option>
                     </select>
-                    <p class="text-xs text-gray-500 mt-1">Only sports with built-in stat tracker templates are listed.</p>
+                    <p class="text-xs text-gray-500 mt-1">Only sports with built-in stat tracker templates are listed.
+                    </p>
                 </div>
 
                 <div>
@@ -75,13 +76,27 @@
                         placeholder="For game summaries">
                 </div>
 
+                <div class="flex items-start">
+                    <div class="flex items-center h-5">
+                        <input id="isPublic" type="checkbox"
+                            class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded" checked>
+                    </div>
+                    <div class="ml-3 text-sm">
+                        <label for="isPublic" class="font-medium text-gray-700">Public Team</label>
+                        <p class="text-gray-500">If unchecked, this team will be hidden from the "Browse Teams" list but
+                            can still be accessed via direct link.</p>
+                    </div>
+                </div>
+
                 <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                     <div class="flex items-center justify-between mb-3">
                         <div>
                             <h3 class="font-semibold text-indigo-900 text-sm">Admin Access</h3>
-                            <p class="text-xs text-indigo-700">Invite coaches/admins by email. They can edit this team after signing up.</p>
+                            <p class="text-xs text-indigo-700">Invite coaches/admins by email. They can edit this team
+                                after signing up.</p>
                         </div>
-                        <button id="add-admin-btn" type="button" class="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">
+                        <button id="add-admin-btn" type="button"
+                            class="text-xs bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700">
                             + Add Admin
                         </button>
                     </div>
@@ -92,9 +107,25 @@
                         <input type="email" id="admin-email-input" placeholder="coach@example.com"
                             class="w-full px-3 py-2 border border-gray-300 rounded mb-2 text-sm">
                         <div class="flex gap-2">
-                            <button id="save-admin-btn" type="button" class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Save</button>
-                            <button id="cancel-admin-btn" type="button" class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">Cancel</button>
+                            <button id="save-admin-btn" type="button"
+                                class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Save</button>
+                            <button id="cancel-admin-btn" type="button"
+                                class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">Cancel</button>
                         </div>
+                    </div>
+                </div>
+
+                <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                    <h3 class="font-semibold text-indigo-900 text-sm mb-3">Team Management</h3>
+                    <div class="flex gap-3">
+                        <a id="manage-roster-btn" href="#"
+                            class="flex-1 bg-white border border-indigo-200 text-indigo-700 py-2 px-4 rounded text-center text-sm font-medium hover:bg-indigo-50 hover:text-indigo-800 transition">
+                            Manage Roster
+                        </a>
+                        <a id="manage-schedule-btn" href="#"
+                            class="flex-1 bg-white border border-indigo-200 text-indigo-700 py-2 px-4 rounded text-center text-sm font-medium hover:bg-indigo-50 hover:text-indigo-800 transition">
+                            Manage Schedule
+                        </a>
                     </div>
                 </div>
 
@@ -125,7 +156,7 @@
 
     <script type="module">
         import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=6';
+        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -176,7 +207,8 @@
                 if (team) {
                     // Check ownership
                     const isAdmin = (team.adminEmails || []).map(e => e.toLowerCase()).includes((currentUser.email || '').toLowerCase());
-                    if (team.ownerId !== currentUser.uid && !isAdmin) {
+
+                    if (team.ownerId !== currentUser.uid && !isAdmin && !currentUser.isAdmin) {
                         alert("You don't have permission to edit this team.");
                         window.location.href = 'dashboard.html';
                         return;
@@ -187,6 +219,7 @@
                     document.getElementById('sport').value = team.sport || '';
                     document.getElementById('notificationEmail').value = team.notificationEmail || '';
                     document.getElementById('zip').value = team.zip || '';
+                    document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
                     adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
                     renderAdminList();
 
@@ -194,6 +227,10 @@
                         currentPhotoUrl = team.photoUrl;
                         document.getElementById('photo-preview').innerHTML = `<img src="${team.photoUrl}" class="w-full h-full object-cover">`;
                     }
+
+                    // Update management links
+                    document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${teamId}`;
+                    document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${teamId}`;
                 }
             }
         }
@@ -289,11 +326,13 @@
                     notificationEmail: document.getElementById('notificationEmail').value,
                     zip,
                     photoUrl: currentPhotoUrl,
+                    isPublic: document.getElementById('isPublic').checked,
                     adminEmails
                 };
 
                 if (!currentTeamId) {
                     teamData.ownerId = currentUser.uid;
+                    teamData.ownerEmail = currentUser.email;
                 }
 
                 if (currentTeamId) {

@@ -35,11 +35,13 @@
   <main class="container mx-auto px-4 py-8 md:py-12">
     <!-- Page Header -->
     <div class="mb-8 md:mb-12 text-center">
-      <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-4 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">
+      <h1
+        class="text-3xl md:text-4xl lg:text-5xl font-bold mb-4 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">
         Browse Teams
       </h1>
       <p class="text-gray-600 text-base md:text-lg max-w-2xl mx-auto">
-        Discover youth sports teams using ALL PLAYS across the country. Find teams in your area or explore what others are doing.
+        Discover youth sports teams using ALL PLAYS across the country. Find teams in your area or explore what others
+        are doing.
       </p>
     </div>
 
@@ -56,7 +58,7 @@
 
   <script type="module">
     import { getTeams } from './js/db.js';
-  import { renderHeader, renderFooter } from './js/utils.js?v=6';
+    import { renderHeader, renderFooter } from './js/utils.js?v=7';
     import { checkAuth } from './js/auth.js';
 
     checkAuth((user) => {
@@ -96,7 +98,10 @@
 
     async function loadTeams() {
       try {
-        const teams = await getTeams();
+        const allTeams = await getTeams();
+        // Filter out private teams (isPublic === false)
+        // Default isPublic to true if undefined
+        const teams = allTeams.filter(t => t.isPublic !== false);
         const container = document.getElementById('teams-list');
 
         if (teams.length === 0) {
@@ -142,11 +147,11 @@
             <div class="p-6">
               <div class="flex items-center space-x-4 mb-4">
                 ${team.photoUrl
-                  ? `<img src="${team.photoUrl}" alt="${team.name}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
-                  : `<div class="w-16 h-16 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition">
+            ? `<img src="${team.photoUrl}" alt="${team.name}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
+            : `<div class="w-16 h-16 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition">
                       <span class="text-2xl font-bold text-primary-600">${team.name ? team.name.charAt(0) : '?'}</span>
                     </div>`
-                }
+          }
                 <div class="flex-grow">
                   <h3 class="text-xl font-bold text-gray-900 group-hover:text-primary-600 transition mb-1">${team.name}</h3>
                   <div class="flex items-center gap-2">
@@ -158,15 +163,15 @@
               </div>
               <p class="text-gray-600 text-sm line-clamp-2 mb-3">${team.description || 'No description available'}</p>
               ${team.zip && zipToLocation[team.zip]
-                ? `<div class="flex items-center text-xs text-gray-500">
+            ? `<div class="flex items-center text-xs text-gray-500">
                     <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                     </svg>
                     <a class="hover:text-primary-600 transition" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(zipToLocation[team.zip])}">${zipToLocation[team.zip]}</a>
                   </div>`
-                : ''
-              }
+            : ''
+          }
             </div>
           </div>
         `;

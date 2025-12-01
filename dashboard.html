@@ -62,8 +62,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, deleteTeam } from './js/db.js?v=2';
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=6';
+        import { getUserTeamsWithAccess, deleteTeam, getUserProfile } from './js/db.js?v=2';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=7';
         import { requireAuth as authRequireAuth } from './js/auth.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -71,6 +71,17 @@
         async function init() {
             try {
                 const user = await authRequireAuth();
+
+                // Load user profile to get isAdmin flag
+                try {
+                    const profile = await getUserProfile(user.uid);
+                    if (profile && profile.isAdmin) {
+                        user.isAdmin = true;
+                    }
+                } catch (e) {
+                    console.error('Error loading user profile:', e);
+                }
+
                 renderHeader(document.getElementById('header-container'), user);
 
                 const teams = await getUserTeamsWithAccess(user.uid, user.email);

@@ -1,38 +1,44 @@
 export function getUrlParams() {
-    const hash = window.location.hash.substring(1); // Remove #
-    const params = new URLSearchParams(hash);
-    return Object.fromEntries(params.entries());
+  // Combine params from both search (?) and hash (#)
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+
+  const params = {};
+  for (const [key, value] of searchParams) params[key] = value;
+  for (const [key, value] of hashParams) params[key] = value;
+
+  return params;
 }
 
 export function setUrlParams(params) {
-    const searchParams = new URLSearchParams(params);
-    window.location.hash = searchParams.toString();
+  const searchParams = new URLSearchParams(params);
+  window.location.hash = searchParams.toString();
 }
 
 export function escapeHtml(unsafe) {
-    if (unsafe === null || unsafe === undefined) return '';
-    return String(unsafe)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 export function formatDate(timestamp) {
-    if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleDateString();
+  if (!timestamp) return '';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleDateString();
 }
 
 export function formatTime(timestamp) {
-    if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (!timestamp) return '';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 export function renderHeader(container, user) {
-    container.innerHTML = `
+  container.innerHTML = `
       <header class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50 border-b border-gray-200">
         <nav class="container mx-auto px-4 py-4">
           <div class="flex items-center justify-between">
@@ -45,54 +51,95 @@ export function renderHeader(container, user) {
                 <p class="text-xs text-gray-500 hidden sm:block">Modern Team Management</p>
               </div>
             </a>
-            <div class="flex items-center gap-2 sm:gap-4" id="nav-auth-actions">
-              <a href="teams.html" class="text-sm sm:text-base text-gray-600 hover:text-primary-600 transition font-medium">Browse Teams</a>
-              <a id="nav-profile" href="profile.html" class="hidden text-sm sm:text-base text-gray-600 hover:text-primary-700 transition font-medium">Profile</a>
-              <a id="nav-signin" href="login.html" class="text-sm sm:text-base px-3 sm:px-4 py-2 text-primary-600 hover:text-primary-700 transition font-medium">Sign In</a>
-              <a id="nav-cta" href="login.html#signup" class="text-sm sm:text-base px-3 sm:px-6 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg font-medium">Get Started</a>
-              <button id="nav-logout" class="hidden text-sm sm:text-base px-3 sm:px-4 py-2 text-gray-600 hover:text-primary-700 transition font-medium" type="button">Log out</button>
+
+            <!-- Desktop Nav -->
+            <div class="hidden md:flex items-center gap-4" id="nav-auth-actions-desktop">
+              <a href="teams.html" class="text-sm font-medium text-gray-600 hover:text-primary-600 transition">Browse Teams</a>
+              <a id="nav-profile-desktop" href="profile.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
+              <a id="nav-signin-desktop" href="login.html" class="text-sm font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
+              <a id="nav-cta-desktop" href="login.html#signup" class="text-sm font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg">Get Started</a>
+              <button id="nav-logout-desktop" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition" type="button">Log out</button>
+            </div>
+
+            <!-- Mobile Menu Button -->
+            <button id="mobile-menu-btn" class="md:hidden p-2 text-gray-600 hover:text-primary-600 focus:outline-none">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Mobile Menu -->
+          <div id="mobile-menu" class="hidden md:hidden mt-4 pb-4 border-t border-gray-100">
+            <div class="flex flex-col space-y-3 pt-4" id="nav-auth-actions-mobile">
+              <a href="teams.html" class="block text-base font-medium text-gray-600 hover:text-primary-600 transition">Browse Teams</a>
+              <a id="nav-profile-mobile" href="profile.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
+              <a id="nav-signin-mobile" href="login.html" class="block text-base font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
+              <a id="nav-cta-mobile" href="login.html#signup" class="block text-center text-base font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md">Get Started</a>
+              <button id="nav-logout-mobile" class="hidden w-full text-left block text-base font-medium text-gray-600 hover:text-primary-700 transition" type="button">Log out</button>
             </div>
           </div>
         </nav>
       </header>
     `;
 
-    // Update navigation based on auth state
-    const navSignIn = container.querySelector('#nav-signin');
-    const navCta = container.querySelector('#nav-cta');
-    const navLogout = container.querySelector('#nav-logout');
-    const navProfile = container.querySelector('#nav-profile');
+  // Mobile menu toggle
+  const mobileBtn = container.querySelector('#mobile-menu-btn');
+  const mobileMenu = container.querySelector('#mobile-menu');
+  mobileBtn.addEventListener('click', () => {
+    mobileMenu.classList.toggle('hidden');
+  });
+
+  // Update navigation based on auth state
+  const updateNav = (suffix) => {
+    const navSignIn = container.querySelector(`#nav-signin-${suffix}`);
+    const navCta = container.querySelector(`#nav-cta-${suffix}`);
+    const navLogout = container.querySelector(`#nav-logout-${suffix}`);
+    const navProfile = container.querySelector(`#nav-profile-${suffix}`);
 
     if (user) {
-        navSignIn.textContent = 'Dashboard';
-        navSignIn.href = 'dashboard.html';
+      // "Sign In" becomes "My Teams" for everyone
+      navSignIn.textContent = 'My Teams';
+      navSignIn.href = 'dashboard.html';
 
-        navCta.textContent = 'Go to Dashboard';
-        navCta.href = 'dashboard.html';
+      // CTA button logic
+      if (user.isAdmin) {
+        // Admins see "Admin Dashboard"
+        navCta.textContent = 'Admin Dashboard';
+        navCta.href = 'admin.html';
+        navCta.classList.remove('hidden');
+      } else {
+        // Regular users don't see the CTA button
+        navCta.classList.add('hidden');
+      }
 
-        navLogout.classList.remove('hidden');
-        navProfile.classList.remove('hidden');
+      navLogout.classList.remove('hidden');
+      navProfile.classList.remove('hidden');
     } else {
-        navSignIn.textContent = 'Sign In';
-        navSignIn.href = 'login.html';
+      navSignIn.textContent = 'Sign In';
+      navSignIn.href = 'login.html';
 
-        navCta.textContent = 'Get Started';
-        navCta.href = 'login.html#signup';
+      navCta.textContent = 'Get Started';
+      navCta.href = 'login.html#signup';
 
-        navLogout.classList.add('hidden');
-        navProfile.classList.add('hidden');
+      navLogout.classList.add('hidden');
+      navProfile.classList.add('hidden');
     }
 
     // Add logout handler
     navLogout.addEventListener('click', async () => {
-        const { logout } = await import('./auth.js');
-        await logout();
-        window.location.href = 'index.html';
+      const { logout } = await import('./auth.js');
+      await logout();
+      window.location.href = 'index.html';
     });
+  };
+
+  updateNav('desktop');
+  updateNav('mobile');
 }
 
 export function renderFooter(container) {
-    container.innerHTML = `
+  container.innerHTML = `
       <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
         <div class="container mx-auto px-4">
           <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
@@ -144,48 +191,48 @@ export function renderFooter(container) {
  * @returns {Promise<Array>} Array of parsed calendar events
  */
 export async function fetchAndParseCalendar(url) {
-    try {
-        // Try direct fetch first
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-        let response = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
+  try {
+    // Try direct fetch first
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    let response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
 
-        // If CORS error, use proxy
-        if (!response.ok && (response.status === 0 || response.type === 'opaque')) {
-            console.log('CORS issue detected, using proxy...');
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-            response = await fetch(proxyUrl);
-        }
+    // If CORS error, use proxy
+    if (!response.ok && (response.status === 0 || response.type === 'opaque')) {
+      console.log('CORS issue detected, using proxy...');
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+      response = await fetch(proxyUrl);
+    }
 
+    if (!response.ok) {
+      throw new Error(`Failed to fetch calendar: ${response.statusText}`);
+    }
+    const icsText = await response.text();
+    return parseICS(icsText);
+  } catch (error) {
+    // If direct fetch fails, try with CORS proxy
+    if (error.message.includes('fetch') || error.message.includes('CORS')) {
+      try {
+        console.log('Direct fetch failed, trying CORS proxy...');
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+        const proxyController = new AbortController();
+        const proxyTimeoutId = setTimeout(() => proxyController.abort(), 5000);
+        const response = await fetch(proxyUrl, { signal: proxyController.signal });
+        clearTimeout(proxyTimeoutId);
         if (!response.ok) {
-            throw new Error(`Failed to fetch calendar: ${response.statusText}`);
+          throw new Error(`Failed to fetch calendar via proxy: ${response.statusText}`);
         }
         const icsText = await response.text();
         return parseICS(icsText);
-    } catch (error) {
-        // If direct fetch fails, try with CORS proxy
-        if (error.message.includes('fetch') || error.message.includes('CORS')) {
-            try {
-                console.log('Direct fetch failed, trying CORS proxy...');
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-                const proxyController = new AbortController();
-                const proxyTimeoutId = setTimeout(() => proxyController.abort(), 5000);
-                const response = await fetch(proxyUrl, { signal: proxyController.signal });
-                clearTimeout(proxyTimeoutId);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch calendar via proxy: ${response.statusText}`);
-                }
-                const icsText = await response.text();
-                return parseICS(icsText);
-            } catch (proxyError) {
-                console.error('Proxy fetch also failed:', proxyError);
-                throw new Error(`Cannot fetch calendar. CORS blocked and proxy failed: ${proxyError.message}`);
-            }
-        }
-        console.error('Error fetching calendar:', error);
-        throw error;
+      } catch (proxyError) {
+        console.error('Proxy fetch also failed:', proxyError);
+        throw new Error(`Cannot fetch calendar. CORS blocked and proxy failed: ${proxyError.message}`);
+      }
     }
+    console.error('Error fetching calendar:', error);
+    throw error;
+  }
 }
 
 /**
@@ -194,64 +241,64 @@ export async function fetchAndParseCalendar(url) {
  * @returns {Array} Array of parsed events
  */
 export function parseICS(icsText) {
-    const events = [];
-    const lines = icsText.split(/\r\n|\n|\r/);
+  const events = [];
+  const lines = icsText.split(/\r\n|\n|\r/);
 
-    let currentEvent = null;
-    let currentField = null;
+  let currentEvent = null;
+  let currentField = null;
 
-    for (let i = 0; i < lines.length; i++) {
-        let line = lines[i].trim();
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
 
-        // Handle line continuation (lines starting with space/tab)
-        while (i + 1 < lines.length && (lines[i + 1].startsWith(' ') || lines[i + 1].startsWith('\t'))) {
-            i++;
-            line += lines[i].trim();
-        }
-
-        if (line === 'BEGIN:VEVENT') {
-            currentEvent = {};
-        } else if (line === 'END:VEVENT' && currentEvent) {
-            if (currentEvent.dtstart && currentEvent.summary) {
-                events.push(currentEvent);
-            }
-            currentEvent = null;
-        } else if (currentEvent) {
-            const colonIndex = line.indexOf(':');
-            if (colonIndex > 0) {
-                const field = line.substring(0, colonIndex);
-                const value = line.substring(colonIndex + 1);
-
-                const fieldName = field.split(';')[0]; // Handle fields like DTSTART;TZID=...
-
-                switch (fieldName) {
-                    case 'DTSTART':
-                        currentEvent.dtstart = parseICSDate(value);
-                        break;
-                    case 'DTEND':
-                        currentEvent.dtend = parseICSDate(value);
-                        break;
-                    case 'SUMMARY':
-                        currentEvent.summary = value;
-                        break;
-                    case 'DESCRIPTION':
-                        currentEvent.description = value;
-                        break;
-                    case 'LOCATION':
-                        currentEvent.location = value.replace(/\\n/g, '\n').replace(/\\,/g, ',');
-                        break;
-                    case 'UID':
-                        currentEvent.uid = value;
-                        break;
-                    case 'STATUS':
-                        currentEvent.status = value;
-                        break;
-                }
-            }
-        }
+    // Handle line continuation (lines starting with space/tab)
+    while (i + 1 < lines.length && (lines[i + 1].startsWith(' ') || lines[i + 1].startsWith('\t'))) {
+      i++;
+      line += lines[i].trim();
     }
 
-    return events;
+    if (line === 'BEGIN:VEVENT') {
+      currentEvent = {};
+    } else if (line === 'END:VEVENT' && currentEvent) {
+      if (currentEvent.dtstart && currentEvent.summary) {
+        events.push(currentEvent);
+      }
+      currentEvent = null;
+    } else if (currentEvent) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const field = line.substring(0, colonIndex);
+        const value = line.substring(colonIndex + 1);
+
+        const fieldName = field.split(';')[0]; // Handle fields like DTSTART;TZID=...
+
+        switch (fieldName) {
+          case 'DTSTART':
+            currentEvent.dtstart = parseICSDate(value);
+            break;
+          case 'DTEND':
+            currentEvent.dtend = parseICSDate(value);
+            break;
+          case 'SUMMARY':
+            currentEvent.summary = value;
+            break;
+          case 'DESCRIPTION':
+            currentEvent.description = value;
+            break;
+          case 'LOCATION':
+            currentEvent.location = value.replace(/\\n/g, '\n').replace(/\\,/g, ',');
+            break;
+          case 'UID':
+            currentEvent.uid = value;
+            break;
+          case 'STATUS':
+            currentEvent.status = value;
+            break;
+        }
+      }
+    }
+  }
+
+  return events;
 }
 
 /**
@@ -260,28 +307,28 @@ export function parseICS(icsText) {
  * @returns {Date} JavaScript Date object
  */
 function parseICSDate(icsDate) {
-    // ICS dates are in format: 20251115T020000Z or 20251115
-    const year = parseInt(icsDate.substring(0, 4));
-    const month = parseInt(icsDate.substring(4, 6)) - 1; // JS months are 0-indexed
-    const day = parseInt(icsDate.substring(6, 8));
+  // ICS dates are in format: 20251115T020000Z or 20251115
+  const year = parseInt(icsDate.substring(0, 4));
+  const month = parseInt(icsDate.substring(4, 6)) - 1; // JS months are 0-indexed
+  const day = parseInt(icsDate.substring(6, 8));
 
-    if (icsDate.length > 8) {
-        // Has time component
-        const hour = parseInt(icsDate.substring(9, 11));
-        const minute = parseInt(icsDate.substring(11, 13));
-        const second = parseInt(icsDate.substring(13, 15));
+  if (icsDate.length > 8) {
+    // Has time component
+    const hour = parseInt(icsDate.substring(9, 11));
+    const minute = parseInt(icsDate.substring(11, 13));
+    const second = parseInt(icsDate.substring(13, 15));
 
-        if (icsDate.endsWith('Z')) {
-            // UTC time
-            return new Date(Date.UTC(year, month, day, hour, minute, second));
-        } else {
-            // Local time
-            return new Date(year, month, day, hour, minute, second);
-        }
+    if (icsDate.endsWith('Z')) {
+      // UTC time
+      return new Date(Date.UTC(year, month, day, hour, minute, second));
     } else {
-        // Date only
-        return new Date(year, month, day);
+      // Local time
+      return new Date(year, month, day, hour, minute, second);
     }
+  } else {
+    // Date only
+    return new Date(year, month, day);
+  }
 }
 
 /**
@@ -292,36 +339,36 @@ function parseICSDate(icsDate) {
  * @returns {string} Opponent name or summary if no pattern matched
  */
 export function extractOpponent(summary, teamName = '') {
-    if (!summary) return 'Unknown';
+  if (!summary) return 'Unknown';
 
-    // Check for "@ Opponent" pattern
-    const atMatch = summary.match(/@\s*(.+)/);
-    if (atMatch) {
-        return atMatch[1].trim();
+  // Check for "@ Opponent" pattern
+  const atMatch = summary.match(/@\s*(.+)/);
+  if (atMatch) {
+    return atMatch[1].trim();
+  }
+
+  // Check for "vs Opponent" pattern
+  const vsMatch = summary.match(/vs\.?\s+(.+)/i);
+  if (vsMatch) {
+    const opponent = vsMatch[1].trim();
+    // If team name is provided, exclude it from opponent
+    if (teamName && opponent.toLowerCase().includes(teamName.toLowerCase())) {
+      return opponent.replace(new RegExp(teamName, 'gi'), '').trim();
     }
+    return opponent;
+  }
 
-    // Check for "vs Opponent" pattern
-    const vsMatch = summary.match(/vs\.?\s+(.+)/i);
-    if (vsMatch) {
-        const opponent = vsMatch[1].trim();
-        // If team name is provided, exclude it from opponent
-        if (teamName && opponent.toLowerCase().includes(teamName.toLowerCase())) {
-            return opponent.replace(new RegExp(teamName, 'gi'), '').trim();
-        }
-        return opponent;
+  // Check for "Opponent vs Team" pattern (reverse)
+  const reverseVsMatch = summary.match(/(.+?)\s+vs\.?\s+/i);
+  if (reverseVsMatch && teamName && summary.toLowerCase().includes(teamName.toLowerCase())) {
+    const opponent = reverseVsMatch[1].trim();
+    if (!opponent.toLowerCase().includes(teamName.toLowerCase())) {
+      return opponent;
     }
+  }
 
-    // Check for "Opponent vs Team" pattern (reverse)
-    const reverseVsMatch = summary.match(/(.+?)\s+vs\.?\s+/i);
-    if (reverseVsMatch && teamName && summary.toLowerCase().includes(teamName.toLowerCase())) {
-        const opponent = reverseVsMatch[1].trim();
-        if (!opponent.toLowerCase().includes(teamName.toLowerCase())) {
-            return opponent;
-        }
-    }
-
-    // No pattern matched, return summary
-    return summary;
+  // No pattern matched, return summary
+  return summary;
 }
 
 /**
@@ -330,9 +377,9 @@ export function extractOpponent(summary, teamName = '') {
  * @returns {boolean} True if event is a practice
  */
 export function isPracticeEvent(summary) {
-    if (!summary) return false;
-    const lowerSummary = summary.toLowerCase();
-    return lowerSummary.includes('practice') ||
-        lowerSummary.includes('training') ||
-        lowerSummary.includes('skills club');
+  if (!summary) return false;
+  const lowerSummary = summary.toLowerCase();
+  return lowerSummary.includes('practice') ||
+    lowerSummary.includes('training') ||
+    lowerSummary.includes('skills club');
 }

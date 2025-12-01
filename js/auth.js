@@ -1,9 +1,21 @@
 import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-import { validateAccessCode, markAccessCodeAsUsed } from './db.js';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile } from './db.js';
 
-export function login(email, password) {
-    return signInWithEmailAndPassword(auth, email, password);
+export async function login(email, password) {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+
+    // Update user profile in Firestore to ensure they appear in Admin Users list
+    try {
+        await updateUserProfile(userCredential.user.uid, {
+            email: email,
+            lastLogin: new Date()
+        });
+    } catch (e) {
+        console.error('Error updating user profile on login:', e);
+    }
+
+    return userCredential;
 }
 
 export async function signup(email, password, activationCode) {
@@ -19,6 +31,16 @@ export async function signup(email, password, activationCode) {
 
     // Create user account
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+
+    // Create user profile in Firestore
+    try {
+        await updateUserProfile(userCredential.user.uid, {
+            email: email,
+            createdAt: new Date()
+        });
+    } catch (e) {
+        console.error('Error creating user profile:', e);
+    }
 
     // Mark the code as used (optional - don't fail if this doesn't work)
     try {
@@ -73,6 +95,25 @@ export async function loginWithGoogle(activationCode = null) {
             console.error('Error marking code as used:', error);
             // Don't fail signup if we can't mark the code, user is already created
         }
+        // Mark code as used (optional - don't fail if this doesn't work)
+        try {
+            await markAccessCodeAsUsed(validation.codeId, result.user.uid);
+        } catch (error) {
+            console.error('Error marking code as used:', error);
+            // Don't fail signup if we can't mark the code, user is already created
+        }
+
+        // Create user profile in Firestore
+        try {
+            await updateUserProfile(result.user.uid, {
+                email: result.user.email,
+                fullName: result.user.displayName,
+                photoUrl: result.user.photoURL,
+                createdAt: new Date()
+            });
+        } catch (e) {
+            console.error('Error creating user profile:', e);
+        }
     }
 
     return result;
@@ -96,8 +137,22 @@ export function requireAuth() {
     });
 }
 
+import { getUserProfile } from './db.js';
+
 export function checkAuth(callback) {
-    return onAuthStateChanged(auth, callback);
+    return onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            try {
+                const profile = await getUserProfile(user.uid);
+                if (profile && profile.isAdmin) {
+                    user.isAdmin = true;
+                }
+            } catch (e) {
+                console.error('Error fetching user profile for auth check:', e);
+            }
+        }
+        callback(user);
+    });
 }
 
 export function resetPassword(email) {

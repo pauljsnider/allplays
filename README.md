@@ -9,6 +9,8 @@ A static HTML + JavaScript sports team management and stat tracking application,
 - **Schedule**: Manage upcoming games and past results.
 - **Live Stat Tracking**: Track stats live during games with a mobile-friendly interface.
 - **Match Reports**: View detailed summaries and aggregated stats for completed games.
+- **Admin Dashboard**: Comprehensive admin section for user and data management (restricted access).
+- **Public/Private Teams**: Control team visibility in the public directory.
 - **Email Summaries**: Generate a mailto draft of the game summary from the tracker UI (no backend send).
 
 ## Tech Stack
@@ -55,10 +57,36 @@ npx http-server .
 
 Open `http://localhost:8000` (or port shown) in your browser.
 
+## Admin Setup
+
+To grant admin access to a user:
+
+1. The user must first sign up and create an account
+2. In Firestore console, navigate to the `users` collection
+3. Find the user document by email
+4. Add a field: `isAdmin` (boolean) = `true`
+
+Admin users have access to:
+- **Admin Dashboard** at `/admin.html` with full site statistics
+- View and manage all teams (edit/delete capabilities)
+- View all users
+- Admin button in navigation (replaces "Get Started" when signed in)
+
+**Note**: Admin access is enforced through Firestore security rules. The `isAdmin` field is checked server-side for all admin operations.
+
+## Security Features
+
+- **Firestore Security Rules**: Multi-level access control with owner, team admin, and global admin permissions
+- **Global Admin Functions**: Admins can manage any team or user data
+- **Team Privacy**: Teams can be marked as public/private to control visibility
+- **Access Code System**: Controlled signup with invitation codes
+- **XSS Protection**: HTML escaping for user-generated content in admin dashboard
+
 ## Folder Structure
 
 - `index.html`: Public home page.
 - `dashboard.html`: User dashboard (protected).
+- `admin.html`: Admin dashboard (admin users only).
 - `team.html`: Public team details.
 - `game.html`: Match report.
 - `track.html`: Live tracking interface.

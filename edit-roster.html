@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" type="image/png" href="img/logo_small.png">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Edit Roster - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
@@ -43,7 +43,8 @@
                 <div class="bg-white rounded-lg shadow-md p-6 sticky top-8">
                     <div class="flex items-center justify-between mb-2">
                         <h2 class="text-xl font-bold">Player</h2>
-                        <button id="cancel-edit" type="button" class="text-sm text-gray-500 hover:text-gray-700 hidden">Cancel</button>
+                        <button id="cancel-edit" type="button"
+                            class="text-sm text-gray-500 hover:text-gray-700 hidden">Cancel</button>
                     </div>
                     <p id="form-subtitle" class="text-xs text-gray-500 mb-4">Add a new player to the roster.</p>
                     <form id="add-player-form" class="space-y-4">
@@ -63,9 +64,12 @@
                                 class="mt-1 block w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                             <p class="text-xs text-gray-500 mt-1">JPG/PNG up to 5MB.</p>
                             <div id="player-photo-preview" class="mt-2 flex items-center gap-3 hidden">
-                                <span class="inline-flex h-12 w-12 rounded-full bg-gray-100 overflow-hidden border border-gray-200" id="player-photo-thumb"></span>
+                                <span
+                                    class="inline-flex h-12 w-12 rounded-full bg-gray-100 overflow-hidden border border-gray-200"
+                                    id="player-photo-thumb"></span>
                                 <label class="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                                    <input type="checkbox" id="removePhoto" class="rounded text-indigo-600 focus:ring-indigo-500">
+                                    <input type="checkbox" id="removePhoto"
+                                        class="rounded text-indigo-600 focus:ring-indigo-500">
                                     <span>Remove photo</span>
                                 </label>
                             </div>
@@ -111,7 +115,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=6';
+        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -123,6 +127,7 @@
         function hasAccess(team, user) {
             if (!team || !user) return false;
             if (team.ownerId === user.uid) return true;
+            if (user.isAdmin) return true;
             const email = (user.email || '').toLowerCase();
             return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
         }

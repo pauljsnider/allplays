@@ -49,3 +49,8 @@ service-account-*.json
 
 # Security
 *.private
+
+# Migration and admin utility scripts
+migrate_admin.js
+verify_admin.js
+check-admin-status.html
