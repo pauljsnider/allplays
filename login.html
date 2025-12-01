@@ -87,7 +87,6 @@
     <script type="module">
         import { login, signup, checkAuth, loginWithGoogle, resetPassword } from './js/auth.js?v=4';
         import { renderHeader, renderFooter } from './js/utils.js?v=7';
-        import { getUserByEmail } from './js/db.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -209,12 +208,8 @@
             }
 
             try {
-                // Check if user exists in our database first
-                const user = await getUserByEmail(email);
-                if (!user) {
-                    throw new Error('No account found with this email address.');
-                }
-
+                // Firebase will validate if the email exists in Auth
+                // No need to check Firestore - user may exist in Auth but not in DB
                 await resetPassword(email);
 
                 // Clear the email field for security
