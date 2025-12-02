@@ -40,14 +40,26 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
             <!-- Add Player Form -->
             <div class="md:col-span-1">
-                <div class="bg-white rounded-lg shadow-md p-6 sticky top-8">
-                    <div class="flex items-center justify-between mb-2">
-                        <h2 class="text-xl font-bold">Player</h2>
-                        <button id="cancel-edit" type="button"
-                            class="text-sm text-gray-500 hover:text-gray-700 hidden">Cancel</button>
+                <div class="bg-white rounded-lg shadow-md overflow-hidden sticky top-8">
+                    <!-- Tab Navigation -->
+                    <div class="flex border-b border-gray-200">
+                        <button id="tab-add-player" class="flex-1 px-4 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50">
+                            Add Player
+                        </button>
+                        <button id="tab-bulk-ai" class="flex-1 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            ✨ Bulk AI Update
+                        </button>
                     </div>
-                    <p id="form-subtitle" class="text-xs text-gray-500 mb-4">Add a new player to the roster.</p>
-                    <form id="add-player-form" class="space-y-4">
+
+                    <!-- Add Player Tab Content -->
+                    <div id="content-add-player" class="p-6">
+                        <div class="flex items-center justify-between mb-2">
+                            <h2 class="text-xl font-bold">Player</h2>
+                            <button id="cancel-edit" type="button"
+                                class="text-sm text-gray-500 hover:text-gray-700 hidden">Cancel</button>
+                        </div>
+                        <p id="form-subtitle" class="text-xs text-gray-500 mb-4">Add a new player to the roster.</p>
+                        <form id="add-player-form" class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Name</label>
                             <input type="text" id="playerName" required
@@ -78,6 +90,75 @@
                             class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
                             Player</button>
                     </form>
+                    </div>
+
+                    <!-- Bulk AI Update Tab Content -->
+                    <div id="content-bulk-ai" class="p-6 hidden">
+                        <h2 class="text-xl font-bold mb-4">Bulk AI Update</h2>
+
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Upload Roster Image (optional)
+                                </label>
+                                <input type="file" id="roster-image-input" accept="image/*"
+                                    class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                                <p class="text-xs text-gray-500 mt-1">Upload a photo/screenshot of the roster</p>
+
+                                <!-- Image preview -->
+                                <div id="roster-image-preview" class="hidden mt-3">
+                                    <img id="roster-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Roster preview">
+                                    <button type="button" id="remove-roster-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">
+                                    Additional Instructions (optional)
+                                </label>
+                                <textarea id="bulk-text-input" rows="3"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                                    placeholder="e.g., 'Just the A team' or 'Only players 1-20'"></textarea>
+                            </div>
+
+                            <button id="process-ai-btn" type="button"
+                                class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition flex items-center justify-center gap-2">
+                                <span>✨</span>
+                                <span>Process with AI</span>
+                            </button>
+
+                            <div id="ai-loading" class="hidden mt-4 text-sm text-indigo-600 flex items-center gap-2 justify-center">
+                                <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Processing with AI...
+                            </div>
+
+                            <!-- Proposed Changes Preview -->
+                            <div id="proposed-changes-section" class="hidden mt-6">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="font-semibold text-gray-900">Proposed Changes</h3>
+                                    <span id="changes-count" class="text-sm text-gray-600"></span>
+                                </div>
+
+                                <div id="proposed-changes-list" class="space-y-2 max-h-96 overflow-y-auto">
+                                    <!-- Proposed changes will be rendered here -->
+                                </div>
+
+                                <div class="flex gap-2 mt-4">
+                                    <button id="cancel-changes-btn" type="button"
+                                        class="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
+                                        Cancel
+                                    </button>
+                                    <button id="apply-changes-btn" type="button"
+                                        class="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700">
+                                        ✅ Apply Changes
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -117,6 +198,8 @@
         import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
+        import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+        import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -231,6 +314,14 @@
         }
 
         function startEditPlayer(player) {
+            // Switch to Add Player tab
+            document.getElementById('tab-add-player').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            document.getElementById('tab-add-player').classList.remove('text-gray-600');
+            document.getElementById('tab-bulk-ai').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            document.getElementById('tab-bulk-ai').classList.add('text-gray-600');
+            document.getElementById('content-add-player').classList.remove('hidden');
+            document.getElementById('content-bulk-ai').classList.add('hidden');
+
             editingPlayerId = player.id;
             editingPhotoUrl = player.photoUrl || null;
             document.getElementById('playerName').value = player.name || '';
@@ -296,6 +387,350 @@
             } catch (error) {
                 console.error(error);
                 alert('Error adding player.');
+            }
+        });
+
+        // ===== BULK AI UPDATE FUNCTIONALITY =====
+
+        let proposedOperations = [];
+
+        // Tab switching
+        document.getElementById('tab-add-player').addEventListener('click', () => {
+            // Update tab styles
+            document.getElementById('tab-add-player').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            document.getElementById('tab-add-player').classList.remove('text-gray-600');
+            document.getElementById('tab-bulk-ai').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            document.getElementById('tab-bulk-ai').classList.add('text-gray-600');
+
+            // Show/hide content
+            document.getElementById('content-add-player').classList.remove('hidden');
+            document.getElementById('content-bulk-ai').classList.add('hidden');
+        });
+
+        document.getElementById('tab-bulk-ai').addEventListener('click', () => {
+            // Update tab styles
+            document.getElementById('tab-bulk-ai').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            document.getElementById('tab-bulk-ai').classList.remove('text-gray-600');
+            document.getElementById('tab-add-player').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            document.getElementById('tab-add-player').classList.add('text-gray-600');
+
+            // Show/hide content
+            document.getElementById('content-bulk-ai').classList.remove('hidden');
+            document.getElementById('content-add-player').classList.add('hidden');
+        });
+
+        // Image preview handler
+        document.getElementById('roster-image-input').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    document.getElementById('roster-image-preview-img').src = event.target.result;
+                    document.getElementById('roster-image-preview').classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Remove image handler
+        document.getElementById('remove-roster-image').addEventListener('click', () => {
+            document.getElementById('roster-image-input').value = '';
+            document.getElementById('roster-image-preview').classList.add('hidden');
+            document.getElementById('roster-image-preview-img').src = '';
+        });
+
+        // Helper function to convert image file to base64 for Gemini
+        async function fileToGenerativePart(file) {
+            const base64EncodedDataPromise = new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.readAsDataURL(file);
+            });
+            return {
+                inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+            };
+        }
+
+        // Process with AI
+        document.getElementById('process-ai-btn').addEventListener('click', async () => {
+            const textInput = document.getElementById('bulk-text-input').value.trim();
+            const imageFile = document.getElementById('roster-image-input').files[0];
+
+            if (!textInput && !imageFile) {
+                alert('Please upload an image or paste roster text');
+                return;
+            }
+
+            const loadingDiv = document.getElementById('ai-loading');
+            const processBtn = document.getElementById('process-ai-btn');
+
+            try {
+                // Show loading state
+                loadingDiv.classList.remove('hidden');
+                processBtn.disabled = true;
+                processBtn.classList.add('opacity-50');
+
+                // Get current players for context
+                const currentPlayers = await getPlayers(currentTeamId);
+
+                // Build context for AI
+                const playersContext = currentPlayers.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    number: p.number || ''
+                }));
+
+                // Define JSON schema for structured output
+                const jsonSchema = Schema.object({
+                    properties: {
+                        operations: Schema.array({
+                            items: Schema.object({
+                                properties: {
+                                    action: Schema.string(),
+                                    player: Schema.object({
+                                        properties: {
+                                            name: Schema.string(),
+                                            number: Schema.string()
+                                        },
+                                        optionalProperties: ["number"]
+                                    }),
+                                    playerId: Schema.string(),
+                                    changes: Schema.object({
+                                        properties: {
+                                            name: Schema.string(),
+                                            number: Schema.string()
+                                        },
+                                        optionalProperties: ["name", "number"]
+                                    }),
+                                    reason: Schema.string()
+                                },
+                                optionalProperties: ["player", "playerId", "changes", "reason"]
+                            })
+                        })
+                    }
+                });
+
+                // Create AI prompt
+                let promptText = `Parse this roster/player list and extract player information.
+
+CONTEXT:
+- Current players in roster: ${playersContext.length}
+${textInput ? `\nADDITIONAL INSTRUCTIONS:\n${textInput}\n` : ''}
+PARSING RULES:
+1. Extract ALL players ${imageFile ? 'from the image' : 'from the text'} (look for Name and Number patterns)
+2. Number formats: "#10", "10", "#10 Name", "Name - 10", "Name (10)", etc.
+3. Skip headers, blank lines, team names, and non-player text
+4. If no number is provided, leave it empty
+5. For each player, create an operation with action="add" and player object with name and number (optional)
+
+EXAMPLES:
+- "#10 John Smith" → name: "John Smith", number: "10"
+- "23 Jane Doe" → name: "Jane Doe", number: "23"
+- "Sarah Johnson - 15" → name: "Sarah Johnson", number: "15"
+- "Mike Wilson" → name: "Mike Wilson", number: ""`;
+
+                // Call Firebase AI with structured output
+                const firebaseApp = getApp();
+                const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+                const model = getGenerativeModel(ai, {
+                    model: "gemini-2.5-flash",
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: jsonSchema
+                    }
+                });
+
+                // Build prompt with or without image
+                let promptParts = [promptText];
+                if (imageFile) {
+                    const imagePart = await fileToGenerativePart(imageFile);
+                    promptParts.push(imagePart);
+                }
+
+                const result = await model.generateContent(promptParts);
+
+                // Parse the JSON response
+                const responseText = result.response.text();
+                const aiResponse = JSON.parse(responseText);
+
+                if (!aiResponse.operations || !Array.isArray(aiResponse.operations)) {
+                    throw new Error('Invalid AI response format - missing "operations" array. Response: ' + JSON.stringify(aiResponse));
+                }
+
+                // Store operations and render preview
+                proposedOperations = aiResponse.operations;
+
+                if (proposedOperations.length === 0) {
+                    alert('AI did not find any players to add/update/delete in the text. Please try being more specific.');
+                }
+
+                renderProposedChanges();
+
+            } catch (error) {
+                console.error('Error processing with AI:', error);
+                alert('Error processing roster with AI:\n\n' + error.message);
+            } finally {
+                // Hide loading state
+                loadingDiv.classList.add('hidden');
+                processBtn.disabled = false;
+                processBtn.classList.remove('opacity-50');
+            }
+        });
+
+        // Render proposed changes with edit/delete capabilities
+        function renderProposedChanges() {
+            const section = document.getElementById('proposed-changes-section');
+            const list = document.getElementById('proposed-changes-list');
+            const countSpan = document.getElementById('changes-count');
+
+            if (proposedOperations.length === 0) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            section.classList.remove('hidden');
+            countSpan.textContent = `${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'}`;
+
+            list.innerHTML = proposedOperations.map((op, index) => {
+                if (op.action === 'add') {
+                    const player = op.player;
+
+                    return `
+                        <div class="border border-green-300 bg-green-50 rounded-lg p-3" data-index="${index}">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="text-xs font-bold text-green-700 uppercase">➕ Add</span>
+                                    </div>
+                                    <div class="text-sm">
+                                        <input type="text" value="${player.name}"
+                                            onchange="updatePlayerOperation(${index}, 'name', this.value)"
+                                            class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1"
+                                            placeholder="Player Name">
+                                        <input type="text" value="${player.number || ''}"
+                                            onchange="updatePlayerOperation(${index}, 'number', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full"
+                                            placeholder="Number (optional)">
+                                    </div>
+                                </div>
+                                <button onclick="removePlayerOperation(${index})"
+                                    class="text-red-600 hover:text-red-800 text-sm font-bold">✕</button>
+                            </div>
+                        </div>
+                    `;
+                } else if (op.action === 'update') {
+                    return `
+                        <div class="border border-blue-300 bg-blue-50 rounded-lg p-3" data-index="${index}">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="flex-1">
+                                    <div class="text-xs font-bold text-blue-700 uppercase mb-1">✏️ Update</div>
+                                    <div class="text-sm">
+                                        Player ID: ${op.playerId}<br>
+                                        Changes: ${JSON.stringify(op.changes)}<br>
+                                        <span class="text-xs text-gray-600">${op.reason || ''}</span>
+                                    </div>
+                                </div>
+                                <button onclick="removePlayerOperation(${index})"
+                                    class="text-red-600 hover:text-red-800 text-sm font-bold">✕</button>
+                            </div>
+                        </div>
+                    `;
+                } else if (op.action === 'delete') {
+                    return `
+                        <div class="border border-red-300 bg-red-50 rounded-lg p-3" data-index="${index}">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="flex-1">
+                                    <div class="text-xs font-bold text-red-700 uppercase mb-1">🗑️ Delete</div>
+                                    <div class="text-sm">
+                                        Player ID: ${op.playerId}<br>
+                                        <span class="text-xs text-gray-600">${op.reason || 'Removed from roster'}</span>
+                                    </div>
+                                </div>
+                                <button onclick="removePlayerOperation(${index})"
+                                    class="text-gray-600 hover:text-gray-800 text-sm font-bold">✕</button>
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('');
+        }
+
+        // Update operation when user edits
+        window.updatePlayerOperation = function(index, field, value) {
+            if (proposedOperations[index].action === 'add') {
+                proposedOperations[index].player[field] = value;
+            }
+        };
+
+        // Remove operation from list
+        window.removePlayerOperation = function(index) {
+            proposedOperations.splice(index, 1);
+            renderProposedChanges();
+        };
+
+        // Cancel changes
+        document.getElementById('cancel-changes-btn').addEventListener('click', () => {
+            proposedOperations = [];
+            document.getElementById('proposed-changes-section').classList.add('hidden');
+            document.getElementById('bulk-text-input').value = '';
+        });
+
+        // Apply changes to database
+        document.getElementById('apply-changes-btn').addEventListener('click', async () => {
+            if (proposedOperations.length === 0) return;
+
+            const confirmMsg = `Apply ${proposedOperations.length} change${proposedOperations.length === 1 ? '' : 's'} to the roster?`;
+            if (!confirm(confirmMsg)) return;
+
+            const applyBtn = document.getElementById('apply-changes-btn');
+            const cancelBtn = document.getElementById('cancel-changes-btn');
+
+            try {
+                applyBtn.disabled = true;
+                cancelBtn.disabled = true;
+                applyBtn.textContent = 'Applying...';
+
+                let successCount = 0;
+                let errorCount = 0;
+
+                for (const op of proposedOperations) {
+                    try {
+                        if (op.action === 'add') {
+                            const playerData = {
+                                name: op.player.name,
+                                number: op.player.number || ''
+                            };
+                            await addPlayer(currentTeamId, playerData);
+                            successCount++;
+                        } else if (op.action === 'update') {
+                            await updatePlayer(currentTeamId, op.playerId, op.changes);
+                            successCount++;
+                        } else if (op.action === 'delete') {
+                            await deletePlayer(currentTeamId, op.playerId);
+                            successCount++;
+                        }
+                    } catch (error) {
+                        console.error(`Error applying operation:`, op, error);
+                        errorCount++;
+                    }
+                }
+
+                // Show results
+                alert(`Applied ${successCount} change${successCount === 1 ? '' : 's'} successfully.${errorCount > 0 ? `\n${errorCount} error${errorCount === 1 ? '' : 's'} occurred.` : ''}`);
+
+                // Reset and reload
+                proposedOperations = [];
+                document.getElementById('proposed-changes-section').classList.add('hidden');
+                document.getElementById('bulk-text-input').value = '';
+                await loadRoster();
+
+            } catch (error) {
+                console.error('Error applying changes:', error);
+                alert('Error applying changes: ' + error.message);
+            } finally {
+                applyBtn.disabled = false;
+                cancelBtn.disabled = false;
+                applyBtn.textContent = '✅ Apply Changes';
             }
         });
     </script>
