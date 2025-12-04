@@ -1,6 +1,6 @@
 import { db } from './firebase.js';
 import { imageStorage, ensureImageAuth } from './firebase-images.js';
-import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-storage.js";
 
 export async function uploadTeamPhoto(file) {
@@ -200,6 +200,192 @@ export async function updateGame(teamId, gameId, gameData) {
 
 export async function deleteGame(teamId, gameId) {
     await deleteDoc(doc(db, `teams/${teamId}/games`, gameId));
+}
+
+// ============================================
+// Events (Games + Practices) - Phase 1
+// ============================================
+
+/**
+ * Normalize legacy game docs with defaults for backward compatibility
+ * @param {Object} doc - Raw document from Firestore
+ * @returns {Object} Normalized event with type and title defaults
+ */
+export function normalizeEvent(doc) {
+    return {
+        ...doc,
+        type: doc.type || 'game',
+        title: doc.title || (doc.type === 'practice' ? 'Practice' : null),
+        end: doc.end || null
+    };
+}
+
+/**
+ * Get all events (games + practices) with optional filtering
+ * @param {string} teamId - Team ID
+ * @param {Object} options - { type: 'game' | 'practice' | 'all' }
+ * @returns {Promise<Array>} Array of normalized events
+ */
+export async function getEvents(teamId, options = {}) {
+    const q = query(collection(db, `teams/${teamId}/games`), orderBy("date"));
+    const snapshot = await getDocs(q);
+    let events = snapshot.docs.map(d => normalizeEvent({ id: d.id, ...d.data() }));
+
+    if (options.type && options.type !== 'all') {
+        events = events.filter(e => e.type === options.type);
+    }
+    return events;
+}
+
+/**
+ * Add a generic event (game or practice)
+ * @param {string} teamId - Team ID
+ * @param {Object} eventData - Event data including type field
+ * @returns {Promise<string>} New document ID
+ */
+export async function addEvent(teamId, eventData) {
+    eventData.createdAt = Timestamp.now();
+    eventData.type = eventData.type || 'game';
+    const docRef = await addDoc(collection(db, `teams/${teamId}/games`), eventData);
+    return docRef.id;
+}
+
+/**
+ * Add a practice event
+ * @param {string} teamId - Team ID
+ * @param {Object} practiceData - { title, date, end, location, notes, recurrence? }
+ * @returns {Promise<string>} New document ID
+ */
+export async function addPractice(teamId, practiceData) {
+    return addEvent(teamId, {
+        ...practiceData,
+        type: 'practice',
+        title: practiceData.title || 'Practice',
+        opponent: null,
+        status: 'scheduled',
+        homeScore: 0,
+        awayScore: 0,
+        statTrackerConfigId: null
+    });
+}
+
+/**
+ * Update any event (game or practice)
+ * @param {string} teamId - Team ID
+ * @param {string} eventId - Event document ID
+ * @param {Object} eventData - Fields to update
+ */
+export async function updateEvent(teamId, eventId, eventData) {
+    const docRef = doc(db, `teams/${teamId}/games`, eventId);
+    await updateDoc(docRef, eventData);
+}
+
+/**
+ * Delete any event (game or practice)
+ * @param {string} teamId - Team ID
+ * @param {string} eventId - Event document ID
+ */
+export async function deleteEvent(teamId, eventId) {
+    await deleteDoc(doc(db, `teams/${teamId}/games`, eventId));
+}
+
+// ============================================
+// Recurring Practices - Phase 2
+// ============================================
+
+/**
+ * Cancel a single occurrence of a recurring practice
+ * @param {string} teamId - Team ID
+ * @param {string} masterId - The series master document ID
+ * @param {string} isoDate - The date to cancel (e.g., '2024-12-24')
+ */
+export async function cancelOccurrence(teamId, masterId, isoDate) {
+    const docRef = doc(db, `teams/${teamId}/games`, masterId);
+    await updateDoc(docRef, {
+        exDates: arrayUnion(isoDate)
+    });
+}
+
+/**
+ * Update a single occurrence of a recurring practice
+ * @param {string} teamId - Team ID
+ * @param {string} masterId - The series master document ID
+ * @param {string} isoDate - The date to override (e.g., '2024-12-19')
+ * @param {Object} changes - The fields to override { startTime, endTime, location, title, notes }
+ */
+export async function updateOccurrence(teamId, masterId, isoDate, changes) {
+    const docRef = doc(db, `teams/${teamId}/games`, masterId);
+
+    // Build the update object with dot notation for nested field
+    const updateData = {};
+    Object.keys(changes).forEach(key => {
+        updateData[`overrides.${isoDate}.${key}`] = changes[key];
+    });
+
+    await updateDoc(docRef, updateData);
+}
+
+/**
+ * Restore a previously cancelled occurrence
+ * @param {string} teamId - Team ID
+ * @param {string} masterId - The series master document ID
+ * @param {string} isoDate - The date to restore (e.g., '2024-12-24')
+ */
+export async function restoreOccurrence(teamId, masterId, isoDate) {
+    const docRef = doc(db, `teams/${teamId}/games`, masterId);
+    await updateDoc(docRef, {
+        exDates: arrayRemove(isoDate)
+    });
+}
+
+/**
+ * Remove override for a specific occurrence, reverting to series defaults
+ * @param {string} teamId - Team ID
+ * @param {string} masterId - The series master document ID
+ * @param {string} isoDate - The date to clear override for
+ */
+export async function clearOccurrenceOverride(teamId, masterId, isoDate) {
+    const docRef = doc(db, `teams/${teamId}/games`, masterId);
+    await updateDoc(docRef, {
+        [`overrides.${isoDate}`]: deleteField()
+    });
+}
+
+/**
+ * Update the entire recurring series (affects all future occurrences)
+ * @param {string} teamId - Team ID
+ * @param {string} masterId - The series master document ID
+ * @param {Object} seriesData - Fields to update on the master
+ */
+export async function updateSeries(teamId, masterId, seriesData) {
+    const docRef = doc(db, `teams/${teamId}/games`, masterId);
+    await updateDoc(docRef, seriesData);
+}
+
+/**
+ * Delete the entire recurring series and all its occurrences
+ * @param {string} teamId - Team ID
+ * @param {string} masterId - The series master document ID
+ */
+export async function deleteSeries(teamId, masterId) {
+    await deleteDoc(doc(db, `teams/${teamId}/games`, masterId));
+}
+
+/**
+ * Find the series master document by its seriesId
+ * @param {string} teamId - Team ID
+ * @param {string} seriesId - The UUID of the series
+ * @returns {Promise<Object|null>} The master document or null
+ */
+export async function getSeriesMaster(teamId, seriesId) {
+    const q = query(
+        collection(db, `teams/${teamId}/games`),
+        where("seriesId", "==", seriesId),
+        where("isSeriesMaster", "==", true)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return null;
+    return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
 // Configs

@@ -383,3 +383,209 @@ export function isPracticeEvent(summary) {
     lowerSummary.includes('training') ||
     lowerSummary.includes('skills club');
 }
+
+// ============================================
+// Practice & Event Utilities - Phase 1
+// ============================================
+
+/**
+ * Format a time range for display (e.g., "6:00 PM - 8:00 PM")
+ * @param {Date|Timestamp|string} start - Start time
+ * @param {Date|Timestamp|string} end - End time
+ * @returns {string} Formatted time range
+ */
+export function formatTimeRange(start, end) {
+  if (!start) return '';
+  const startStr = formatTime(start);
+  if (!end) return startStr;
+  const endStr = formatTime(end);
+  return `${startStr} - ${endStr}`;
+}
+
+/**
+ * Compute default end time based on event type
+ * @param {Date|Timestamp|string} startDate - Start date/time
+ * @param {string} type - Event type ('game' or 'practice')
+ * @returns {Date|null} Default end time
+ */
+export function getDefaultEndTime(startDate, type = 'game') {
+  if (!startDate) return null;
+  const date = startDate.toDate ? startDate.toDate() : new Date(startDate);
+  // Practices default to 1.5 hours, games to 2 hours
+  const durationMs = type === 'practice' ? 90 * 60 * 1000 : 120 * 60 * 1000;
+  return new Date(date.getTime() + durationMs);
+}
+
+// ============================================
+// Recurring Practices - Phase 2
+// ============================================
+
+/**
+ * Generate a UUID v4 for series identification
+ * @returns {string} UUID string
+ */
+export function generateSeriesId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+/**
+ * Day code mapping for recurrence
+ */
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+
+/**
+ * Expand a recurring practice master into individual occurrences
+ * @param {Object} master - The series master document
+ * @param {number} windowDays - Number of days to expand into the future (default 180)
+ * @returns {Array} Array of occurrence objects
+ */
+export function expandRecurrence(master, windowDays = 180) {
+  // If not a series master, return as single item
+  if (!master.isSeriesMaster || !master.recurrence) {
+    return [master];
+  }
+
+  const occurrences = [];
+  const now = new Date();
+  const pastWindow = 14; // Show past 14 days for recent cancellations
+  const windowStart = new Date(now.getTime() - pastWindow * 24 * 60 * 60 * 1000);
+  const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
+
+  const { freq, interval = 1, byDays = [], until, count } = master.recurrence;
+  const exDates = master.exDates || [];
+  const overrides = master.overrides || {};
+
+  // Start from series creation date
+  const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
+  let current = new Date(seriesStart);
+  let generated = 0;
+
+  // For weekly recurrence, we need to check each day
+  const maxIterations = windowDays * 2; // Safety limit
+  let iterations = 0;
+
+  while (current <= windowEnd && iterations < maxIterations) {
+    iterations++;
+
+    // Check end conditions
+    if (until) {
+      const untilDate = until.toDate ? until.toDate() : new Date(until);
+      if (current > untilDate) break;
+    }
+    if (count && generated >= count) break;
+
+    const isoDate = current.toISOString().split('T')[0];
+    const dayCode = DAY_CODES[current.getDay()];
+
+    // Check if this day matches the recurrence pattern
+    let matches = false;
+    if (freq === 'weekly' && byDays.length > 0) {
+      matches = byDays.includes(dayCode);
+    } else if (freq === 'daily') {
+      matches = true;
+    } else if (freq === 'weekly' && byDays.length === 0) {
+      // If no specific days, match the same day as series start
+      matches = current.getDay() === seriesStart.getDay();
+    }
+
+    // Only process if within visible window and matches pattern
+    if (matches && current >= windowStart && !exDates.includes(isoDate)) {
+      const override = overrides[isoDate] || {};
+
+      // Build the occurrence object
+      const occurrence = {
+        ...master,
+        id: master.id, // Keep master ID for reference
+        masterId: master.id,
+        instanceDate: isoDate,
+        isInstance: true,
+        // Apply overrides or use master defaults
+        title: override.title || master.title,
+        location: override.location || master.location,
+        notes: override.notes || master.notes,
+        startTime: override.startTime || master.startTime,
+        endTime: override.endTime || master.endTime,
+        // Mark if this occurrence has been modified
+        isModified: Object.keys(override).length > 0
+      };
+
+      // Compute actual date/time for this occurrence
+      if (master.startTime) {
+        const [hours, minutes] = (override.startTime || master.startTime).split(':').map(Number);
+        const occDate = new Date(current);
+        occDate.setHours(hours, minutes, 0, 0);
+        occurrence.date = occDate;
+
+        if (master.endTime || override.endTime) {
+          const [endHours, endMinutes] = (override.endTime || master.endTime).split(':').map(Number);
+          const endDate = new Date(current);
+          endDate.setHours(endHours, endMinutes, 0, 0);
+          occurrence.end = endDate;
+        }
+      } else {
+        occurrence.date = new Date(current);
+      }
+
+      occurrences.push(occurrence);
+      generated++;
+    }
+
+    // Advance to next day
+    current.setDate(current.getDate() + 1);
+
+    // For daily with interval > 1, skip days
+    if (freq === 'daily' && interval > 1) {
+      current.setDate(current.getDate() + interval - 1);
+    }
+  }
+
+  return occurrences;
+}
+
+/**
+ * Format recurrence rule for display
+ * @param {Object} recurrence - Recurrence object { freq, interval, byDays, until, count }
+ * @returns {string} Human-readable recurrence description
+ */
+export function formatRecurrence(recurrence) {
+  if (!recurrence) return '';
+
+  const { freq, interval = 1, byDays = [], until, count } = recurrence;
+
+  let text = '';
+
+  // Frequency
+  if (freq === 'daily') {
+    text = interval === 1 ? 'Daily' : `Every ${interval} days`;
+  } else if (freq === 'weekly') {
+    if (interval === 1) {
+      text = 'Weekly';
+    } else {
+      text = `Every ${interval} weeks`;
+    }
+
+    // Days
+    if (byDays.length > 0) {
+      const dayNames = {
+        'SU': 'Sun', 'MO': 'Mon', 'TU': 'Tue', 'WE': 'Wed',
+        'TH': 'Thu', 'FR': 'Fri', 'SA': 'Sat'
+      };
+      const dayList = byDays.map(d => dayNames[d] || d).join(', ');
+      text += ` on ${dayList}`;
+    }
+  }
+
+  // End condition
+  if (until) {
+    const untilDate = until.toDate ? until.toDate() : new Date(until);
+    text += ` until ${untilDate.toLocaleDateString()}`;
+  } else if (count) {
+    text += `, ${count} times`;
+  }
+
+  return text;
+}

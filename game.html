@@ -182,6 +182,13 @@
                     return;
                 }
 
+                // Practices don't have game reports - redirect to team page
+                if (game.type === 'practice') {
+                    alert('Practice events do not have game reports.');
+                    window.location.href = `team.html#teamId=${teamId}`;
+                    return;
+                }
+
                 // Render Header
                 const isWin = (game.homeScore || 0) > (game.awayScore || 0);
                 const isLoss = (game.homeScore || 0) < (game.awayScore || 0);

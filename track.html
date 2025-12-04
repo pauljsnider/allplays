@@ -325,6 +325,13 @@
                     return;
                 }
 
+                // Practices cannot be tracked - redirect to schedule
+                if (game.type === 'practice') {
+                    alert('Practice events cannot be tracked. Use game tracking for games only.');
+                    window.location.href = `edit-schedule.html#teamId=${teamId}`;
+                    return;
+                }
+
                 currentTeam = team;
                 currentGame = game;
                 players = playersList;
