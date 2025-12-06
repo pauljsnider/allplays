@@ -261,6 +261,8 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame } from './js/db.js';
+        import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { db } from './js/firebase.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { db } from './js/firebase.js';
@@ -298,6 +300,7 @@
             opponentStats: {},
             currentPeriod: 'Q1'
         };
+        let existingPlayerStats = {}; // Stores existing aggregated stats from Firestore
 
         checkAuth((user) => {
             if (!user) {
@@ -353,7 +356,10 @@
 
                 // Initialize opponent stats
                 opponentPlayers.forEach(p => {
-                    gameState.opponentStats[p.id] = {};
+                    gameState.opponentStats[p.id] = {
+                        name: p.name || '',
+                        number: p.number || ''
+                    };
                 });
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
@@ -373,6 +379,26 @@
                         name: 'Default',
                         columns: ['PTS', 'REB', 'AST', 'STL', 'TO']
                     };
+                }
+
+                // Load existing aggregated stats from Firestore
+                const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                statsSnapshot.forEach(doc => {
+                    existingPlayerStats[doc.id] = doc.data().stats || {};
+                });
+
+                // Also load existing scores from aggregated stats
+                let totalHomePoints = 0;
+                players.forEach(p => {
+                    if (existingPlayerStats[p.id]) {
+                        const pts = existingPlayerStats[p.id].pts || existingPlayerStats[p.id].points || 0;
+                        totalHomePoints += pts;
+                    }
+                });
+                // Use calculated total if game score is 0 but we have player stats
+                if (totalHomePoints > 0 && homeScore === 0) {
+                    homeScore = totalHomePoints;
+                    updateScoreDisplay();
                 }
 
                 // Initialize opponent stats with config columns
@@ -451,9 +477,10 @@
                     const statKey = col.toLowerCase();
 
                     if (isPoints) {
+                        const existingVal = (existingPlayerStats[player.id] && existingPlayerStats[player.id][statKey]) || 0;
                         rowHTML += `<td class="stat-cell-wide p-1">
                             <div class="flex flex-col items-center gap-1">
-                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">0</div>
+                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${existingVal}</div>
                                 <div class="flex gap-0.5">
                                     <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
                                         onclick="incrementStat('${player.id}', '${statKey}', 1, false)">1</button>
@@ -465,9 +492,10 @@
                             </div>
                         </td>`;
                     } else {
+                        const existingVal = (existingPlayerStats[player.id] && existingPlayerStats[player.id][statKey]) || 0;
                         rowHTML += `<td class="stat-cell p-1">
                             <div class="flex flex-col items-center gap-1">
-                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">0</div>
+                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${existingVal}</div>
                                 <div class="flex gap-0.5">
                                     <button class="stat-btn bg-green-50 text-green-600 border border-green-300 rounded w-5 h-5 text-xs font-bold hover:bg-green-100"
                                         onclick="incrementStat('${player.id}', '${statKey}', 1, false)">+</button>
@@ -566,6 +594,9 @@
         window.updateOpponentName = function (oppId, name) {
             const opp = opponentPlayers.find(o => o.id === oppId);
             if (opp) opp.name = name;
+            if (gameState.opponentStats[oppId]) {
+                gameState.opponentStats[oppId].name = name;
+            }
         };
 
         window.updateOpponentNote = function (oppId, note) {
@@ -694,7 +725,7 @@
                 name: '',
                 notes: ''
             };
-            gameState.opponentStats[newOpp.id] = {};
+            gameState.opponentStats[newOpp.id] = { name: '', number: '' };
             currentConfig.columns.forEach(col => {
                 gameState.opponentStats[newOpp.id][col.toLowerCase()] = 0;
             });
@@ -756,8 +787,8 @@
             }
         }
 
-        function resetTimer() {
-            if (confirm('Reset timer and clear all stats?')) {
+        async function resetTimer() {
+            if (confirm('Reset timer and clear all stats? This will also clear saved stats in the database.')) {
                 gameState.startTime = null;
                 gameState.elapsed = 0;
                 gameState.isRunning = false;
@@ -771,6 +802,16 @@
                 document.querySelectorAll('[id^="stat-"]').forEach(el => {
                     el.textContent = '0';
                 });
+
+                // Clear aggregated stats in Firebase
+                try {
+                    const statsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                    const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js");
+                    await Promise.all(statsSnapshot.docs.map(doc => deleteDoc(doc.ref)));
+                    existingPlayerStats = {}; // Clear local cache too
+                } catch (error) {
+                    console.error('Error clearing stats:', error);
+                }
 
                 updateScoreDisplay();
                 renderGameLog();

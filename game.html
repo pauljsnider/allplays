@@ -309,8 +309,13 @@
 
                     // Get stat keys from opponent stats
                     const opponentStatKeys = new Set();
+                    const metadataKeys = new Set(['name', 'number', 'notes']);
                     Object.values(game.opponentStats).forEach(stats => {
-                        Object.keys(stats).forEach(k => opponentStatKeys.add(k));
+                        Object.keys(stats).forEach(k => {
+                            if (!metadataKeys.has(k)) {
+                                opponentStatKeys.add(k);
+                            }
+                        });
                     });
                     const oppKeys = Array.from(opponentStatKeys).sort();
 
@@ -323,12 +328,15 @@
                     });
 
                     // Render rows
-                    const opponentPlayers = Object.entries(game.opponentStats).map(([id, stats]) => ({
-                        id,
-                        number: stats.number || id,
-                        name: stats.name || `Player ${id}`,
-                        stats
-                    }));
+                    const opponentPlayers = Object.entries(game.opponentStats).map(([id, stats]) => {
+                        const { name, number, notes, ...statValues } = stats;
+                        return {
+                            id,
+                            number: number || '-',
+                            name: name || 'Opponent Player',
+                            stats: statValues
+                        };
+                    });
 
                     opponentTbody.innerHTML = opponentPlayers.map(p => {
                         const statCells = oppKeys.map(key => `
