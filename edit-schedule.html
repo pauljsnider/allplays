@@ -246,29 +246,37 @@
 
                     <!-- Bulk AI Update Tab Content -->
                     <div id="content-bulk-ai" class="p-6 hidden">
-                        <h2 class="text-xl font-bold mb-4">Bulk AI Update</h2>
-
-                        <div class="space-y-4">
+                        <div class="flex items-start justify-between gap-3 mb-2">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">
-                                    Upload Schedule Image
-                                </label>
-                                <input type="file" id="schedule-image-input" accept="image/*"
-                                    class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
-                                <p class="text-xs text-gray-500 mt-1">Upload a photo/screenshot of the schedule</p>
-                                <div id="schedule-image-preview" class="hidden mt-3">
-                                    <img id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
-                                    <button type="button" id="remove-schedule-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
-                                </div>
+                                <h2 class="text-xl font-bold">Bulk AI Update</h2>
+                                <p class="text-sm text-gray-600">Upload an image (and add text hints), or skip the image and just paste raw schedule text. Short instructions help steer the results.</p>
                             </div>
+                            <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Image optional</span>
+                        </div>
 
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">
-                                    Additional Instructions (optional)
-                                </label>
-                                <textarea id="bulk-text-input" rows="4"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
-                                    placeholder="e.g., 'only include home games' or 'just the games in March'"></textarea>
+                        <div class="space-y-5">
+                            <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-800 mb-1">
+                                        Upload schedule image (optional)
+                                    </label>
+                                    <p class="text-xs text-gray-600 mb-2">Screenshot or photo of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
+                                    <input type="file" id="schedule-image-input" accept="image/*"
+                                        class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                                    <div id="schedule-image-preview" class="hidden mt-3">
+                                        <img id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
+                                        <button type="button" id="remove-schedule-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-800 mb-1">
+                                        Paste schedule text (or use text-only)
+                                    </label>
+                                    <p class="text-xs text-gray-600 mb-2">Raw text works by itself, or alongside an image for extra context. Add a short instruction like “only home games”, “ignore scrimmages”, or “just March dates”.</p>
+                                    <textarea id="bulk-text-input" rows="5"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                                        placeholder="Example:&#10;Sat 11/15 8:30 AM | Home vs Wildcats | Main Field&#10;Tue 11/18 6:00 PM | Away @ Tigers | East Gym"></textarea>
+                                </div>
                             </div>
 
                             <button id="process-ai-btn" type="button"
@@ -358,28 +366,35 @@
     <!-- Occurrence Choice Modal (Phase 2) -->
     <div id="occurrence-choice-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 class="text-xl font-bold mb-2">Edit Practice</h3>
-            <p class="text-sm text-gray-600 mb-4">This practice is part of a recurring series.</p>
+            <h3 class="text-xl font-bold mb-2">Manage Recurring Practice</h3>
+            <p class="text-sm text-gray-600 mb-4">
+                Select what to change for <span id="occurrence-choice-date" class="font-semibold text-gray-800"></span>.
+            </p>
             <div class="space-y-2">
                 <button id="edit-this-occurrence-btn"
                     class="w-full px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition">
-                    <span class="font-medium">Edit This Occurrence Only</span>
-                    <p class="text-sm text-gray-500">Change only this date</p>
+                    <span class="font-medium">Edit this date</span>
+                    <p class="text-sm text-gray-500">Change only this occurrence</p>
                 </button>
                 <button id="edit-series-btn"
                     class="w-full px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition">
-                    <span class="font-medium">Edit Entire Series</span>
-                    <p class="text-sm text-gray-500">Change all occurrences</p>
+                    <span class="font-medium">Edit entire series</span>
+                    <p class="text-sm text-gray-500">Update all future dates</p>
                 </button>
                 <button id="cancel-this-occurrence-btn"
+                    class="w-full px-4 py-3 text-left bg-amber-50 hover:bg-amber-100 rounded-lg border border-amber-200 transition">
+                    <span class="font-medium text-amber-800">Cancel this date</span>
+                    <p class="text-sm text-amber-600">Skip this occurrence only</p>
+                </button>
+                <button id="delete-series-btn"
                     class="w-full px-4 py-3 text-left bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition">
-                    <span class="font-medium text-red-700">Cancel This Occurrence</span>
-                    <p class="text-sm text-red-500">Remove only this date</p>
+                    <span class="font-medium text-red-700">Cancel entire series</span>
+                    <p class="text-sm text-red-500">Remove all occurrences</p>
                 </button>
             </div>
             <div class="flex justify-end mt-4">
                 <button id="close-occurrence-choice-btn"
-                    class="px-4 py-2 text-gray-600 hover:text-gray-800">Cancel</button>
+                    class="px-4 py-2 text-gray-600 hover:text-gray-800">Close</button>
             </div>
         </div>
     </div>
@@ -456,7 +471,9 @@
         let selectedCalendarEvent = null;
         let allConfigs = [];
         let editingPracticeId = null; // For editing existing practice
+        let editingSeriesId = null; // For editing existing recurring series
         let editingOccurrence = null; // { masterId, isoDate, master } for recurring practice editing
+        let seriesMasters = {}; // Cache of series master docs by id
 
         function mapLink(locationText) {
             if (!locationText) return null;
@@ -570,6 +587,8 @@
             const dbEvents = await getEvents(currentTeamId);
             const container = document.getElementById('schedule-list');
             let allEvents = [];
+            // Reset series master cache for this load
+            seriesMasters = {};
 
             // Get tracked calendar event UIDs
             const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
@@ -613,6 +632,11 @@
 
             // Add DB events (games and practices), expanding recurring series
             dbEvents.forEach(event => {
+                // Cache series masters for later lookup
+                if (event.isSeriesMaster) {
+                    seriesMasters[event.id] = event;
+                }
+
                 // Expand recurring practices into individual occurrences
                 if (event.isSeriesMaster && event.recurrence) {
                     const occurrences = expandRecurrence(event);
@@ -633,7 +657,7 @@
                             instanceDate: occ.instanceDate,
                             masterId: occ.masterId,
                             master: event, // Keep reference to master for editing
-                            eventId: event.id,
+                            id: event.id,
                             startTime: occ.startTime,
                             endTime: occ.endTime
                         });
@@ -654,7 +678,7 @@
                         status: event.status,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
-                        eventId: event.id,
+                        id: event.id,
                         isPractice: eventType === 'practice',
                         isRecurring: false
                     });
@@ -732,12 +756,9 @@
             let actions = '';
             if (practice.isInstance) {
                 // Recurring occurrence - edit opens occurrence choice modal
-                const masterJson = JSON.stringify(practice.master).replace(/"/g, '&quot;').replace(/'/g, "\\'");
                 actions = `
-                    <button onclick="editOccurrence('${practice.masterId}', '${practice.instanceDate}', '${masterJson}')"
-                        class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
-                    <button onclick="deleteSeries('${practice.masterId}')"
-                        class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50">Delete Series</button>
+                    <button onclick="editOccurrence('${practice.masterId}', '${practice.instanceDate}')"
+                        class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Manage</button>
                 `;
             } else {
                 // Single practice
@@ -799,7 +820,7 @@
         function renderDbGame(game) {
             const isCompleted = game.status === 'completed';
             // Cache game data for later retrieval
-            gamesCache[game.gameId] = game;
+            gamesCache[game.id] = game;
             return `
                 <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
@@ -811,11 +832,11 @@
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
                     </div>
                     <div class="flex space-x-2">
-                        <button data-game-id="${game.gameId}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
-                        <a href="track.html#teamId=${currentTeamId}&gameId=${game.gameId}" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</a>
-                        ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.gameId}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
-                        <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.gameId}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
-                        <button data-id="${game.gameId}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
+                        <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
+                        ${!isCompleted ? `<a href="track.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</a>` : ''}
+                        ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
+                        <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
+                        <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
                     </div>
                 </div>
             `;
@@ -824,7 +845,7 @@
         function startEditGame(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
-            editingGameId = game.gameId;
+            editingGameId = game.id;
 
             // Switch to Add Game tab
             switchTab('tab-add-game');
@@ -899,12 +920,14 @@
             document.getElementById('recurrence-builder').classList.add('hidden');
             document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
             editingPracticeId = null;
+            editingSeriesId = null;
             document.getElementById('submit-practice-btn').textContent = 'Add Practice';
             document.getElementById('cancel-edit-practice-btn').classList.add('hidden');
         }
 
         function startEditPractice(practice) {
             editingPracticeId = practice.id;
+            editingSeriesId = practice.seriesId || null;
             switchTab('tab-add-practice');
 
             const date = practice.date?.toDate ? practice.date.toDate() : new Date(practice.date);
@@ -985,7 +1008,10 @@
                     const endType = document.querySelector('input[name="recurrenceEnd"]:checked').value;
 
                     practiceData.isSeriesMaster = true;
-                    practiceData.seriesId = editingPracticeId ? undefined : generateSeriesId(); // Keep existing seriesId when editing
+                    // Preserve existing seriesId on edit; generate new on create
+                    practiceData.seriesId = editingPracticeId
+                        ? (editingSeriesId || practiceData.seriesId || generateSeriesId())
+                        : generateSeriesId();
 
                     // Store start/end as time strings for recurring (HH:mm)
                     practiceData.startTime = startDate.toTimeString().slice(0, 5);
@@ -1027,6 +1053,11 @@
 
         function showOccurrenceChoiceModal(masterId, isoDate, master) {
             editingOccurrence = { masterId, isoDate, master };
+            const dateText = new Date(isoDate).toLocaleDateString();
+            const dateEl = document.getElementById('occurrence-choice-date');
+            if (dateEl) {
+                dateEl.textContent = dateText;
+            }
             document.getElementById('occurrence-choice-modal').classList.remove('hidden');
         }
 
@@ -1061,6 +1092,23 @@
             document.getElementById('occurrence-choice-modal').classList.add('hidden');
             // Load the series master into the practice form
             startEditPractice(editingOccurrence.master);
+        });
+
+        // Cancel entire series from manage modal
+        document.getElementById('delete-series-btn').addEventListener('click', async () => {
+            const { masterId } = editingOccurrence || {};
+            if (!masterId) return;
+
+            if (confirm('Cancel this entire series? All occurrences will be removed.')) {
+                try {
+                    await deleteSeries(currentTeamId, masterId);
+                    document.getElementById('occurrence-choice-modal').classList.add('hidden');
+                    editingOccurrence = null;
+                    loadSchedule();
+                } catch (error) {
+                    alert('Error canceling series: ' + error.message);
+                }
+            }
         });
 
         // Cancel this occurrence
@@ -1140,8 +1188,12 @@
             });
         };
 
-        window.editOccurrence = (masterId, isoDate, masterJson) => {
-            const master = JSON.parse(masterJson);
+        window.editOccurrence = (masterId, isoDate) => {
+            const master = seriesMasters[masterId];
+            if (!master) {
+                alert('Series data not found. Please reload and try again.');
+                return;
+            }
             showOccurrenceChoiceModal(masterId, isoDate, master);
         };
 

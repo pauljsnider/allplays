@@ -43,6 +43,8 @@ ui-debug.log
 *.key
 *.pem
 service-account-*.json
+serviceAccountKey*.json
+**/serviceAccountKey*.json
 .env
 .env.local
 .env.*.local
@@ -51,6 +53,7 @@ service-account-*.json
 *.private
 
 # Migration and admin utility scripts
+_migration/
 migrate_admin.js
 verify_admin.js
 check-admin-status.html
