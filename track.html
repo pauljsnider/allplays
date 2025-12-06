@@ -705,27 +705,37 @@
         // Timer functions
         async function startTimer() {
             if (!gameState.isRunning) {
-                // Check if there are existing events in the database
-                const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                // Only consider clearing DB if we have no local activity yet
+                const hasLocalActivity = gameState.elapsed > 0 ||
+                                         homeScore > 0 ||
+                                         awayScore > 0 ||
+                                         (gameState.gameLog && gameState.gameLog.length > 0);
 
-                if (eventsSnap.size > 0) {
-                    const confirmClear = confirm(`This game has ${eventsSnap.size} existing event(s) in the database. Starting will clear all existing data. Continue?`);
+                if (!hasLocalActivity) {
+                    const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
 
-                    if (!confirmClear) {
-                        return; // User cancelled
+                    if (eventsSnap.size > 0) {
+                        const msg = currentGame?.status === 'completed'
+                            ? `This game was previously finished and has ${eventsSnap.size} event(s). Starting will clear that data. Continue?`
+                            : `This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`;
+
+                        const confirmClear = confirm(msg);
+                        if (!confirmClear) {
+                            return; // User cancelled
+                        }
+
+                        // Clear existing events and stats
+                        console.log('Clearing existing events and stats...');
+                        const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
+                        await Promise.all(deleteEventPromises);
+
+                        // Clear aggregated stats
+                        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                        const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
+                        await Promise.all(deleteStatsPromises);
+
+                        console.log('Cleared existing data. Starting fresh...');
                     }
-
-                    // Clear existing events and stats
-                    console.log('Clearing existing events and stats...');
-                    const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
-                    await Promise.all(deleteEventPromises);
-
-                    // Clear aggregated stats
-                    const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                    const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
-                    await Promise.all(deleteStatsPromises);
-
-                    console.log('Cleared existing data. Starting fresh...');
                 }
 
                 gameState.startTime = Date.now() - gameState.elapsed;
