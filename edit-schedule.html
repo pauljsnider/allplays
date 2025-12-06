@@ -67,11 +67,14 @@
                 <div class="bg-white rounded-lg shadow-md overflow-hidden sticky top-8">
                     <!-- Tab Navigation -->
                     <div class="flex border-b border-gray-200">
-                        <button id="tab-add-game" class="flex-1 px-4 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50">
-                            Add Game
+                        <button id="tab-add-game" class="flex-1 px-3 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50">
+                            Game
                         </button>
-                        <button id="tab-bulk-ai" class="flex-1 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
-                            ✨ Bulk AI Update
+                        <button id="tab-add-practice" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            Practice
+                        </button>
+                        <button id="tab-bulk-ai" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            ✨ AI
                         </button>
                     </div>
 
@@ -114,31 +117,166 @@
                     </form>
                     </div>
 
-                    <!-- Bulk AI Update Tab Content -->
-                    <div id="content-bulk-ai" class="p-6 hidden">
-                        <h2 class="text-xl font-bold mb-4">Bulk AI Update</h2>
-
-                        <div class="space-y-4">
+                    <!-- Add Practice Tab Content -->
+                    <div id="content-add-practice" class="p-6 hidden">
+                        <h2 class="text-xl font-bold mb-4">Add Practice</h2>
+                        <form id="add-practice-form" class="space-y-4">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">
-                                    Upload Schedule Image
+                                <label class="block text-sm font-medium text-gray-700">Title</label>
+                                <input type="text" id="practiceTitle" value="Practice"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Start Date & Time</label>
+                                <input type="datetime-local" id="practiceStart" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">End Time</label>
+                                <input type="datetime-local" id="practiceEnd"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                <p class="text-xs text-gray-500 mt-1">Defaults to 1.5 hours after start</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Location</label>
+                                <input type="text" id="practiceLocation"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Notes</label>
+                                <textarea id="practiceNotes" rows="2"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                    placeholder="Optional notes..."></textarea>
+                            </div>
+
+                            <!-- Recurrence Builder (Phase 2) -->
+                            <div class="border-t border-gray-200 pt-4 mt-4">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" id="practiceRecurring" class="rounded text-indigo-600">
+                                    <span class="text-sm font-medium text-gray-700">Make this a recurring practice</span>
                                 </label>
-                                <input type="file" id="schedule-image-input" accept="image/*"
-                                    class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
-                                <p class="text-xs text-gray-500 mt-1">Upload a photo/screenshot of the schedule</p>
-                                <div id="schedule-image-preview" class="hidden mt-3">
-                                    <img id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
-                                    <button type="button" id="remove-schedule-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
+
+                                <div id="recurrence-builder" class="hidden mt-4 space-y-4 p-4 bg-gray-50 rounded-lg">
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">Repeat</label>
+                                            <select id="recurrenceFreq"
+                                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                                <option value="weekly">Weekly</option>
+                                                <option value="daily">Daily</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700">Every</label>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <input type="number" id="recurrenceInterval" value="1" min="1" max="12"
+                                                    class="w-16 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                                <span class="text-sm text-gray-600" id="interval-label">week(s)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div id="day-selector">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">On days</label>
+                                        <div class="flex flex-wrap gap-2">
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="SU" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Sun</span>
+                                            </label>
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="MO" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Mon</span>
+                                            </label>
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="TU" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Tue</span>
+                                            </label>
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="WE" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Wed</span>
+                                            </label>
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="TH" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Thu</span>
+                                            </label>
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="FR" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Fri</span>
+                                            </label>
+                                            <label class="inline-flex items-center">
+                                                <input type="checkbox" value="SA" class="day-checkbox rounded text-indigo-600">
+                                                <span class="ml-1 text-sm">Sat</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">Ends</label>
+                                        <div class="space-y-2">
+                                            <label class="flex items-center gap-2">
+                                                <input type="radio" name="recurrenceEnd" value="never" checked class="text-indigo-600">
+                                                <span class="text-sm">Never</span>
+                                            </label>
+                                            <label class="flex items-center gap-2">
+                                                <input type="radio" name="recurrenceEnd" value="until" class="text-indigo-600">
+                                                <span class="text-sm">On date:</span>
+                                                <input type="date" id="recurrenceUntil"
+                                                    class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-1 text-sm">
+                                            </label>
+                                            <label class="flex items-center gap-2">
+                                                <input type="radio" name="recurrenceEnd" value="count" class="text-indigo-600">
+                                                <span class="text-sm">After</span>
+                                                <input type="number" id="recurrenceCount" value="10" min="1" max="100"
+                                                    class="w-16 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-1 text-sm">
+                                                <span class="text-sm">occurrences</span>
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
+                            <div class="flex gap-2">
+                                <button type="submit" id="submit-practice-btn"
+                                    class="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition">Add Practice</button>
+                                <button type="button" id="cancel-edit-practice-btn"
+                                    class="hidden px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Bulk AI Update Tab Content -->
+                    <div id="content-bulk-ai" class="p-6 hidden">
+                        <div class="flex items-start justify-between gap-3 mb-2">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">
-                                    Additional Instructions (optional)
-                                </label>
-                                <textarea id="bulk-text-input" rows="4"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
-                                    placeholder="e.g., 'only include home games' or 'just the games in March'"></textarea>
+                                <h2 class="text-xl font-bold">Bulk AI Update</h2>
+                                <p class="text-sm text-gray-600">Upload an image (and add text hints), or skip the image and just paste raw schedule text. Short instructions help steer the results.</p>
+                            </div>
+                            <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Image optional</span>
+                        </div>
+
+                        <div class="space-y-5">
+                            <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-800 mb-1">
+                                        Upload schedule image (optional)
+                                    </label>
+                                    <p class="text-xs text-gray-600 mb-2">Screenshot or photo of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
+                                    <input type="file" id="schedule-image-input" accept="image/*"
+                                        class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                                    <div id="schedule-image-preview" class="hidden mt-3">
+                                        <img id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
+                                        <button type="button" id="remove-schedule-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold text-gray-800 mb-1">
+                                        Paste schedule text (or use text-only)
+                                    </label>
+                                    <p class="text-xs text-gray-600 mb-2">Raw text works by itself, or alongside an image for extra context. Add a short instruction like “only home games”, “ignore scrimmages”, or “just March dates”.</p>
+                                    <textarea id="bulk-text-input" rows="5"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
+                                        placeholder="Example:&#10;Sat 11/15 8:30 AM | Home vs Wildcats | Main Field&#10;Tue 11/18 6:00 PM | Away @ Tigers | East Gym"></textarea>
+                                </div>
                             </div>
 
                             <button id="process-ai-btn" type="button"
@@ -225,9 +363,101 @@
         </div>
     </div>
 
+    <!-- Occurrence Choice Modal (Phase 2) -->
+    <div id="occurrence-choice-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-xl font-bold mb-2">Manage Recurring Practice</h3>
+            <p class="text-sm text-gray-600 mb-4">
+                Select what to change for <span id="occurrence-choice-date" class="font-semibold text-gray-800"></span>.
+            </p>
+            <div class="space-y-2">
+                <button id="edit-this-occurrence-btn"
+                    class="w-full px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition">
+                    <span class="font-medium">Edit this date</span>
+                    <p class="text-sm text-gray-500">Change only this occurrence</p>
+                </button>
+                <button id="edit-series-btn"
+                    class="w-full px-4 py-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition">
+                    <span class="font-medium">Edit entire series</span>
+                    <p class="text-sm text-gray-500">Update all future dates</p>
+                </button>
+                <button id="cancel-this-occurrence-btn"
+                    class="w-full px-4 py-3 text-left bg-amber-50 hover:bg-amber-100 rounded-lg border border-amber-200 transition">
+                    <span class="font-medium text-amber-800">Cancel this date</span>
+                    <p class="text-sm text-amber-600">Skip this occurrence only</p>
+                </button>
+                <button id="delete-series-btn"
+                    class="w-full px-4 py-3 text-left bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition">
+                    <span class="font-medium text-red-700">Cancel entire series</span>
+                    <p class="text-sm text-red-500">Remove all occurrences</p>
+                </button>
+            </div>
+            <div class="flex justify-end mt-4">
+                <button id="close-occurrence-choice-btn"
+                    class="px-4 py-2 text-gray-600 hover:text-gray-800">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Single Occurrence Modal (Phase 2) -->
+    <div id="edit-occurrence-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h3 class="text-xl font-bold mb-2">Edit Practice</h3>
+            <p class="text-sm text-gray-600 mb-4">
+                Editing <span id="occurrence-date-display" class="font-semibold"></span> only.
+                Other occurrences will not be affected.
+            </p>
+
+            <form id="edit-occurrence-form" class="space-y-4">
+                <input type="hidden" id="occurrence-master-id">
+                <input type="hidden" id="occurrence-iso-date">
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Title</label>
+                    <input type="text" id="occurrence-title"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Start Time</label>
+                        <input type="time" id="occurrence-start-time"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">End Time</label>
+                        <input type="time" id="occurrence-end-time"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Location</label>
+                    <input type="text" id="occurrence-location"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Notes</label>
+                    <textarea id="occurrence-notes" rows="2"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"></textarea>
+                </div>
+
+                <div class="flex gap-2 justify-end pt-2">
+                    <button type="button" id="cancel-occurrence-edit-btn"
+                        class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">Cancel</button>
+                    <button type="button" id="revert-occurrence-btn"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">Revert to Series</button>
+                    <button type="submit"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script type="module">
-        import { getTeam, getGames, addGame, updateGame, deleteGame, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=7';
+        import { getTeam, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
         import { Timestamp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
@@ -240,6 +470,10 @@
         let showPractices = false;
         let selectedCalendarEvent = null;
         let allConfigs = [];
+        let editingPracticeId = null; // For editing existing practice
+        let editingSeriesId = null; // For editing existing recurring series
+        let editingOccurrence = null; // { masterId, isoDate, master } for recurring practice editing
+        let seriesMasters = {}; // Cache of series master docs by id
 
         function mapLink(locationText) {
             if (!locationText) return null;
@@ -349,9 +583,12 @@
         }
 
         async function loadSchedule() {
-            const dbGames = await getGames(currentTeamId);
+            // Get all events (games and practices) from DB
+            const dbEvents = await getEvents(currentTeamId);
             const container = document.getElementById('schedule-list');
             let allEvents = [];
+            // Reset series master cache for this load
+            seriesMasters = {};
 
             // Get tracked calendar event UIDs
             const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
@@ -366,9 +603,9 @@
                             // Skip if already tracked
                             if (trackedUids.includes(event.uid)) return;
 
-                            // Skip if conflicts with DB game
-                            const hasConflict = dbGames.some(dbGame => {
-                                const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                            // Skip if conflicts with DB event
+                            const hasConflict = dbEvents.some(dbEvent => {
+                                const dbDate = dbEvent.date?.toDate ? dbEvent.date.toDate() : new Date(dbEvent.date);
                                 const eventDate = event.dtstart;
                                 return Math.abs(dbDate - eventDate) < 60000;
                             });
@@ -378,7 +615,8 @@
                             const opponent = extractOpponent(event.summary, currentTeam.name);
 
                             allEvents.push({
-                                type: 'calendar',
+                                source: 'calendar',
+                                eventType: isPractice ? 'practice' : 'game',
                                 date: event.dtstart,
                                 opponent: opponent,
                                 location: event.location || 'TBD',
@@ -392,19 +630,59 @@
                 }
             }
 
-            // Add DB games
-            dbGames.forEach(game => {
-                const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
-                allEvents.push({
-                    type: 'db',
-                    date: gameDate,
-                    opponent: game.opponent,
-                    location: game.location || 'TBD',
-                    status: game.status,
-                    homeScore: game.homeScore,
-                    awayScore: game.awayScore,
-                    gameId: game.id
-                });
+            // Add DB events (games and practices), expanding recurring series
+            dbEvents.forEach(event => {
+                // Cache series masters for later lookup
+                if (event.isSeriesMaster) {
+                    seriesMasters[event.id] = event;
+                }
+
+                // Expand recurring practices into individual occurrences
+                if (event.isSeriesMaster && event.recurrence) {
+                    const occurrences = expandRecurrence(event);
+                    occurrences.forEach(occ => {
+                        const occDate = occ.date?.toDate ? occ.date.toDate() : new Date(occ.date);
+                        allEvents.push({
+                            source: 'db',
+                            eventType: 'practice',
+                            date: occDate,
+                            end: occ.end,
+                            title: occ.title,
+                            location: occ.location || 'TBD',
+                            notes: occ.notes,
+                            isPractice: true,
+                            isRecurring: true,
+                            isInstance: occ.isInstance,
+                            isModified: occ.isModified,
+                            instanceDate: occ.instanceDate,
+                            masterId: occ.masterId,
+                            master: event, // Keep reference to master for editing
+                            id: event.id,
+                            startTime: occ.startTime,
+                            endTime: occ.endTime
+                        });
+                    });
+                } else {
+                    // Single event (game or practice)
+                    const eventDate = event.date?.toDate ? event.date.toDate() : new Date(event.date);
+                    const eventType = event.type || 'game';
+                    allEvents.push({
+                        source: 'db',
+                        eventType: eventType,
+                        date: eventDate,
+                        end: event.end,
+                        opponent: event.opponent,
+                        title: event.title,
+                        location: event.location || 'TBD',
+                        notes: event.notes,
+                        status: event.status,
+                        homeScore: event.homeScore,
+                        awayScore: event.awayScore,
+                        id: event.id,
+                        isPractice: eventType === 'practice',
+                        isRecurring: false
+                    });
+                }
             });
 
             // Sort by date
@@ -426,19 +704,21 @@
                 : '';
 
             if (filteredEvents.length === 0) {
-                container.innerHTML = practiceNotice + '<div class="p-6 text-center text-gray-500">No games scheduled.</div>';
+                container.innerHTML = practiceNotice + '<div class="p-6 text-center text-gray-500">No events scheduled.</div>';
                 return;
             }
 
             container.innerHTML = practiceNotice + filteredEvents.map(event => {
-                if (event.type === 'calendar') {
+                if (event.source === 'calendar') {
                     return renderCalendarEvent(event);
+                } else if (event.eventType === 'practice') {
+                    return renderPractice(event);
                 } else {
                     return renderDbGame(event);
                 }
             }).join('');
 
-            // Attach delete button handlers
+            // Attach delete button handlers for games
             document.querySelectorAll('.delete-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     if (confirm('Are you sure you want to delete this game?')) {
@@ -448,13 +728,66 @@
                 });
             });
 
-            // Attach edit button handlers
+            // Attach edit button handlers for games
             document.querySelectorAll('.edit-game-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     const gameId = e.target.dataset.gameId;
                     startEditGame(gameId);
                 });
             });
+        }
+
+        // Render practice events (single or recurring instance)
+        function renderPractice(practice) {
+            const timeDisplay = practice.startTime && practice.endTime
+                ? `${practice.startTime} - ${practice.endTime}`
+                : formatTimeRange(practice.date, practice.end);
+
+            // Build badge HTML
+            let badges = '<span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded font-semibold">Practice</span>';
+            if (practice.isRecurring) {
+                badges += ' <span class="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-semibold">Recurring</span>';
+            }
+            if (practice.isModified) {
+                badges += ' <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-semibold">Modified</span>';
+            }
+
+            // Build action buttons
+            let actions = '';
+            if (practice.isInstance) {
+                // Recurring occurrence - edit opens occurrence choice modal
+                actions = `
+                    <button onclick="editOccurrence('${practice.masterId}', '${practice.instanceDate}')"
+                        class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Manage</button>
+                `;
+            } else {
+                // Single practice
+                actions = `
+                    <button onclick="editPractice('${practice.eventId}')"
+                        class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
+                    <button onclick="deletePractice('${practice.eventId}')"
+                        class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50">Delete</button>
+                `;
+            }
+
+            return `
+                <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-l-4 border-green-500">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            ${badges}
+                        </div>
+                        <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1">${formatDate(practice.date)} • ${timeDisplay || formatTime(practice.date)}</div>
+                        <div class="text-lg font-bold text-gray-900">${practice.title || 'Practice'}</div>
+                        <div class="text-sm text-gray-600">
+                            ${mapLink(practice.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(practice.location)}">${practice.location || 'TBD'}</a>` : (practice.location || 'TBD')}
+                        </div>
+                        ${practice.notes ? `<div class="text-sm text-gray-500 mt-1">${practice.notes}</div>` : ''}
+                    </div>
+                    <div class="flex space-x-2">
+                        ${actions}
+                    </div>
+                </div>
+            `;
         }
 
         function renderCalendarEvent(event) {
@@ -487,7 +820,7 @@
         function renderDbGame(game) {
             const isCompleted = game.status === 'completed';
             // Cache game data for later retrieval
-            gamesCache[game.gameId] = game;
+            gamesCache[game.id] = game;
             return `
                 <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
@@ -499,11 +832,11 @@
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
                     </div>
                     <div class="flex space-x-2">
-                        <button data-game-id="${game.gameId}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
-                        <a href="track.html#teamId=${currentTeamId}&gameId=${game.gameId}" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</a>
-                        ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.gameId}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
-                        <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.gameId}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
-                        <button data-id="${game.gameId}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
+                        <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
+                        ${!isCompleted ? `<a href="track.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</a>` : ''}
+                        ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
+                        <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
+                        <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
                     </div>
                 </div>
             `;
@@ -512,15 +845,10 @@
         function startEditGame(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
-            editingGameId = game.gameId;
+            editingGameId = game.id;
 
             // Switch to Add Game tab
-            document.getElementById('tab-add-game').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-add-game').classList.remove('text-gray-600');
-            document.getElementById('tab-bulk-ai').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-bulk-ai').classList.add('text-gray-600');
-            document.getElementById('content-add-game').classList.remove('hidden');
-            document.getElementById('content-bulk-ai').classList.add('hidden');
+            switchTab('tab-add-game');
 
             // Populate form
             const date = game.date.toDate ? game.date.toDate() : new Date(game.date);
@@ -582,6 +910,323 @@
                 alert('Error saving game: ' + error.message);
             }
         });
+
+        // ===== PRACTICE FORM HANDLERS =====
+
+        function resetPracticeForm() {
+            document.getElementById('add-practice-form').reset();
+            document.getElementById('practiceTitle').value = 'Practice';
+            document.getElementById('practiceRecurring').checked = false;
+            document.getElementById('recurrence-builder').classList.add('hidden');
+            document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
+            editingPracticeId = null;
+            editingSeriesId = null;
+            document.getElementById('submit-practice-btn').textContent = 'Add Practice';
+            document.getElementById('cancel-edit-practice-btn').classList.add('hidden');
+        }
+
+        function startEditPractice(practice) {
+            editingPracticeId = practice.id;
+            editingSeriesId = practice.seriesId || null;
+            switchTab('tab-add-practice');
+
+            const date = practice.date?.toDate ? practice.date.toDate() : new Date(practice.date);
+            document.getElementById('practiceTitle').value = practice.title || 'Practice';
+            document.getElementById('practiceStart').value = date.toISOString().slice(0, 16);
+
+            if (practice.end) {
+                const endDate = practice.end?.toDate ? practice.end.toDate() : new Date(practice.end);
+                document.getElementById('practiceEnd').value = endDate.toISOString().slice(0, 16);
+            }
+
+            document.getElementById('practiceLocation').value = practice.location || '';
+            document.getElementById('practiceNotes').value = practice.notes || '';
+
+            // Handle recurring practice edit - load series settings
+            if (practice.isSeriesMaster && practice.recurrence) {
+                document.getElementById('practiceRecurring').checked = true;
+                document.getElementById('recurrence-builder').classList.remove('hidden');
+                document.getElementById('recurrenceFreq').value = practice.recurrence.freq || 'weekly';
+                document.getElementById('recurrenceInterval').value = practice.recurrence.interval || 1;
+
+                // Set day checkboxes
+                document.querySelectorAll('.day-checkbox').forEach(cb => {
+                    cb.checked = (practice.recurrence.byDays || []).includes(cb.value);
+                });
+
+                // Set end condition
+                if (practice.recurrence.until) {
+                    document.querySelector('input[name="recurrenceEnd"][value="until"]').checked = true;
+                    const untilDate = practice.recurrence.until?.toDate ? practice.recurrence.until.toDate() : new Date(practice.recurrence.until);
+                    document.getElementById('recurrenceUntil').value = untilDate.toISOString().split('T')[0];
+                } else if (practice.recurrence.count) {
+                    document.querySelector('input[name="recurrenceEnd"][value="count"]').checked = true;
+                    document.getElementById('recurrenceCount').value = practice.recurrence.count;
+                } else {
+                    document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
+                }
+            }
+
+            document.getElementById('submit-practice-btn').textContent = 'Update Practice';
+            document.getElementById('cancel-edit-practice-btn').classList.remove('hidden');
+        }
+
+        document.getElementById('cancel-edit-practice-btn').addEventListener('click', resetPracticeForm);
+
+        document.getElementById('add-practice-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const title = document.getElementById('practiceTitle').value || 'Practice';
+            const startVal = document.getElementById('practiceStart').value;
+            const endVal = document.getElementById('practiceEnd').value;
+            const location = document.getElementById('practiceLocation').value;
+            const notes = document.getElementById('practiceNotes').value;
+            const isRecurring = document.getElementById('practiceRecurring').checked;
+
+            if (!startVal) {
+                alert('Please enter a start date and time');
+                return;
+            }
+
+            try {
+                const startDate = new Date(startVal);
+                const endDate = endVal ? new Date(endVal) : getDefaultEndTime(startDate, 'practice');
+
+                const practiceData = {
+                    title,
+                    date: Timestamp.fromDate(startDate),
+                    end: Timestamp.fromDate(endDate),
+                    location,
+                    notes
+                };
+
+                // Handle recurring practice
+                if (isRecurring) {
+                    const freq = document.getElementById('recurrenceFreq').value;
+                    const interval = parseInt(document.getElementById('recurrenceInterval').value) || 1;
+                    const byDays = Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value);
+                    const endType = document.querySelector('input[name="recurrenceEnd"]:checked').value;
+
+                    practiceData.isSeriesMaster = true;
+                    // Preserve existing seriesId on edit; generate new on create
+                    practiceData.seriesId = editingPracticeId
+                        ? (editingSeriesId || practiceData.seriesId || generateSeriesId())
+                        : generateSeriesId();
+
+                    // Store start/end as time strings for recurring (HH:mm)
+                    practiceData.startTime = startDate.toTimeString().slice(0, 5);
+                    practiceData.endTime = endDate.toTimeString().slice(0, 5);
+
+                    practiceData.recurrence = { freq, interval, byDays };
+
+                    if (endType === 'until') {
+                        const untilVal = document.getElementById('recurrenceUntil').value;
+                        if (untilVal) {
+                            practiceData.recurrence.until = Timestamp.fromDate(new Date(untilVal));
+                        }
+                    } else if (endType === 'count') {
+                        practiceData.recurrence.count = parseInt(document.getElementById('recurrenceCount').value) || 10;
+                    }
+
+                    // Initialize empty exDates and overrides
+                    if (!editingPracticeId) {
+                        practiceData.exDates = [];
+                        practiceData.overrides = {};
+                    }
+                }
+
+                if (editingPracticeId) {
+                    await updateEvent(currentTeamId, editingPracticeId, practiceData);
+                } else {
+                    await addPractice(currentTeamId, practiceData);
+                }
+
+                resetPracticeForm();
+                loadSchedule();
+            } catch (error) {
+                console.error(error);
+                alert('Error saving practice: ' + error.message);
+            }
+        });
+
+        // ===== OCCURRENCE MODAL HANDLERS (Phase 2) =====
+
+        function showOccurrenceChoiceModal(masterId, isoDate, master) {
+            editingOccurrence = { masterId, isoDate, master };
+            const dateText = new Date(isoDate).toLocaleDateString();
+            const dateEl = document.getElementById('occurrence-choice-date');
+            if (dateEl) {
+                dateEl.textContent = dateText;
+            }
+            document.getElementById('occurrence-choice-modal').classList.remove('hidden');
+        }
+
+        // Close occurrence choice modal
+        document.getElementById('close-occurrence-choice-btn').addEventListener('click', () => {
+            document.getElementById('occurrence-choice-modal').classList.add('hidden');
+            editingOccurrence = null;
+        });
+
+        // Edit this occurrence only
+        document.getElementById('edit-this-occurrence-btn').addEventListener('click', () => {
+            document.getElementById('occurrence-choice-modal').classList.add('hidden');
+
+            const { masterId, isoDate, master } = editingOccurrence;
+            const override = master.overrides?.[isoDate] || {};
+
+            // Populate occurrence form
+            document.getElementById('occurrence-master-id').value = masterId;
+            document.getElementById('occurrence-iso-date').value = isoDate;
+            document.getElementById('occurrence-date-display').textContent = new Date(isoDate).toLocaleDateString();
+            document.getElementById('occurrence-title').value = override.title || master.title || 'Practice';
+            document.getElementById('occurrence-start-time').value = override.startTime || master.startTime || '';
+            document.getElementById('occurrence-end-time').value = override.endTime || master.endTime || '';
+            document.getElementById('occurrence-location').value = override.location || master.location || '';
+            document.getElementById('occurrence-notes').value = override.notes || master.notes || '';
+
+            document.getElementById('edit-occurrence-modal').classList.remove('hidden');
+        });
+
+        // Edit entire series
+        document.getElementById('edit-series-btn').addEventListener('click', () => {
+            document.getElementById('occurrence-choice-modal').classList.add('hidden');
+            // Load the series master into the practice form
+            startEditPractice(editingOccurrence.master);
+        });
+
+        // Cancel entire series from manage modal
+        document.getElementById('delete-series-btn').addEventListener('click', async () => {
+            const { masterId } = editingOccurrence || {};
+            if (!masterId) return;
+
+            if (confirm('Cancel this entire series? All occurrences will be removed.')) {
+                try {
+                    await deleteSeries(currentTeamId, masterId);
+                    document.getElementById('occurrence-choice-modal').classList.add('hidden');
+                    editingOccurrence = null;
+                    loadSchedule();
+                } catch (error) {
+                    alert('Error canceling series: ' + error.message);
+                }
+            }
+        });
+
+        // Cancel this occurrence
+        document.getElementById('cancel-this-occurrence-btn').addEventListener('click', async () => {
+            const { masterId, isoDate } = editingOccurrence;
+
+            if (confirm(`Cancel practice on ${new Date(isoDate).toLocaleDateString()}? This occurrence will be removed from the schedule.`)) {
+                try {
+                    await cancelOccurrence(currentTeamId, masterId, isoDate);
+                    document.getElementById('occurrence-choice-modal').classList.add('hidden');
+                    editingOccurrence = null;
+                    loadSchedule();
+                } catch (error) {
+                    alert('Error canceling occurrence: ' + error.message);
+                }
+            }
+        });
+
+        // Cancel edit occurrence modal
+        document.getElementById('cancel-occurrence-edit-btn').addEventListener('click', () => {
+            document.getElementById('edit-occurrence-modal').classList.add('hidden');
+        });
+
+        // Revert occurrence to series defaults
+        document.getElementById('revert-occurrence-btn').addEventListener('click', async () => {
+            const masterId = document.getElementById('occurrence-master-id').value;
+            const isoDate = document.getElementById('occurrence-iso-date').value;
+
+            if (confirm('Revert this occurrence to use the series defaults?')) {
+                try {
+                    await clearOccurrenceOverride(currentTeamId, masterId, isoDate);
+                    document.getElementById('edit-occurrence-modal').classList.add('hidden');
+                    loadSchedule();
+                } catch (error) {
+                    alert('Error reverting occurrence: ' + error.message);
+                }
+            }
+        });
+
+        // Save single occurrence override
+        document.getElementById('edit-occurrence-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const masterId = document.getElementById('occurrence-master-id').value;
+            const isoDate = document.getElementById('occurrence-iso-date').value;
+
+            const changes = {
+                title: document.getElementById('occurrence-title').value,
+                startTime: document.getElementById('occurrence-start-time').value,
+                endTime: document.getElementById('occurrence-end-time').value,
+                location: document.getElementById('occurrence-location').value,
+                notes: document.getElementById('occurrence-notes').value
+            };
+
+            try {
+                await updateOccurrence(currentTeamId, masterId, isoDate, changes);
+                document.getElementById('edit-occurrence-modal').classList.add('hidden');
+                loadSchedule();
+            } catch (error) {
+                alert('Error updating occurrence: ' + error.message);
+            }
+        });
+
+        // Global functions for practice actions (called from rendered HTML)
+        window.editPractice = (practiceId) => {
+            getEvents(currentTeamId).then(events => {
+                const practice = events.find(e => e.id === practiceId);
+                if (practice) {
+                    if (practice.isSeriesMaster) {
+                        // Show occurrence choice modal for recurring practices
+                        const today = new Date().toISOString().split('T')[0];
+                        showOccurrenceChoiceModal(practiceId, today, practice);
+                    } else {
+                        startEditPractice(practice);
+                    }
+                }
+            });
+        };
+
+        window.editOccurrence = (masterId, isoDate) => {
+            const master = seriesMasters[masterId];
+            if (!master) {
+                alert('Series data not found. Please reload and try again.');
+                return;
+            }
+            showOccurrenceChoiceModal(masterId, isoDate, master);
+        };
+
+        window.deletePractice = async (practiceId) => {
+            if (confirm('Delete this practice?')) {
+                try {
+                    await deleteEvent(currentTeamId, practiceId);
+                    loadSchedule();
+                } catch (error) {
+                    alert('Error deleting practice: ' + error.message);
+                }
+            }
+        };
+
+        window.deleteSeries = async (masterId) => {
+            if (confirm('Delete this entire recurring series? All occurrences will be removed.')) {
+                try {
+                    await deleteSeries(currentTeamId, masterId);
+                    loadSchedule();
+                } catch (error) {
+                    alert('Error deleting series: ' + error.message);
+                }
+            }
+        };
+
+        window.restoreOccurrence = async (masterId, isoDate) => {
+            try {
+                await restoreOccurrence(currentTeamId, masterId, isoDate);
+                loadSchedule();
+            } catch (error) {
+                alert('Error restoring occurrence: ' + error.message);
+            }
+        };
 
         // Calendar Management Event Handlers
         document.getElementById('add-calendar-btn').addEventListener('click', () => {
@@ -672,29 +1317,53 @@
 
         let proposedOperations = [];
 
-        // Tab switching
-        document.getElementById('tab-add-game').addEventListener('click', () => {
-            // Update tab styles
-            document.getElementById('tab-add-game').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-add-game').classList.remove('text-gray-600');
-            document.getElementById('tab-bulk-ai').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-bulk-ai').classList.add('text-gray-600');
+        // Tab switching helper
+        function switchTab(activeTab) {
+            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-bulk-ai'];
+            const contents = ['content-add-game', 'content-add-practice', 'content-bulk-ai'];
 
-            // Show/hide content
-            document.getElementById('content-add-game').classList.remove('hidden');
-            document.getElementById('content-bulk-ai').classList.add('hidden');
+            tabs.forEach((tabId, index) => {
+                const tab = document.getElementById(tabId);
+                const content = document.getElementById(contents[index]);
+
+                if (tabId === activeTab) {
+                    tab.classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+                    tab.classList.remove('text-gray-600');
+                    content.classList.remove('hidden');
+                } else {
+                    tab.classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+                    tab.classList.add('text-gray-600');
+                    content.classList.add('hidden');
+                }
+            });
+        }
+
+        document.getElementById('tab-add-game').addEventListener('click', () => switchTab('tab-add-game'));
+        document.getElementById('tab-add-practice').addEventListener('click', () => switchTab('tab-add-practice'));
+        document.getElementById('tab-bulk-ai').addEventListener('click', () => switchTab('tab-bulk-ai'));
+
+        // Recurrence builder toggle
+        document.getElementById('practiceRecurring').addEventListener('change', (e) => {
+            const builder = document.getElementById('recurrence-builder');
+            const daySelector = document.getElementById('day-selector');
+            if (e.target.checked) {
+                builder.classList.remove('hidden');
+            } else {
+                builder.classList.add('hidden');
+            }
         });
 
-        document.getElementById('tab-bulk-ai').addEventListener('click', () => {
-            // Update tab styles
-            document.getElementById('tab-bulk-ai').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-bulk-ai').classList.remove('text-gray-600');
-            document.getElementById('tab-add-game').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-add-game').classList.add('text-gray-600');
-
-            // Show/hide content
-            document.getElementById('content-bulk-ai').classList.remove('hidden');
-            document.getElementById('content-add-game').classList.add('hidden');
+        // Update interval label based on frequency
+        document.getElementById('recurrenceFreq').addEventListener('change', (e) => {
+            const label = document.getElementById('interval-label');
+            const daySelector = document.getElementById('day-selector');
+            if (e.target.value === 'daily') {
+                label.textContent = 'day(s)';
+                daySelector.classList.add('hidden');
+            } else {
+                label.textContent = 'week(s)';
+                daySelector.classList.remove('hidden');
+            }
         });
 
         // Image upload and preview handlers

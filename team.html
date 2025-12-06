@@ -154,8 +154,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=7';
+        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getEvents } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, formatTimeRange, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, expandRecurrence } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -248,13 +248,14 @@
             currentTeamId = teamId;
 
             try {
-                const [team, players, dbGames] = await Promise.all([
+                const [team, players, dbEvents] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId),
-                    getGames(teamId)
+                    getEvents(teamId) // Get all events including practices
                 ]);
 
-                teamGames = dbGames;
+                // Filter to games only for stats/record calculations
+                const dbGames = dbEvents.filter(e => (e.type || 'game') === 'game');
                 teamGames = dbGames;
                 const sortedGames = [...dbGames].sort((a, b) => {
                     const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
@@ -308,13 +309,13 @@
                 const totalGames = dbGames.filter(g => g.status === 'completed').length;
                 const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
 
-                // Fetch calendar events and render schedule
-                await renderSchedule(team, dbGames);
+                // Fetch calendar events and render schedule (pass all dbEvents to include practices)
+                await renderSchedule(team, dbEvents);
 
                 // After schedule is rendered, update season overview with next game info
                 let nextGame = null;
                 try {
-                    const allEventsForOverview = await getAllEvents(team, dbGames);
+                    const allEventsForOverview = await getAllEvents(team, dbEvents);
 
                     nextGame = getNextGame(allEventsForOverview);
 
@@ -573,11 +574,12 @@
             }
         }
 
-        async function getAllEvents(team, dbGames) {
+        async function getAllEvents(team, dbEvents) {
             let allEvents = [];
 
             const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
 
+            // Fetch calendar events
             if (team.calendarUrls && team.calendarUrls.length > 0) {
                 for (const calendarUrl of team.calendarUrls) {
                     try {
@@ -586,8 +588,8 @@
                         calendarEvents.forEach(event => {
                             if (trackedUids.includes(event.uid)) return;
 
-                            const hasConflict = dbGames.some(dbGame => {
-                                const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                            const hasConflict = dbEvents.some(dbEvent => {
+                                const dbDate = dbEvent.date?.toDate ? dbEvent.date.toDate() : new Date(dbEvent.date);
                                 const eventDate = event.dtstart;
                                 return Math.abs(dbDate - eventDate) < 60000;
                             });
@@ -598,7 +600,8 @@
                             const opponent = extractOpponent(event.summary, team.name);
 
                             allEvents.push({
-                                type: 'calendar',
+                                source: 'calendar',
+                                eventType: isPractice ? 'practice' : 'game',
                                 date: event.dtstart,
                                 opponent: opponent,
                                 location: event.location || 'TBD',
@@ -612,19 +615,52 @@
                 }
             }
 
-            dbGames.forEach(game => {
-                const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
-                allEvents.push({
-                    type: 'db',
-                    date: gameDate,
-                    opponent: game.opponent,
-                    location: game.location || 'TBD',
-                    status: game.status,
-                    homeScore: game.homeScore,
-                    awayScore: game.awayScore,
-                    gameId: game.id,
-                    isPractice: false
-                });
+            // Add DB events (games and practices), expanding recurring series
+            dbEvents.forEach(event => {
+                // Expand recurring practices
+                if (event.isSeriesMaster && event.recurrence) {
+                    const occurrences = expandRecurrence(event);
+                    occurrences.forEach(occ => {
+                        const occDate = occ.date?.toDate ? occ.date.toDate() : new Date(occ.date);
+                        allEvents.push({
+                            source: 'db',
+                            eventType: 'practice',
+                            date: occDate,
+                            end: occ.end,
+                            title: occ.title,
+                            location: occ.location || 'TBD',
+                            notes: occ.notes,
+                            isPractice: true,
+                            isRecurring: true,
+                            isInstance: occ.isInstance,
+                            isModified: occ.isModified,
+                            startTime: occ.startTime,
+                            endTime: occ.endTime,
+                            eventId: event.id
+                        });
+                    });
+                } else {
+                    // Single event (game or practice)
+                    const eventDate = event.date?.toDate ? event.date.toDate() : new Date(event.date);
+                    const eventType = event.type || 'game';
+                    allEvents.push({
+                        source: 'db',
+                        eventType: eventType,
+                        date: eventDate,
+                        end: event.end,
+                        opponent: event.opponent,
+                        title: event.title,
+                        location: event.location || 'TBD',
+                        notes: event.notes,
+                        status: event.status,
+                        homeScore: event.homeScore,
+                        awayScore: event.awayScore,
+                        gameId: event.id,
+                        eventId: event.id,
+                        isPractice: eventType === 'practice',
+                        isRecurring: false
+                    });
+                }
             });
 
             allEvents.sort((a, b) => a.date - b.date);
@@ -650,19 +686,69 @@
                         <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                         </svg>
-                        <p class="text-gray-500">No games scheduled</p>
+                        <p class="text-gray-500">No events scheduled</p>
                     </div>
                 `;
                 return;
             }
 
             scheduleList.innerHTML = filteredEvents.map(event => {
-                if (event.type === 'calendar') {
+                if (event.source === 'calendar') {
                     return renderCalendarEvent(event);
+                } else if (event.eventType === 'practice') {
+                    return renderDbPractice(event);
                 } else {
                     return renderDbGame(event);
                 }
             }).join('');
+        }
+
+        function renderDbPractice(practice) {
+            const isUpcoming = practice.date > new Date();
+            const timeDisplay = practice.startTime && practice.endTime
+                ? `${practice.startTime} - ${practice.endTime}`
+                : formatTimeRange(practice.date, practice.end);
+
+            // Build badges
+            let badges = '<span class="text-xs bg-green-100 text-green-800 px-2.5 py-0.5 rounded-full font-semibold">Practice</span>';
+            if (practice.isRecurring) {
+                badges += ' <span class="text-xs bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full font-semibold">Recurring</span>';
+            }
+            if (practice.isModified) {
+                badges += ' <span class="text-xs bg-yellow-100 text-yellow-800 px-2.5 py-0.5 rounded-full font-semibold">Modified</span>';
+            }
+            if (isUpcoming) {
+                badges += ' <span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>';
+            }
+
+            return `
+                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 border-green-500 overflow-hidden border border-gray-200">
+                    <div class="p-5">
+                        <div class="flex flex-col sm:flex-row justify-between items-start gap-4">
+                            <div class="flex-grow">
+                                <div class="flex flex-wrap items-center gap-2 mb-2">
+                                    ${badges}
+                                </div>
+                                <div class="text-sm text-gray-500 font-semibold mb-2">${formatDate(practice.date)} • ${timeDisplay || formatTime(practice.date)}</div>
+                                <div class="text-lg md:text-xl font-bold text-gray-900 mb-2">
+                                    ${escapeHtml(practice.title || 'Practice')}
+                                </div>
+                                <div class="flex items-center text-sm text-gray-600">
+                                    <svg class="w-4 h-4 mr-1.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    </svg>
+                                    ${mapLink(practice.location)
+                                        ? `<a class="hover:text-primary-600 transition truncate" target="_blank" rel="noopener noreferrer" href="${mapLink(practice.location)}">${escapeHtml(practice.location)}</a>`
+                                        : `<span class="truncate">${escapeHtml(practice.location)}</span>`
+                                    }
+                                </div>
+                                ${practice.notes ? `<div class="text-sm text-gray-500 mt-2">${escapeHtml(practice.notes)}</div>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         function renderCalendarEvent(event) {
@@ -745,7 +831,7 @@
                                             <div class="text-2xl md:text-3xl font-bold font-mono ${lost ? 'text-red-600' : 'text-gray-700'}">${game.awayScore}</div>
                                         </div>
                                       </div>
-                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.gameId}"
+                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.id}"
                                          class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 transition font-medium">
                                         <span>View Report</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

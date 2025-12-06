@@ -136,6 +136,8 @@
                     class="bg-white text-blue-600 px-3 py-1 rounded font-semibold text-sm">Start</button>
                 <button id="stopBtn" class="bg-red-600 text-white px-3 py-1 rounded text-sm" disabled>Stop</button>
                 <button id="resetBtn" class="bg-gray-700 text-white px-3 py-1 rounded text-sm">Reset</button>
+                <button id="undoLastBtn" class="bg-yellow-600 text-white px-3 py-1 rounded text-sm font-bold">↶ Undo Last</button>
+                <button id="cancelBtn" class="bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold">Cancel Game</button>
                 <!-- Email button removed -->
                 <button id="finish-btn"
                     class="bg-green-600 text-white px-3 py-1 rounded text-sm font-bold">Finish</button>
@@ -261,6 +263,8 @@
         import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
+        import { db } from './js/firebase.js';
+        import { collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
 
@@ -284,6 +288,7 @@
             { id: 'opp2', name: '', notes: '' },
             { id: 'opp3', name: '', notes: '' }
         ];
+        let isFinishing = false; // Flag to disable beforeunload warning when finishing game
         let gameState = {
             startTime: null,
             elapsed: 0,
@@ -305,7 +310,9 @@
 
         async function init() {
             const { teamId, gameId } = getUrlParams();
+            console.log('Track init - teamId:', teamId, 'gameId:', gameId);
             if (!teamId || !gameId) {
+                console.error('Missing teamId or gameId');
                 window.location.href = 'dashboard.html';
                 return;
             }
@@ -319,9 +326,19 @@
                     getPlayers(teamId)
                 ]);
 
+                console.log('Loaded game:', game);
+
                 if (!game) {
+                    console.error('Game not found for teamId:', teamId, 'gameId:', gameId);
                     alert("Game not found");
                     window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                // Practices cannot be tracked - redirect to schedule
+                if (game.type === 'practice') {
+                    alert('Practice events cannot be tracked. Use game tracking for games only.');
+                    window.location.href = `edit-schedule.html#teamId=${teamId}`;
                     return;
                 }
 
@@ -368,6 +385,9 @@
                 renderStatsTable();
                 renderOpponentTable();
                 setInterval(updateTimer, 1000);
+
+                // Add initial history state for back button handling
+                history.pushState({ trackingPage: true }, '', window.location.href);
 
                 // Add period button listeners
                 document.querySelectorAll('.period-btn').forEach(btn => {
@@ -683,8 +703,31 @@
         });
 
         // Timer functions
-        function startTimer() {
+        async function startTimer() {
             if (!gameState.isRunning) {
+                // Check if there are existing events in the database
+                const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+
+                if (eventsSnap.size > 0) {
+                    const confirmClear = confirm(`This game has ${eventsSnap.size} existing event(s) in the database. Starting will clear all existing data. Continue?`);
+
+                    if (!confirmClear) {
+                        return; // User cancelled
+                    }
+
+                    // Clear existing events and stats
+                    console.log('Clearing existing events and stats...');
+                    const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
+                    await Promise.all(deleteEventPromises);
+
+                    // Clear aggregated stats
+                    const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                    const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
+                    await Promise.all(deleteStatsPromises);
+
+                    console.log('Cleared existing data. Starting fresh...');
+                }
+
                 gameState.startTime = Date.now() - gameState.elapsed;
                 gameState.isRunning = true;
                 document.getElementById('startBtn').disabled = true;
@@ -722,6 +765,41 @@
                 updateScoreDisplay();
                 renderGameLog();
                 updateTimer();
+            }
+        }
+
+        async function cancelGame() {
+            const confirmMsg = 'Are you sure you want to cancel this game? All tracked data will be permanently deleted.';
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            try {
+                // Delete all events
+                const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
+                await Promise.all(deleteEventPromises);
+
+                // Delete all aggregated stats
+                const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
+                await Promise.all(deleteStatsPromises);
+
+                // Reset game status to scheduled if it was started
+                if (currentGame.status !== 'scheduled') {
+                    await updateGame(currentTeamId, currentGameId, {
+                        status: 'scheduled',
+                        homeScore: 0,
+                        awayScore: 0
+                    });
+                }
+
+                // Navigate back to schedule
+                alert('Game cancelled. All data has been deleted.');
+                window.location.href = `edit-schedule.html#teamId=${currentTeamId}`;
+            } catch (error) {
+                console.error('Error cancelling game:', error);
+                alert('Error cancelling game: ' + error.message);
             }
         }
 
@@ -1085,6 +1163,9 @@ Write the match report now:`;
                     opponentStats: gameState.opponentStats
                 });
 
+                // Disable beforeunload warning since we're finishing successfully
+                isFinishing = true;
+
                 // Send email if checkbox is checked
                 if (sendEmail) {
                     const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
@@ -1109,7 +1190,14 @@ Write the match report now:`;
         document.getElementById('startBtn').addEventListener('click', startTimer);
         document.getElementById('stopBtn').addEventListener('click', stopTimer);
         document.getElementById('resetBtn').addEventListener('click', resetTimer);
-        document.getElementById('email-btn').addEventListener('click', emailSummary);
+        document.getElementById('undoLastBtn').addEventListener('click', () => {
+            if (gameState.gameLog.length > 0) {
+                undoLogEntry(0); // Undo the most recent entry (index 0)
+            } else {
+                alert('No actions to undo');
+            }
+        });
+        document.getElementById('cancelBtn').addEventListener('click', cancelGame);
 
         // Period selector
         document.querySelectorAll('.period-btn').forEach(btn => {
@@ -1131,6 +1219,11 @@ Write the match report now:`;
 
         // Navigation warning for unsaved changes
         window.addEventListener('beforeunload', (event) => {
+            // Skip warning if we're finishing the game successfully
+            if (isFinishing) {
+                return;
+            }
+
             // Warn if game has started or any stats have been tracked
             const hasGameActivity = gameState.startTime !== null || // Timer was started
                                    gameState.elapsed > 0 || // Game has elapsed time
@@ -1142,6 +1235,40 @@ Write the match report now:`;
                 event.preventDefault();
                 event.returnValue = ''; // Required for Chrome
                 return ''; // For older browsers
+            }
+        });
+
+        // Handle back button navigation
+        let allowNavigation = false;
+
+        function checkGameActivity() {
+            return gameState.startTime !== null ||
+                   gameState.elapsed > 0 ||
+                   (gameState.gameLog && gameState.gameLog.length > 0) ||
+                   homeScore > 0 ||
+                   awayScore > 0;
+        }
+
+        // Listen for back button (popstate event)
+        window.addEventListener('popstate', (event) => {
+            if (allowNavigation) {
+                // Navigation was already confirmed, let it proceed
+                allowNavigation = false;
+                return;
+            }
+
+            if (checkGameActivity()) {
+                // Game is active, warn user
+                const confirmLeave = confirm('You have an active game in progress. Any unsaved data will be lost. Do you want to leave?');
+
+                if (!confirmLeave) {
+                    // User wants to stay, push state back to prevent navigation
+                    history.pushState({ trackingPage: true }, '', window.location.href);
+                } else {
+                    // User confirmed leaving, set flag and go back
+                    allowNavigation = true;
+                    history.back();
+                }
             }
         });
     </script>

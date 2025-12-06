@@ -158,7 +158,7 @@ export function checkAuth(callback) {
 export function resetPassword(email) {
     const actionCodeSettings = {
         // URL to redirect back to after password reset
-        url: 'https://pauljsnider.github.io/allplays/reset-password.html',
+        url: 'https://allplays.ai/reset-password.html',
         handleCodeInApp: true
     };
 
