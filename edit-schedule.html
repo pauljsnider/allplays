@@ -67,13 +67,16 @@
                 <div class="bg-white rounded-lg shadow-md overflow-hidden sticky top-8">
                     <!-- Tab Navigation -->
                     <div class="flex border-b border-gray-200">
-                        <button id="tab-add-game" class="flex-1 px-3 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50">
+                        <button id="tab-add-game"
+                            class="flex-1 px-3 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50">
                             Game
                         </button>
-                        <button id="tab-add-practice" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                        <button id="tab-add-practice"
+                            class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             Practice
                         </button>
-                        <button id="tab-bulk-ai" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                        <button id="tab-bulk-ai"
+                            class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             ✨ AI
                         </button>
                     </div>
@@ -82,39 +85,39 @@
                     <div id="content-add-game" class="p-6">
                         <h2 class="text-xl font-bold mb-4">Add Game</h2>
                         <form id="add-game-form" class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Date & Time</label>
-                            <input type="datetime-local" id="gameDate" required
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Opponent</label>
-                            <input type="text" id="opponent" required
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Location</label>
-                            <input type="text" id="location"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700">Stat Config</label>
-                            <select id="statConfig"
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
-                                <option value="">Default (None)</option>
-                                <!-- Configs loaded here -->
-                            </select>
-                            <p class="text-xs text-gray-500 mt-1">Create configs in <a href="#" id="config-link"
-                                    class="text-indigo-600 hover:underline">Edit Configs</a></p>
-                        </div>
-                        <div class="flex gap-2">
-                            <button type="submit" id="submit-game-btn"
-                                class="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
-                                Game</button>
-                            <button type="button" id="cancel-edit-game-btn"
-                                class="hidden px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">Cancel</button>
-                        </div>
-                    </form>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Date & Time</label>
+                                <input type="datetime-local" id="gameDate" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Opponent</label>
+                                <input type="text" id="opponent" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Location</label>
+                                <input type="text" id="location"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Stat Config</label>
+                                <select id="statConfig"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                    <option value="">Default (None)</option>
+                                    <!-- Configs loaded here -->
+                                </select>
+                                <p class="text-xs text-gray-500 mt-1">Create configs in <a href="#" id="config-link"
+                                        class="text-indigo-600 hover:underline">Edit Configs</a></p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="submit" id="submit-game-btn"
+                                    class="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
+                                    Game</button>
+                                <button type="button" id="cancel-edit-game-btn"
+                                    class="hidden px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">Cancel</button>
+                            </div>
+                        </form>
                     </div>
 
                     <!-- Add Practice Tab Content -->
@@ -153,7 +156,8 @@
                             <div class="border-t border-gray-200 pt-4 mt-4">
                                 <label class="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" id="practiceRecurring" class="rounded text-indigo-600">
-                                    <span class="text-sm font-medium text-gray-700">Make this a recurring practice</span>
+                                    <span class="text-sm font-medium text-gray-700">Make this a recurring
+                                        practice</span>
                                 </label>
 
                                 <div id="recurrence-builder" class="hidden mt-4 space-y-4 p-4 bg-gray-50 rounded-lg">
@@ -180,31 +184,38 @@
                                         <label class="block text-sm font-medium text-gray-700 mb-2">On days</label>
                                         <div class="flex flex-wrap gap-2">
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="SU" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="SU"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Sun</span>
                                             </label>
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="MO" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="MO"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Mon</span>
                                             </label>
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="TU" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="TU"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Tue</span>
                                             </label>
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="WE" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="WE"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Wed</span>
                                             </label>
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="TH" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="TH"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Thu</span>
                                             </label>
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="FR" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="FR"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Fri</span>
                                             </label>
                                             <label class="inline-flex items-center">
-                                                <input type="checkbox" value="SA" class="day-checkbox rounded text-indigo-600">
+                                                <input type="checkbox" value="SA"
+                                                    class="day-checkbox rounded text-indigo-600">
                                                 <span class="ml-1 text-sm">Sat</span>
                                             </label>
                                         </div>
@@ -214,17 +225,20 @@
                                         <label class="block text-sm font-medium text-gray-700 mb-2">Ends</label>
                                         <div class="space-y-2">
                                             <label class="flex items-center gap-2">
-                                                <input type="radio" name="recurrenceEnd" value="never" checked class="text-indigo-600">
+                                                <input type="radio" name="recurrenceEnd" value="never" checked
+                                                    class="text-indigo-600">
                                                 <span class="text-sm">Never</span>
                                             </label>
                                             <label class="flex items-center gap-2">
-                                                <input type="radio" name="recurrenceEnd" value="until" class="text-indigo-600">
+                                                <input type="radio" name="recurrenceEnd" value="until"
+                                                    class="text-indigo-600">
                                                 <span class="text-sm">On date:</span>
                                                 <input type="date" id="recurrenceUntil"
                                                     class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-1 text-sm">
                                             </label>
                                             <label class="flex items-center gap-2">
-                                                <input type="radio" name="recurrenceEnd" value="count" class="text-indigo-600">
+                                                <input type="radio" name="recurrenceEnd" value="count"
+                                                    class="text-indigo-600">
                                                 <span class="text-sm">After</span>
                                                 <input type="number" id="recurrenceCount" value="10" min="1" max="100"
                                                     class="w-16 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-1 text-sm">
@@ -237,7 +251,8 @@
 
                             <div class="flex gap-2">
                                 <button type="submit" id="submit-practice-btn"
-                                    class="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition">Add Practice</button>
+                                    class="flex-1 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 transition">Add
+                                    Practice</button>
                                 <button type="button" id="cancel-edit-practice-btn"
                                     class="hidden px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">Cancel</button>
                             </div>
@@ -249,7 +264,8 @@
                         <div class="flex items-start justify-between gap-3 mb-2">
                             <div>
                                 <h2 class="text-xl font-bold">Bulk AI Update</h2>
-                                <p class="text-sm text-gray-600">Upload an image (and add text hints), or skip the image and just paste raw schedule text. Short instructions help steer the results.</p>
+                                <p class="text-sm text-gray-600">Upload an image (and add text hints), or skip the image
+                                    and just paste raw schedule text. Short instructions help steer the results.</p>
                             </div>
                             <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">Image optional</span>
                         </div>
@@ -260,19 +276,25 @@
                                     <label class="block text-sm font-semibold text-gray-800 mb-1">
                                         Upload schedule image (optional)
                                     </label>
-                                    <p class="text-xs text-gray-600 mb-2">Screenshot or photo of the schedule. You can still add text instructions below to guide the AI (e.g., “only home games”).</p>
+                                    <p class="text-xs text-gray-600 mb-2">Screenshot or photo of the schedule. You can
+                                        still add text instructions below to guide the AI (e.g., “only home games”).</p>
                                     <input type="file" id="schedule-image-input" accept="image/*"
                                         class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
                                     <div id="schedule-image-preview" class="hidden mt-3">
-                                        <img id="schedule-image-preview-img" class="max-w-full h-auto rounded-lg border border-gray-300" alt="Schedule preview">
-                                        <button type="button" id="remove-schedule-image" class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
+                                        <img id="schedule-image-preview-img"
+                                            class="max-w-full h-auto rounded-lg border border-gray-300"
+                                            alt="Schedule preview">
+                                        <button type="button" id="remove-schedule-image"
+                                            class="mt-2 text-sm text-red-600 hover:text-red-800">✕ Remove image</button>
                                     </div>
                                 </div>
                                 <div>
                                     <label class="block text-sm font-semibold text-gray-800 mb-1">
                                         Paste schedule text (or use text-only)
                                     </label>
-                                    <p class="text-xs text-gray-600 mb-2">Raw text works by itself, or alongside an image for extra context. Add a short instruction like “only home games”, “ignore scrimmages”, or “just March dates”.</p>
+                                    <p class="text-xs text-gray-600 mb-2">Raw text works by itself, or alongside an
+                                        image for extra context. Add a short instruction like “only home games”, “ignore
+                                        scrimmages”, or “just March dates”.</p>
                                     <textarea id="bulk-text-input" rows="5"
                                         class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm"
                                         placeholder="Example:&#10;Sat 11/15 8:30 AM | Home vs Wildcats | Main Field&#10;Tue 11/18 6:00 PM | Away @ Tigers | East Gym"></textarea>
@@ -285,10 +307,15 @@
                                 <span>Process with AI</span>
                             </button>
 
-                            <div id="ai-loading" class="hidden mt-4 text-sm text-indigo-600 flex items-center gap-2 justify-center">
-                                <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            <div id="ai-loading"
+                                class="hidden mt-4 text-sm text-indigo-600 flex items-center gap-2 justify-center">
+                                <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none"
+                                    viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                        stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor"
+                                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                                    </path>
                                 </svg>
                                 Processing with AI...
                             </div>
@@ -364,7 +391,8 @@
     </div>
 
     <!-- Occurrence Choice Modal (Phase 2) -->
-    <div id="occurrence-choice-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div id="occurrence-choice-modal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 class="text-xl font-bold mb-2">Manage Recurring Practice</h3>
             <p class="text-sm text-gray-600 mb-4">
@@ -400,7 +428,8 @@
     </div>
 
     <!-- Edit Single Occurrence Modal (Phase 2) -->
-    <div id="edit-occurrence-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div id="edit-occurrence-modal"
+        class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h3 class="text-xl font-bold mb-2">Edit Practice</h3>
             <p class="text-sm text-gray-600 mb-4">
@@ -447,7 +476,8 @@
                     <button type="button" id="cancel-occurrence-edit-btn"
                         class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">Cancel</button>
                     <button type="button" id="revert-occurrence-btn"
-                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">Revert to Series</button>
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">Revert to
+                        Series</button>
                     <button type="submit"
                         class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Save</button>
                 </div>
@@ -817,6 +847,46 @@
         let editingGameId = null;
         let gamesCache = {};
 
+        // Handle tracking game with sport-specific routing
+        window.handleTrackGame = async (teamId, gameId) => {
+            try {
+                // We might already have the game in cache, but safer to fetch or use what we have
+                let game = gamesCache[gameId];
+                if (!game) {
+                    // Fallback if not in cache (unlikely given how this is called)
+                    const games = await getGames(teamId);
+                    game = games.find(g => g.id === gameId);
+                }
+
+                let trackerUrl = 'track.html'; // Default
+
+                if (game && game.statTrackerConfigId) {
+                    // We need configs to check the type
+                    // allConfigs is loaded in init()
+                    const config = allConfigs.find(c => c.id === game.statTrackerConfigId);
+
+                    if (config) {
+                        // Check baseType or name for backward compatibility
+                        const type = config.baseType || config.name;
+                        if (type && type.toLowerCase().includes('basketball')) {
+                            trackerUrl = 'track-basketball.html';
+                        } else if (type && type.toLowerCase().includes('soccer')) {
+                            trackerUrl = 'track-soccer.html';
+                        }
+                    }
+                } else if (currentTeam && currentTeam.sport && currentTeam.sport.toLowerCase() === 'basketball') {
+                    // Fallback to basketball tracker if team is basketball and no config set
+                    trackerUrl = 'track-basketball.html';
+                }
+
+                window.location.href = `${trackerUrl}#teamId=${teamId}&gameId=${gameId}`;
+            } catch (error) {
+                console.error('Error handling track game:', error);
+                // Fallback
+                window.location.href = `track.html#teamId=${teamId}&gameId=${gameId}`;
+            }
+        };
+
         function renderDbGame(game) {
             const isCompleted = game.status === 'completed';
             // Cache game data for later retrieval
@@ -833,7 +903,7 @@
                     </div>
                     <div class="flex space-x-2">
                         <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
-                        ${!isCompleted ? `<a href="track.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</a>` : ''}
+                        ${!isCompleted ? `<button onclick="handleTrackGame('${currentTeamId}', '${game.id}')" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</button>` : ''}
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
@@ -1305,8 +1375,8 @@
                     calendarEventUid: calendarEvent.uid
                 });
 
-                // Redirect to stat tracker
-                window.location.href = `track.html#teamId=${currentTeamId}&gameId=${gameId}`;
+                // Redirect to stat tracker using the handler
+                await window.handleTrackGame(currentTeamId, gameId);
             } catch (error) {
                 console.error('Error tracking game:', error);
                 alert('Error tracking game: ' + error.message);
@@ -1659,7 +1729,7 @@ PARSING RULES:
         }
 
         // Update operation when user edits
-        window.updateOperation = function(index, field, value) {
+        window.updateOperation = function (index, field, value) {
             if (proposedOperations[index].action === 'add') {
                 if (field === 'date') {
                     proposedOperations[index].game[field] = new Date(value).toISOString();
@@ -1670,7 +1740,7 @@ PARSING RULES:
         };
 
         // Remove operation from list
-        window.removeOperation = async function(index) {
+        window.removeOperation = async function (index) {
             proposedOperations.splice(index, 1);
             await renderProposedChanges();
         };

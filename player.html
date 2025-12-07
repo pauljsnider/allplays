@@ -211,6 +211,7 @@
                     const statsDoc = await getDoc(doc(db, `teams/${teamId}/games/${gameIdIter}/aggregatedStats`, playerId));
                     if (statsDoc.exists()) {
                         const stats = statsDoc.data().stats || {};
+                        const notes = statsDoc.data().notes || '';
                         gamesPlayed++;
                         Object.entries(stats).forEach(([stat, value]) => {
                             seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
@@ -219,7 +220,8 @@
                             gameId: gameIdIter,
                             date: game.date.toDate ? game.date.toDate() : new Date(game.date),
                             opponent: game.opponent || 'Opponent',
-                            stats
+                            stats,
+                            notes
                         });
 
                         // Collect events for this game
@@ -461,13 +463,33 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                                ${Object.entries(g.stats).map(([stat, value]) => `
+                                ${(() => {
+                            let minutes = null;
+                            if (g.stats.minutes !== undefined) minutes = g.stats.minutes;
+                            else if (g.stats.secondsPlayed !== undefined) minutes = Math.floor(g.stats.secondsPlayed / 60);
+
+                            if (minutes !== null) {
+                                return `
+                                            <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                                                <div class="text-2xl md:text-3xl font-bold text-primary-600">${minutes}</div>
+                                                <div class="text-xs text-gray-600 uppercase mt-1 font-medium">MIN</div>
+                                            </div>
+                                        `;
+                            }
+                            return '';
+                        })()}
+                                ${Object.entries(g.stats).filter(([k]) => k !== 'minutes' && k !== 'secondsPlayed').map(([stat, value]) => `
                                     <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
                                         <div class="text-2xl md:text-3xl font-bold text-primary-600">${value}</div>
                                         <div class="text-xs text-gray-600 uppercase mt-1 font-medium">${stat}</div>
                                     </div>
                                 `).join('')}
                             </div>
+                            ${g.notes ? `
+                                <div class="mt-4 p-3 bg-yellow-50 border border-yellow-100 rounded text-sm text-gray-700 italic">
+                                    <span class="font-semibold not-italic text-yellow-800">Note:</span> ${escapeHtml(g.notes)}
+                                </div>
+                            ` : ''}
                         </div>
                     `).join('');
                 } else {

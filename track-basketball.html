@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Track Game - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Montserrat', 'Roboto', sans-serif;
+            background: #f4f4f4;
+            font-size: 14px;
+        }
+
+        .stat-btn {
+            touch-action: manipulation;
+        }
+
+        .stat-cell {
+            width: 45px;
+            min-width: 45px;
+            max-width: 45px;
+        }
+
+        .stat-cell-wide {
+            width: 70px;
+            min-width: 70px;
+            max-width: 70px;
+        }
+
+        .player-name {
+            width: 120px;
+            min-width: 120px;
+            max-width: 120px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .notes-cell {
+            min-width: 140px;
+        }
+
+        .notes-container {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .notes-input {
+            flex: 1;
+            padding: 3px;
+            border: 1px solid #d1d5db;
+            border-radius: 3px;
+            font-size: 9px;
+        }
+
+        .notes-btn {
+            width: 30px;
+            height: 24px;
+            padding: 2px 4px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            font-size: 8px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .notes-btn:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <div class="p-2">
+        <!-- Game Tracking Header -->
+        <div class="bg-blue-600 text-white p-3 rounded-lg mb-3 shadow-md">
+            <div class="flex justify-between items-center mb-2">
+                <div>
+                    <h1 class="font-bold text-lg" id="game-title">Loading...</h1>
+                    <div class="text-sm opacity-90" id="game-meta"></div>
+                </div>
+                <div class="text-right">
+                    <div class="text-3xl font-mono font-bold mb-1">
+                        <span id="home-score">0</span> - <span id="away-score">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-center items-center gap-2 mb-2">
+                <div class="text-2xl font-bold" id="timer">00:00</div>
+            </div>
+
+            <!-- Period Selector -->
+            <div class="flex justify-center gap-1 mb-2">
+                <button
+                    class="period-btn bg-white text-blue-600 border-2 border-blue-600 px-3 py-1 rounded text-xs font-bold"
+                    data-period="Q1">Q1</button>
+                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                    data-period="Q2">Q2</button>
+                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                    data-period="Q3">Q3</button>
+                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                    data-period="Q4">Q4</button>
+                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                    data-period="OT">OT</button>
+            </div>
+
+            <div class="flex justify-center gap-2 flex-wrap">
+                <button id="lineupBtn"
+                    class="bg-indigo-600 text-white px-3 py-1 rounded font-semibold text-sm">Lineup</button>
+                <button id="startBtn"
+                    class="bg-white text-blue-600 px-3 py-1 rounded font-semibold text-sm">Start</button>
+                <button id="stopBtn" class="bg-red-600 text-white px-3 py-1 rounded text-sm" disabled>Stop</button>
+                <button id="resetBtn" class="bg-gray-700 text-white px-3 py-1 rounded text-sm">Reset</button>
+                <button id="undoLastBtn" class="bg-yellow-600 text-white px-3 py-1 rounded text-sm font-bold">↶ Undo
+                    Last</button>
+                <button id="cancelBtn" class="bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold">Cancel
+                    Game</button>
+                <!-- Email button removed -->
+                <button id="finish-btn"
+                    class="bg-green-600 text-white px-3 py-1 rounded text-sm font-bold">Finish</button>
+            </div>
+        </div>
+
+        <!-- Team Stats Table -->
+        <div class="bg-white rounded-lg shadow-md overflow-hidden border-2 border-blue-600 mb-3">
+            <div class="bg-blue-600 text-white p-3 font-bold text-center">Team Stats</div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-center text-xs" id="statsTable">
+                    <thead>
+                        <tr class="bg-gray-100 border-b-2 border-blue-600">
+                            <th class="player-name text-left p-1">Player</th>
+                            <!-- Column headers will be injected -->
+                        </tr>
+                    </thead>
+                    <tbody id="statsTableBody">
+                        <!-- Rows will be injected -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Opponent Stats Table -->
+        <div class="bg-white rounded-lg shadow-md overflow-hidden border-2 border-red-600 mb-3">
+            <div class="bg-red-600 text-white p-3 font-bold text-center flex justify-between items-center">
+                <span>Opponent Stats</span>
+                <button id="addOpponentBtn" class="bg-red-700 text-white px-2 py-1 rounded text-xs hover:bg-red-800">Add
+                    Player</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-center text-xs" id="opponentTable">
+                    <thead>
+                        <tr class="bg-gray-100 border-b-2 border-red-600">
+                            <th class="player-name text-left p-1">Player</th>
+                            <!-- Column headers will be injected -->
+                        </tr>
+                    </thead>
+                    <tbody id="opponentTableBody">
+                        <!-- Rows will be injected -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Game Log -->
+        <div class="bg-white rounded-lg shadow-md border-2 border-blue-600 p-3 max-h-48 overflow-y-auto">
+            <h3 class="font-bold text-sm text-blue-600 mb-2">Game Log</h3>
+            <div id="gameLog" class="text-xs">
+                <div class="p-2 bg-gray-100 rounded text-gray-500 text-center">Game log will appear here</div>
+            </div>
+        </div>
+
+        <!-- Lineup Modal -->
+        <div id="lineup-modal"
+            class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div class="bg-white rounded-lg max-w-2xl w-full p-6 my-8">
+                <h2 class="text-2xl font-bold mb-4">Manage Lineup</h2>
+                <div class="grid grid-cols-3 gap-4 mb-4">
+                    <div class="bg-green-50 p-3 rounded border border-green-200">
+                        <h3 class="font-bold text-green-800 mb-2 text-center">Starters (5)</h3>
+                        <div id="starters-list" class="space-y-1 min-h-[100px]"></div>
+                    </div>
+                    <div class="bg-blue-50 p-3 rounded border border-blue-200">
+                        <h3 class="font-bold text-blue-800 mb-2 text-center">Bench</h3>
+                        <div id="bench-list" class="space-y-1 min-h-[100px]"></div>
+                    </div>
+                    <div class="bg-gray-50 p-3 rounded border border-gray-200">
+                        <h3 class="font-bold text-gray-800 mb-2 text-center">Absent</h3>
+                        <div id="absent-list" class="space-y-1 min-h-[100px]"></div>
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-3">
+                    <button id="cancel-lineup"
+                        class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button id="save-lineup"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">Save Lineup</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player Detail Modal -->
+        <div id="player-detail-modal"
+            class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div class="bg-white rounded-lg max-w-lg w-full p-6 my-8">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-2xl font-bold" id="detail-player-name">Player Name</h2>
+                    <button id="close-detail-modal" class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button>
+                </div>
+
+                <div class="mb-4">
+                    <h3 class="font-bold text-gray-700 mb-2">Game Stats</h3>
+                    <div id="detail-stats-grid" class="grid grid-cols-3 gap-2 text-sm">
+                        <!-- Stats injected here -->
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <h3 class="font-bold text-gray-700 mb-2">Playing Time</h3>
+                    <div class="text-xl font-mono" id="detail-playing-time">00:00</div>
+                </div>
+
+                <div class="mb-4">
+                    <h3 class="font-bold text-gray-700 mb-2">Notes</h3>
+                    <textarea id="detail-notes" rows="4" class="w-full border border-gray-300 rounded p-2"
+                        placeholder="Enter player notes..."></textarea>
+                </div>
+
+                <div class="flex justify-end">
+                    <button id="save-detail-notes"
+                        class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save Notes</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Finish Game Modal -->
+        <div id="finish-modal"
+            class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div class="bg-white rounded-lg max-w-4xl w-full p-6 my-8">
+                <h2 class="text-2xl font-bold mb-4">Finish Game</h2>
+                <form id="finish-form" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Home Score</label>
+                            <input type="number" id="finalHomeScore" required
+                                class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Away Score</label>
+                            <input type="number" id="finalAwayScore" required
+                                class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2">
+                        </div>
+                    </div>
+                    <div id="zero-stats-section" class="hidden mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                        <h3 class="text-sm font-bold text-yellow-800 mb-2">Players with No Recorded Stats</h3>
+                        <p class="text-xs text-yellow-700 mb-2">The following players have no stats. Click to add a note
+                            about their contribution.</p>
+                        <div id="zero-stats-list" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div>
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="block text-sm font-medium text-gray-700">Game Summary</label>
+                            <button type="button" id="generateAISummary"
+                                class="px-3 py-1 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 flex items-center gap-1">
+                                <span>✨</span> Generate AI Summary
+                            </button>
+                        </div>
+                        <textarea id="gameSummary" rows="4"
+                            class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2"
+                            placeholder="Key moments, MVP, etc."></textarea>
+                        <div id="aiSummaryLoading" class="hidden mt-2 text-sm text-blue-600 flex items-center gap-2">
+                            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none"
+                                viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
+                                    stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                                </path>
+                            </svg>
+                            Generating AI match report...
+                        </div>
+                    </div>
+                    <div class="flex items-center">
+                        <input type="checkbox" id="sendEmailCheckbox" checked
+                            class="h-4 w-4 text-blue-600 border-gray-300 rounded">
+                        <label for="sendEmailCheckbox" class="ml-2 text-sm font-medium text-gray-700">Send game summary
+                            email</label>
+                    </div>
+                    <div id="emailPreviewSection" class="border-t pt-4">
+                        <h3 class="text-lg font-semibold mb-2">Email Preview</h3>
+                        <div class="bg-gray-50 p-4 rounded-md max-h-96 overflow-y-auto">
+                            <pre id="emailPreview"
+                                class="text-xs whitespace-pre-wrap font-mono text-gray-700">Email preview will appear here...</pre>
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-3 pt-4">
+                        <button type="button" id="cancel-finish"
+                            class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Save
+                            & Complete</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getTeam, getGame, getPlayers, getConfigs, updateGame } from './js/db.js';
+        import { collection, getDocs, deleteDoc, writeBatch, doc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { db } from './js/firebase.js';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
+        import { checkAuth } from './js/auth.js';
+        import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+        import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        checkAuth((user) => {
+            renderHeader(document.getElementById('header-container'), user);
+        });
+
+        let currentTeamId = null;
+        let currentGameId = null;
+        let currentUser = null;
+        let currentConfig = null;
+        let currentTeam = null;
+        let currentGame = null;
+        let homeScore = 0;
+        let awayScore = 0;
+        let players = [];
+        let opponentPlayers = [
+            { id: 'opp1', name: '', notes: '' },
+            { id: 'opp2', name: '', notes: '' },
+            { id: 'opp3', name: '', notes: '' }
+        ];
+        let isFinishing = false; // Flag to disable beforeunload warning when finishing game
+        let gameState = {
+            startTime: null,
+            elapsed: 0,
+            isRunning: false,
+            gameLog: [],
+            playerNotes: {},
+            playerStats: {},
+            opponentStats: {},
+            currentPeriod: 'Q1',
+            lineup: {
+                starters: [],
+                bench: [],
+                absent: []
+            },
+            lastSubTime: 0 // Game time in ms when last sub/start occurred
+        };
+        let tempLineup = null;
+        let existingPlayerStats = {}; // Stores existing aggregated stats from Firestore
+
+        checkAuth((user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            currentUser = user;
+            init();
+        });
+
+        async function init() {
+            const { teamId, gameId } = getUrlParams();
+
+            if (!teamId || !gameId) {
+                console.error('Missing teamId or gameId');
+                window.location.href = 'dashboard.html';
+                return;
+            }
+            currentTeamId = teamId;
+            currentGameId = gameId;
+
+            try {
+                const [team, game, playersList] = await Promise.all([
+                    getTeam(teamId),
+                    getGame(teamId, gameId),
+                    getPlayers(teamId)
+                ]);
+
+
+
+                if (!game) {
+                    console.error('Game not found for teamId:', teamId, 'gameId:', gameId);
+                    alert("Game not found");
+                    window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                // Practices cannot be tracked - redirect to schedule
+                if (game.type === 'practice') {
+                    alert('Practice events cannot be tracked. Use game tracking for games only.');
+                    window.location.href = `edit-schedule.html#teamId=${teamId}`;
+                    return;
+                }
+
+                currentTeam = team;
+                currentGame = game;
+                players = playersList;
+
+                // Initialize notes for all players
+                players.forEach(p => {
+                    gameState.playerNotes[p.id] = '';
+                });
+
+                // Initialize opponent stats - load from game if exists, otherwise create fresh
+                if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
+                    // Load existing opponent stats from the game
+                    gameState.opponentStats = JSON.parse(JSON.stringify(game.opponentStats));
+
+                } else {
+                    // Initialize fresh opponent stats
+                    opponentPlayers.forEach(p => {
+                        gameState.opponentStats[p.id] = {
+                            name: p.name || '',
+                            number: p.number || ''
+                        };
+                    });
+                }
+
+                document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
+                document.getElementById('game-meta').textContent = escapeHtml(team.name);
+                homeScore = game.homeScore || 0;
+                awayScore = game.awayScore || 0;
+                updateScoreDisplay();
+
+                // Load Config
+                if (game.statTrackerConfigId) {
+                    const configs = await getConfigs(teamId);
+                    currentConfig = configs.find(c => c.id === game.statTrackerConfigId);
+                }
+
+                if (!currentConfig) {
+                    currentConfig = {
+                        name: 'Default',
+                        columns: ['PTS', 'REB', 'AST', 'STL', 'TO']
+                    };
+                }
+
+                // Load existing aggregated stats from Firestore
+                const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                statsSnapshot.forEach(doc => {
+                    existingPlayerStats[doc.id] = doc.data().stats || {};
+                });
+
+                // Initialize player stats with existing data or zeros
+                players.forEach(p => {
+                    gameState.playerStats[p.id] = {};
+                    currentConfig.columns.forEach(col => {
+                        const statKey = col.toLowerCase();
+                        const existingVal = (existingPlayerStats[p.id] && existingPlayerStats[p.id][statKey]) || 0;
+                        gameState.playerStats[p.id][statKey] = existingVal;
+                    });
+                });
+
+                // Also load existing scores from aggregated stats
+                let totalHomePoints = 0;
+                players.forEach(p => {
+                    const pts = gameState.playerStats[p.id].pts || gameState.playerStats[p.id].points || 0;
+                    totalHomePoints += pts;
+                });
+                // Use calculated total if game score is 0 but we have player stats
+                if (totalHomePoints > 0 && homeScore === 0) {
+                    homeScore = totalHomePoints;
+                    updateScoreDisplay();
+                }
+
+                // Check for local draft
+                loadDraft();
+
+                // Initialize lineup if empty (first load)
+                if (gameState.lineup.starters.length === 0 && gameState.lineup.bench.length === 0 && gameState.lineup.absent.length === 0) {
+                    // Default everyone to bench initially
+                    gameState.lineup.bench = players.map(p => p.id);
+                }
+
+                // Initialize opponent stats with config columns
+                opponentPlayers.forEach(p => {
+                    currentConfig.columns.forEach(col => {
+                        gameState.opponentStats[p.id][col.toLowerCase()] = 0;
+                    });
+                });
+
+                renderStatsTable();
+                renderOpponentTable();
+                setInterval(updateTimer, 1000);
+
+                // Add initial history state for back button handling
+                history.pushState({ trackingPage: true }, '', window.location.href);
+
+                // Add period button listeners
+                document.querySelectorAll('.period-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        // Update UI
+                        document.querySelectorAll('.period-btn').forEach(b => {
+                            b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'font-bold');
+                            b.classList.add('bg-white', 'text-gray-600', 'border-gray-300');
+                        });
+                        btn.classList.remove('bg-white', 'text-gray-600', 'border-gray-300');
+                        btn.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'font-bold');
+
+                        // Update state
+                        gameState.currentPeriod = btn.dataset.period;
+                        addLogEntry(`Period changed to ${gameState.currentPeriod}`);
+                    });
+                });
+
+            } catch (error) {
+                console.error(error);
+                alert("Error loading game data.");
+            }
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('home-score').textContent = homeScore;
+            document.getElementById('away-score').textContent = awayScore;
+        }
+
+
+
+        function renderOpponentTable() {
+            const thead = document.querySelector('#opponentTable thead tr');
+            const tbody = document.getElementById('opponentTableBody');
+
+            // Render column headers
+            let headersHTML = '<th class="player-name text-left p-1">Player</th>';
+            currentConfig.columns.forEach(col => {
+                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
+            });
+            headersHTML += '<th class="notes-cell p-1">Notes</th>';
+            thead.innerHTML = headersHTML;
+
+            // Render opponent rows
+            tbody.innerHTML = opponentPlayers.map(opp => {
+                let rowHTML = `<tr class="border-b hover:bg-gray-50">
+                    <td class="player-name text-left p-1">
+                        <input type="text" class="notes-input" placeholder="Player name..." value="${escapeHtml(opp.name)}"
+                            onchange="updateOpponentName('${opp.id}', this.value)">
+                    </td>`;
+
+                currentConfig.columns.forEach(col => {
+                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                    const statKey = col.toLowerCase();
+
+                    if (isPoints) {
+                        rowHTML += `<td class="stat-cell-wide p-1">
+                            <div class="flex flex-col items-center gap-1">
+                                <div class="font-bold text-sm text-red-600" id="stat-${opp.id}-${statKey}">0</div>
+                                <div class="flex gap-0.5">
+                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                        onclick="incrementStat('${opp.id}', '${statKey}', 1, true)">1</button>
+                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                        onclick="incrementStat('${opp.id}', '${statKey}', 2, true)">2</button>
+                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                        onclick="incrementStat('${opp.id}', '${statKey}', 3, true)">3</button>
+                                </div>
+                            </div>
+                        </td>`;
+                    } else {
+                        rowHTML += `<td class="stat-cell p-1">
+                            <div class="flex flex-col items-center gap-1">
+                                <div class="font-bold text-sm text-red-600" id="stat-${opp.id}-${statKey}">0</div>
+                                <div class="flex gap-0.5">
+                                    <button class="stat-btn bg-orange-50 text-orange-600 border border-orange-300 rounded w-5 h-5 text-xs font-bold hover:bg-orange-100"
+                                        onclick="incrementStat('${opp.id}', '${statKey}', 1, true)">+</button>
+                                </div>
+                            </div>
+                        </td>`;
+                    }
+                });
+
+                rowHTML += `<td class="notes-cell p-1">
+                    <div class="notes-container">
+                        <input type="text" class="notes-input" placeholder="Notes..." id="opp-notes-${opp.id}"
+                            onchange="updateOpponentNote('${opp.id}', this.value)">
+                        <button class="notes-btn" onclick="logOpponentNote('${opp.id}')">Log</button>
+                    </div>
+                </td></tr>`;
+                return rowHTML;
+            }).join('');
+        }
+
+        window.updatePlayerNote = function (playerId, note) {
+            gameState.playerNotes[playerId] = note;
+        };
+
+        window.logPlayerNote = function (playerId) {
+            const player = players.find(p => p.id === playerId);
+            const notes = gameState.playerNotes[playerId];
+            if (notes && notes.trim()) {
+                addLogEntry(`#${player.number || '-'} ${player.name} - Note: ${notes}`);
+            }
+        };
+
+        window.updateOpponentName = function (oppId, name) {
+            const opp = opponentPlayers.find(o => o.id === oppId);
+            if (opp) opp.name = name;
+            if (gameState.opponentStats[oppId]) {
+                gameState.opponentStats[oppId].name = name;
+            }
+        };
+
+        window.updateOpponentNote = function (oppId, note) {
+            const opp = opponentPlayers.find(o => o.id === oppId);
+            if (opp) opp.notes = note;
+        };
+
+        window.logOpponentNote = function (oppId) {
+            const opp = opponentPlayers.find(o => o.id === oppId);
+            const notes = opp.notes;
+            if (notes && notes.trim()) {
+                const playerName = opp.name || 'Opponent Player';
+                addLogEntry(`${playerName} (Opp) - Note: ${notes}`);
+            }
+        };
+
+        window.incrementStat = async function (playerId, statKey, value, isOpponent) {
+            const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
+            const currentVal = parseInt(statEl.textContent);
+            const newVal = currentVal + value;
+            statEl.textContent = newVal;
+
+            const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
+
+            if (isOpponent) {
+                gameState.opponentStats[playerId][statKey] = newVal;
+                if (isPoints) {
+                    awayScore += value;
+                    updateScoreDisplay();
+                }
+                const opp = opponentPlayers.find(o => o.id === playerId);
+                const oppName = opp.name || 'Opponent Player';
+                addLogEntry(`${oppName} (Opp) +${value} ${statKey.toUpperCase()}`, {
+                    type: 'stat',
+                    playerId,
+                    statKey,
+                    value,
+                    isOpponent: true
+                });
+            } else {
+                const player = players.find(p => p.id === playerId);
+                if (!player) return;
+
+                if (isPoints) {
+                    homeScore += value;
+                    updateScoreDisplay();
+                }
+
+                // Update in-memory state
+                if (!gameState.playerStats[playerId]) gameState.playerStats[playerId] = {};
+                if (!gameState.playerStats[playerId][statKey]) gameState.playerStats[playerId][statKey] = 0;
+                gameState.playerStats[playerId][statKey] += value;
+
+                addLogEntry(`#${player.number || '-'} ${player.name} +${value} ${statKey.toUpperCase()}`, {
+                    type: 'stat',
+                    playerId,
+                    statKey,
+                    value,
+                    isOpponent: false
+                });
+
+                saveDraft(); // Auto-save to local storage
+            }
+        };
+
+        window.decrementStat = async function (playerId, statKey, isOpponent) {
+            const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
+            const currentVal = parseInt(statEl.textContent);
+            if (currentVal === 0) return;
+
+            let value = 1;
+            const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
+
+            if (isPoints && currentVal >= 3) {
+                value = confirm('Remove 3 points?') ? 3 : confirm('Remove 2 points?') ? 2 : 1;
+            }
+
+            const newVal = Math.max(0, currentVal - value);
+            statEl.textContent = newVal;
+
+            if (isOpponent) {
+                gameState.opponentStats[playerId][statKey] = newVal;
+                if (isPoints) {
+                    awayScore = Math.max(0, awayScore - value);
+                    updateScoreDisplay();
+                }
+                const opp = opponentPlayers.find(o => o.id === playerId);
+                const oppName = opp.name || 'Opponent Player';
+                addLogEntry(`${oppName} (Opp) -${value} ${statKey.toUpperCase()}`);
+            } else {
+                const player = players.find(p => p.id === playerId);
+                if (!player) return;
+
+                if (isPoints) {
+                    homeScore = Math.max(0, homeScore - value);
+                    updateScoreDisplay();
+                }
+
+                // Update in-memory state
+                if (!gameState.playerStats[playerId]) gameState.playerStats[playerId] = {};
+                if (!gameState.playerStats[playerId][statKey]) gameState.playerStats[playerId][statKey] = 0;
+                gameState.playerStats[playerId][statKey] = Math.max(0, gameState.playerStats[playerId][statKey] - value);
+
+                addLogEntry(`#${player.number || '-'} ${player.name} -${value} ${statKey.toUpperCase()}`);
+
+                saveDraft(); // Auto-save to local storage
+            }
+        };
+
+        // Add opponent player
+        document.getElementById('addOpponentBtn').addEventListener('click', () => {
+            const newOpp = {
+                id: 'opp' + Date.now(),
+                name: '',
+                notes: ''
+            };
+            gameState.opponentStats[newOpp.id] = { name: '', number: '' };
+            currentConfig.columns.forEach(col => {
+                gameState.opponentStats[newOpp.id][col.toLowerCase()] = 0;
+            });
+            opponentPlayers.push(newOpp);
+            renderOpponentTable();
+        });
+
+        // Timer functions
+        async function startTimer() {
+            if (!gameState.isRunning) {
+                // Only consider clearing DB if we have no local activity yet
+                const hasLocalActivity = gameState.elapsed > 0 ||
+                    homeScore > 0 ||
+                    awayScore > 0 ||
+                    (gameState.gameLog && gameState.gameLog.length > 0);
+
+                if (!hasLocalActivity) {
+                    const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+
+                    if (eventsSnap.size > 0) {
+                        const msg = currentGame?.status === 'completed'
+                            ? `This game was previously finished and has ${eventsSnap.size} event(s). Starting will clear that data. Continue?`
+                            : `This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`;
+
+                        const confirmClear = confirm(msg);
+                        if (!confirmClear) {
+                            return; // User cancelled
+                        }
+
+                        // Clear existing events and stats
+
+                        const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
+                        await Promise.all(deleteEventPromises);
+
+                        // Clear aggregated stats
+                        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                        const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
+                        await Promise.all(deleteStatsPromises);
+
+
+                    }
+                }
+
+                gameState.startTime = Date.now() - gameState.elapsed;
+                gameState.isRunning = true;
+                gameState.lastSubTime = gameState.elapsed; // Track when this segment started
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                addLogEntry('Game started');
+                addLogEntry(`Period: ${gameState.currentPeriod}`);
+            }
+        }
+
+        function stopTimer() {
+            if (gameState.isRunning) {
+                updatePlayingTime(); // Credit time before stopping
+                gameState.isRunning = false;
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                addLogEntry('Game stopped');
+                saveDraft();
+            }
+        }
+
+        async function resetTimer() {
+            if (confirm('Reset timer and clear all stats? This will also clear saved stats in the database.')) {
+                gameState.startTime = null;
+                gameState.elapsed = 0;
+                gameState.isRunning = false;
+                gameState.gameLog = [];
+                homeScore = 0;
+                awayScore = 0;
+
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+
+                document.querySelectorAll('[id^="stat-"]').forEach(el => {
+                    el.textContent = '0';
+                });
+
+                // Clear aggregated stats in Firebase
+                try {
+                    const statsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                    const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js");
+                    await Promise.all(statsSnapshot.docs.map(doc => deleteDoc(doc.ref)));
+                    existingPlayerStats = {}; // Clear local cache too
+                } catch (error) {
+                    console.error('Error clearing stats:', error);
+                }
+
+                updateScoreDisplay();
+                renderGameLog();
+                updateTimer();
+            }
+        }
+
+        async function cancelGame() {
+            const confirmMsg = 'Are you sure you want to cancel this game? All tracked data will be permanently deleted.';
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            try {
+                // Delete all events
+                const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
+                await Promise.all(deleteEventPromises);
+
+                // Delete all aggregated stats
+                const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+                const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
+                await Promise.all(deleteStatsPromises);
+
+                // Reset game status to scheduled if it was started
+                if (currentGame.status !== 'scheduled') {
+                    await updateGame(currentTeamId, currentGameId, {
+                        status: 'scheduled',
+                        homeScore: 0,
+                        awayScore: 0
+                    });
+                }
+
+                // Navigate back to schedule
+                alert('Game cancelled. All data has been deleted.');
+                window.location.href = `edit-schedule.html#teamId=${currentTeamId}`;
+            } catch (error) {
+                console.error('Error cancelling game:', error);
+                alert('Error cancelling game: ' + error.message);
+            }
+        }
+
+        function updateTimer() {
+            if (gameState.isRunning) {
+                gameState.elapsed = Date.now() - gameState.startTime;
+            }
+
+            const totalSeconds = Math.floor(gameState.elapsed / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+
+            document.getElementById('timer').textContent =
+                `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function getGameTime() {
+            const totalSeconds = Math.floor(gameState.elapsed / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        async function addLogEntry(text, undoData = null) {
+            const entry = {
+                text: text,
+                time: getGameTime(),
+                period: gameState.currentPeriod,
+                timestamp: Date.now(),
+                undoData: undoData
+            };
+            gameState.gameLog.unshift(entry);
+            renderGameLog();
+            saveDraft();
+        }
+
+        function renderGameLog() {
+            const logDiv = document.getElementById('gameLog');
+            if (gameState.gameLog.length === 0) {
+                logDiv.innerHTML = '<div class="p-2 bg-gray-100 rounded text-gray-500 text-center">Game log will appear here</div>';
+                return;
+            }
+
+            logDiv.innerHTML = gameState.gameLog.map((entry, index) => `
+                <div class="p-2 mb-1 bg-gray-100 rounded flex justify-between items-center border-l-2 border-blue-600">
+                    <span class="flex-1">${escapeHtml(entry.text)}</span>
+                    <span class="text-blue-600 font-medium text-xs mr-2">${escapeHtml(entry.period || 'Q1')} ${escapeHtml(entry.time)}</span>
+                    <button class="bg-red-600 text-white px-2 py-1 rounded text-xs hover:bg-red-700"
+                        onclick="undoLogEntry(${index})">✕</button>
+                </div>
+            `).join('');
+        }
+
+        window.undoLogEntry = function (index) {
+            const entry = gameState.gameLog[index];
+
+            // Only undo stat changes, not notes
+            if (entry.undoData && entry.undoData.type === 'stat') {
+                const { playerId, statKey, value, isOpponent } = entry.undoData;
+                const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
+                const currentVal = parseInt(statEl.textContent);
+                const newVal = Math.max(0, currentVal - value);
+                statEl.textContent = newVal;
+
+                const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
+
+                if (isOpponent) {
+                    gameState.opponentStats[playerId][statKey] = newVal;
+                    if (isPoints) {
+                        awayScore = Math.max(0, awayScore - value);
+                        updateScoreDisplay();
+                    }
+                } else {
+                    if (isPoints) {
+                        homeScore = Math.max(0, homeScore - value);
+                        updateScoreDisplay();
+                    }
+
+                    // Update in-memory stats
+                    if (gameState.playerStats[playerId] && gameState.playerStats[playerId][statKey]) {
+                        gameState.playerStats[playerId][statKey] = Math.max(0, gameState.playerStats[playerId][statKey] - value);
+                    }
+                }
+            }
+
+            // Remove the entry from the log
+            gameState.gameLog.splice(index, 1);
+            renderGameLog();
+            saveDraft();
+        };
+
+        document.getElementById('undoLastBtn').addEventListener('click', () => {
+            if (gameState.gameLog.length > 0) {
+                undoLogEntry(0);
+            }
+        });
+
+        // Email Summary Function
+        function generateEmailBody(finalHomeScore, finalAwayScore, summary = '') {
+            const gameData = {
+                opponent: currentGame.opponent || 'Unknown Opponent',
+                date: currentGame.date ? new Date(currentGame.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString(),
+                gameTime: getGameTime(),
+                homeScore: finalHomeScore,
+                awayScore: finalAwayScore
+            };
+
+            let body = `${currentTeam.name} Game Summary\n`;
+            body += `Date: ${gameData.date}\n`;
+            body += `Opponent: ${gameData.opponent}\n`;
+            body += `Final Score: ${gameData.homeScore} - ${gameData.awayScore}\n`;
+            body += `Game Time: ${gameData.gameTime}\n`;
+
+            if (summary) {
+                body += `\nSUMMARY:\n`;
+                body += `${'='.repeat(40)}\n`;
+                body += `${summary}\n`;
+            }
+
+            body += `\n${currentTeam.name.toUpperCase()} PLAYER STATS:\n`;
+            body += `${'='.repeat(40)}\n`;
+            players.forEach(player => {
+                body += `#${player.number || '-'} ${player.name}:\n`;
+                currentConfig.columns.forEach(col => {
+                    const statKey = col.toLowerCase();
+                    const statEl = document.getElementById(`stat-${player.id}-${statKey}`);
+                    const value = statEl ? statEl.textContent : '0';
+                    body += `  ${col}: ${value}\n`;
+                });
+                const notes = gameState.playerNotes[player.id];
+                if (notes) body += `  Notes: ${notes}\n`;
+                body += `\n`;
+            });
+
+            body += `\nOPPONENT TEAM STATS:\n`;
+            body += `${'='.repeat(40)}\n`;
+            opponentPlayers.forEach(opp => {
+                const hasStats = gameState.opponentStats[opp.id];
+                const hasNotes = opp.notes;
+                const hasName = opp.name;
+
+                if (hasName || hasStats || hasNotes) {
+                    const playerName = opp.name || 'Unnamed Player';
+                    body += `${playerName}:\n`;
+
+                    if (hasStats) {
+                        currentConfig.columns.forEach(col => {
+                            const statKey = col.toLowerCase();
+                            const value = hasStats[statKey] || 0;
+                            if (value > 0) {
+                                body += `  ${col}: ${value}\n`;
+                            }
+                        });
+                    }
+
+                    if (hasNotes) {
+                        body += `  Notes: ${hasNotes}\n`;
+                    }
+                    body += `\n`;
+                }
+            });
+
+            if (gameState.gameLog.length > 0) {
+                body += `\nGAME LOG:\n`;
+                body += `${'='.repeat(40)}\n`;
+                gameState.gameLog.slice().reverse().forEach(entry => {
+                    const period = entry.period || 'Q1';
+                    body += `${period} ${entry.time} - ${entry.text}\n`;
+                });
+            }
+
+            return body;
+        }
+
+        function emailSummary() {
+            const gameData = {
+                opponent: currentGame.opponent || 'Unknown Opponent'
+            };
+            const subject = `${currentTeam.name} vs ${gameData.opponent} - Game Summary`;
+            const body = generateEmailBody(homeScore, awayScore, '');
+
+            // Create mailto link
+            const userEmail = currentUser.email || '';
+            const mailto = `mailto:${userEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            window.location.href = mailto;
+        }
+
+        // AI Summary Generation
+        async function generateAIMatchReport() {
+            const loadingDiv = document.getElementById('aiSummaryLoading');
+            const summaryTextarea = document.getElementById('gameSummary');
+            const generateBtn = document.getElementById('generateAISummary');
+
+            try {
+                // Show loading state
+                loadingDiv.classList.remove('hidden');
+                generateBtn.disabled = true;
+                generateBtn.classList.add('opacity-50');
+
+                // Collect game data
+                const finalHomeScore = parseInt(document.getElementById('finalHomeScore').value) || homeScore;
+                const finalAwayScore = parseInt(document.getElementById('finalAwayScore').value) || awayScore;
+
+                // Build comprehensive game context
+                let context = `Game: ${currentTeam.name} vs ${currentGame.opponent}\n`;
+                context += `Final Score: ${finalHomeScore} - ${finalAwayScore}\n`;
+                context += `Date: ${currentGame.date ? new Date(currentGame.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString()}\n`;
+                context += `Sport: ${currentTeam.sport || 'Unknown'}\n\n`;
+
+                // Player Stats
+                context += `${currentTeam.name.toUpperCase()} PLAYERS:\n`;
+                players.forEach(player => {
+                    context += `#${player.number || '-'} ${player.name}: `;
+                    const stats = [];
+                    currentConfig.columns.forEach(col => {
+                        const statKey = col.toLowerCase();
+                        const statEl = document.getElementById(`stat-${player.id}-${statKey}`);
+                        const value = statEl ? statEl.textContent : '0';
+                        stats.push(`${col}:${value}`);
+                    });
+                    context += stats.join(', ');
+                    const notes = gameState.playerNotes[player.id];
+                    if (notes) context += ` | Notes: ${notes}`;
+                    context += `\n`;
+                });
+
+                // Opponent Stats
+                context += `\nOPPONENT PLAYERS:\n`;
+                opponentPlayers.forEach(opp => {
+                    if (opp.name && gameState.opponentStats[opp.id]) {
+                        context += `${opp.name}: `;
+                        const stats = [];
+                        currentConfig.columns.forEach(col => {
+                            const statKey = col.toLowerCase();
+                            const value = gameState.opponentStats[opp.id][statKey] || 0;
+                            if (value > 0) stats.push(`${col}:${value}`);
+                        });
+                        context += stats.join(', ');
+                        if (opp.notes) context += ` | Notes: ${opp.notes}`;
+                        context += `\n`;
+                    }
+                });
+
+                // Game Log
+                if (gameState.gameLog.length > 0) {
+                    context += `\nGAME LOG (chronological order):\n`;
+                    gameState.gameLog.slice().reverse().forEach(entry => {
+                        const period = entry.period || 'Q1';
+                        context += `${period} ${entry.time} - ${entry.text}\n`;
+                    });
+                }
+
+                // Existing Summary (if any)
+                const existingSummary = summaryTextarea.value.trim();
+                if (existingSummary) {
+                    context += `\nEXISTING GAME NOTES/SUMMARY:\n${existingSummary}\n`;
+                }
+
+                // Create AI prompt
+                const prompt = `You are a professional sports journalist writing a match report. Based on the following game data, create an engaging narrative match report in 2-3 paragraphs.
+${existingSummary ? '\nIMPORTANT: There are existing game notes/summary provided. Use this information to enhance your report, incorporating any insights or context mentioned.' : ''}
+
+Write in a narrative style that tells the story of the game, highlighting:
+- Key moments and turning points from the game log
+- Outstanding individual performances (mention ALL players who had significant contributions)
+- The flow and momentum of the game
+- Notable statistics that tell the story
+
+Make it engaging and professional, as if it would appear in a sports publication. Focus on the narrative, not just listing stats.
+
+GAME DATA:
+${context}
+
+Write the match report now:`;
+
+                // Use Firebase AI Logic SDK (free on Spark plan!)
+                const firebaseApp = getApp();
+                const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+                const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+
+                const result = await model.generateContent(prompt);
+                const text = result.response.text();
+
+                // Update the summary textarea
+                summaryTextarea.value = text;
+
+                // Update email preview
+                updateEmailPreview();
+
+            } catch (error) {
+                console.error('Error generating AI summary:', error);
+                alert('Error generating AI summary. Please check console for details.\n\nError: ' + error.message);
+            } finally {
+                // Hide loading state
+                loadingDiv.classList.add('hidden');
+                generateBtn.disabled = false;
+                generateBtn.classList.remove('opacity-50');
+            }
+        }
+
+        // Finish Game Logic
+        const modal = document.getElementById('finish-modal');
+        const finishBtn = document.getElementById('finish-btn');
+        const cancelBtn = document.getElementById('cancel-finish');
+        const finishForm = document.getElementById('finish-form');
+
+        finishBtn.addEventListener('click', () => {
+            document.getElementById('finalHomeScore').value = homeScore;
+            document.getElementById('finalAwayScore').value = awayScore;
+
+            // Check for zero stats players
+            const zeroStatsPlayers = players.filter(p => {
+                const stats = gameState.playerStats[p.id];
+                // Check if any stat is > 0 (excluding playingTime/minutes if we want to be strict, but playing time is a stat)
+                // If they played but have no other stats, maybe we still want to prompt?
+                // Let's say if they have NO stats recorded at all (including playing time).
+                // Or if they have playing time but no "box score" stats?
+                // The requirement says "players with zero stats".
+                // Let's check for any non-zero value in stats object.
+                const hasStats = stats && Object.values(stats).some(v => v > 0);
+                const hasNotes = gameState.playerNotes[p.id];
+                const isAbsent = gameState.lineup.absent.includes(p.id);
+                return !hasStats && !hasNotes && !isAbsent;
+            });
+
+            const zeroStatsSection = document.getElementById('zero-stats-section');
+            const zeroStatsList = document.getElementById('zero-stats-list');
+
+            if (zeroStatsPlayers.length > 0) {
+                zeroStatsSection.classList.remove('hidden');
+                zeroStatsList.innerHTML = zeroStatsPlayers.map(p => `
+                    <button type="button" class="px-2 py-1 bg-white border border-yellow-300 rounded text-xs font-medium text-yellow-800 hover:bg-yellow-100"
+                        onclick="openPlayerDetailModal('${p.id}')">
+                        #${p.number} ${p.name}
+                    </button>
+                `).join('');
+            } else {
+                zeroStatsSection.classList.add('hidden');
+            }
+
+            // Generate and display email preview
+            const emailBody = generateEmailBody(homeScore, awayScore, document.getElementById('gameSummary').value);
+            document.getElementById('emailPreview').textContent = emailBody;
+
+            modal.classList.remove('hidden');
+        });
+
+        // Update email preview when scores or summary change
+        document.getElementById('finalHomeScore').addEventListener('input', updateEmailPreview);
+        document.getElementById('finalAwayScore').addEventListener('input', updateEmailPreview);
+        document.getElementById('gameSummary').addEventListener('input', updateEmailPreview);
+
+        // AI Summary button
+        document.getElementById('generateAISummary').addEventListener('click', generateAIMatchReport);
+
+        function updateEmailPreview() {
+            const finalHome = parseInt(document.getElementById('finalHomeScore').value) || 0;
+            const finalAway = parseInt(document.getElementById('finalAwayScore').value) || 0;
+            const summary = document.getElementById('gameSummary').value;
+            const emailBody = generateEmailBody(finalHome, finalAway, summary);
+            document.getElementById('emailPreview').textContent = emailBody;
+        }
+
+        cancelBtn.addEventListener('click', () => {
+            modal.classList.add('hidden');
+        });
+
+        function saveDraft() {
+            if (!gameState.isRunning && gameState.elapsed === 0 && gameState.gameLog.length === 0) return;
+
+            const draftData = {
+                teamId: currentTeamId,
+                gameId: currentGameId,
+                timestamp: Date.now(),
+                gameState: gameState,
+                homeScore: homeScore,
+                awayScore: awayScore
+            };
+            localStorage.setItem(`draft_${currentTeamId}_${currentGameId}`, JSON.stringify(draftData));
+        }
+
+        function loadDraft() {
+            const draftJson = localStorage.getItem(`draft_${currentTeamId}_${currentGameId}`);
+            if (draftJson) {
+                try {
+                    const draft = JSON.parse(draftJson);
+                    // Check if draft is recent (e.g., within 24 hours) - optional
+                    // For now, just load it if it matches the game
+                    if (draft.teamId === currentTeamId && draft.gameId === currentGameId) {
+
+                        gameState = draft.gameState;
+                        homeScore = draft.homeScore;
+                        awayScore = draft.awayScore;
+                        updateScoreDisplay();
+
+                        // Restore timer UI
+                        const minutes = Math.floor(gameState.elapsed / 60000);
+                        const seconds = Math.floor((gameState.elapsed % 60000) / 1000);
+                        document.getElementById('timer').textContent =
+                            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+                        // Restore log
+                        const logDiv = document.getElementById('gameLog');
+                        logDiv.innerHTML = '';
+                        gameState.gameLog.forEach(entry => {
+                            const entryDiv = document.createElement('div');
+                            entryDiv.className = 'p-1 border-b border-gray-100 hover:bg-gray-50 flex justify-between';
+                            entryDiv.innerHTML = `<span>${escapeHtml(entry.text)}</span> <span class="text-gray-400 font-mono">${entry.gameTime}</span>`;
+                            logDiv.prepend(entryDiv);
+                        });
+
+                        // Restore period buttons
+                        document.querySelectorAll('.period-btn').forEach(btn => {
+                            if (btn.dataset.period === gameState.currentPeriod) {
+                                btn.classList.remove('bg-white', 'text-gray-600', 'border-gray-300');
+                                btn.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'font-bold');
+                            } else {
+                                btn.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'font-bold');
+                                btn.classList.add('bg-white', 'text-gray-600', 'border-gray-300');
+                            }
+                        });
+
+                        if (gameState.isRunning) {
+                            // If it was running, we pause it on reload for safety
+                            gameState.isRunning = false;
+                            addLogEntry('Game resumed from draft (paused)');
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error loading draft:', e);
+                }
+            }
+        }
+
+        // We need to see addLogEntry to implement undo correctly.
+        // Assuming addLogEntry unshifts to array or pushes.
+        // Let's look at addLogEntry implementation later.
+        // For now, I'll assume I need to fix addLogEntry to store metadata if it doesn't.
+
+        // Let's implement finishGame batch write
+        finishForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (isFinishing) return;
+            isFinishing = true;
+
+            const finalHome = parseInt(document.getElementById('finalHomeScore').value);
+            const finalAway = parseInt(document.getElementById('finalAwayScore').value);
+            const summary = document.getElementById('gameSummary').value;
+            const sendEmail = document.getElementById('sendEmailCheckbox').checked;
+
+            try {
+                const batch = writeBatch(db);
+
+                // 1. Write all events
+                // We'll write them in chronological order (oldest first)
+                // Assuming gameLog is ordered.
+                gameState.gameLog.forEach((event, index) => {
+                    const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                    // Ensure timestamp is a Firestore Timestamp if needed, or just use date
+                    // event.timestamp is likely a number (Date.now())
+                    // We should convert it to Timestamp for consistency
+                    const eventData = { ...event };
+                    // Remove internal metadata if any
+                    delete eventData.metadata;
+
+                    batch.set(eventRef, eventData);
+                });
+
+                // 2. Write aggregated player stats
+                Object.entries(gameState.playerStats).forEach(([playerId, stats]) => {
+                    const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+                    // We need player name and number for the aggregated doc
+                    const player = players.find(p => p.id === playerId);
+                    const notes = gameState.playerNotes[playerId] || '';
+                    batch.set(statsRef, {
+                        playerName: player ? player.name : 'Unknown',
+                        playerNumber: player ? player.number : '',
+                        stats: stats,
+                        notes: notes
+                    });
+                });
+
+                // 3. Update game document
+                const gameRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}`);
+                batch.update(gameRef, {
+                    homeScore: finalHome,
+                    awayScore: finalAway,
+                    summary: summary,
+                    status: 'completed',
+                });
+
+                // Disable beforeunload warning since we're finishing successfully
+                isFinishing = true;
+
+                // Send email if checkbox is checked
+                if (sendEmail) {
+                    const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
+                    const body = generateEmailBody(finalHome, finalAway, summary);
+                    const userEmail = currentUser.email || '';
+                    const mailto = `mailto:${userEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                    window.location.href = mailto;
+
+                    // Small delay to allow mailto to open before redirecting
+                    setTimeout(() => {
+                        window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
+                    }, 500);
+                } else {
+                    window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
+                }
+            } catch (error) {
+                console.error(error);
+                alert('Error finishing game.');
+            }
+        });
+
+        document.getElementById('startBtn').addEventListener('click', startTimer);
+        document.getElementById('stopBtn').addEventListener('click', stopTimer);
+        document.getElementById('resetBtn').addEventListener('click', resetTimer);
+        document.getElementById('undoLastBtn').addEventListener('click', () => {
+            if (gameState.gameLog.length > 0) {
+                undoLogEntry(0); // Undo the most recent entry (index 0)
+            } else {
+                alert('No actions to undo');
+            }
+        });
+        document.getElementById('cancelBtn').addEventListener('click', cancelGame);
+
+        // Period selector
+        document.querySelectorAll('.period-btn').forEach(btn => {
+            btn.addEventListener('click', function () {
+                const period = this.getAttribute('data-period');
+                gameState.currentPeriod = period;
+
+                // Update button styles
+                document.querySelectorAll('.period-btn').forEach(b => {
+                    b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'border-2', 'font-bold');
+                    b.classList.add('bg-white', 'text-gray-600', 'border-gray-300', 'border');
+                });
+                this.classList.remove('bg-white', 'text-gray-600', 'border-gray-300', 'border');
+                this.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'border-2', 'font-bold');
+
+                addLogEntry(`Period changed to ${period}`);
+            });
+        });
+
+        // Navigation warning for unsaved changes
+        window.addEventListener('beforeunload', (event) => {
+            // Skip warning if we're finishing the game successfully
+            if (isFinishing) {
+                return;
+            }
+
+            // Warn if game has started or any stats have been tracked
+            const hasGameActivity = gameState.startTime !== null || // Timer was started
+                gameState.elapsed > 0 || // Game has elapsed time
+                (gameState.gameLog && gameState.gameLog.length > 0) || // Has log entries
+                homeScore > 0 || // Home team scored
+                awayScore > 0; // Away team scored
+
+            if (hasGameActivity) {
+                event.preventDefault();
+                event.returnValue = ''; // Required for Chrome
+                return ''; // For older browsers
+            }
+        });
+
+        // Lineup Management Logic
+        const lineupModal = document.getElementById('lineup-modal');
+        const lineupBtn = document.getElementById('lineupBtn');
+        const saveLineupBtn = document.getElementById('save-lineup');
+        const cancelLineupBtn = document.getElementById('cancel-lineup');
+
+        lineupBtn.addEventListener('click', openLineupModal);
+        cancelLineupBtn.addEventListener('click', () => lineupModal.classList.add('hidden'));
+        saveLineupBtn.addEventListener('click', saveLineup);
+
+        function openLineupModal() {
+            // Clone current lineup to temp
+            tempLineup = JSON.parse(JSON.stringify(gameState.lineup));
+            renderLineupLists();
+            lineupModal.classList.remove('hidden');
+        }
+
+        function renderLineupLists() {
+            const startersList = document.getElementById('starters-list');
+            const benchList = document.getElementById('bench-list');
+            const absentList = document.getElementById('absent-list');
+
+            startersList.innerHTML = '';
+            benchList.innerHTML = '';
+            absentList.innerHTML = '';
+
+            // Use tempLineup for rendering
+            const currentLineup = tempLineup || gameState.lineup;
+
+            // Helper to create player item
+            const createPlayerItem = (playerId, listType) => {
+                const player = players.find(p => p.id === playerId);
+                if (!player) return null;
+
+                const div = document.createElement('div');
+                div.className = 'bg-white p-2 rounded shadow-sm border border-gray-200 flex justify-between items-center cursor-pointer hover:bg-gray-50';
+                div.innerHTML = `<span class="font-bold text-xs">#${player.number || '-'}</span> <span class="text-xs truncate ml-1 flex-1">${player.name}</span>`;
+
+                div.onclick = () => movePlayer(playerId, listType);
+                return div;
+            };
+
+            currentLineup.starters.forEach(id => {
+                const item = createPlayerItem(id, 'starters');
+                if (item) startersList.appendChild(item);
+            });
+
+            currentLineup.bench.forEach(id => {
+                const item = createPlayerItem(id, 'bench');
+                if (item) benchList.appendChild(item);
+            });
+
+            currentLineup.absent.forEach(id => {
+                const item = createPlayerItem(id, 'absent');
+                if (item) absentList.appendChild(item);
+            });
+        }
+
+        function movePlayer(playerId, currentList) {
+            if (!tempLineup) return;
+
+            // Cycle: Bench -> Starters -> Absent -> Bench
+            let nextList;
+            if (currentList === 'bench') nextList = 'starters';
+            else if (currentList === 'starters') nextList = 'absent';
+            else nextList = 'bench';
+
+            // Remove from current
+            tempLineup[currentList] = tempLineup[currentList].filter(id => id !== playerId);
+            // Add to next
+            tempLineup[nextList].push(playerId);
+
+            // Enforce max 5 starters
+            if (nextList === 'starters' && tempLineup.starters.length > 5) {
+                // Move the first starter back to bench
+                const moved = tempLineup.starters.shift();
+                tempLineup.bench.push(moved);
+            }
+
+            renderLineupLists();
+        }
+
+        function updatePlayingTime() {
+            if (!gameState.isRunning || gameState.lastSubTime === undefined) {
+                // Only update if game is running and last update time is set
+                return;
+            }
+
+            const timeDiff = gameState.elapsed - gameState.lastSubTime;
+
+            if (timeDiff > 0) {
+                gameState.lineup.starters.forEach(playerId => {
+                    if (!gameState.playerStats[playerId]) {
+                        gameState.playerStats[playerId] = {};
+                    }
+                    // Store in seconds
+                    const currentSeconds = gameState.playerStats[playerId].secondsPlayed || 0;
+                    gameState.playerStats[playerId].secondsPlayed = currentSeconds + (timeDiff / 1000);
+
+                    // Update display minutes
+                    gameState.playerStats[playerId].minutes = Math.floor(gameState.playerStats[playerId].secondsPlayed / 60);
+                });
+            }
+            gameState.lastSubTime = gameState.elapsed;
+        }
+
+        function saveLineup() {
+            if (!tempLineup) return;
+
+            // 1. Update playing time for current starters BEFORE changing lineup
+            if (gameState.isRunning) {
+                updatePlayingTime();
+            }
+
+            // 2. Log substitutions
+            const oldStarters = gameState.lineup.starters;
+            const newStarters = tempLineup.starters;
+
+            const subbedIn = newStarters.filter(id => !oldStarters.includes(id));
+            const subbedOut = oldStarters.filter(id => !newStarters.includes(id));
+
+            if (subbedIn.length > 0 || subbedOut.length > 0) {
+                const inNames = subbedIn.map(id => players.find(p => p.id === id)?.name).join(', ');
+                const outNames = subbedOut.map(id => players.find(p => p.id === id)?.name).join(', ');
+
+                let logText = 'Substitution:';
+                if (subbedIn.length > 0) logText += ` IN: ${inNames}`;
+                if (subbedOut.length > 0) logText += ` OUT: ${outNames}`;
+
+                addLogEntry(logText);
+            }
+
+            // 3. Apply new lineup
+            gameState.lineup = JSON.parse(JSON.stringify(tempLineup));
+            tempLineup = null;
+
+            saveDraft();
+            lineupModal.classList.add('hidden');
+            renderStatsTable();
+        }
+
+        // Update renderStatsTable to respect absent players and remove inline notes
+        function renderStatsTable() {
+            window.renderStatsTable = renderStatsTable; // Ensure global access if needed
+            const thead = document.querySelector('#statsTable thead tr');
+            const tbody = document.getElementById('statsTableBody');
+
+            // Render column headers
+            let headersHTML = '<th class="player-name text-left p-1">Player</th>';
+            currentConfig.columns.forEach(col => {
+                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
+            });
+            // Removed Notes column
+            thead.innerHTML = headersHTML;
+
+            // Filter players - exclude absent
+            const activePlayers = players.filter(p => !gameState.lineup.absent.includes(p.id));
+
+            // Render player rows
+            tbody.innerHTML = activePlayers.map(player => {
+                const isStarter = gameState.lineup.starters.includes(player.id);
+                const statusIndicator = isStarter ? '<span class="text-green-600 font-bold text-xs ml-1" title="Starter">•</span>' : '';
+
+                let rowHTML = `<tr class="border-b hover:bg-gray-50 ${isStarter ? 'bg-green-50' : ''}">
+                    <td class="player-name text-left p-1 font-medium cursor-pointer" onclick="openPlayerDetailModal('${player.id}')">
+                        <div class="flex items-center gap-2">
+                            <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200 relative">
+                                ${player.photoUrl ? `<img src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `
+                                    <svg class="w-full h-full text-gray-400 p-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                                    </svg>
+                                `}
+                            </span>
+                            <div class="flex flex-col leading-tight">
+                                <span class="hover:text-blue-600 hover:underline">#${escapeHtml(player.number || '-')} ${escapeHtml(player.name)}</span>
+                                ${statusIndicator}
+                            </div>
+                        </div>
+                    </td>`;
+
+                currentConfig.columns.forEach(col => {
+                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                    const statKey = col.toLowerCase();
+                    const val = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
+
+                    if (isPoints) {
+                        rowHTML += `<td class="stat-cell-wide p-1">
+                            <div class="flex flex-col items-center gap-1">
+                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${val}</div>
+                                <div class="flex gap-0.5">
+                                    <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
+                                        onclick="incrementStat('${player.id}', '${statKey}', 1, false)">1</button>
+                                    <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
+                                        onclick="incrementStat('${player.id}', '${statKey}', 2, false)">2</button>
+                                    <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
+                                        onclick="incrementStat('${player.id}', '${statKey}', 3, false)">3</button>
+                                </div>
+                            </div>
+                        </td>`;
+                    } else {
+                        rowHTML += `<td class="stat-cell p-1">
+                            <div class="flex flex-col items-center gap-1">
+                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${val}</div>
+                                <div class="flex gap-0.5">
+                                    <button class="stat-btn bg-green-50 text-green-600 border border-green-300 rounded w-5 h-5 text-xs font-bold hover:bg-green-100"
+                                        onclick="incrementStat('${player.id}', '${statKey}', 1, false)">+</button>
+                                </div>
+                            </div>
+                        </td>`;
+                    }
+                });
+
+                rowHTML += `</tr>`; // Removed notes cell
+                return rowHTML;
+            }).join('');
+        };
+
+        // Player Detail Modal Logic
+        const detailModal = document.getElementById('player-detail-modal');
+        const closeDetailBtn = document.getElementById('close-detail-modal');
+        const saveDetailBtn = document.getElementById('save-detail-notes');
+        let currentDetailPlayerId = null;
+
+        closeDetailBtn.addEventListener('click', () => detailModal.classList.add('hidden'));
+
+        saveDetailBtn.addEventListener('click', () => {
+            if (currentDetailPlayerId) {
+                const notes = document.getElementById('detail-notes').value;
+                gameState.playerNotes[currentDetailPlayerId] = notes;
+                saveDraft();
+                detailModal.classList.add('hidden');
+
+                // Log note update?
+                if (notes) {
+                    const player = players.find(p => p.id === currentDetailPlayerId);
+                    addLogEntry(`#${player.number} ${player.name} - Note updated`);
+                }
+            }
+        });
+
+        function openPlayerDetailModal(playerId) {
+            currentDetailPlayerId = playerId;
+            const player = players.find(p => p.id === playerId);
+            if (!player) return;
+
+            document.getElementById('detail-player-name').textContent = `#${player.number || '-'} ${player.name}`;
+            document.getElementById('detail-notes').value = gameState.playerNotes[playerId] || '';
+
+            // Render stats
+            const statsGrid = document.getElementById('detail-stats-grid');
+            statsGrid.innerHTML = '';
+            currentConfig.columns.forEach(col => {
+                const statKey = col.toLowerCase();
+                const val = (gameState.playerStats[playerId] && gameState.playerStats[playerId][statKey]) || 0;
+                statsGrid.innerHTML += `<div class="bg-gray-50 p-2 rounded border text-center">
+                    <div class="text-gray-500 text-xs">${col}</div>
+                    <div class="font-bold text-lg">${val}</div>
+                </div>`;
+            });
+
+            // Render Playing Time
+            const seconds = (gameState.playerStats[playerId] && gameState.playerStats[playerId].secondsPlayed) || 0;
+            const minutes = Math.floor(seconds / 60);
+            const remSeconds = Math.floor(seconds % 60);
+            document.getElementById('detail-playing-time').textContent = `${minutes}:${remSeconds.toString().padStart(2, '0')}`;
+
+            detailModal.classList.remove('hidden');
+        }
+        window.openPlayerDetailModal = openPlayerDetailModal;
+
+        // Handle back button navigation
+        let allowNavigation = false;
+
+        function checkGameActivity() {
+            return gameState.startTime !== null ||
+                gameState.elapsed > 0 ||
+                (gameState.gameLog && gameState.gameLog.length > 0) ||
+                homeScore > 0 ||
+                awayScore > 0;
+        }
+
+        // Listen for back button (popstate event)
+        window.addEventListener('popstate', (event) => {
+            if (allowNavigation) {
+                // Navigation was already confirmed, let it proceed
+                allowNavigation = false;
+                return;
+            }
+
+            if (checkGameActivity()) {
+                // Game is active, warn user
+                const confirmLeave = confirm('You have an active game in progress. Any unsaved data will be lost. Do you want to leave?');
+
+                if (!confirmLeave) {
+                    // User wants to stay, push state back to prevent navigation
+                    history.pushState({ trackingPage: true }, '', window.location.href);
+                } else {
+                    // User confirmed leaving, set flag and go back
+                    allowNavigation = true;
+                    history.back();
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
