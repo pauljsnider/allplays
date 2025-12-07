@@ -136,8 +136,10 @@
                     class="bg-white text-blue-600 px-3 py-1 rounded font-semibold text-sm">Start</button>
                 <button id="stopBtn" class="bg-red-600 text-white px-3 py-1 rounded text-sm" disabled>Stop</button>
                 <button id="resetBtn" class="bg-gray-700 text-white px-3 py-1 rounded text-sm">Reset</button>
-                <button id="undoLastBtn" class="bg-yellow-600 text-white px-3 py-1 rounded text-sm font-bold">↶ Undo Last</button>
-                <button id="cancelBtn" class="bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold">Cancel Game</button>
+                <button id="undoLastBtn" class="bg-yellow-600 text-white px-3 py-1 rounded text-sm font-bold">↶ Undo
+                    Last</button>
+                <button id="cancelBtn" class="bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold">Cancel
+                    Game</button>
                 <!-- Email button removed -->
                 <button id="finish-btn"
                     class="bg-green-600 text-white px-3 py-1 rounded text-sm font-bold">Finish</button>
@@ -260,13 +262,13 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame } from './js/db.js';
-        import { collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query } from './js/db.js';
         import { db } from './js/firebase.js';
+        import { writeBatch, doc, setDoc, addDoc } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
-        import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+        // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -295,10 +297,10 @@
             isRunning: false,
             gameLog: [],
             playerNotes: {},
+            playerStats: {}, // In-memory player stats (replaces real-time DB writes)
             opponentStats: {},
             currentPeriod: 'Q1'
         };
-        let existingPlayerStats = {}; // Stores existing aggregated stats from Firestore
 
         checkAuth((user) => {
             if (!user) {
@@ -386,17 +388,17 @@
                     };
                 }
 
-                // Load existing aggregated stats from Firestore
+                // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 statsSnapshot.forEach(doc => {
-                    existingPlayerStats[doc.id] = doc.data().stats || {};
+                    gameState.playerStats[doc.id] = doc.data().stats || {};
                 });
 
                 // Also load existing scores from aggregated stats
                 let totalHomePoints = 0;
                 players.forEach(p => {
-                    if (existingPlayerStats[p.id]) {
-                        const pts = existingPlayerStats[p.id].pts || existingPlayerStats[p.id].points || 0;
+                    if (gameState.playerStats[p.id]) {
+                        const pts = gameState.playerStats[p.id].pts || gameState.playerStats[p.id].points || 0;
                         totalHomePoints += pts;
                     }
                 });
@@ -409,7 +411,10 @@
                 // Initialize opponent stats with config columns
                 opponentPlayers.forEach(p => {
                     currentConfig.columns.forEach(col => {
-                        gameState.opponentStats[p.id][col.toLowerCase()] = 0;
+                        const key = col.toLowerCase();
+                        if (gameState.opponentStats[p.id][key] === undefined) {
+                            gameState.opponentStats[p.id][key] = 0;
+                        }
                     });
                 });
 
@@ -482,7 +487,7 @@
                     const statKey = col.toLowerCase();
 
                     if (isPoints) {
-                        const existingVal = (existingPlayerStats[player.id] && existingPlayerStats[player.id][statKey]) || 0;
+                        const existingVal = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
                         rowHTML += `<td class="stat-cell-wide p-1">
                             <div class="flex flex-col items-center gap-1">
                                 <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${existingVal}</div>
@@ -497,7 +502,7 @@
                             </div>
                         </td>`;
                     } else {
-                        const existingVal = (existingPlayerStats[player.id] && existingPlayerStats[player.id][statKey]) || 0;
+                        const existingVal = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
                         rowHTML += `<td class="stat-cell p-1">
                             <div class="flex flex-col items-center gap-1">
                                 <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${existingVal}</div>
@@ -619,6 +624,12 @@
         };
 
         window.incrementStat = async function (playerId, statKey, value, isOpponent) {
+            // Prevent stat tracking before game starts
+            if (!gameState.isRunning && gameState.elapsed === 0) {
+                alert('Please start the game timer before recording stats.');
+                return;
+            }
+
             const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
             const currentVal = parseInt(statEl.textContent);
             const newVal = currentVal + value;
@@ -645,6 +656,14 @@
                 const player = players.find(p => p.id === playerId);
                 if (!player) return;
 
+                // Initialize player stats if not exists
+                if (!gameState.playerStats[playerId]) {
+                    gameState.playerStats[playerId] = {};
+                }
+
+                // Update in-memory stats
+                gameState.playerStats[playerId][statKey] = newVal;
+
                 if (isPoints) {
                     homeScore += value;
                     updateScoreDisplay();
@@ -655,21 +674,10 @@
                     playerId,
                     statKey,
                     value,
-                    isOpponent: false
+                    isOpponent: false,
+                    playerName: player.name,
+                    playerNumber: player.number
                 });
-
-                try {
-                    await logStatEvent(currentTeamId, currentGameId, {
-                        playerId,
-                        statKey,
-                        valueChange: value,
-                        createdBy: currentUser.uid
-                    });
-
-                    await updatePlayerStats(currentTeamId, currentGameId, playerId, statKey, value, player.name, player.number);
-                } catch (error) {
-                    console.error("Error logging stat:", error);
-                }
             }
         };
 
@@ -701,25 +709,17 @@
                 const player = players.find(p => p.id === playerId);
                 if (!player) return;
 
+                // Update in-memory stats
+                if (gameState.playerStats[playerId]) {
+                    gameState.playerStats[playerId][statKey] = newVal;
+                }
+
                 if (isPoints) {
                     homeScore = Math.max(0, homeScore - value);
                     updateScoreDisplay();
                 }
 
                 addLogEntry(`#${player.number || '-'} ${player.name} -${value} ${statKey.toUpperCase()}`);
-
-                try {
-                    await logStatEvent(currentTeamId, currentGameId, {
-                        playerId,
-                        statKey,
-                        valueChange: -value,
-                        createdBy: currentUser.uid
-                    });
-
-                    await updatePlayerStats(currentTeamId, currentGameId, playerId, statKey, -value, player.name, player.number);
-                } catch (error) {
-                    console.error("Error logging stat:", error);
-                }
             }
         };
 
@@ -743,9 +743,9 @@
             if (!gameState.isRunning) {
                 // Only consider clearing DB if we have no local activity yet
                 const hasLocalActivity = gameState.elapsed > 0 ||
-                                         homeScore > 0 ||
-                                         awayScore > 0 ||
-                                         (gameState.gameLog && gameState.gameLog.length > 0);
+                    homeScore > 0 ||
+                    awayScore > 0 ||
+                    (gameState.gameLog && gameState.gameLog.length > 0);
 
                 if (!hasLocalActivity) {
                     const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
@@ -798,6 +798,7 @@
                 gameState.elapsed = 0;
                 gameState.isRunning = false;
                 gameState.gameLog = [];
+                gameState.playerStats = {}; // Clear in-memory player stats
                 homeScore = 0;
                 awayScore = 0;
 
@@ -811,9 +812,7 @@
                 // Clear aggregated stats in Firebase
                 try {
                     const statsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                    const { deleteDoc } = await import("https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js");
                     await Promise.all(statsSnapshot.docs.map(doc => deleteDoc(doc.ref)));
-                    existingPlayerStats = {}; // Clear local cache too
                 } catch (error) {
                     console.error('Error clearing stats:', error);
                 }
@@ -889,19 +888,7 @@
             };
             gameState.gameLog.unshift(entry);
             renderGameLog();
-
-            // Save to Firebase
-            try {
-                await logStatEvent(currentTeamId, currentGameId, {
-                    type: 'game_log',
-                    text: text,
-                    gameTime: entry.time,
-                    period: gameState.currentPeriod,
-                    createdBy: currentUser.uid
-                });
-            } catch (error) {
-                console.error('Error logging game event:', error);
-            }
+            // Note: Game log will be saved to Firebase when game is finished
         }
 
         function renderGameLog() {
@@ -921,7 +908,7 @@
             `).join('');
         }
 
-        window.undoLogEntry = async function (index) {
+        window.undoLogEntry = function (index) {
             const entry = gameState.gameLog[index];
 
             // Only undo stat changes, not notes
@@ -935,32 +922,20 @@
                 const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
 
                 if (isOpponent) {
+                    // Update in-memory opponent stats
                     gameState.opponentStats[playerId][statKey] = newVal;
                     if (isPoints) {
                         awayScore = Math.max(0, awayScore - value);
                         updateScoreDisplay();
                     }
                 } else {
+                    // Update in-memory player stats
+                    if (gameState.playerStats[playerId]) {
+                        gameState.playerStats[playerId][statKey] = newVal;
+                    }
                     if (isPoints) {
                         homeScore = Math.max(0, homeScore - value);
                         updateScoreDisplay();
-                    }
-
-                    // Update Firebase stats for team players
-                    try {
-                        const player = players.find(p => p.id === playerId);
-                        if (player) {
-                            await logStatEvent(currentTeamId, currentGameId, {
-                                playerId,
-                                statKey,
-                                valueChange: -value,
-                                createdBy: currentUser.uid
-                            });
-
-                            await updatePlayerStats(currentTeamId, currentGameId, playerId, statKey, -value, player.name, player.number);
-                        }
-                    } catch (error) {
-                        console.error("Error undoing stat:", error);
                     }
                 }
             }
@@ -998,8 +973,7 @@
                 body += `#${player.number || '-'} ${player.name}:\n`;
                 currentConfig.columns.forEach(col => {
                     const statKey = col.toLowerCase();
-                    const statEl = document.getElementById(`stat-${player.id}-${statKey}`);
-                    const value = statEl ? statEl.textContent : '0';
+                    const value = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
                     body += `  ${col}: ${value}\n`;
                 });
                 const notes = gameState.playerNotes[player.id];
@@ -1072,6 +1046,9 @@
                 generateBtn.disabled = true;
                 generateBtn.classList.add('opacity-50');
 
+                // Lazy-load Firebase AI module
+                const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
+
                 // Collect game data
                 const finalHomeScore = parseInt(document.getElementById('finalHomeScore').value) || homeScore;
                 const finalAwayScore = parseInt(document.getElementById('finalAwayScore').value) || awayScore;
@@ -1089,8 +1066,7 @@
                     const stats = [];
                     currentConfig.columns.forEach(col => {
                         const statKey = col.toLowerCase();
-                        const statEl = document.getElementById(`stat-${player.id}-${statKey}`);
-                        const value = statEl ? statEl.textContent : '0';
+                        const value = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
                         stats.push(`${col}:${value}`);
                     });
                     context += stats.join(', ');
@@ -1218,13 +1194,52 @@ Write the match report now:`;
             const sendEmail = document.getElementById('sendEmailCheckbox').checked;
 
             try {
-                await updateGame(currentTeamId, currentGameId, {
+                // Create a batch write for all data
+                const batch = writeBatch(db);
+
+                // 1. Write all game log events
+                gameState.gameLog.forEach(entry => {
+                    const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                    batch.set(eventRef, {
+                        text: entry.text,
+                        gameTime: entry.time,
+                        period: entry.period,
+                        timestamp: entry.timestamp || Date.now(),
+                        type: entry.undoData?.type || 'game_log',
+                        playerId: entry.undoData?.playerId || null,
+                        statKey: entry.undoData?.statKey || null,
+                        value: entry.undoData?.value || null,
+                        isOpponent: entry.undoData?.isOpponent || false,
+                        createdBy: currentUser.uid
+                    });
+                });
+
+                // 2. Write aggregated stats for each player
+                Object.entries(gameState.playerStats).forEach(([playerId, stats]) => {
+                    const player = players.find(p => p.id === playerId);
+                    if (player) {
+                        const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+                        batch.set(statsRef, {
+                            playerName: player.name,
+                            playerNumber: player.number,
+                            stats: stats
+                        });
+                    }
+                });
+
+                // 3. Update game document with final data
+                const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
+                batch.update(gameRef, {
                     homeScore: finalHome,
                     awayScore: finalAway,
                     summary: summary,
                     status: 'completed',
                     opponentStats: gameState.opponentStats
                 });
+
+                // Commit all writes in a single batch
+                await batch.commit();
+                console.log('Game data saved successfully');
 
                 // Disable beforeunload warning since we're finishing successfully
                 isFinishing = true;
@@ -1245,8 +1260,8 @@ Write the match report now:`;
                     window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
                 }
             } catch (error) {
-                console.error(error);
-                alert('Error finishing game.');
+                console.error('Error finishing game:', error);
+                alert('Error finishing game: ' + error.message);
             }
         });
 
@@ -1289,10 +1304,10 @@ Write the match report now:`;
 
             // Warn if game has started or any stats have been tracked
             const hasGameActivity = gameState.startTime !== null || // Timer was started
-                                   gameState.elapsed > 0 || // Game has elapsed time
-                                   (gameState.gameLog && gameState.gameLog.length > 0) || // Has log entries
-                                   homeScore > 0 || // Home team scored
-                                   awayScore > 0; // Away team scored
+                gameState.elapsed > 0 || // Game has elapsed time
+                (gameState.gameLog && gameState.gameLog.length > 0) || // Has log entries
+                homeScore > 0 || // Home team scored
+                awayScore > 0; // Away team scored
 
             if (hasGameActivity) {
                 event.preventDefault();
@@ -1306,10 +1321,10 @@ Write the match report now:`;
 
         function checkGameActivity() {
             return gameState.startTime !== null ||
-                   gameState.elapsed > 0 ||
-                   (gameState.gameLog && gameState.gameLog.length > 0) ||
-                   homeScore > 0 ||
-                   awayScore > 0;
+                gameState.elapsed > 0 ||
+                (gameState.gameLog && gameState.gameLog.length > 0) ||
+                homeScore > 0 ||
+                awayScore > 0;
         }
 
         // Listen for back button (popstate event)

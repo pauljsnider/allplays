@@ -1,23 +1,12 @@
 import { db } from './firebase.js';
 import { imageStorage, ensureImageAuth } from './firebase-images.js';
 import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+// import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
+export { collection, getDocs, deleteDoc, query };
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-storage.js";
 
 export async function uploadTeamPhoto(file) {
-    console.log('Starting photo upload...', {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type
-    });
-
-    await ensureImageAuth();
-
-    const path = `team-photos/${Date.now()}_${file.name}`;
-    console.log('Upload path:', path);
-
-    const storageRef = ref(imageStorage, path);
-    console.log('Storage reference created');
-
     const snapshot = await uploadBytes(storageRef, file);
     console.log('Upload complete, getting download URL...');
 
@@ -36,7 +25,7 @@ export async function uploadPlayerPhoto(file) {
 
     await ensureImageAuth();
 
-    const path = `player-photos/${Date.now()}_${file.name}`;
+    const path = `player - photos / ${Date.now()}_${file.name} `;
     const storageRef = ref(imageStorage, path);
 
     const snapshot = await uploadBytes(storageRef, file);
@@ -124,7 +113,7 @@ export async function updateTeam(teamId, teamData) {
 
 export async function deleteTeam(teamId) {
     // Delete games and their subcollections
-    const gamesSnapshot = await getDocs(collection(db, `teams/${teamId}/games`));
+    const gamesSnapshot = await getDocs(collection(db, `teams / ${teamId}/games`));
     for (const gameDoc of gamesSnapshot.docs) {
         const gameId = gameDoc.id;
         // Remove events
