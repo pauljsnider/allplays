@@ -252,21 +252,84 @@
                     statsMap[doc.id] = doc.data().stats;
                 });
 
-                // Determine columns from data if config not available, or just show all keys found
-                // Ideally we fetch the config used.
-                // For now, let's collect all unique keys from statsMap
-                const allKeys = new Set();
-                Object.values(statsMap).forEach(stats => {
-                    Object.keys(stats).forEach(k => allKeys.add(k));
-                });
-                const statKeys = Array.from(allKeys).sort();
+                // Fetch the config used for this game
+                let statKeys = [];
+                let statLabels = {};
+
+                if (game.configId) {
+                    try {
+                        const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
+                        const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
+                        const config = configs.find(c => c.id === game.configId);
+
+                        if (config && config.columns) {
+                            // First, collect all actual field names from the stats data
+                            const actualFields = new Set();
+                            Object.values(statsMap).forEach(stats => {
+                                Object.keys(stats).forEach(k => actualFields.add(k.toLowerCase()));
+                            });
+
+                            // Map config columns to actual field names in the data
+                            // Try variations: PTS -> points, pts, etc.
+                            config.columns.forEach(col => {
+                                const normalized = col.toLowerCase();
+                                let fieldName = normalized;
+
+                                // Try to find matching field in actual data
+                                // Check for common variations
+                                const variations = [
+                                    normalized,                                    // pts
+                                    normalized + 's',                              // pts -> ptss (unlikely)
+                                    normalized.endsWith('s') ? normalized.slice(0, -1) : normalized + 's',  // pts <-> pt
+                                ];
+
+                                // Special mappings
+                                if (normalized === 'pts' || normalized === 'points') {
+                                    variations.push('pts', 'points', 'pt');
+                                }
+                                if (normalized === 'rebs' || normalized === 'reb') {
+                                    variations.push('rebs', 'reb', 'rebounds');
+                                }
+                                if (normalized === 'ast' || normalized === 'assists') {
+                                    variations.push('ast', 'assists', 'assist');
+                                }
+
+                                // Find first matching variation in actual data
+                                for (const variant of variations) {
+                                    if (actualFields.has(variant)) {
+                                        fieldName = variant;
+                                        break;
+                                    }
+                                }
+
+                                statKeys.push(fieldName);
+                                statLabels[fieldName] = col;
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Error fetching config:', err);
+                    }
+                }
+
+                // Fallback: if no config, collect all unique keys from statsMap
+                if (statKeys.length === 0) {
+                    const allKeys = new Set();
+                    Object.values(statsMap).forEach(stats => {
+                        Object.keys(stats).forEach(k => allKeys.add(k));
+                    });
+                    statKeys = Array.from(allKeys).sort();
+                    // Use uppercase for labels
+                    statKeys.forEach(key => {
+                        statLabels[key] = key.toUpperCase();
+                    });
+                }
 
                 // Render Table Header
                 const headerRow = document.getElementById('stats-header-row');
                 statKeys.forEach(key => {
                     const th = document.createElement('th');
                     th.className = "px-4 py-4 text-center";
-                    th.textContent = key; // Could map to friendly name if we had config
+                    th.textContent = statLabels[key] || key.toUpperCase();
                     headerRow.appendChild(th);
                 });
 

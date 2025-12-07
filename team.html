@@ -394,6 +394,7 @@
                     const recentGames = sortedGames.slice(-5);
                     const recentWins = recentGames.filter(g => g.homeScore > g.awayScore).length;
                     const recentLosses = recentGames.filter(g => g.homeScore < g.awayScore).length;
+                    const recentTies = recentGames.filter(g => g.homeScore === g.awayScore).length;
                     const recentForm = recentGames.map(g => {
                         if (g.homeScore > g.awayScore) return 'W';
                         if (g.homeScore < g.awayScore) return 'L';
@@ -433,7 +434,7 @@
                                         </div>
                                     `).join('')}
                                 </div>
-                                <div class="grid grid-cols-2 gap-4">
+                                <div class="grid grid-cols-${recentTies > 0 ? '3' : '2'} gap-4">
                                     <div class="text-center p-4 bg-gradient-to-br from-green-50 to-green-100 rounded-lg">
                                         <div class="text-3xl font-bold text-green-600">${recentWins}</div>
                                         <div class="text-xs text-green-700 font-medium mt-1">Wins</div>
@@ -442,6 +443,12 @@
                                         <div class="text-3xl font-bold text-red-600">${recentLosses}</div>
                                         <div class="text-xs text-red-700 font-medium mt-1">Losses</div>
                                     </div>
+                                    ${recentTies > 0 ? `
+                                    <div class="text-center p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg">
+                                        <div class="text-3xl font-bold text-gray-600">${recentTies}</div>
+                                        <div class="text-xs text-gray-700 font-medium mt-1">Ties</div>
+                                    </div>
+                                    ` : ''}
                                 </div>
                             </div>
 

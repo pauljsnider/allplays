@@ -261,12 +261,10 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame } from './js/db.js';
-        import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
-        import { db } from './js/firebase.js';
-        import { collection, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
 
@@ -354,13 +352,20 @@
                     gameState.playerNotes[p.id] = '';
                 });
 
-                // Initialize opponent stats
-                opponentPlayers.forEach(p => {
-                    gameState.opponentStats[p.id] = {
-                        name: p.name || '',
-                        number: p.number || ''
-                    };
-                });
+                // Initialize opponent stats - load from game if exists, otherwise create fresh
+                if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
+                    // Load existing opponent stats from the game
+                    gameState.opponentStats = JSON.parse(JSON.stringify(game.opponentStats));
+                    console.log('Loaded existing opponent stats:', gameState.opponentStats);
+                } else {
+                    // Initialize fresh opponent stats
+                    opponentPlayers.forEach(p => {
+                        gameState.opponentStats[p.id] = {
+                            name: p.name || '',
+                            number: p.number || ''
+                        };
+                    });
+                }
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
@@ -1120,8 +1125,15 @@
                     });
                 }
 
+                // Existing Summary (if any)
+                const existingSummary = summaryTextarea.value.trim();
+                if (existingSummary) {
+                    context += `\nEXISTING GAME NOTES/SUMMARY:\n${existingSummary}\n`;
+                }
+
                 // Create AI prompt
                 const prompt = `You are a professional sports journalist writing a match report. Based on the following game data, create an engaging narrative match report in 2-3 paragraphs.
+${existingSummary ? '\nIMPORTANT: There are existing game notes/summary provided. Use this information to enhance your report, incorporating any insights or context mentioned.' : ''}
 
 Write in a narrative style that tells the story of the game, highlighting:
 - Key moments and turning points from the game log
