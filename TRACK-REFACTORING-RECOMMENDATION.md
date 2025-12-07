@@ -157,7 +157,70 @@ Until the refactoring is complete, the following fixes have been applied:
 
 Based on coaching workflow feedback, the following improvements would significantly enhance the game tracking experience:
 
+### Important: Sport-Specific Implementation 🏀⚽🏒
+
+These UX recommendations are **basketball-specific** and assume:
+- 5 players on court at a time
+- Substitution workflow with playing time tracking
+- Basketball-specific stat types (PTS, REB, AST, STL, BLK)
+
+**Proposed Architecture: Sport-Specific Tracker Files**
+
+Create dedicated tracking interfaces per sport:
+```
+track.html              → Generic/fallback tracker (current implementation)
+track-basketball.html   → Basketball-optimized tracker (NEW)
+track-soccer.html       → Soccer-optimized tracker (future)
+track-hockey.html       → Hockey-optimized tracker (future)
+```
+
+**Routing Logic in edit-schedule.html:**
+```javascript
+// When "Track Game" button is clicked
+function getTrackerUrl(game, team) {
+    // Check if game has a statTrackerConfigId
+    if (game.statTrackerConfigId) {
+        const config = await getConfig(team.id, game.statTrackerConfigId);
+
+        // Route based on config.baseType
+        switch(config.baseType) {
+            case 'Basketball':
+                return `track-basketball.html#teamId=${team.id}&gameId=${game.id}`;
+            case 'Soccer':
+                return `track-soccer.html#teamId=${team.id}&gameId=${game.id}`;
+            case 'Hockey':
+                return `track-hockey.html#teamId=${team.id}&gameId=${game.id}`;
+            default:
+                return `track.html#teamId=${team.id}&gameId=${game.id}`;
+        }
+    }
+
+    // Fallback: No config set, use generic tracker
+    return `track.html#teamId=${team.id}&gameId=${game.id}`;
+}
+```
+
+**Benefits of Sport-Specific Files:**
+- ✅ Sport-specific UX optimizations (e.g., 5 players for basketball, 11 for soccer)
+- ✅ Cleaner code - no complex conditional logic for different sports
+- ✅ Easier to maintain and test independently
+- ✅ Can ship basketball features without affecting other sports
+- ✅ Future-proof for adding new sports
+- ✅ Smaller file sizes (only load relevant code)
+
+**Alternative Considered: Single File with Conditional Rendering**
+- ❌ Single track.html with sport detection
+- ❌ Complex if/else branching throughout code
+- ❌ Harder to maintain as features diverge
+- ❌ Performance impact (loading unused code)
+- ❌ Harder to test sport-specific features
+
+**Recommendation: Use Sport-Specific Files (track-basketball.html)**
+
+---
+
 ### 1. Core Flow Redesign ⭐ HIGH PRIORITY
+*Applies to: track-basketball.html*
 
 **Current State:**
 - Game tracking starts immediately with all players visible
@@ -166,7 +229,7 @@ Based on coaching workflow feedback, the following improvements would significan
 
 **Proposed Flow:**
 1. **Make Lineup** (Pre-game screen)
-   - Select starting 5 players
+   - Select starting 5 players (basketball-specific number)
    - Mark absent players (grayed out, not clickable)
    - Set initial bench players
 
@@ -195,6 +258,7 @@ gameState = {
 ```
 
 ### 2. Substitution Workflow ⭐ HIGH PRIORITY
+*Applies to: track-basketball.html (5 active players)*
 
 **Current State:**
 - No substitution tracking
@@ -252,28 +316,6 @@ function calculatePlayingTime() {
 }
 ```
 
-### 3. Enhanced Undo System 🔄 MEDIUM PRIORITY
-
-**Current State:**
-- Single "Undo Last" button
-- No visibility into what will be undone
-- Can't undo specific entries
-
-**Proposed:**
-- Display last 3 entries prominently with individual delete buttons
-- Quick visual confirmation of what's being undone
-- Replaces current notes log area (which is rarely used in-game)
-
-**UI Mockup:**
-```
-┌─────────────────────────────────────┐
-│ Recent Actions                      │
-├─────────────────────────────────────┤
-│ ⌫ #10 Charlotte +2 PTS  Q2 3:45    │
-│ ⌫ #21 Vale +1 REB       Q2 3:22    │
-│ ⌫ #2 Charlotte +3 PTS   Q2 2:58    │
-└─────────────────────────────────────┘
-```
 
 ### 4. Notes Redesign 💡 MEDIUM PRIORITY
 
@@ -329,6 +371,7 @@ async function promptForPlayerNotes(players) {
 ```
 
 ### 5. Playing Time Tracking ⏱️ HIGH PRIORITY
+*Applies to: track-basketball.html (calculated from substitutions)*
 
 **Current State:**
 - No playing time tracking
@@ -362,6 +405,8 @@ PLAYING TIME REPORT
 
 Fair Play Alert: All players got 40%+ playing time ✓
 ```
+
+
 
 **Implementation:**
 - Track when each player enters/exits court via substitutions
@@ -397,8 +442,161 @@ Fair Play Alert: All players got 40%+ playing time ✓
 7. Add player detail screen
 8. Post-game AI-assisted notes
 
+Phase 4: must include new tracked data to team.html and player.html
+
 ### Estimated Total Effort
 - **Phase 1**: 6-8 hours
 - **Phase 2**: 8-12 hours
 - **Phase 3**: 4-6 hours
-- **Total**: 18-26 hours (2-3 sprint weeks)
+- **Phase 4**: 3-4 hours (display new data)
+- **Total**: 21-30 hours (2-3 sprint weeks)
+
+---
+
+## Implementation Guide: Sport-Specific Routing
+
+### Step 1: Update edit-schedule.html to Route to Correct Tracker
+
+**Current Code** (edit-schedule.html):
+```javascript
+// Track Game button likely does something like:
+window.location.href = `track.html#teamId=${teamId}&gameId=${gameId}`;
+```
+
+**Updated Code:**
+```javascript
+async function handleTrackGame(teamId, gameId) {
+    try {
+        const game = await getGame(teamId, gameId);
+
+        // Determine which tracker to use based on config
+        let trackerUrl = 'track.html'; // Default fallback
+
+        if (game.statTrackerConfigId) {
+            const configs = await getConfigs(teamId);
+            const config = configs.find(c => c.id === game.statTrackerConfigId);
+
+            if (config) {
+                // Route based on sport type
+                const trackerMap = {
+                    'Basketball': 'track-basketball.html',
+                    'Soccer': 'track-soccer.html',
+                    'Hockey': 'track-hockey.html'
+                };
+
+                trackerUrl = trackerMap[config.baseType] || 'track.html';
+            }
+        }
+
+        // Navigate to appropriate tracker
+        window.location.href = `${trackerUrl}#teamId=${teamId}&gameId=${gameId}`;
+
+    } catch (error) {
+        console.error('Error launching tracker:', error);
+        // Fallback to generic tracker
+        window.location.href = `track.html#teamId=${teamId}&gameId=${gameId}`;
+    }
+}
+```
+
+### Step 2: Create track-basketball.html
+
+**Option A: Copy and Customize** (Faster initial implementation)
+1. Copy track.html → track-basketball.html
+2. Remove generic features
+3. Add basketball-specific features incrementally
+4. Keep both files in sync for shared components
+
+**Option B: Shared Component Architecture** (Better long-term)
+1. Extract shared logic to `js/tracker-core.js`:
+   - Timer functionality
+   - Score display
+   - Game log
+   - Firebase save/load
+   - AI summary generation
+
+2. Create sport-specific modules:
+   - `js/tracker-basketball.js` (lineup, subs, 5 players)
+   - `js/tracker-soccer.js` (11 players, halves, future)
+   - `js/tracker-hockey.js` (6 players, periods, future)
+
+3. Each track-*.html imports:
+   ```javascript
+   import { TrackerCore } from './js/tracker-core.js';
+   import { BasketballFeatures } from './js/tracker-basketball.js';
+
+   const tracker = new TrackerCore();
+   const basketball = new BasketballFeatures(tracker);
+   ```
+
+**Recommendation: Start with Option A, refactor to Option B later**
+- Ship basketball features faster
+- Learn what's truly sport-specific vs generic
+- Refactor once patterns are clear
+
+### Step 3: Ensure Backwards Compatibility
+
+**Games without statTrackerConfigId:**
+- Should still route to track.html (generic tracker)
+- No breaking changes for existing users
+
+**Games with config but non-basketball:**
+- Route to track.html until sport-specific tracker exists
+- Graceful degradation
+
+**Update game creation flow:**
+- When creating game in edit-schedule.html
+- Prompt user to select stat tracker config
+- Store `game.statTrackerConfigId` at creation time
+- This enables routing to correct tracker
+
+### Step 4: Testing Strategy
+
+**Test Cases:**
+1. ✅ Basketball game with config → routes to track-basketball.html
+2. ✅ Soccer game with config → routes to track.html (fallback, until track-soccer.html exists)
+3. ✅ Game without config → routes to track.html
+4. ✅ Invalid config ID → routes to track.html
+5. ✅ Config load error → routes to track.html
+
+**Backwards Compatibility:**
+1. ✅ Existing games still work with track.html
+2. ✅ New basketball games use track-basketball.html
+3. ✅ Can switch between trackers if needed (URL change)
+
+### Example: Find Track Game Button in edit-schedule.html
+
+Look for code similar to:
+```javascript
+// Likely in edit-schedule.html
+<button onclick="trackGame('${teamId}', '${gameId}')">Track Game</button>
+
+// Function to update:
+function trackGame(teamId, gameId) {
+    window.location.href = `track.html#teamId=${teamId}&gameId=${gameId}`;
+}
+```
+
+Change to:
+```javascript
+async function trackGame(teamId, gameId) {
+    await handleTrackGame(teamId, gameId); // Uses logic from Step 1
+}
+```
+
+### Phase 4 Requirements: Display New Tracking Data
+
+When substitutions and playing time are implemented, update these pages:
+
+**team.html Enhancements:**
+- Average playing time per player across all games
+- Playing time distribution chart
+- Substitution patterns analytics
+- Fair play metrics (% of players getting >40% playing time)
+
+**player.html Enhancements:**
+- Playing time per game (timeline chart)
+- Substitution history for this player
+- In/out patterns (which players subbed with them)
+- Playing time trends over season
+
