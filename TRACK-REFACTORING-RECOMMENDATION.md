@@ -150,3 +150,255 @@ Until the refactoring is complete, the following fixes have been applied:
 3. ⚠️ **Undo for opponent stats still only updates local state**
    - Not persisted to DB until game finishes
    - This is acceptable if we move to the recommended architecture
+
+---
+
+## UX Enhancement Recommendations
+
+Based on coaching workflow feedback, the following improvements would significantly enhance the game tracking experience:
+
+### 1. Core Flow Redesign ⭐ HIGH PRIORITY
+
+**Current State:**
+- Game tracking starts immediately with all players visible
+- No pre-game lineup selection
+- No way to mark players as absent
+
+**Proposed Flow:**
+1. **Make Lineup** (Pre-game screen)
+   - Select starting 5 players
+   - Mark absent players (grayed out, not clickable)
+   - Set initial bench players
+
+2. **Start Game** (Begins timer)
+
+3. **Record Stats** (Current tracking interface)
+
+**Benefits:**
+- Clearer game start ritual
+- Reduces clutter (only show active players initially)
+- Prevents accidental stat recording for absent players
+- Aligns with real coaching workflow
+
+**Implementation:**
+```javascript
+gameState = {
+    // ... existing fields
+    lineup: {
+        starters: ['playerId1', 'playerId2', 'playerId3', 'playerId4', 'playerId5'],
+        bench: ['playerId6', 'playerId7', 'playerId8'],
+        absent: ['playerId9'],
+        onCourt: ['playerId1', 'playerId2', 'playerId3', 'playerId4', 'playerId5']
+    },
+    substitutions: [] // Track sub history for playing time
+};
+```
+
+### 2. Substitution Workflow ⭐ HIGH PRIORITY
+
+**Current State:**
+- No substitution tracking
+- All players always visible
+- No playing time tracking
+
+**Option A: Per-Player Sub Button**
+- Each active player row has a "Sub" button
+- Clicking opens modal to select bench player
+- Swaps player and logs the substitution
+
+**Option B: Global Sub Button** (Recommended)
+- Single "Substitution" button at top of interface
+- Opens two-step flow:
+  1. Tap player coming OUT
+  2. Tap player coming IN
+- Only shows 5 active players in main view
+- Bench players accessible via sub button
+
+**Benefits:**
+- Tracks playing time automatically
+- Cleaner UI (only 5 players visible)
+- Coaches can ensure fair playing time distribution
+- Historical sub data for analysis
+
+**Implementation:**
+```javascript
+function recordSubstitution(playerOut, playerIn) {
+    const currentTime = getGameTime();
+
+    gameState.substitutions.push({
+        timestamp: Date.now(),
+        gameTime: currentTime,
+        period: gameState.currentPeriod,
+        out: playerOut,
+        in: playerIn
+    });
+
+    // Update active lineup
+    const index = gameState.lineup.onCourt.indexOf(playerOut);
+    gameState.lineup.onCourt[index] = playerIn;
+
+    // Calculate playing time
+    updatePlayingTime();
+
+    addLogEntry(`Sub: ${playerOut} → ${playerIn}`);
+    renderStatsTable(); // Re-render to show only active players
+}
+
+function calculatePlayingTime() {
+    // Calculate minutes played for each player based on substitutions
+    const playingTime = {};
+    // ... algorithm to calculate from gameState.substitutions
+    return playingTime;
+}
+```
+
+### 3. Enhanced Undo System 🔄 MEDIUM PRIORITY
+
+**Current State:**
+- Single "Undo Last" button
+- No visibility into what will be undone
+- Can't undo specific entries
+
+**Proposed:**
+- Display last 3 entries prominently with individual delete buttons
+- Quick visual confirmation of what's being undone
+- Replaces current notes log area (which is rarely used in-game)
+
+**UI Mockup:**
+```
+┌─────────────────────────────────────┐
+│ Recent Actions                      │
+├─────────────────────────────────────┤
+│ ⌫ #10 Charlotte +2 PTS  Q2 3:45    │
+│ ⌫ #21 Vale +1 REB       Q2 3:22    │
+│ ⌫ #2 Charlotte +3 PTS   Q2 2:58    │
+└─────────────────────────────────────┘
+```
+
+### 4. Notes Redesign 💡 MEDIUM PRIORITY
+
+**Current State:**
+- Notes field on every player row
+- Takes up significant screen space
+- Disruptive to stat tracking flow
+- Rarely used during live games
+
+**Proposed Changes:**
+
+**A. Remove in-game notes UI**
+- Remove notes column from main tracking table
+- More screen space for stats
+- Less cognitive load during game
+
+**B. Move notes to player detail screen**
+- Tap player name → opens detail modal
+- Shows cumulative stats for this game
+- Notes field available if needed
+- Not required/prompted
+
+**C. Post-game AI-assisted notes**
+- After finishing game, AI identifies players with zero stats
+- Prompts: "Any notes about [Player Name]? (Optional)"
+  - Example responses: "Strong defense", "Hustled on every play"
+- These get included in AI summary generation
+- Provides narrative without in-game disruption
+
+**Implementation:**
+```javascript
+async function finishGame() {
+    // ... existing finish logic
+
+    // After stats saved, prompt for notes on low-stat players
+    const playersWithoutStats = players.filter(p => {
+        const stats = gameState.playerStats[p.id] || {};
+        const totalStats = Object.values(stats).reduce((sum, val) => sum + val, 0);
+        return totalStats === 0;
+    });
+
+    if (playersWithoutStats.length > 0) {
+        await promptForPlayerNotes(playersWithoutStats);
+    }
+}
+
+async function promptForPlayerNotes(players) {
+    // Show modal with list of players
+    // Simple textarea for each
+    // "Skip" button to bypass
+    // Notes get added to game summary context for AI
+}
+```
+
+### 5. Playing Time Tracking ⏱️ HIGH PRIORITY
+
+**Current State:**
+- No playing time tracking
+- Coaches manually track with paper or memory
+- No visibility into fair distribution
+
+**Proposed:**
+- Automatic calculation based on substitutions
+- Display during game (small indicator)
+- Full report after game completion
+- Include in email summary
+
+**UI During Game:**
+```
+┌──────────────────────┐
+│ #10 Charlotte        │
+│ PTS: 8  REB: 3       │
+│ 🕐 12:34 playing time│
+└──────────────────────┘
+```
+
+**Post-Game Report:**
+```
+PLAYING TIME REPORT
+═══════════════════════════════════════
+#10 Charlotte C      16:45 (83%)
+#21 Vale            14:22 (72%)
+#2  Charlotte       12:10 (61%)
+#31 Tanvi           10:05 (50%)
+#23 Emmie            8:38 (43%)
+
+Fair Play Alert: All players got 40%+ playing time ✓
+```
+
+**Implementation:**
+- Track when each player enters/exits court via substitutions
+- Calculate cumulative time per player
+- Show warnings if distribution is uneven (optional)
+- Include in post-game summary
+
+### Priority Matrix
+
+| Feature | Priority | Effort | Impact | Dependencies |
+|---------|----------|--------|--------|--------------|
+| In-memory architecture | HIGH | Medium | Very High | None |
+| Lineup selection | HIGH | Low | High | None |
+| Substitution tracking | HIGH | Medium | Very High | Lineup selection |
+| Playing time display | HIGH | Low | High | Substitution tracking |
+| Enhanced undo UI | MEDIUM | Low | Medium | None |
+| Remove in-game notes | MEDIUM | Low | Medium | None |
+| Post-game AI notes prompt | MEDIUM | Medium | Medium | AI summary feature |
+
+### Recommended Implementation Order
+
+**Phase 1: Foundation** (Addresses technical debt)
+1. In-memory architecture refactor
+2. Enhanced undo UI
+
+**Phase 2: Lineup & Subs** (Core workflow improvement)
+3. Pre-game lineup selection
+4. Substitution workflow
+5. Playing time tracking
+
+**Phase 3: Notes Refinement** (Polish)
+6. Remove in-game notes column
+7. Add player detail screen
+8. Post-game AI-assisted notes
+
+### Estimated Total Effort
+- **Phase 1**: 6-8 hours
+- **Phase 2**: 8-12 hours
+- **Phase 3**: 4-6 hours
+- **Total**: 18-26 hours (2-3 sprint weeks)
