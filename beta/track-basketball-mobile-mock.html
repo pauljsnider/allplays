@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Track Basketball (Mobile Mock) - ALL PLAYS</title>
+  <link rel="icon" type="image/png" href="../img/logo_small.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0b132b',
+            slate: '#1c2541',
+            teal: '#5bc0be',
+            sand: '#f7f5ed',
+            accent: '#f59e0b'
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'ui-sans-serif'],
+            body: ['"Inter Tight"', 'ui-sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { background: radial-gradient(circle at 20% 20%, rgba(91,192,190,0.12), transparent 35%), #0b132b; }
+    .card { background: rgba(255,255,255,0.94); backdrop-filter: blur(8px); }
+    .pill { border-radius: 999px; }
+    .stat-btn { touch-action: manipulation; }
+    .grid-cols-auto { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  </style>
+</head>
+<body class="min-h-screen text-ink font-body">
+  <header class="px-4 py-3 text-white flex items-center justify-between">
+    <div>
+      <p class="uppercase tracking-[0.2em] text-xs text-teal/70">ALL PLAYS · Mobile Lab</p>
+      <h1 class="text-xl font-display font-bold">Sideline Tracker</h1>
+      <p class="text-xs text-teal/70">In-memory mock, optimized for one-hand use.</p>
+    </div>
+    <div class="text-right">
+      <div class="text-3xl font-display font-bold" id="score-line">0 — 0</div>
+      <div class="text-xs text-teal/70" id="period-chip">Q1 · 00:00</div>
+    </div>
+  </header>
+
+  <main class="space-y-3 pb-20">
+    <!-- Top controls -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3">
+      <div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10 hidden" id="pre-game-tab">Lineup</button>
+        <button class="pill px-3 py-2 text-xs font-semibold bg-teal text-ink" id="live-tab">Live</button>
+        <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10" id="opponents-tab">Opponents</button>
+        <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10" id="finish-tab">Finish</button>
+        <div class="ml-auto flex gap-1">
+          <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10" id="start-stop">Start</button>
+          <button class="pill px-3 py-2 text-xs font-semibold bg-accent text-white" id="undo-mini">↶ Undo</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center text-xs">
+        <button class="pill px-2 py-2 bg-white border border-slate/10 period-btn" data-period="Q1">Q1</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10 period-btn" data-period="Q2">Q2</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10 period-btn" data-period="Q3">Q3</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10 period-btn" data-period="Q4">Q4</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10 period-btn" data-period="OT">OT</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10" id="sub-open">Subs</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10" id="full-line-swap">Swap full 5</button>
+      </div>
+      <div class="flex items-center justify-between text-xs text-white bg-slate rounded-xl px-3 py-2">
+        <span class="font-semibold">On court: <span id="on-court-count-mobile">0/5</span></span>
+        <span id="fairness-mobile" class="pill px-2 py-1 bg-white/10 text-white font-semibold text-xs">Needs data</span>
+        <span class="font-mono" id="clock-mobile">00:00</span>
+      </div>
+    </section>
+
+    <!-- Lineup -->
+    <section id="panel-lineup" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3 hidden">
+      <div class="flex items-center justify-between text-sm font-semibold">
+        <span>Pick starters (max 5)</span>
+        <button id="clear-lineup-mobile" class="text-xs underline">Clear</button>
+      </div>
+      <div id="lineup-starters" class="grid grid-cols-5 gap-2 text-center text-xs"></div>
+      <div class="border-t border-slate/10 pt-2">
+        <p class="text-xs text-slate/70 mb-1">Bench / absent</p>
+        <div id="lineup-bench" class="grid grid-cols-5 gap-2 text-center text-xs"></div>
+      </div>
+    </section>
+
+    <!-- Live -->
+    <section id="panel-live" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div id="starter-helper" class="hidden rounded-xl bg-sand border border-slate/10 p-2 text-xs space-y-1">
+        <div class="flex items-center justify-between">
+          <span class="font-semibold text-ink">Add starters</span>
+          <button id="auto-fill-mobile" class="pill px-2 py-1 bg-teal text-ink font-semibold">Auto-fill 5</button>
+        </div>
+        <p class="text-slate-600">Tap below to move players on court.</p>
+      </div>
+      <div id="live-players" class="grid grid-cols-2 gap-2"></div>
+      <button id="toggle-bench-mobile" class="w-full text-xs font-semibold pill px-3 py-2 bg-white border border-slate/10">Bench / Add starters</button>
+      <div id="bench-mobile" class="grid grid-cols-2 gap-2"></div>
+    </section>
+
+    <!-- Opponents -->
+    <section id="panel-opponents" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div class="flex gap-2">
+        <input id="opp-input-mobile" class="flex-1 px-3 py-2 rounded-lg border border-slate/10 text-sm" placeholder="# / name">
+        <button id="opp-add-mobile" class="px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold">Add</button>
+      </div>
+      <div id="opp-cards-mobile" class="grid grid-cols-2 gap-2"></div>
+    </section>
+
+    <!-- Finish -->
+    <section id="panel-finish" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div class="flex gap-2">
+        <input id="home-final" type="number" class="flex-1 px-3 py-2 rounded-lg border border-slate/10" placeholder="Home score">
+        <input id="away-final" type="number" class="flex-1 px-3 py-2 rounded-lg border border-slate/10" placeholder="Away score">
+      </div>
+      <textarea id="notes-final" class="w-full px-3 py-2 rounded-lg border border-slate/10 text-sm" rows="2" placeholder="Highlights, hustle notes"></textarea>
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <button id="finish-save" class="pill px-3 py-2 bg-teal text-ink font-semibold">Save mock</button>
+        <button id="finish-ai" class="pill px-3 py-2 bg-white border border-slate/10 font-semibold">AI summary (mock)</button>
+        <button id="finish-email" class="pill px-3 py-2 bg-white border border-slate/10 font-semibold">Email (mock)</button>
+      </div>
+      <div id="finish-report-mobile" class="text-xs text-slate/80 space-y-1"></div>
+    </section>
+
+    <!-- Game log -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2">
+      <div class="flex items-center justify-between text-sm font-semibold">
+        <span>Recent events</span>
+        <button id="clear-log-mobile" class="text-xs underline">Clear</button>
+      </div>
+      <div id="log-mobile" class="space-y-2 text-xs max-h-56 overflow-y-auto"></div>
+    </section>
+  </main>
+
+  <!-- Sub modal -->
+  <div id="sub-modal-mobile" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-2xl w-full max-w-md p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate/60 uppercase tracking-[0.18em] font-semibold">Subs</p>
+          <p class="font-display font-bold">Two taps</p>
+        </div>
+        <button id="close-sub-mobile" class="text-slate-500 text-lg">✕</button>
+      </div>
+      <div class="border border-slate/10 rounded-lg p-2 text-xs bg-sand">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-semibold">Planned swaps</span>
+          <button id="clear-queue-mobile" class="pill px-2 py-1 bg-white border border-slate/10 font-semibold">Clear</button>
+        </div>
+        <div id="queue-list-mobile" class="flex flex-wrap gap-1 text-[11px] text-ink">
+          <span class="text-slate-500">Tap Out then In to build queue.</span>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <p class="mb-1 text-slate-600 font-semibold">Out</p>
+          <div id="sub-out-mobile" class="grid grid-cols-1 gap-1"></div>
+        </div>
+        <div>
+          <p class="mb-1 text-slate-600 font-semibold">In</p>
+          <div id="sub-in-mobile" class="grid grid-cols-1 gap-1"></div>
+        </div>
+      </div>
+      <div class="flex items-center justify-between text-xs">
+        <span id="sub-hint-mobile" class="text-slate-600">Pick who comes out</span>
+        <button id="confirm-sub-mobile" class="pill px-3 py-2 bg-teal text-ink font-semibold" disabled>Apply subs</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/track-basketball-mobile-mock.js"></script>
+</body>
+</html>

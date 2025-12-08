@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Track Basketball (Mock) - ALL PLAYS</title>
+    <link rel="icon" type="image/png" href="../img/logo_small.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        display: ['"Bai Jamjuree"', 'ui-sans-serif', 'system-ui'],
+                        body: ['"Work Sans"', 'ui-sans-serif', 'system-ui']
+                    },
+                    colors: {
+                        court: {
+                            900: '#0b132b',
+                            800: '#1c2541',
+                            700: '#3a506b',
+                            500: '#5bc0be',
+                            300: '#a6f0ed'
+                        },
+                        accent: '#ffa33c'
+                    },
+                    boxShadow: {
+                        glass: '0 12px 40px rgba(0,0,0,0.16)'
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Work Sans', 'Segoe UI', sans-serif;
+            background: radial-gradient(circle at 20% 20%, rgba(91,192,190,0.12), transparent 32%), radial-gradient(circle at 80% 10%, rgba(255,163,60,0.08), transparent 30%), #0b132b;
+            color: #0f172a;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(8px);
+        }
+        .pill {
+            border-radius: 999px;
+        }
+        .stat-btn {
+            touch-action: manipulation;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <header class="text-white px-6 py-4 flex items-center justify-between">
+        <div>
+            <p class="uppercase tracking-[0.2em] text-xs text-court-300">ALL PLAYS | Basketball Lab</p>
+            <h1 class="text-2xl font-display font-bold">Game Day Tracker (Mock)</h1>
+            <p class="text-sm text-court-300">Offline sandbox — no auth, no Firebase. Built for sideline speed.</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <div class="px-3 py-1 pill bg-court-800 text-court-300 text-xs font-semibold">In-memory only</div>
+            <button id="clear-draft" class="px-4 py-2 bg-white/10 border border-white/20 text-white rounded-lg hover:bg-white/20 transition">Reset Demo</button>
+        </div>
+    </header>
+
+    <main class="px-4 pb-12 max-w-7xl mx-auto space-y-6">
+        <!-- Hero & Scoreboard -->
+        <section class="glass rounded-2xl shadow-glass p-6 grid md:grid-cols-[2fr,1fr] gap-6">
+            <div class="space-y-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-xs uppercase tracking-[0.18em] text-court-700 font-semibold">Game Control</p>
+                        <div class="flex items-center gap-2 text-sm text-court-600">
+                            <span id="game-phase" class="px-2 py-1 pill bg-court-100 text-court-800 font-semibold">Pre-game</span>
+                            <span class="px-2 py-1 pill bg-court-100 text-court-800 font-semibold" id="period-label">Q1</span>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-court-600">Game Clock</p>
+                        <p id="clock" class="text-4xl font-display font-bold text-court-900">00:00</p>
+                    </div>
+                </div>
+                <div class="grid sm:grid-cols-3 gap-3">
+                    <button id="start-btn" class="w-full py-3 rounded-xl bg-court-800 text-white font-semibold hover:bg-court-700 transition">Start Game</button>
+                    <button id="pause-btn" class="w-full py-3 rounded-xl bg-court-100 text-court-900 font-semibold hover:bg-court-200 transition" disabled>Pause</button>
+                    <button id="finish-btn" class="w-full py-3 rounded-xl bg-accent text-court-900 font-display font-bold hover:brightness-95 transition" disabled>Finish</button>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-court-900 text-white rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs uppercase tracking-[0.18em] text-court-300">Home</p>
+                            <p id="home-team" class="text-lg font-semibold">Raptors U12</p>
+                        </div>
+                        <div class="text-4xl font-display font-bold" id="home-score">38</div>
+                    </div>
+                    <div class="bg-white text-court-900 border border-court-100 rounded-xl p-4 flex items-center justify-between">
+                        <div>
+                            <p class="text-xs uppercase tracking-[0.18em] text-court-600">Opponent</p>
+                            <input id="opponent-name" class="bg-transparent border-b border-court-200 focus:border-court-500 focus:outline-none text-lg font-semibold" value="Bayside Waves"/>
+                        </div>
+                        <div class="text-4xl font-display font-bold" id="away-score">32</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 text-sm">
+                    <div class="flex gap-2">
+                        <button data-period="Q1" class="period-btn px-3 py-1 rounded-lg font-semibold border border-court-200">Q1</button>
+                        <button data-period="Q2" class="period-btn px-3 py-1 rounded-lg font-semibold border border-court-200">Q2</button>
+                        <button data-period="Q3" class="period-btn px-3 py-1 rounded-lg font-semibold border border-court-200">Q3</button>
+                        <button data-period="Q4" class="period-btn px-3 py-1 rounded-lg font-semibold border border-court-200">Q4</button>
+                        <button data-period="OT" class="period-btn px-3 py-1 rounded-lg font-semibold border border-court-200">OT</button>
+                    </div>
+                    <div class="flex gap-2 ml-auto">
+                        <button id="undo-btn" class="px-3 py-1 rounded-lg border border-court-200 text-court-800 font-semibold bg-white hover:bg-court-50">↶ Undo</button>
+                        <button id="sub-btn" class="px-3 py-1 rounded-lg bg-court-900 text-white font-semibold hover:bg-court-700">Substitution</button>
+                    </div>
+                </div>
+            </div>
+            <div class="glass rounded-xl border border-white/60 p-4 shadow-glass">
+                <p class="text-xs uppercase tracking-[0.18em] text-court-700 font-semibold mb-3">Game Health</p>
+                <div class="space-y-3 text-sm text-court-700">
+                    <div class="flex items-center justify-between">
+                        <span>In-memory sync</span>
+                        <span id="autosave-pill" class="pill px-3 py-1 bg-court-100 text-court-900 font-semibold text-xs">Draft saved</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span>Players on court</span>
+                        <span id="on-court-count" class="font-display font-semibold text-court-900">0 / 5</span>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span>Fair play</span>
+                        <span id="fair-play" class="px-2 py-1 pill bg-court-100 text-court-900 font-semibold text-xs">Needs data</span>
+                    </div>
+                    <p class="text-xs text-court-500">This mock focuses on UX flow: lineup → start → subs → stats → finish. No backend writes.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pre-game lineup -->
+        <section id="pregame-panel" class="glass rounded-2xl shadow-glass p-6">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-700 font-semibold">Step 1</p>
+                    <h2 class="text-xl font-display font-bold text-court-900">Make your starting five</h2>
+                    <p class="text-sm text-court-700">Tap to set starters, mark absences, and confirm the bench. Only starters appear when tip-off begins.</p>
+                </div>
+                <button id="quick-fill" class="px-4 py-2 rounded-lg bg-court-900 text-white font-semibold hover:bg-court-700">Auto pick starters</button>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4 mt-4">
+                <div class="bg-court-900 text-white rounded-xl p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <p class="text-xs uppercase tracking-[0.18em] text-court-300 font-semibold">On Court</p>
+                            <h3 class="text-lg font-display font-bold"><span id="starter-count">0</span>/5 selected</h3>
+                        </div>
+                        <button id="clear-lineup" class="text-xs text-court-300 underline hover:text-white">Clear lineup</button>
+                    </div>
+                    <div id="starters-grid" class="grid grid-cols-2 gap-3 text-court-900"></div>
+                </div>
+                <div class="bg-white rounded-xl border border-court-100 p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold">Roster</p>
+                            <h3 class="text-lg font-display font-bold text-court-900">Bench & Absent</h3>
+                        </div>
+                        <div class="flex gap-2 text-xs">
+                            <span class="px-2 py-1 pill bg-court-100 text-court-900 font-semibold">Tap to move</span>
+                            <span class="px-2 py-1 pill bg-accent text-court-900 font-semibold">Hold to mark absent</span>
+                        </div>
+                    </div>
+                    <div id="roster-grid" class="grid sm:grid-cols-2 gap-3"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live tracking -->
+        <section id="live-panel" class="glass rounded-2xl shadow-glass p-6 hidden">
+            <div class="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-700 font-semibold">Step 2</p>
+                    <h2 class="text-xl font-display font-bold text-court-900">Track live with only five visible</h2>
+                    <p class="text-sm text-court-700">Fast stat buttons, substitution flow, and automatic playing time. Bench stays tucked away until needed.</p>
+                </div>
+                <div class="flex gap-2">
+                    <button id="toggle-bench" class="px-4 py-2 rounded-lg bg-court-100 text-court-900 font-semibold hover:bg-court-200">Show Bench</button>
+                    <button id="show-report" class="px-4 py-2 rounded-lg bg-white text-court-900 font-semibold border border-court-200 hover:bg-court-50">Playing time report</button>
+                </div>
+            </div>
+
+            <div class="grid lg:grid-cols-[2fr,1fr] gap-4 mt-4">
+                <div class="space-y-3">
+                    <div id="on-court-grid" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+                    <div id="bench-panel" class="hidden bg-white border border-court-100 rounded-xl p-3">
+                        <div class="flex items-center justify-between">
+                            <p class="text-sm font-semibold text-court-800">Bench ready</p>
+                            <span class="text-xs text-court-500">Tap player to sub in</span>
+                        </div>
+                        <div id="bench-grid" class="grid sm:grid-cols-3 gap-2 mt-3"></div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-xl border border-court-100 p-4 space-y-3">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-court-900">Game Log</h3>
+                        <span class="text-xs text-court-500">Recent first</span>
+                    </div>
+                    <div id="game-log" class="h-96 overflow-y-auto space-y-2 text-sm text-court-800">
+                        <div class="text-court-500 text-center py-8 bg-court-50 rounded-lg">Actions will appear here</div>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white rounded-xl border border-court-100 p-4 space-y-3 mt-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-semibold text-court-900">Opponent quick stats</h3>
+                    <div class="flex items-center gap-2 text-xs">
+                        <input id="opp-name" class="px-2 py-1 rounded border border-court-200 text-sm" placeholder="# / name">
+                        <button id="add-opponent" class="px-3 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700">Add</button>
+                    </div>
+                </div>
+                <div id="opponent-grid" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+                <div class="text-xs text-court-600">Track their scoring/rebounds/assists/steals/blocks to keep the score honest. No subs needed.</div>
+            </div>
+        </section>
+
+        <!-- Postgame -->
+        <section id="post-panel" class="glass rounded-2xl shadow-glass p-6 hidden">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-700 font-semibold">Step 3</p>
+                    <h2 class="text-xl font-display font-bold text-court-900">Final whistle recap</h2>
+                    <p class="text-sm text-court-700">Playing time fairness, substitution history, and quick export-ready summary.</p>
+                </div>
+                <button id="restart-btn" class="px-4 py-2 rounded-lg bg-court-900 text-white font-semibold hover:bg-court-700">New mock game</button>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4 mt-4">
+                <div class="bg-white rounded-xl border border-court-100 p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-semibold text-court-900">Playing time report</h3>
+                        <span id="fairness-label" class="px-2 py-1 pill bg-court-100 text-court-900 text-xs font-semibold">Balanced</span>
+                    </div>
+                    <div id="time-report" class="space-y-2"></div>
+                </div>
+                <div class="bg-white rounded-xl border border-court-100 p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-semibold text-court-900">Substitution history</h3>
+                        <span class="text-xs text-court-500">Chronological</span>
+                    </div>
+                    <div id="subs-history" class="space-y-2 text-sm text-court-800"></div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Substitution modal -->
+    <div id="sub-modal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold">Two taps</p>
+                    <h3 class="text-xl font-display font-bold text-court-900">Substitution flow</h3>
+                    <p class="text-sm text-court-700">Tap who is coming out, then who is coming in. We keep the clock running and update playing time automatically.</p>
+                    <div class="flex gap-2 mt-2 text-xs">
+                        <span id="selected-out" class="px-2 py-1 pill bg-court-100 text-court-900 font-semibold">Out: none</span>
+                        <span id="selected-in" class="px-2 py-1 pill bg-court-100 text-court-900 font-semibold">In: none</span>
+                    </div>
+                </div>
+                <button id="close-sub" class="text-court-500 hover:text-court-800 text-lg">✕</button>
+            </div>
+            <div class="flex items-center justify-between">
+                <p class="text-sm text-court-700">Need to flip the whole line? Swap all five in one tap.</p>
+                <button id="swap-line" class="px-3 py-2 rounded-lg bg-court-900 text-white text-sm font-semibold disabled:opacity-50">Swap full bench ↔ on court</button>
+            </div>
+            <div class="bg-court-50 border border-court-100 rounded-lg p-3 text-sm text-court-800">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="font-semibold">Queued swaps (multi-select)</span>
+                    <button id="clear-queue" class="text-xs px-2 py-1 rounded pill bg-white border border-court-100 hover:bg-court-100">Clear</button>
+                </div>
+                <div id="sub-queue" class="flex flex-wrap gap-2 text-xs text-court-900">
+                    <span class="text-court-500">Pick pairs to build a batch, then confirm.</span>
+                </div>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold mb-2">Coming out</p>
+                    <div id="sub-out-list" class="grid sm:grid-cols-2 gap-2"></div>
+                </div>
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold mb-2">Coming in</p>
+                    <div id="sub-in-list" class="grid sm:grid-cols-2 gap-2"></div>
+                </div>
+            </div>
+            <div class="flex items-center justify-between">
+                <p class="text-sm text-court-700" id="sub-hint">Select a player to come out.</p>
+                <button id="confirm-sub" class="px-4 py-2 rounded-lg bg-court-900 text-white font-semibold disabled:opacity-50" disabled>Confirm substitution</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Playing time report (live) -->
+    <div id="report-modal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-4xl w-full p-6 space-y-4">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold">Live insight</p>
+                    <h3 class="text-xl font-display font-bold text-court-900">Playing time report</h3>
+                    <p class="text-sm text-court-700">Check balance mid-game without stopping the clock.</p>
+                </div>
+                <button id="close-report" class="text-court-500 hover:text-court-800 text-lg">✕</button>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="report-fairness" class="px-2 py-1 pill bg-court-100 text-court-900 text-xs font-semibold">Needs data</span>
+                <p class="text-xs text-court-600">Calculated from the live clock and substitutions.</p>
+            </div>
+            <div id="report-body" class="grid md:grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <!-- Finish modal -->
+    <div id="finish-modal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-4xl w-full p-6 space-y-4">
+            <div class="flex items-start justify-between">
+                <div>
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold">Final whistle</p>
+                    <h3 class="text-xl font-display font-bold text-court-900">Game summary & mock actions</h3>
+                    <p class="text-sm text-court-700">Adjust scores, note highlights, and trigger mock AI/email buttons.</p>
+                </div>
+                <button id="close-finish" class="text-court-500 hover:text-court-800 text-lg">✕</button>
+            </div>
+            <div class="grid md:grid-cols-3 gap-3">
+                <div class="bg-court-900 text-white rounded-xl p-4">
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-300 font-semibold">Home</p>
+                    <input id="final-home" type="number" class="w-full mt-2 bg-white/10 border border-white/20 rounded-lg px-3 py-2 font-display text-3xl" value="0">
+                </div>
+                <div class="bg-white border border-court-100 rounded-xl p-4">
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold">Away</p>
+                    <input id="final-away" type="number" class="w-full mt-2 bg-white border border-court-200 rounded-lg px-3 py-2 font-display text-3xl" value="0">
+                </div>
+                <div class="bg-court-50 border border-court-100 rounded-xl p-4">
+                    <p class="text-xs uppercase tracking-[0.18em] text-court-600 font-semibold">Period ended</p>
+                    <div class="text-lg font-display font-bold text-court-900 mt-2" id="finish-period">Q1</div>
+                    <div class="text-sm text-court-600">Clock: <span id="finish-clock">00:00</span></div>
+                </div>
+            </div>
+            <textarea id="coach-notes" class="w-full bg-white border border-court-200 rounded-lg px-3 py-2 text-sm" rows="3" placeholder="Key moments, rotations, hustle stats..."></textarea>
+            <div class="flex flex-wrap gap-3">
+                <button id="mock-ai" class="px-4 py-2 rounded-lg bg-court-900 text-white font-semibold hover:bg-court-700">Generate mock AI summary</button>
+                <button id="mock-email" class="px-4 py-2 rounded-lg bg-court-100 text-court-900 font-semibold border border-court-200 hover:bg-court-50">Send mock email recap</button>
+                <button id="mock-save" class="px-4 py-2 rounded-lg bg-accent text-court-900 font-semibold hover:brightness-95">Save mock & finish</button>
+            </div>
+            <div class="grid md:grid-cols-2 gap-3">
+                <div>
+                    <h4 class="text-sm font-semibold text-court-900 mb-2">Playing time snapshot</h4>
+                    <div id="finish-time-report" class="space-y-2"></div>
+                </div>
+                <div>
+                    <h4 class="text-sm font-semibold text-court-900 mb-2">Substitution history</h4>
+                    <div id="finish-subs" class="space-y-2 text-sm text-court-800 max-h-64 overflow-y-auto"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="js/track-basketball-mock.js"></script>
+</body>
+</html>

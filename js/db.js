@@ -7,6 +7,20 @@ export { collection, getDocs, deleteDoc, query };
 import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-storage.js";
 
 export async function uploadTeamPhoto(file) {
+    console.log('Starting photo upload...', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
+    });
+
+    await ensureImageAuth();
+
+    const path = `team-photos/${Date.now()}_${file.name}`;
+    console.log('Upload path:', path);
+
+    const storageRef = ref(imageStorage, path);
+    console.log('Storage reference created');
+
     const snapshot = await uploadBytes(storageRef, file);
     console.log('Upload complete, getting download URL...');
 
@@ -25,7 +39,7 @@ export async function uploadPlayerPhoto(file) {
 
     await ensureImageAuth();
 
-    const path = `player - photos / ${Date.now()}_${file.name} `;
+    const path = `player-photos/${Date.now()}_${file.name}`;
     const storageRef = ref(imageStorage, path);
 
     const snapshot = await uploadBytes(storageRef, file);

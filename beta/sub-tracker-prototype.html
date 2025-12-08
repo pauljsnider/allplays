@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basketball Substitution & Playing Time - UX Prototype</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes pulse-green {
+            0%, 100% { background-color: rgb(34, 197, 94); }
+            50% { background-color: rgb(22, 163, 74); }
+        }
+        .playing { animation: pulse-green 2s ease-in-out infinite; }
+        .on-bench { opacity: 0.6; }
+        .absent { opacity: 0.3; filter: grayscale(100%); }
+        .player-card { transition: all 0.2s ease; }
+        .player-card:hover:not(.absent) { transform: scale(1.02); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .player-card.selected { ring: 3px solid rgb(59, 130, 246); transform: scale(1.05); }
+        .sub-step-1 .player-card.on-court { cursor: pointer; }
+        .sub-step-2 .player-card.on-bench { cursor: pointer; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- Header -->
+    <div class="bg-blue-600 text-white p-4 shadow-lg">
+        <h1 class="text-xl font-bold">🏀 Basketball Game Tracker</h1>
+        <p class="text-sm opacity-90" id="gameInfo">Wildcats vs Eagles</p>
+    </div>
+
+    <!-- SCREEN 1: PRE-GAME LINEUP SELECTION -->
+    <div id="lineupScreen" class="max-w-4xl mx-auto p-4">
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-2xl font-bold mb-2">Make Your Lineup</h2>
+            <p class="text-gray-600 mb-4">Select your starting 5 players. Mark absent players if needed.</p>
+
+            <div class="flex items-center justify-between mb-4 p-3 bg-blue-50 rounded-lg">
+                <div>
+                    <span class="text-lg font-bold text-blue-900">Starting 5: </span>
+                    <span id="starterCount" class="text-2xl font-bold text-blue-600">0</span>
+                    <span class="text-gray-600">/5</span>
+                </div>
+                <button id="startGameBtn" disabled
+                    class="bg-green-600 text-white px-8 py-3 rounded-lg font-bold text-lg disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-green-700 transition">
+                    Start Game
+                </button>
+            </div>
+
+            <div id="lineupPlayerList" class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- SCREEN 2: GAME TRACKING -->
+    <div id="gameScreen" class="hidden max-w-4xl mx-auto p-4">
+
+        <!-- Timer & Score -->
+        <div class="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg shadow-lg p-6 mb-4">
+            <div class="grid grid-cols-3 gap-4 items-center">
+                <div class="text-center">
+                    <div class="text-sm opacity-80">HOME</div>
+                    <div class="text-4xl font-bold">45</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-6xl font-bold" id="timerDisplay">12:00</div>
+                    <div class="text-sm opacity-90" id="periodDisplay">Q2</div>
+                    <div class="flex gap-2 justify-center mt-2">
+                        <button id="pauseBtn" class="bg-yellow-500 hover:bg-yellow-600 px-4 py-2 rounded font-bold text-sm">
+                            ⏸ PAUSE
+                        </button>
+                    </div>
+                </div>
+                <div class="text-center">
+                    <div class="text-sm opacity-80">AWAY</div>
+                    <div class="text-4xl font-bold">42</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Substitution Button & Playing Time Summary -->
+        <div class="mb-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button id="subBtn"
+                class="bg-orange-500 hover:bg-orange-600 text-white p-4 rounded-lg shadow-lg font-bold text-xl transition transform hover:scale-105">
+                🔄 SUBSTITUTION
+            </button>
+            <div class="bg-white rounded-lg shadow-md p-4">
+                <div class="text-sm font-bold text-gray-600 mb-2">⏱️ PLAYING TIME BALANCE</div>
+                <div class="flex items-center gap-2">
+                    <div class="flex-1 bg-gray-200 rounded-full h-3">
+                        <div class="bg-green-500 h-3 rounded-full" style="width: 78%"></div>
+                    </div>
+                    <span class="text-sm font-bold text-green-600">78% Fair</span>
+                </div>
+                <div class="text-xs text-gray-500 mt-1">All active players have 40%+ playing time</div>
+            </div>
+        </div>
+
+        <!-- Active Players (On Court) -->
+        <div class="bg-white rounded-lg shadow-md p-4 mb-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-bold text-lg">⭐ On Court (5)</h3>
+                <span class="text-xs text-green-600 font-bold">● PLAYING</span>
+            </div>
+            <div id="activePlayersList" class="space-y-2">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Bench Players -->
+        <div class="bg-white rounded-lg shadow-md p-4 mb-4">
+            <h3 class="font-bold text-lg mb-3">💺 Bench</h3>
+            <div id="benchPlayersList" class="space-y-2">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Game Log -->
+        <div class="bg-white rounded-lg shadow-md p-4">
+            <h3 class="font-bold text-lg mb-3">📋 Game Log</h3>
+            <div id="gameLogList" class="space-y-1 max-h-64 overflow-y-auto">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Substitution Flow -->
+    <div id="subModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div class="p-6">
+                <!-- Step Indicator -->
+                <div class="mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="text-2xl font-bold">Substitution</h2>
+                        <button id="closeSub" class="text-gray-400 hover:text-gray-600 text-2xl">✕</button>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <div id="step1Indicator" class="flex items-center gap-2 flex-1">
+                            <div class="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">1</div>
+                            <span class="font-bold text-blue-600">Select Player OUT</span>
+                        </div>
+                        <div class="w-8 h-1 bg-gray-300"></div>
+                        <div id="step2Indicator" class="flex items-center gap-2 flex-1">
+                            <div class="w-8 h-8 bg-gray-300 text-white rounded-full flex items-center justify-center font-bold">2</div>
+                            <span class="text-gray-400">Select Player IN</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Substitution Content -->
+                <div id="subContent">
+                    <!-- Populated by JS based on step -->
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="mt-6 flex gap-3">
+                    <button id="cancelSub" class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-700 py-3 rounded-lg font-bold">
+                        Cancel
+                    </button>
+                    <button id="confirmSub" class="hidden flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-bold">
+                        ✓ Confirm Substitution
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========================================
+        // MOCK DATA
+        // ========================================
+        const TEAM_ROSTER = [
+            { id: 1, name: 'Charlotte C', number: '10', position: 'Guard' },
+            { id: 2, name: 'Vale', number: '21', position: 'Forward' },
+            { id: 3, name: 'Charlotte', number: '2', position: 'Guard' },
+            { id: 4, name: 'Tanvi', number: '31', position: 'Center' },
+            { id: 5, name: 'Emmie', number: '23', position: 'Forward' },
+            { id: 6, name: 'Sophia', number: '15', position: 'Guard' },
+            { id: 7, name: 'Emma', number: '7', position: 'Forward' },
+            { id: 8, name: 'Mia', number: '12', position: 'Guard' },
+            { id: 9, name: 'Olivia', number: '5', position: 'Center' },
+            { id: 10, name: 'Ava', number: '8', position: 'Forward' },
+        ];
+
+        // ========================================
+        // GAME STATE
+        // ========================================
+        let gameState = {
+            // Lineup management
+            starters: [],
+            bench: [],
+            absent: [],
+            onCourt: [],
+
+            // Timer
+            startTime: null,
+            elapsed: 0,
+            isRunning: false,
+            currentPeriod: 'Q1',
+
+            // Substitutions
+            substitutions: [],
+
+            // Stats
+            playerStats: {},
+
+            // Game log
+            gameLog: []
+        };
+
+        let subState = {
+            step: 1, // 1 = select OUT, 2 = select IN
+            playerOut: null,
+            playerIn: null
+        };
+
+        // ========================================
+        // SCREEN 1: LINEUP SELECTION
+        // ========================================
+        function renderLineupScreen() {
+            const container = document.getElementById('lineupPlayerList');
+
+            container.innerHTML = TEAM_ROSTER.map(player => {
+                const isStarter = gameState.starters.includes(player.id);
+                const isAbsent = gameState.absent.includes(player.id);
+
+                return `
+                    <div class="player-card ${isAbsent ? 'absent' : ''} ${isStarter ? 'selected' : ''}
+                         bg-white rounded-lg p-4 border-2 ${isStarter ? 'border-blue-500' : 'border-gray-200'}
+                         ${!isAbsent ? 'cursor-pointer' : 'cursor-not-allowed'}"
+                         onclick="${!isAbsent ? `toggleStarter(${player.id})` : ''}">
+                        <div class="flex items-start justify-between mb-2">
+                            <div>
+                                <div class="text-2xl font-bold text-gray-800">#${player.number}</div>
+                                <div class="font-bold text-gray-900">${player.name}</div>
+                                <div class="text-xs text-gray-500">${player.position}</div>
+                            </div>
+                            ${isStarter ? '<div class="text-2xl">⭐</div>' : ''}
+                            ${isAbsent ? '<div class="text-2xl">🚫</div>' : ''}
+                        </div>
+                        <div class="flex gap-1 mt-2">
+                            ${!isAbsent && !isStarter ? `
+                                <button class="flex-1 bg-blue-500 text-white text-xs py-1 rounded hover:bg-blue-600"
+                                    onclick="event.stopPropagation(); toggleStarter(${player.id})">
+                                    Add to Starting 5
+                                </button>
+                            ` : ''}
+                            ${isStarter ? `
+                                <button class="flex-1 bg-red-500 text-white text-xs py-1 rounded hover:bg-red-600"
+                                    onclick="event.stopPropagation(); toggleStarter(${player.id})">
+                                    Remove
+                                </button>
+                            ` : ''}
+                            <button class="bg-gray-300 text-gray-700 text-xs px-2 py-1 rounded hover:bg-gray-400"
+                                onclick="event.stopPropagation(); toggleAbsent(${player.id})">
+                                ${isAbsent ? '↩️' : '🚫'}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            updateStarterCount();
+        }
+
+        function toggleStarter(playerId) {
+            const index = gameState.starters.indexOf(playerId);
+
+            if (index > -1) {
+                // Remove from starters
+                gameState.starters.splice(index, 1);
+            } else {
+                // Add to starters (max 5)
+                if (gameState.starters.length < 5) {
+                    gameState.starters.push(playerId);
+                } else {
+                    alert('You can only have 5 starters. Remove a player first.');
+                    return;
+                }
+            }
+
+            renderLineupScreen();
+        }
+
+        function toggleAbsent(playerId) {
+            const index = gameState.absent.indexOf(playerId);
+
+            if (index > -1) {
+                gameState.absent.splice(index, 1);
+            } else {
+                // Remove from starters if they were there
+                const starterIndex = gameState.starters.indexOf(playerId);
+                if (starterIndex > -1) {
+                    gameState.starters.splice(starterIndex, 1);
+                }
+                gameState.absent.push(playerId);
+            }
+
+            renderLineupScreen();
+        }
+
+        function updateStarterCount() {
+            document.getElementById('starterCount').textContent = gameState.starters.length;
+            document.getElementById('startGameBtn').disabled = gameState.starters.length !== 5;
+        }
+
+        // ========================================
+        // SCREEN 2: GAME TRACKING
+        // ========================================
+        function startGame() {
+            // Initialize game state
+            gameState.onCourt = [...gameState.starters];
+            gameState.bench = TEAM_ROSTER
+                .filter(p => !gameState.starters.includes(p.id) && !gameState.absent.includes(p.id))
+                .map(p => p.id);
+
+            // Initialize player stats with start time
+            gameState.onCourt.forEach(playerId => {
+                gameState.playerStats[playerId] = {
+                    playingTime: 0,
+                    lastSubIn: 0 // Game started at 0:00
+                };
+            });
+
+            gameState.bench.forEach(playerId => {
+                gameState.playerStats[playerId] = {
+                    playingTime: 0,
+                    lastSubIn: null
+                };
+            });
+
+            // Start timer
+            gameState.isRunning = true;
+            gameState.startTime = Date.now();
+
+            // Switch screens
+            document.getElementById('lineupScreen').classList.add('hidden');
+            document.getElementById('gameScreen').classList.remove('hidden');
+
+            renderGameScreen();
+            startTimer();
+
+            addToGameLog('🏀 Game Started! Starting 5 on court.');
+        }
+
+        function renderGameScreen() {
+            renderActivePlayersList();
+            renderBenchPlayersList();
+            renderGameLog();
+            updatePlayingTimes();
+        }
+
+        function renderActivePlayersList() {
+            const container = document.getElementById('activePlayersList');
+
+            container.innerHTML = gameState.onCourt.map(playerId => {
+                const player = TEAM_ROSTER.find(p => p.id === playerId);
+                const stats = gameState.playerStats[playerId];
+                const playingTime = formatTime(stats.playingTime);
+                const playingPercentage = Math.round((stats.playingTime / gameState.elapsed) * 100) || 0;
+
+                return `
+                    <div class="bg-gradient-to-r from-green-50 to-green-100 border-2 border-green-500 rounded-lg p-3">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3 flex-1">
+                                <div class="text-2xl font-bold text-green-700">#${player.number}</div>
+                                <div class="flex-1">
+                                    <div class="font-bold text-gray-900">${player.name}</div>
+                                    <div class="text-xs text-gray-600">${player.position}</div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-sm font-bold text-green-700">⏱️ ${playingTime}</div>
+                                <div class="text-xs text-gray-600">${playingPercentage}% of game</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderBenchPlayersList() {
+            const container = document.getElementById('benchPlayersList');
+
+            if (gameState.bench.length === 0) {
+                container.innerHTML = '<div class="text-gray-400 text-center p-3">No bench players available</div>';
+                return;
+            }
+
+            container.innerHTML = gameState.bench.map(playerId => {
+                const player = TEAM_ROSTER.find(p => p.id === playerId);
+                const stats = gameState.playerStats[playerId];
+                const playingTime = formatTime(stats.playingTime);
+                const playingPercentage = Math.round((stats.playingTime / gameState.elapsed) * 100) || 0;
+
+                return `
+                    <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 on-bench">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3 flex-1">
+                                <div class="text-xl font-bold text-gray-500">#${player.number}</div>
+                                <div class="flex-1">
+                                    <div class="font-bold text-gray-700">${player.name}</div>
+                                    <div class="text-xs text-gray-500">${player.position}</div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-sm font-bold text-gray-600">⏱️ ${playingTime}</div>
+                                <div class="text-xs text-gray-500">${playingPercentage}% of game</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderGameLog() {
+            const container = document.getElementById('gameLogList');
+
+            if (gameState.gameLog.length === 0) {
+                container.innerHTML = '<div class="text-gray-400 text-center p-3">Game log will appear here</div>';
+                return;
+            }
+
+            container.innerHTML = gameState.gameLog.slice(0, 20).map(entry => `
+                <div class="text-sm p-2 bg-gray-50 rounded flex justify-between items-center">
+                    <span>${entry.text}</span>
+                    <span class="text-xs text-gray-500">${entry.period} ${entry.time}</span>
+                </div>
+            `).join('');
+        }
+
+        function addToGameLog(text) {
+            gameState.gameLog.unshift({
+                text: text,
+                time: formatTime(gameState.elapsed),
+                period: gameState.currentPeriod,
+                timestamp: Date.now()
+            });
+            renderGameLog();
+        }
+
+        // ========================================
+        // SUBSTITUTION WORKFLOW
+        // ========================================
+        function openSubModal() {
+            subState = { step: 1, playerOut: null, playerIn: null };
+            document.getElementById('subModal').classList.remove('hidden');
+            renderSubModal();
+        }
+
+        function closeSubModal() {
+            document.getElementById('subModal').classList.add('hidden');
+        }
+
+        function renderSubModal() {
+            const step1 = document.getElementById('step1Indicator');
+            const step2 = document.getElementById('step2Indicator');
+            const content = document.getElementById('subContent');
+            const confirmBtn = document.getElementById('confirmSub');
+
+            if (subState.step === 1) {
+                // Step 1: Select player OUT (from on-court players)
+                step1.querySelector('div').className = 'w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold';
+                step1.querySelector('span').className = 'font-bold text-blue-600';
+                step2.querySelector('div').className = 'w-8 h-8 bg-gray-300 text-white rounded-full flex items-center justify-center font-bold';
+                step2.querySelector('span').className = 'text-gray-400';
+                confirmBtn.classList.add('hidden');
+
+                content.innerHTML = `
+                    <div class="mb-3">
+                        <div class="text-lg font-bold text-gray-800 mb-1">Who's coming OUT?</div>
+                        <div class="text-sm text-gray-600">Select a player currently on the court</div>
+                    </div>
+                    <div class="space-y-2">
+                        ${gameState.onCourt.map(playerId => {
+                            const player = TEAM_ROSTER.find(p => p.id === playerId);
+                            const stats = gameState.playerStats[playerId];
+                            const playingTime = formatTime(stats.playingTime);
+
+                            return `
+                                <div class="player-card on-court cursor-pointer bg-gradient-to-r from-green-50 to-green-100 border-2 border-green-500 rounded-lg p-4 hover:shadow-lg"
+                                    onclick="selectPlayerOut(${playerId})">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-3">
+                                            <div class="text-2xl font-bold text-green-700">#${player.number}</div>
+                                            <div>
+                                                <div class="font-bold text-gray-900">${player.name}</div>
+                                                <div class="text-xs text-gray-600">⏱️ ${playingTime} played</div>
+                                            </div>
+                                        </div>
+                                        <div class="text-2xl">➡️</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            } else if (subState.step === 2) {
+                // Step 2: Select player IN (from bench players)
+                step1.querySelector('div').className = 'w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold';
+                step1.querySelector('span').className = 'font-bold text-green-600';
+                step2.querySelector('div').className = 'w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold';
+                step2.querySelector('span').className = 'font-bold text-blue-600';
+                confirmBtn.classList.add('hidden');
+
+                const playerOut = TEAM_ROSTER.find(p => p.id === subState.playerOut);
+
+                content.innerHTML = `
+                    <div class="mb-4 p-3 bg-green-50 rounded-lg border-2 border-green-500">
+                        <div class="text-sm text-gray-600 mb-1">Coming OUT:</div>
+                        <div class="flex items-center gap-2">
+                            <div class="text-xl font-bold text-green-700">#${playerOut.number}</div>
+                            <div class="font-bold text-gray-900">${playerOut.name}</div>
+                            <button class="ml-auto text-xs bg-gray-300 hover:bg-gray-400 px-2 py-1 rounded"
+                                onclick="subState.step = 1; renderSubModal();">
+                                Change
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="text-lg font-bold text-gray-800 mb-1">Who's coming IN?</div>
+                        <div class="text-sm text-gray-600">Select a player from the bench</div>
+                    </div>
+                    <div class="space-y-2">
+                        ${gameState.bench.map(playerId => {
+                            const player = TEAM_ROSTER.find(p => p.id === playerId);
+                            const stats = gameState.playerStats[playerId];
+                            const playingTime = formatTime(stats.playingTime);
+                            const playingPercentage = Math.round((stats.playingTime / gameState.elapsed) * 100) || 0;
+
+                            return `
+                                <div class="player-card on-bench cursor-pointer bg-gray-50 border-2 border-gray-300 rounded-lg p-4 hover:shadow-lg hover:border-blue-500"
+                                    onclick="selectPlayerIn(${playerId})">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-3">
+                                            <div class="text-2xl font-bold text-gray-700">#${player.number}</div>
+                                            <div>
+                                                <div class="font-bold text-gray-900">${player.name}</div>
+                                                <div class="text-xs text-gray-600">⏱️ ${playingTime} (${playingPercentage}%)</div>
+                                            </div>
+                                        </div>
+                                        <div class="text-2xl">⬅️</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            } else if (subState.step === 3) {
+                // Step 3: Confirm substitution
+                step1.querySelector('div').className = 'w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold';
+                step1.querySelector('span').className = 'font-bold text-green-600';
+                step2.querySelector('div').className = 'w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold';
+                step2.querySelector('span').className = 'font-bold text-green-600';
+                confirmBtn.classList.remove('hidden');
+
+                const playerOut = TEAM_ROSTER.find(p => p.id === subState.playerOut);
+                const playerIn = TEAM_ROSTER.find(p => p.id === subState.playerIn);
+
+                content.innerHTML = `
+                    <div class="bg-blue-50 rounded-lg p-6 border-2 border-blue-500">
+                        <div class="text-center mb-4">
+                            <div class="text-lg font-bold text-gray-800 mb-2">Confirm Substitution</div>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-4 items-center">
+                            <div class="text-center p-4 bg-red-100 rounded-lg border-2 border-red-400">
+                                <div class="text-sm text-red-700 mb-1">OUT</div>
+                                <div class="text-2xl font-bold text-red-700">#${playerOut.number}</div>
+                                <div class="font-bold text-gray-900">${playerOut.name}</div>
+                            </div>
+
+                            <div class="text-center text-4xl">
+                                🔄
+                            </div>
+
+                            <div class="text-center p-4 bg-green-100 rounded-lg border-2 border-green-400">
+                                <div class="text-sm text-green-700 mb-1">IN</div>
+                                <div class="text-2xl font-bold text-green-700">#${playerIn.number}</div>
+                                <div class="font-bold text-gray-900">${playerIn.name}</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 text-center text-sm text-gray-600">
+                            Game Time: ${gameState.currentPeriod} ${formatTime(gameState.elapsed)}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function selectPlayerOut(playerId) {
+            subState.playerOut = playerId;
+            subState.step = 2;
+            renderSubModal();
+        }
+
+        function selectPlayerIn(playerId) {
+            subState.playerIn = playerId;
+            subState.step = 3;
+            renderSubModal();
+        }
+
+        function confirmSubstitution() {
+            const playerOut = TEAM_ROSTER.find(p => p.id === subState.playerOut);
+            const playerIn = TEAM_ROSTER.find(p => p.id === subState.playerIn);
+
+            // Record the substitution
+            const currentTime = gameState.elapsed;
+
+            gameState.substitutions.push({
+                timestamp: Date.now(),
+                gameTime: currentTime,
+                period: gameState.currentPeriod,
+                out: subState.playerOut,
+                in: subState.playerIn
+            });
+
+            // Update playing time for player going OUT
+            if (gameState.playerStats[subState.playerOut].lastSubIn !== null) {
+                const timeOnCourt = currentTime - gameState.playerStats[subState.playerOut].lastSubIn;
+                gameState.playerStats[subState.playerOut].playingTime += timeOnCourt;
+                gameState.playerStats[subState.playerOut].lastSubIn = null;
+            }
+
+            // Set sub-in time for player coming IN
+            gameState.playerStats[subState.playerIn].lastSubIn = currentTime;
+
+            // Update lineups
+            const courtIndex = gameState.onCourt.indexOf(subState.playerOut);
+            gameState.onCourt[courtIndex] = subState.playerIn;
+
+            const benchIndex = gameState.bench.indexOf(subState.playerIn);
+            gameState.bench[benchIndex] = subState.playerOut;
+
+            // Add to game log
+            addToGameLog(`🔄 Sub: #${playerOut.number} ${playerOut.name} OUT → #${playerIn.number} ${playerIn.name} IN`);
+
+            // Close modal and re-render
+            closeSubModal();
+            renderGameScreen();
+        }
+
+        // ========================================
+        // TIMER & PLAYING TIME
+        // ========================================
+        let timerInterval = null;
+
+        function startTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+
+            timerInterval = setInterval(() => {
+                if (gameState.isRunning) {
+                    gameState.elapsed = Math.floor((Date.now() - gameState.startTime) / 1000);
+                    updateTimerDisplay();
+                    updatePlayingTimes();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            document.getElementById('timerDisplay').textContent = formatTime(gameState.elapsed);
+        }
+
+        function updatePlayingTimes() {
+            // Update playing time for currently active players
+            gameState.onCourt.forEach(playerId => {
+                if (gameState.playerStats[playerId].lastSubIn !== null) {
+                    const currentPlayingTime = gameState.playerStats[playerId].playingTime;
+                    const timeOnCourt = gameState.elapsed - gameState.playerStats[playerId].lastSubIn;
+                    // We don't update the stored value here, just calculate for display
+                }
+            });
+
+            renderActivePlayersList();
+            renderBenchPlayersList();
+        }
+
+        function pauseTimer() {
+            gameState.isRunning = !gameState.isRunning;
+            document.getElementById('pauseBtn').innerHTML = gameState.isRunning ? '⏸ PAUSE' : '▶️ RESUME';
+
+            if (gameState.isRunning) {
+                // Resuming - adjust start time
+                gameState.startTime = Date.now() - (gameState.elapsed * 1000);
+            }
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // ========================================
+        // EVENT LISTENERS
+        // ========================================
+        document.getElementById('startGameBtn').addEventListener('click', startGame);
+        document.getElementById('subBtn').addEventListener('click', openSubModal);
+        document.getElementById('closeSub').addEventListener('click', closeSubModal);
+        document.getElementById('cancelSub').addEventListener('click', closeSubModal);
+        document.getElementById('confirmSub').addEventListener('click', confirmSubstitution);
+        document.getElementById('pauseBtn').addEventListener('click', pauseTimer);
+
+        // ========================================
+        // INITIALIZE
+        // ========================================
+        renderLineupScreen();
+    </script>
+</body>
+</html>
