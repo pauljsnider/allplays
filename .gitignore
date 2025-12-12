@@ -60,3 +60,9 @@ check-admin-status.html
 
 # Temporary files
 _temp/
+
+# Database cleanup and admin utilities (keep cheer app)
+cleanup-duplicate-events.html
+fix-game-stats.html
+quick-cleanup.html
+packages.microsoft.gpg

@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Cheer Track (Beta) - ALL PLAYS</title>
+  <link rel="icon" type="image/png" href="../img/logo_small.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0b1021',
+            steel: '#1d2738',
+            mint: '#4de1c1',
+            coral: '#f4667c',
+            sand: '#f6f0e8',
+            slate: '#60708a'
+          },
+          fontFamily: {
+            display: ['"Sora"', 'ui-sans-serif'],
+            body: ['"Manrope"', 'ui-sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=Sora:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    body { background: radial-gradient(circle at 20% 20%, rgba(77, 225, 193, 0.12), transparent 32%), #0b1021; }
+    .card { background: rgba(255,255,255,0.96); backdrop-filter: blur(8px); }
+    .pill { border-radius: 999px; }
+    .no-scrollbar { scrollbar-width: none; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .stat-btn { touch-action: manipulation; }
+    .grid-cols-auto { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  </style>
+</head>
+<body class="min-h-screen text-ink font-body">
+  <header class="px-4 py-3 text-white flex items-center justify-between">
+    <div>
+      <p class="uppercase tracking-[0.2em] text-[11px] text-mint/80">ALL PLAYS · Cheer Lab</p>
+      <h1 class="text-xl font-display font-bold">Floor Coach Tracker</h1>
+      <p class="text-xs text-slate/60">In-memory beta · no sync</p>
+    </div>
+    <div class="text-right">
+      <div class="text-3xl font-display font-bold" id="timer">00:00</div>
+      <div class="text-xs text-mint/80" id="segment-chip">Segment: Warm-up</div>
+    </div>
+  </header>
+
+  <main class="space-y-3 pb-24">
+    <!-- Controls -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3">
+      <div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <button id="start-stop" class="pill px-3 py-2 text-xs font-semibold bg-mint text-ink">Start</button>
+        <button id="reset-timer" class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/20">Reset</button>
+        <div class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/20 flex items-center gap-2">
+          <span class="text-slate">Segment</span>
+          <select id="segment-select" class="bg-transparent text-ink text-xs font-semibold focus:outline-none">
+            <option>Warm-up</option>
+            <option>Opening</option>
+            <option>Stunts</option>
+            <option>Pyramid</option>
+            <option>Tumbling</option>
+            <option>Jumps</option>
+            <option>Dance/Outro</option>
+          </select>
+        </div>
+        <button id="add-note" class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/20">Quick note</button>
+        <button id="edit-focus" class="pill px-3 py-2 text-xs font-semibold bg-ink text-white border border-ink">Edit focus</button>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <button class="pill px-2 py-2 bg-white border border-slate/10 focus-tab" data-target="live-panel">Live</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10 focus-tab" data-target="deductions-panel">Deductions</button>
+        <button class="pill px-2 py-2 bg-white border border-slate/10 focus-tab" data-target="summary-panel">Finish</button>
+      </div>
+      <div class="flex items-center justify-between text-xs text-white bg-steel rounded-xl px-3 py-2">
+        <span class="font-semibold">Focus items: <span id="focus-count">0</span>/6</span>
+        <span class="font-mono" id="events-count">0 events</span>
+      </div>
+    </section>
+
+    <!-- Team snapshot -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Team snapshot</p>
+          <h3 class="text-lg font-display font-bold">Division & lineup quick hit</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="pill px-3 py-1 bg-sand text-xs text-slate font-semibold" id="on-floor-chip">0 on floor</span>
+          <button class="text-xs underline collapse-btn" data-collapse-target="team-body">Collapse</button>
+        </div>
+      </div>
+      <div id="team-body" class="space-y-3">
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <input id="team-name" class="w-full px-3 py-2 rounded-lg border border-slate/20" placeholder="Team name (e.g., Jr L3 Heat)">
+          <input id="division" class="w-full px-3 py-2 rounded-lg border border-slate/20" placeholder="Division (e.g., Junior L3 Small)">
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-steel text-white rounded-xl p-3">
+            <p class="text-[11px] uppercase tracking-[0.18em] text-white/60 font-semibold">Headcount</p>
+            <div class="text-2xl font-display" id="headcount">0 athletes</div>
+            <p class="text-[11px] text-white/70" id="group-count">0 groups · adjust below</p>
+          </div>
+          <div class="bg-sand rounded-xl p-3">
+            <p class="text-[11px] uppercase tracking-[0.18em] text-slate/70 font-semibold">Callouts</p>
+            <div class="text-xs text-slate" id="callouts">Set stunt timing · watch landings</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Focus editor -->
+    <section id="focus-editor" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Coach focus</p>
+          <h3 class="text-lg font-display font-bold">Pick up to six priority items</h3>
+        </div>
+        <button id="close-focus" class="text-xs text-slate">✕</button>
+      </div>
+      <div id="focus-options" class="grid grid-cols-2 gap-2 text-sm"></div>
+    </section>
+
+    <!-- Warm-up flow -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Warm-up flow</p>
+          <h3 class="text-lg font-display font-bold">Backstage pacing</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="reset-warmup" class="text-xs underline">Reset</button>
+          <button class="text-xs underline collapse-btn" data-collapse-target="warmup-body">Collapse</button>
+        </div>
+      </div>
+      <div id="warmup-body">
+        <div id="warmup-steps" class="space-y-2 text-sm"></div>
+      </div>
+    </section>
+
+    <!-- Roster / stunt groups -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Roster</p>
+          <h3 class="text-lg font-display font-bold">Groups & roles</h3>
+        </div>
+        <button class="text-xs underline collapse-btn" data-collapse-target="roster-body">Collapse</button>
+      </div>
+      <div id="roster-body">
+        <div id="roster-grid" class="grid grid-cols-auto gap-2"></div>
+      </div>
+    </section>
+
+    <!-- Crowd cues -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Crowd & parents</p>
+          <h3 class="text-lg font-display font-bold">Cheer cues to shout</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="swap-cues" class="text-xs underline">Shuffle</button>
+          <button class="text-xs underline collapse-btn" data-collapse-target="crowd-body">Collapse</button>
+        </div>
+      </div>
+      <div id="crowd-body">
+        <div id="crowd-cues" class="space-y-2 text-sm"></div>
+      </div>
+    </section>
+
+    <!-- Live tracking -->
+    <section id="live-panel" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Live</p>
+          <h3 class="text-lg font-display font-bold">Skill hits & issues</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="pill px-3 py-1 bg-sand text-xs text-slate font-semibold" id="hit-zero-pill">Hit zero?</span>
+          <button class="text-xs underline collapse-btn" data-collapse-target="live-body">Collapse</button>
+        </div>
+      </div>
+      <div id="live-body">
+        <div id="focus-cards" class="grid grid-cols-2 gap-2"></div>
+      </div>
+    </section>
+
+    <!-- Deductions -->
+    <section id="deductions-panel" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Deductions</p>
+          <h3 class="text-lg font-display font-bold">Tag safety / execution hits</h3>
+        </div>
+        <div class="text-right">
+          <p class="text-xs text-slate">Total</p>
+          <div class="text-xl font-display font-bold" id="deduction-total">-0.00</div>
+        </div>
+      </div>
+      <div class="flex items-center justify-end">
+        <button class="text-xs underline collapse-btn" data-collapse-target="deductions-body">Collapse</button>
+      </div>
+      <div id="deductions-body">
+        <div class="grid grid-cols-2 gap-2 text-sm" id="deduction-buttons"></div>
+      </div>
+    </section>
+
+    <!-- Summary -->
+    <section id="summary-panel" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3 hidden">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Finish</p>
+          <h3 class="text-lg font-display font-bold">Routine snapshot</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="copy-summary" class="pill px-3 py-2 bg-white border border-slate/20 text-xs font-semibold">Copy recap</button>
+          <button class="text-xs underline collapse-btn" data-collapse-target="summary-body">Collapse</button>
+        </div>
+      </div>
+      <div id="summary-body" class="space-y-3">
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <div class="bg-steel text-white rounded-xl p-3">
+            <p class="text-xs uppercase tracking-[0.18em] text-white/70 font-semibold">Timer</p>
+            <div class="text-2xl font-display" id="summary-time">00:00</div>
+            <p class="text-xs text-white/70" id="summary-segment">Segment: Warm-up</p>
+          </div>
+          <div class="bg-sand text-ink rounded-xl p-3">
+            <p class="text-xs uppercase tracking-[0.18em] text-slate/70 font-semibold">Deductions</p>
+            <div class="text-2xl font-display" id="summary-deductions">-0.00</div>
+            <p class="text-xs text-slate" id="hit-zero-status">On track to hit zero</p>
+          </div>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold mb-2">Focus recap</h4>
+          <div id="summary-focus" class="space-y-1 text-xs"></div>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold mb-2">Coach notes</h4>
+          <textarea id="coach-notes" rows="3" class="w-full px-3 py-2 rounded-lg border border-slate/20 text-sm" placeholder="Timing issues, formations, cue words, judge reminders"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- Log -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 mb-8">
+      <div class="flex items-center justify-between text-sm font-semibold">
+        <span>Recent events</span>
+        <div class="flex items-center gap-2">
+          <button id="clear-log" class="text-xs underline">Clear</button>
+          <button class="text-xs underline collapse-btn" data-collapse-target="log-body">Collapse</button>
+        </div>
+      </div>
+      <div id="log-body">
+        <div id="log" class="space-y-2 text-xs max-h-64 overflow-y-auto"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Note modal -->
+  <div id="note-modal" class="fixed inset-0 bg-black/60 hidden items-center justify-center p-4 z-50">
+    <div class="card w-full max-w-md p-4 rounded-2xl space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="font-display font-bold text-lg">Quick note</h3>
+        <button id="close-note" class="text-slate text-sm">✕</button>
+      </div>
+      <textarea id="note-input" rows="3" class="w-full px-3 py-2 rounded-lg border border-slate/20 text-sm" placeholder="Example: Pyramid switch to 2+2 looked unstable"></textarea>
+      <div class="flex justify-end gap-2 text-sm">
+        <button id="note-cancel" class="pill px-3 py-2 bg-white border border-slate/20">Cancel</button>
+        <button id="note-save" class="pill px-3 py-2 bg-mint text-ink font-semibold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const focusOptions = [
+      { id: 'stunts', label: 'Stunts', hint: 'Partner groups' },
+      { id: 'pyramids', label: 'Pyramids', hint: 'Structures/sequence' },
+      { id: 'tosses', label: 'Baskets', hint: 'Height/body positions' },
+      { id: 'standing', label: 'Standing tumble', hint: 'Sync / majority' },
+      { id: 'running', label: 'Running tumble', hint: 'Passes / landings' },
+      { id: 'jumps', label: 'Jumps', hint: 'Combo / timing' },
+      { id: 'dance', label: 'Dance/Outro', hint: 'Energy / choreo' },
+      { id: 'crowd', label: 'Crowd-leading', hint: 'Cheer voice/signs' }
+    ];
+
+    const deductionPresets = [
+      { id: 'AB', label: 'AB • Athlete bobble', value: 0.25 },
+      { id: 'AF', label: 'AF • Athlete fall', value: 0.50 },
+      { id: 'BB', label: 'BB • Building bobble', value: 0.50 },
+      { id: 'BF', label: 'BF • Building fall', value: 2.00 },
+      { id: 'MBF', label: 'Major BF', value: 3.00 },
+      { id: 'PF', label: 'PF • Pyramid fall', value: 4.00 },
+      { id: 'OOB', label: 'Out of bounds', value: 0.50 },
+      { id: 'TIME', label: 'Time over', value: 1.00 }
+    ];
+
+    const warmupTemplate = [
+      'Check-in / waivers',
+      'Stretch / mobility',
+      'Tumble strip',
+      'Stunt reps',
+      'Full floor (music)',
+      'On deck'
+    ];
+
+    const rosterTemplate = [
+      { name: 'Avery', role: 'Flyer', group: 'Center', onFloor: true },
+      { name: 'Blake', role: 'Base', group: 'Center', onFloor: true },
+      { name: 'Casey', role: 'Base', group: 'Center', onFloor: true },
+      { name: 'Dee', role: 'Spot', group: 'Center', onFloor: true },
+      { name: 'Eli', role: 'Flyer', group: 'Side 1', onFloor: true },
+      { name: 'Finn', role: 'Base', group: 'Side 1', onFloor: true },
+      { name: 'Gray', role: 'Base', group: 'Side 1', onFloor: true },
+      { name: 'Hayes', role: 'Spot', group: 'Side 1', onFloor: true },
+      { name: 'Izzy', role: 'Flyer', group: 'Side 2', onFloor: true },
+      { name: 'Jude', role: 'Base', group: 'Side 2', onFloor: true },
+      { name: 'Kai', role: 'Base', group: 'Side 2', onFloor: true },
+      { name: 'Lane', role: 'Spot', group: 'Side 2', onFloor: true },
+      { name: 'Mila', role: 'Alt', group: 'Alternate', onFloor: false },
+      { name: 'Noah', role: 'Alt', group: 'Alternate', onFloor: false }
+    ];
+
+    const crowdCuesList = [
+      'Clap in on the music break',
+      'Signs up: spell with them',
+      'Loud on last 8-count',
+      'Chant team name in jumps',
+      'Phones down, eyes up',
+      'Stay loud through pyramid'
+    ];
+
+    let timerSeconds = 0;
+    let timerInterval = null;
+    let currentSegment = 'Warm-up';
+    let events = [];
+    let focusSet = new Set(['stunts', 'pyramids', 'tosses', 'standing', 'running', 'jumps']);
+    let focusCounts = {};
+    let deductionTotal = 0;
+    let warmupSteps = [...warmupTemplate];
+    let roster = [...rosterTemplate];
+    let crowdCues = [...crowdCuesList];
+
+    const timerEl = document.getElementById('timer');
+    const segmentChip = document.getElementById('segment-chip');
+    const startStopBtn = document.getElementById('start-stop');
+    const resetBtn = document.getElementById('reset-timer');
+    const focusCards = document.getElementById('focus-cards');
+    const focusCount = document.getElementById('focus-count');
+    const eventsCount = document.getElementById('events-count');
+    const deductionButtons = document.getElementById('deduction-buttons');
+    const deductionTotalEl = document.getElementById('deduction-total');
+    const logEl = document.getElementById('log');
+    const hitZeroPill = document.getElementById('hit-zero-pill');
+
+    const summaryTime = document.getElementById('summary-time');
+    const summarySegment = document.getElementById('summary-segment');
+    const summaryDeductions = document.getElementById('summary-deductions');
+    const summaryFocus = document.getElementById('summary-focus');
+    const hitZeroStatus = document.getElementById('hit-zero-status');
+    const headcountEl = document.getElementById('headcount');
+    const groupCountEl = document.getElementById('group-count');
+    const onFloorChip = document.getElementById('on-floor-chip');
+    const rosterGrid = document.getElementById('roster-grid');
+    const warmupListEl = document.getElementById('warmup-steps');
+    const crowdCuesEl = document.getElementById('crowd-cues');
+
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = (sec % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function tick() {
+      timerSeconds += 1;
+      renderTimer();
+    }
+
+    function renderTimer() {
+      timerEl.textContent = formatTime(timerSeconds);
+      summaryTime.textContent = formatTime(timerSeconds);
+    }
+
+    function toggleTimer() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+        startStopBtn.textContent = 'Start';
+        startStopBtn.classList.remove('bg-coral', 'text-white');
+        startStopBtn.classList.add('bg-mint', 'text-ink');
+      } else {
+        timerInterval = setInterval(tick, 1000);
+        startStopBtn.textContent = 'Pause';
+        startStopBtn.classList.remove('bg-mint', 'text-ink');
+        startStopBtn.classList.add('bg-coral', 'text-white');
+      }
+    }
+
+    function resetTimer() {
+      clearInterval(timerInterval);
+      timerInterval = null;
+      timerSeconds = 0;
+      renderTimer();
+      startStopBtn.textContent = 'Start';
+      startStopBtn.classList.remove('bg-coral', 'text-white');
+      startStopBtn.classList.add('bg-mint', 'text-ink');
+    }
+
+    function logEvent(entry) {
+      const stamp = formatTime(timerSeconds);
+      events.unshift({ ...entry, at: stamp, segment: currentSegment, id: crypto.randomUUID ? crypto.randomUUID() : Date.now() + Math.random() });
+      if (events.length > 60) events.pop();
+      renderLog();
+      renderSummary();
+    }
+
+    function renderLog() {
+      if (!events.length) {
+        logEl.innerHTML = '<div class="p-2 bg-sand rounded text-slate text-center">Log will appear here</div>';
+        return;
+      }
+      logEl.innerHTML = events.map(e => {
+        const badge = e.type === 'deduction'
+          ? `<span class="pill px-2 py-1 bg-coral text-white text-[11px] font-semibold">-${e.value.toFixed(2)}</span>`
+          : `<span class="pill px-2 py-1 bg-mint text-ink text-[11px] font-semibold">${e.type}</span>`;
+        const note = e.note ? `<div class="text-slate text-[11px]">${e.note}</div>` : '';
+        return `<div class="flex items-start gap-2 bg-white border border-slate/10 rounded-xl px-3 py-2">
+          <div class="text-[11px] font-mono text-slate/80">${e.at}</div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <div class="font-semibold text-sm">${e.label || e.category || 'Event'} · <span class="text-slate">${e.segment}</span></div>
+              ${badge}
+            </div>
+            ${note}
+          </div>
+        </div>`;
+      }).join('');
+      eventsCount.textContent = `${events.length} events`;
+    }
+
+    function smoothJump(el) {
+      if (!el || !el.scrollIntoView) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function renderFocusCards() {
+      focusCount.textContent = focusSet.size;
+      focusCards.innerHTML = '';
+      Array.from(focusSet).forEach(id => {
+        if (!focusCounts[id]) focusCounts[id] = { hits: 0, issues: 0 };
+        const data = focusCounts[id];
+        const option = focusOptions.find(o => o.id === id);
+        const card = document.createElement('div');
+        card.className = 'border border-slate/10 rounded-xl p-3 bg-white shadow-sm';
+        card.innerHTML = `
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <p class="text-[11px] uppercase tracking-[0.16em] text-slate/70 font-semibold">${option ? option.label : id}</p>
+              <p class="text-[11px] text-slate">${option ? option.hint : ''}</p>
+            </div>
+            <div class="text-right text-xs text-slate">${data.hits} hit · ${data.issues} issue</div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <button class="stat-btn pill px-3 py-2 bg-mint text-ink text-xs font-semibold" data-action="hit" data-id="${id}">Hit</button>
+            <button class="stat-btn pill px-3 py-2 bg-coral text-white text-xs font-semibold" data-action="issue" data-id="${id}">Issue</button>
+          </div>
+        `;
+        focusCards.appendChild(card);
+      });
+      attachStatHandlers();
+      renderSummary();
+    }
+
+    function attachStatHandlers() {
+      focusCards.querySelectorAll('.stat-btn').forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.id;
+          const action = btn.dataset.action;
+          if (!focusCounts[id]) focusCounts[id] = { hits: 0, issues: 0 };
+          focusCounts[id][action === 'hit' ? 'hits' : 'issues'] += 1;
+          renderFocusCards();
+          const match = focusOptions.find(o => o.id === id);
+          const label = match ? match.label : id;
+          logEvent({ type: action === 'hit' ? 'hit' : 'issue', category: id, label });
+          smoothJump(document.getElementById('log'));
+        };
+      });
+    }
+
+    function renderDeductions() {
+      deductionButtons.innerHTML = deductionPresets.map(d => `
+        <button class="pill px-3 py-2 bg-white border border-slate/20 text-left flex items-center justify-between" data-id="${d.id}" data-value="${d.value}">
+          <span>${d.label}</span>
+          <span class="text-coral font-semibold">-${d.value.toFixed(2)}</span>
+        </button>
+      `).join('');
+      deductionButtons.querySelectorAll('button').forEach(btn => {
+        btn.onclick = () => {
+          const val = Number(btn.dataset.value);
+          deductionTotal += val;
+          deductionTotalEl.textContent = `-${deductionTotal.toFixed(2)}`;
+          logEvent({ type: 'deduction', label: btn.textContent.trim(), value: val });
+          renderSummary();
+        };
+      });
+    }
+
+    function renderSummary() {
+      summarySegment.textContent = `Segment: ${currentSegment}`;
+      summaryDeductions.textContent = `-${deductionTotal.toFixed(2)}`;
+      const hitZero = deductionTotal === 0;
+      hitZeroPill.textContent = hitZero ? 'Hit zero pace' : 'Deductions on board';
+      hitZeroPill.className = `pill px-3 py-1 text-xs font-semibold ${hitZero ? 'bg-mint text-ink' : 'bg-coral text-white'}`;
+      hitZeroStatus.textContent = hitZero ? 'On track to hit zero' : 'Clean up deductions before awards';
+      summaryFocus.innerHTML = Array.from(focusSet).map(id => {
+        const opt = focusOptions.find(o => o.id === id);
+        const data = focusCounts[id] || { hits: 0, issues: 0 };
+        return `<div class="flex items-center justify-between bg-white border border-slate/10 rounded-lg px-3 py-2">
+          <span class="font-semibold">${opt ? opt.label : id}</span>
+          <span class="text-slate text-xs">${data.hits} hit · ${data.issues} issue</span>
+        </div>`;
+      }).join('');
+    }
+
+    function renderWarmup() {
+      warmupListEl.innerHTML = warmupSteps.map((step, idx) => `
+        <label class="flex items-center gap-2 bg-white border border-slate/10 rounded-lg px-3 py-2">
+          <input type="checkbox" data-idx="${idx}" class="w-4 h-4">
+          <div>
+            <div class="text-sm font-semibold">${step}</div>
+            <div class="text-[11px] text-slate">${idx === warmupSteps.length - 1 ? 'Head to on deck' : 'Stay on pace'}</div>
+          </div>
+        </label>
+      `).join('');
+      warmupListEl.querySelectorAll('input[type="checkbox"]').forEach(box => {
+        box.onchange = () => {
+          const label = box.closest('label');
+          if (box.checked) {
+            label.classList.add('opacity-60');
+            logEvent({ type: 'warmup', label: `Done: ${warmupSteps[box.dataset.idx]}` });
+          } else {
+            label.classList.remove('opacity-60');
+          }
+        };
+      });
+    }
+
+    function renderRoster() {
+      const grouped = roster.reduce((acc, athlete) => {
+        if (!acc[athlete.group]) acc[athlete.group] = [];
+        acc[athlete.group].push(athlete);
+        return acc;
+      }, {});
+      rosterGrid.innerHTML = Object.entries(grouped).map(([group, athletes]) => `
+        <div class="border border-slate/10 rounded-xl p-3 bg-white shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <p class="text-[11px] uppercase tracking-[0.16em] text-slate/70 font-semibold">${group}</p>
+              <p class="text-[11px] text-slate">${athletes.length} athletes</p>
+            </div>
+          </div>
+          <div class="space-y-2">
+            ${athletes.map(a => `
+              <label class="flex items-center justify-between bg-sand rounded-lg px-3 py-2 text-sm">
+                <div>
+                  <div class="font-semibold">${a.name}</div>
+                  <div class="text-[11px] text-slate">${a.role}</div>
+                </div>
+                <input type="checkbox" ${a.onFloor ? 'checked' : ''} data-name="${a.name}">
+              </label>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+      rosterGrid.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.onchange = () => {
+          const name = cb.dataset.name;
+          roster = roster.map(a => a.name === name ? { ...a, onFloor: cb.checked } : a);
+          updateCounts();
+        };
+      });
+      updateCounts();
+    }
+
+    function updateCounts() {
+      const onFloor = roster.filter(a => a.onFloor).length;
+      const groups = new Set(roster.filter(a => a.onFloor).map(a => a.group)).size;
+      headcountEl.textContent = `${onFloor} athletes`;
+      groupCountEl.textContent = `${groups} groups · adjust below`;
+      onFloorChip.textContent = `${onFloor} on floor`;
+    }
+
+    function renderCrowdCues() {
+      crowdCuesEl.innerHTML = crowdCues.map(line => `
+        <div class="flex items-center gap-2 bg-white border border-slate/10 rounded-lg px-3 py-2">
+          <span class="pill px-2 py-1 bg-mint/20 text-[11px] font-semibold text-ink">Cue</span>
+          <span>${line}</span>
+        </div>
+      `).join('');
+    }
+
+    function renderFocusEditor() {
+      const container = document.getElementById('focus-options');
+      container.innerHTML = focusOptions.map(opt => {
+        const active = focusSet.has(opt.id);
+        return `<label class="flex items-start gap-2 border border-slate/10 rounded-lg px-3 py-2 ${active ? 'bg-mint/10' : 'bg-white'}">
+          <input type="checkbox" class="mt-[3px]" data-id="${opt.id}" ${active ? 'checked' : ''}>
+          <div>
+            <div class="text-sm font-semibold">${opt.label}</div>
+            <div class="text-[11px] text-slate">${opt.hint}</div>
+          </div>
+        </label>`;
+      }).join('');
+      container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.onchange = () => {
+          const id = cb.dataset.id;
+          if (cb.checked) {
+            if (focusSet.size >= 6) {
+              cb.checked = false;
+              alert('Limit 6 focus items. Uncheck one to add another.');
+              return;
+            }
+            focusSet.add(id);
+          } else {
+            focusSet.delete(id);
+          }
+          renderFocusCards();
+          renderFocusEditor();
+        };
+      });
+    }
+
+    // Tabs
+    document.querySelectorAll('.focus-tab').forEach(btn => {
+      btn.onclick = () => {
+        const target = btn.dataset.target;
+      ['live-panel', 'deductions-panel', 'summary-panel'].forEach(id => {
+        document.getElementById(id).classList.toggle('hidden', id !== target);
+      });
+      document.querySelectorAll('.focus-tab').forEach(b => b.classList.remove('bg-mint', 'text-ink'));
+      btn.classList.add('bg-mint', 'text-ink');
+      smoothJump(document.getElementById(target));
+    };
+  });
+
+  function attachCollapses() {
+    document.querySelectorAll('.collapse-btn').forEach(btn => {
+      btn.onclick = () => {
+        const target = document.getElementById(btn.dataset.collapseTarget);
+        if (!target) return;
+        const hidden = target.classList.toggle('hidden');
+        btn.textContent = hidden ? 'Expand' : 'Collapse';
+      };
+    });
+  }
+    const defaultTab = document.querySelector('.focus-tab[data-target="live-panel"]');
+    if (defaultTab) defaultTab.classList.add('bg-mint', 'text-ink');
+
+    // Timer controls
+    startStopBtn.onclick = toggleTimer;
+    resetBtn.onclick = resetTimer;
+
+    // Segment select
+    document.getElementById('segment-select').onchange = (e) => {
+      currentSegment = e.target.value;
+      segmentChip.textContent = `Segment: ${currentSegment}`;
+      summarySegment.textContent = `Segment: ${currentSegment}`;
+    };
+
+    // Notes modal
+    const noteModal = document.getElementById('note-modal');
+    document.getElementById('add-note').onclick = () => {
+      noteModal.classList.remove('hidden');
+      noteModal.classList.add('flex');
+      document.getElementById('note-input').value = '';
+    };
+    document.getElementById('close-note').onclick = document.getElementById('note-cancel').onclick = () => {
+      noteModal.classList.add('hidden');
+      noteModal.classList.remove('flex');
+    };
+    document.getElementById('note-save').onclick = () => {
+      const note = document.getElementById('note-input').value.trim();
+      if (note) {
+        logEvent({ type: 'note', label: 'Coach note', note });
+      }
+      noteModal.classList.add('hidden');
+      noteModal.classList.remove('flex');
+    };
+
+    // Focus editor
+    const focusEditor = document.getElementById('focus-editor');
+    document.getElementById('edit-focus').onclick = () => {
+      focusEditor.classList.remove('hidden');
+    };
+    document.getElementById('close-focus').onclick = () => focusEditor.classList.add('hidden');
+
+    // Log clear
+    document.getElementById('clear-log').onclick = () => {
+      events = [];
+      renderLog();
+      eventsCount.textContent = '0 events';
+    };
+
+    // Copy recap
+    document.getElementById('copy-summary').onclick = async () => {
+      const notes = document.getElementById('coach-notes').value.trim();
+      const text = [
+        `Timer: ${formatTime(timerSeconds)} | Segment: ${currentSegment}`,
+        `Deductions: -${deductionTotal.toFixed(2)} (${deductionTotal === 0 ? 'Hit zero ready' : 'Clean needed'})`,
+        'Focus:',
+        ...Array.from(focusSet).map(id => {
+          const opt = focusOptions.find(o => o.id === id);
+          const data = focusCounts[id] || { hits: 0, issues: 0 };
+          return `- ${opt ? opt.label : id}: ${data.hits} hit / ${data.issues} issue`;
+        }),
+        notes ? `Notes: ${notes}` : null
+      ].filter(Boolean).join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Summary copied');
+      } catch (e) {
+        alert('Could not copy. Select the text manually.');
+      }
+    };
+
+    // Warm-up flow
+    document.getElementById('reset-warmup').onclick = () => renderWarmup();
+
+    // Crowd cues shuffle
+    document.getElementById('swap-cues').onclick = () => {
+      crowdCues = crowdCues.sort(() => Math.random() - 0.5);
+      renderCrowdCues();
+    };
+
+    // Team name / division callouts
+    document.getElementById('team-name').oninput = (e) => {
+      document.getElementById('callouts').textContent = e.target.value ? `Eyes up for ${e.target.value}` : 'Set stunt timing · watch landings';
+    };
+    document.getElementById('division').oninput = (e) => {
+      document.getElementById('callouts').textContent = e.target.value ? `${e.target.value} · check legalities` : 'Set stunt timing · watch landings';
+    };
+
+    // Deductions
+    renderDeductions();
+
+    // Initial render
+    renderFocusCards();
+    renderFocusEditor();
+    renderLog();
+    renderTimer();
+    renderWarmup();
+    renderRoster();
+    renderCrowdCues();
+    attachCollapses();
+  </script>
+</body>
+</html>
