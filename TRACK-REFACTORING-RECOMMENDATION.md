@@ -200,6 +200,12 @@ function getTrackerUrl(game, team) {
 }
 ```
 
+**Current Implementation Note (Dec 2025):**
+- Basketball games now show a small chooser modal on Track:
+  - Standard → `track.html`
+  - Beta → `track-basketball.html`
+- This keeps `track.html` passive while allowing opt-in testing of the basketball UX.
+
 **Benefits of Sport-Specific Files:**
 - ✅ Sport-specific UX optimizations (e.g., 5 players for basketball, 11 for soccer)
 - ✅ Cleaner code - no complex conditional logic for different sports
@@ -599,4 +605,3 @@ When substitutions and playing time are implemented, update these pages:
 - Substitution history for this player
 - In/out patterns (which players subbed with them)
 - Playing time trends over season
-

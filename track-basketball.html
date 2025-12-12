@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Track Basketball - ALL PLAYS</title>
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0b132b',
+            slate: '#1c2541',
+            teal: '#5bc0be',
+            sand: '#f7f5ed',
+            accent: '#f59e0b'
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'ui-sans-serif'],
+            body: ['"Inter Tight"', 'ui-sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body { background: radial-gradient(circle at 20% 20%, rgba(91,192,190,0.12), transparent 35%), #0b132b; }
+    .card { background: rgba(255,255,255,0.94); backdrop-filter: blur(8px); }
+    .pill { border-radius: 999px; }
+    .stat-btn { touch-action: manipulation; }
+    .grid-cols-auto { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  </style>
+</head>
+<body class="min-h-screen text-ink font-body">
+  <header class="px-4 py-3 text-white flex items-center justify-between">
+    <div>
+      <p class="uppercase tracking-[0.2em] text-xs text-teal/70">ALL PLAYS</p>
+      <h1 class="text-xl font-display font-bold">Sideline Tracker</h1>
+      <p class="text-xs text-teal/70" id="game-subtitle">Loading game…</p>
+    </div>
+    <div class="text-right">
+      <div class="text-3xl font-display font-bold" id="score-line">0 — 0</div>
+      <div class="text-xs text-teal/70" id="period-chip">Q1 · 00:00</div>
+    </div>
+  </header>
+
+  <main class="space-y-3 pb-20">
+    <!-- Top controls -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3">
+      <div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10 hidden" id="pre-game-tab">Lineup</button>
+        <button class="pill px-3 py-2 text-xs font-semibold bg-teal text-ink" id="live-tab">Live</button>
+        <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10" id="opponents-tab">Opponents</button>
+        <button class="pill px-3 py-2 text-xs font-semibold bg-white border border-slate/10" id="finish-tab">Finish</button>
+        <div class="ml-auto flex gap-1">
+          <button class="pill px-3 py-2 text-xs font-semibold bg-emerald-600 text-white border border-emerald-700" id="start-stop">Start</button>
+          <button class="pill px-3 py-2 text-xs font-semibold bg-accent text-white" id="undo-mini">↶ Undo</button>
+        </div>
+      </div>
+      <!-- Periods row (compact) -->
+      <div class="grid grid-cols-4 gap-1 text-center text-[11px]">
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q1">Q1</button>
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q2">Q2</button>
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q3">Q3</button>
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q4">Q4</button>
+      </div>
+      <!-- Actions row -->
+      <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="OT">OT</button>
+        <button class="pill px-2 py-1.5 bg-purple-600 text-white border border-purple-700 font-bold" id="sub-open">Subs</button>
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 font-semibold" id="full-line-swap">Swap 5</button>
+      </div>
+      <!-- Quick apply queue button (only visible when queue exists) -->
+      <div id="queue-quick-apply" class="hidden rounded-xl bg-teal/10 border border-teal p-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs text-teal font-semibold">Ready to apply <span id="queue-count-main">0</span> queued swap(s)</span>
+          <button id="apply-queue-now" class="pill px-3 py-2 bg-teal text-ink font-bold text-xs">Apply Now</button>
+        </div>
+      </div>
+      <div class="flex items-center justify-between text-xs text-white bg-slate rounded-xl px-3 py-2">
+        <span class="font-semibold">On court: <span id="on-court-count-mobile">0/5</span></span>
+        <span id="fairness-mobile" class="pill px-2 py-1 bg-white/10 text-white font-semibold text-xs">Needs data</span>
+        <span class="font-mono" id="clock-mobile">00:00</span>
+      </div>
+    </section>
+
+    <!-- Lineup -->
+    <section id="panel-lineup" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3 hidden">
+      <div class="flex items-center justify-between text-sm font-semibold">
+        <span>Pick starters (max 5)</span>
+        <button id="clear-lineup-mobile" class="text-xs underline">Clear</button>
+      </div>
+      <div id="lineup-starters" class="grid grid-cols-5 gap-2 text-center text-xs"></div>
+      <div class="border-t border-slate/10 pt-2">
+        <p class="text-xs text-slate/70 mb-1">Bench / absent</p>
+        <div id="lineup-bench" class="grid grid-cols-5 gap-2 text-center text-xs"></div>
+      </div>
+    </section>
+
+    <!-- Live -->
+    <section id="panel-live" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div id="starter-helper" class="hidden rounded-xl bg-sand border border-slate/10 p-2 text-xs space-y-1">
+        <div class="flex items-center justify-between">
+          <span class="font-semibold text-ink">Add starters</span>
+          <button id="auto-fill-mobile" class="pill px-2 py-1 bg-teal text-ink font-semibold">Auto-fill 5</button>
+        </div>
+        <p class="text-slate-600">Tap below to move players on court.</p>
+      </div>
+      <div id="live-players" class="grid grid-cols-2 gap-2"></div>
+      <button id="toggle-bench-mobile" class="w-full text-xs font-semibold pill px-3 py-2 bg-white border border-slate/10">Bench / Add starters</button>
+      <div id="bench-mobile" class="grid grid-cols-2 gap-2"></div>
+    </section>
+
+    <!-- Opponents -->
+    <section id="panel-opponents" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div class="flex gap-2">
+        <input id="opp-input-mobile" class="flex-1 px-3 py-2 rounded-lg border border-slate/10 text-sm" placeholder="# / name">
+        <button id="opp-add-mobile" class="px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold">Add</button>
+      </div>
+      <div id="opp-cards-mobile" class="grid grid-cols-2 gap-2"></div>
+    </section>
+
+    <!-- Finish -->
+    <section id="panel-finish" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3 hidden">
+      <div>
+        <p class="text-xs uppercase tracking-[0.18em] text-slate/60 font-semibold">Final Whistle</p>
+        <h3 class="text-lg font-display font-bold">Game Summary</h3>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div class="bg-slate text-white rounded-xl p-3">
+          <p class="text-xs uppercase tracking-[0.18em] text-white/60 font-semibold">Home</p>
+          <input id="home-final" type="number" class="w-full mt-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 font-display text-2xl text-white" value="0">
+        </div>
+        <div class="bg-white border border-slate/10 rounded-xl p-3">
+          <p class="text-xs uppercase tracking-[0.18em] text-slate/60 font-semibold">Away</p>
+          <input id="away-final" type="number" class="w-full mt-1 bg-white border border-slate/20 rounded-lg px-3 py-2 font-display text-2xl" value="0">
+        </div>
+      </div>
+
+      <div class="bg-sand border border-slate/10 rounded-xl p-3">
+        <p class="text-xs uppercase tracking-[0.18em] text-slate/60 font-semibold">Period Ended</p>
+        <div class="text-base font-display font-bold mt-1" id="finish-period">Q1</div>
+        <div class="text-xs text-slate-600">Clock: <span id="finish-clock">00:00</span></div>
+      </div>
+
+      <textarea id="notes-final" class="w-full px-3 py-2 rounded-lg border border-slate/10 text-sm" rows="3" placeholder="Key moments, rotations, hustle stats..."></textarea>
+
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <button id="finish-ai" class="pill px-3 py-2 bg-slate text-white font-semibold">📝 AI Summary</button>
+        <button id="finish-email" class="pill px-3 py-2 bg-white border border-slate/10 font-semibold">✉️ Email Recap</button>
+      </div>
+
+      <label class="flex items-center gap-2 text-xs text-slate-700">
+        <input type="checkbox" id="finish-send-email" checked class="rounded text-teal">
+        <span>Send game summary email on save</span>
+      </label>
+
+      <button id="finish-save"
+        class="w-full pill px-4 py-3 bg-teal text-ink font-bold text-sm">
+        Save & Complete
+      </button>
+
+      <!-- AI Summary Output -->
+      <div id="ai-summary-output" class="hidden bg-sand border border-slate/10 rounded-xl p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <h4 class="text-sm font-semibold">AI-Generated Summary</h4>
+          <button id="close-ai-summary" class="text-slate-500 text-xs">✕</button>
+        </div>
+        <div id="ai-summary-text" class="text-xs text-slate-700 whitespace-pre-wrap"></div>
+      </div>
+
+      <!-- Email Output -->
+      <div id="email-output" class="hidden bg-sand border border-slate/10 rounded-xl p-3 space-y-2">
+        <div class="flex items-center justify-between">
+          <h4 class="text-sm font-semibold">Email Recap</h4>
+          <button id="close-email" class="text-slate-500 text-xs">✕</button>
+        </div>
+        <div id="email-text" class="text-xs text-slate-700 whitespace-pre-wrap"></div>
+        <div class="flex gap-2">
+          <button id="copy-email" class="pill px-3 py-1 bg-white border border-slate/10 font-semibold text-[10px]">Copy to Clipboard</button>
+          <span id="copy-status" class="text-[10px] text-teal hidden">✓ Copied!</span>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div>
+          <h4 class="text-sm font-semibold mb-2">Playing Time Snapshot</h4>
+          <div id="finish-time-report" class="space-y-1 text-xs"></div>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold mb-2">Substitution History</h4>
+          <div id="finish-subs" class="space-y-1 text-xs max-h-48 overflow-y-auto"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Game log -->
+    <section class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2">
+      <div class="flex items-center justify-between text-sm font-semibold">
+        <span>Recent events</span>
+        <button id="clear-log-mobile" class="text-xs underline">Clear</button>
+      </div>
+      <div id="log-mobile" class="space-y-2 text-xs max-h-56 overflow-y-auto"></div>
+    </section>
+  </main>
+
+  <!-- Sub modal -->
+  <div id="sub-modal-mobile" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-2xl w-full max-w-md p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate/60 uppercase tracking-[0.18em] font-semibold">Substitutions</p>
+          <p class="font-display font-bold" id="sub-mode-title">Quick Swap</p>
+        </div>
+        <button id="close-sub-mobile" class="text-slate-500 text-lg">✕</button>
+      </div>
+
+      <!-- Mode toggle -->
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <button id="mode-quick" class="pill px-3 py-2 bg-teal text-ink font-semibold">Quick Swap</button>
+        <button id="mode-queue" class="pill px-3 py-2 bg-white border border-slate/10 font-semibold">Queue Multiple</button>
+      </div>
+
+      <!-- Queue display (only visible in queue mode) -->
+      <div id="queue-display" class="border border-teal rounded-lg p-2 text-xs bg-teal/5 hidden">
+        <div class="flex items-center justify-between mb-1">
+          <span class="font-semibold text-teal">Queued swaps (<span id="queue-count">0</span>)</span>
+          <button id="clear-queue-mobile" class="pill px-2 py-1 bg-white border border-slate/10 font-semibold text-[10px]">Clear All</button>
+        </div>
+        <div id="queue-list-mobile" class="flex flex-wrap gap-1 text-[11px] text-ink min-h-[20px]">
+          <span class="text-slate-500">Build your queue...</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <p class="mb-1 text-slate-600 font-semibold">On Court</p>
+          <div id="sub-out-mobile" class="grid grid-cols-1 gap-1"></div>
+        </div>
+        <div>
+          <p class="mb-1 text-slate-600 font-semibold">Bench</p>
+          <div id="sub-in-mobile" class="grid grid-cols-1 gap-1"></div>
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <div id="sub-hint-mobile" class="text-xs text-center py-2 rounded-lg bg-sand text-slate-600 font-medium">Tap player on court, then tap replacement</div>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="save-queue-later" class="hidden pill px-3 py-2 bg-white border-2 border-teal text-teal font-bold text-sm">Save for Later</button>
+          <button id="confirm-sub-mobile" class="w-full pill px-4 py-3 bg-teal text-ink font-bold text-sm" disabled>Make Swap</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/track-basketball.js"></script>
+</body>
+</html>

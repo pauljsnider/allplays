@@ -104,8 +104,17 @@ The password reset flow:
 - `admin.html`: Admin dashboard (admin users only).
 - `team.html`: Public team details.
 - `game.html`: Match report.
-- `track.html`: Live tracking interface.
+- `track.html`: Standard live tracking interface (all sports).
+- `track-basketball.html`: Basketball-optimized mobile tracker with subs, queue mode, player photos, AI + email, and Firebase persistence.
 - `js/`: Shared JavaScript modules.
 - `css/`: Global styles.
 - `assets/`: Images and static assets.
 - `img/`: Favicons and logos.
+
+## Trackers & Routing
+
+- Games use a stat config (`statTrackerConfigId`) to define sport + columns.
+- In `edit-schedule.html`, basketball games (config `baseType: Basketball`, or team sport fallback) prompt on Track:
+  - **Standard** → `track.html`
+  - **Beta** → `track-basketball.html`
+- Non-basketball games always route to `track.html`.
