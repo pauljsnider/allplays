@@ -1,0 +1,6 @@
+{
+    "appId": "com.example.allplays",
+    "appName": "Allplays",
+    "webDir": "www",
+    "bundledWebRuntime": false
+}

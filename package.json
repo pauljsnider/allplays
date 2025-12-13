@@ -1,0 +1,29 @@
+{
+    "name": "allplays",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "cap": "cap",
+        "cap:copy": "npx cap copy",
+        "cap:sync": "npx cap sync",
+        "cap:open:ios": "npx cap open ios",
+        "cap:open:android": "npx cap open android",
+        "mobile:build": "npm run build && npx cap sync",
+        "build": "rm -rf www && mkdir www && cp *.html www/ && cp -r js css img assets www/ || true"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "devDependencies": {
+        "@capacitor/android": "^8.0.0",
+        "@capacitor/cli": "^8.0.0",
+        "@capacitor/core": "^8.0.0",
+        "@capacitor/ios": "^8.0.0",
+        "esbuild": "^0.27.1"
+    },
+    "dependencies": {
+        "@capacitor-firebase/authentication": "^7.4.0"
+    }
+}

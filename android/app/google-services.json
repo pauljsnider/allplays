@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "982493478258",
+    "project_id": "game-flow-c6311",
+    "storage_bucket": "game-flow-c6311.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:982493478258:android:dde2a18e4f2791e8e8b1eb",
+        "android_client_info": {
+          "package_name": "com.example.allplays"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "982493478258-7cakpuhsnphefrrkchdmon76moil17jf.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBU3TQwqKjl0bLE02_EwOJucUmIAi7Q1uA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "982493478258-7cakpuhsnphefrrkchdmon76moil17jf.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

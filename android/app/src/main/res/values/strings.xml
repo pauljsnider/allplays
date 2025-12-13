@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Allplays</string>
+    <string name="title_activity_main">Allplays</string>
+    <string name="package_name">com.example.allplays</string>
+    <string name="custom_url_scheme">com.example.allplays</string>
+    <string name="server_client_id">1042730101740-1042730101740.apps.googleusercontent.com</string>
+</resources>

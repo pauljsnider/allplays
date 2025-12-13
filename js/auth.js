@@ -1,5 +1,5 @@
 import { auth } from './firebase.js';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, signInWithCredential } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile } from './db.js';
 
 export async function login(email, password) {
@@ -53,19 +53,40 @@ export async function signup(email, password, activationCode) {
     return userCredential;
 }
 
+import { Capacitor, GoogleAuth } from './capacitor-bundle.js';
+// signInWithCredential and GoogleAuthProvider are already imported at the top of the file
+
 export async function loginWithGoogle(activationCode = null) {
-    const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
+    let userCredential;
+
+    // --- NATIVE MOBILE PATH ---
+    if (Capacitor.isNativePlatform()) {
+        // 1. Native Sign-In (no web popup)
+        const googleUser = await GoogleAuth.signIn();
+
+        // 2. Create credential for Firebase
+        const credential = GoogleAuthProvider.credential(googleUser.authentication.idToken);
+
+        // 3. Sign in to Firebase with that credential
+        userCredential = await signInWithCredential(auth, credential);
+
+        // --- WEB DESKTOP PATH ---
+    } else {
+        const provider = new GoogleAuthProvider();
+        userCredential = await signInWithPopup(auth, provider);
+    }
+
+    const { user } = userCredential;
 
     // Check if this is a new user (first time signing in)
-    const isNewUser = result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
+    const isNewUser = user.metadata.creationTime === user.metadata.lastSignInTime;
 
     if (isNewUser) {
         // New user - require activation code
         if (!activationCode) {
             // Delete the newly created user account and sign out
             try {
-                await result.user.delete();
+                await user.delete();
                 await signOut(auth);
             } catch (deleteError) {
                 console.error('Error deleting unauthorized Google user:', deleteError);
@@ -79,7 +100,7 @@ export async function loginWithGoogle(activationCode = null) {
         if (!validation.valid) {
             // Delete the newly created user account and sign out
             try {
-                await result.user.delete();
+                await user.delete();
                 await signOut(auth);
             } catch (deleteError) {
                 console.error('Error deleting user with invalid code:', deleteError);
@@ -90,14 +111,7 @@ export async function loginWithGoogle(activationCode = null) {
 
         // Mark code as used (optional - don't fail if this doesn't work)
         try {
-            await markAccessCodeAsUsed(validation.codeId, result.user.uid);
-        } catch (error) {
-            console.error('Error marking code as used:', error);
-            // Don't fail signup if we can't mark the code, user is already created
-        }
-        // Mark code as used (optional - don't fail if this doesn't work)
-        try {
-            await markAccessCodeAsUsed(validation.codeId, result.user.uid);
+            await markAccessCodeAsUsed(validation.codeId, user.uid);
         } catch (error) {
             console.error('Error marking code as used:', error);
             // Don't fail signup if we can't mark the code, user is already created
@@ -105,10 +119,10 @@ export async function loginWithGoogle(activationCode = null) {
 
         // Create user profile in Firestore
         try {
-            await updateUserProfile(result.user.uid, {
-                email: result.user.email,
-                fullName: result.user.displayName,
-                photoUrl: result.user.photoURL,
+            await updateUserProfile(user.uid, {
+                email: user.email,
+                fullName: user.displayName,
+                photoUrl: user.photoURL,
                 createdAt: new Date()
             });
         } catch (e) {
@@ -116,7 +130,7 @@ export async function loginWithGoogle(activationCode = null) {
         }
     }
 
-    return result;
+    return userCredential;
 }
 
 export function logout() {

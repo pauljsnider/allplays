@@ -66,3 +66,6 @@ cleanup-duplicate-events.html
 fix-game-stats.html
 quick-cleanup.html
 packages.microsoft.gpg
+
+# Capacitor build output
+www/

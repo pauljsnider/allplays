@@ -118,3 +118,35 @@ The password reset flow:
   - **Standard** → `track.html`
   - **Beta** → `track-basketball.html`
 - Non-basketball games always route to `track.html`.
+
+## Mobile (Capacitor) setup
+
+### Prerequisites
+- Node.js and npm
+- [Xcode](https://developer.apple.com/xcode/) (for iOS)
+- [Android Studio](https://developer.android.com/studio) (for Android)
+
+### One-time setup
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. initialize platforms:
+   ```bash
+   npx cap add ios
+   npx cap add android
+   ```
+
+### Development loop
+1. Build the web assets and sync to native projects:
+   ```bash
+   npm run mobile:build
+   ```
+2. Open the native IDE to run/test:
+   ```bash
+   npm run cap:open:ios
+   # or
+   npm run cap:open:android
+   ```
+
+*Note: At this stage, the mobile apps behave exactly like the current web app, with no extra native features enabled yet.*
