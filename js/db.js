@@ -607,6 +607,8 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
 }
 
 export async function redeemParentInvite(userId, code) {
+    console.log('[redeemParentInvite] start', { userId, code });
+
     // 1. Validate Code
     const q = query(
         collection(db, "accessCodes"),
@@ -617,17 +619,36 @@ export async function redeemParentInvite(userId, code) {
     if (snapshot.empty) throw new Error("Invalid or used code");
     
     const codeDoc = snapshot.docs[0];
-    const codeData = codeDoc.data();
+    const codeData = codeDoc.data() || {};
+    console.log('[redeemParentInvite] code loaded', {
+        codeId: codeDoc.id,
+        type: codeData.type,
+        teamId: codeData.teamId,
+        playerId: codeData.playerId,
+        generatedBy: codeData.generatedBy
+    });
     
     if (codeData.type !== 'parent_invite') throw new Error("Not a parent invite code");
 
     // 2. Get Team & Player details for caching
+    console.log('[redeemParentInvite] fetching team & player', {
+        teamId: codeData.teamId,
+        playerId: codeData.playerId
+    });
     const [team, player] = await Promise.all([
         getTeam(codeData.teamId),
         getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
     ]);
 
-    if (!team || !player) throw new Error("Team or Player not found");
+    if (!team || !player) {
+        console.error('[redeemParentInvite] missing team or player', { teamExists: !!team, playerExists: !!player });
+        throw new Error("Team or Player not found");
+    }
+    console.log('[redeemParentInvite] team & player resolved', {
+        teamName: team.name,
+        playerName: player.name,
+        playerNumber: player.number
+    });
 
     // 3. Update User Profile (parentOf)
     try {
@@ -643,6 +664,7 @@ export async function redeemParentInvite(userId, code) {
             }),
             roles: arrayUnion('parent')
         }, { merge: true });
+        console.log('[redeemParentInvite] user profile updated');
     } catch (err) {
         console.error('redeemParentInvite: error updating user profile', err);
         throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
@@ -651,6 +673,27 @@ export async function redeemParentInvite(userId, code) {
     // 4. Update Player Doc (parents list)
     try {
         const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+
+        // Log current parents state for debugging
+        try {
+            const snap = await getDoc(playerRef);
+            if (snap.exists()) {
+                const data = snap.data() || {};
+                console.log('[redeemParentInvite] current player parents before update', {
+                    teamId: codeData.teamId,
+                    playerId: codeData.playerId,
+                    parents: data.parents || []
+                });
+            } else {
+                console.log('[redeemParentInvite] player doc not found before parents update', {
+                    teamId: codeData.teamId,
+                    playerId: codeData.playerId
+                });
+            }
+        } catch (innerErr) {
+            console.warn('[redeemParentInvite] failed to read player before update (non-fatal)', innerErr);
+        }
+
         await updateDoc(playerRef, {
             parents: arrayUnion({
                 userId,
@@ -659,11 +702,16 @@ export async function redeemParentInvite(userId, code) {
                 addedAt: Timestamp.now()
             })
         });
+        console.log('[redeemParentInvite] player parents updated');
     } catch (err) {
         // If this fails (e.g., due to stricter live rules), we still
         // consider the parent linked via their user profile. Coaches
         // simply won't see the connection until rules are updated.
-        console.error('redeemParentInvite: error updating player parents (non-fatal)', err);
+        console.error('redeemParentInvite: error updating player parents (non-fatal)', {
+            message: err?.message,
+            code: err?.code,
+            name: err?.name
+        });
     }
 
     // 5. Mark Code Used
@@ -673,6 +721,7 @@ export async function redeemParentInvite(userId, code) {
             usedBy: userId,
             usedAt: Timestamp.now()
         });
+        console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
     } catch (err) {
         console.error('redeemParentInvite: error marking code used', err);
         throw new Error('Unable to link parent (access code). ' + (err?.message || ''));

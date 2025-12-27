@@ -133,10 +133,13 @@
                     btn.disabled = true;
 
                     try {
+                        console.log('[parent-dashboard] redeem click', { code });
                         await redeemParentInvite(user.uid, code);
+                        console.log('[parent-dashboard] redeem completed successfully');
                         alert('Player added successfully!');
                         location.reload();
                     } catch (e) {
+                        console.error('[parent-dashboard] redeem error', e);
                         alert('Error: ' + e.message);
                         btn.textContent = originalText;
                         btn.disabled = false;
