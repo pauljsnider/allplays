@@ -146,6 +146,8 @@
             try {
                 if (isLogin) {
                     await login(email, password);
+                    // Login - redirect to dashboard (checkAuth will handle verification redirect if needed)
+                    window.location.href = 'dashboard.html';
                 } else {
                     // Signup mode - validate password confirmation
                     const confirmPassword = document.getElementById('confirm-password').value;
@@ -158,9 +160,10 @@
                         throw new Error('Activation code is required');
                     }
                     await signup(email, password, activationCode);
+                    // Signup - redirect to email verification page
+                    window.location.href = 'verify-pending.html';
+                    return;
                 }
-                // Success - redirect to dashboard
-                window.location.href = 'dashboard.html';
             } catch (error) {
                 isProcessingAuth = false; // Reset flag on error
                 errorDiv.textContent = error.message; // Show actual error

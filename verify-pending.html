@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Verify Your Email - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 flex flex-col min-h-screen">
+    <div id="header-container"></div>
+
+    <main class="flex-grow flex items-center justify-center px-4">
+        <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md text-center">
+            <div class="text-indigo-500 mb-4">
+                <svg class="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
+                    </path>
+                </svg>
+            </div>
+            <h1 class="text-2xl font-bold mb-4">Verify Your Email</h1>
+            <p class="text-gray-600 mb-2">We've sent a verification email to:</p>
+            <p id="user-email" class="font-semibold text-gray-800 mb-4">loading...</p>
+            <p class="text-gray-600 mb-6">Please check your inbox and click the verification link to activate your account.</p>
+
+            <div class="space-y-3">
+                <button id="resend-btn"
+                    class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                    Resend Verification Email
+                </button>
+                <button id="check-btn"
+                    class="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300 transition">
+                    I've Verified My Email
+                </button>
+                <button id="logout-btn"
+                    class="w-full text-gray-500 py-2 px-4 rounded-md hover:text-gray-700 transition">
+                    Sign Out
+                </button>
+            </div>
+
+            <div id="message" class="mt-4 hidden"></div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { auth } from './js/firebase.js';
+        import { checkAuth, logout, resendVerificationEmail } from './js/auth.js';
+        import { renderHeader, renderFooter } from './js/utils.js?v=7';
+
+        renderHeader(document.getElementById('header-container'), null);
+        renderFooter(document.getElementById('footer-container'));
+
+        const userEmailEl = document.getElementById('user-email');
+        const resendBtn = document.getElementById('resend-btn');
+        const checkBtn = document.getElementById('check-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        const messageEl = document.getElementById('message');
+
+        function showMessage(text, isError = false) {
+            messageEl.textContent = text;
+            messageEl.className = `mt-4 text-sm ${isError ? 'text-red-600' : 'text-green-600'}`;
+            messageEl.classList.remove('hidden');
+        }
+
+        // Check auth state - skip email verification check to avoid redirect loop
+        checkAuth((user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+
+            userEmailEl.textContent = user.email;
+
+            // If user is already verified, redirect to home
+            if (user.emailVerified) {
+                window.location.href = 'index.html';
+            }
+        }, { skipEmailVerificationCheck: true });
+
+        // Resend verification email
+        resendBtn.addEventListener('click', async () => {
+            resendBtn.disabled = true;
+            resendBtn.textContent = 'Sending...';
+
+            try {
+                await resendVerificationEmail();
+                showMessage('Verification email sent! Please check your inbox.');
+            } catch (error) {
+                console.error('Error sending verification email:', error);
+                if (error.code === 'auth/too-many-requests') {
+                    showMessage('Too many requests. Please wait a few minutes before trying again.', true);
+                } else {
+                    showMessage('Error sending email. Please try again later.', true);
+                }
+            } finally {
+                resendBtn.disabled = false;
+                resendBtn.textContent = 'Resend Verification Email';
+            }
+        });
+
+        // Check verification status
+        checkBtn.addEventListener('click', async () => {
+            checkBtn.disabled = true;
+            checkBtn.textContent = 'Checking...';
+
+            try {
+                // Reload user to get latest emailVerified status
+                await auth.currentUser.reload();
+
+                if (auth.currentUser.emailVerified) {
+                    showMessage('Email verified! Redirecting...');
+                    setTimeout(() => {
+                        window.location.href = 'index.html';
+                    }, 1000);
+                } else {
+                    showMessage('Email not yet verified. Please check your inbox and click the verification link.', true);
+                }
+            } catch (error) {
+                console.error('Error checking verification:', error);
+                showMessage('Error checking verification status.', true);
+            } finally {
+                checkBtn.disabled = false;
+                checkBtn.textContent = "I've Verified My Email";
+            }
+        });
+
+        // Logout
+        logoutBtn.addEventListener('click', async () => {
+            try {
+                await logout();
+                window.location.href = 'login.html';
+            } catch (error) {
+                console.error('Error logging out:', error);
+            }
+        });
+    </script>
+</body>
+
+</html>

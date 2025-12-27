@@ -1,5 +1,5 @@
 import { auth } from './firebase.js';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, sendEmailVerification } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile } from './db.js';
 
 export async function login(email, password) {
@@ -32,14 +32,27 @@ export async function signup(email, password, activationCode) {
     // Create user account
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
 
-    // Create user profile in Firestore
+    // Create user profile in Firestore with emailVerificationRequired flag
     try {
         await updateUserProfile(userCredential.user.uid, {
             email: email,
-            createdAt: new Date()
+            createdAt: new Date(),
+            emailVerificationRequired: true  // Flag for new email/password signups
         });
     } catch (e) {
         console.error('Error creating user profile:', e);
+    }
+
+    // Send verification email
+    try {
+        const actionCodeSettings = {
+            url: 'https://allplays.ai/reset-password.html',
+            handleCodeInApp: true
+        };
+        await sendEmailVerification(userCredential.user, actionCodeSettings);
+    } catch (e) {
+        console.error('Error sending verification email:', e);
+        // Don't fail signup if email fails - user can request resend
     }
 
     // Mark the code as used (optional - don't fail if this doesn't work)
@@ -139,13 +152,29 @@ export function requireAuth() {
 
 import { getUserProfile } from './db.js';
 
-export function checkAuth(callback) {
+export function checkAuth(callback, options = {}) {
+    const { skipEmailVerificationCheck = false } = options;
+
     return onAuthStateChanged(auth, async (user) => {
         if (user) {
             try {
                 const profile = await getUserProfile(user.uid);
                 if (profile && profile.isAdmin) {
                     user.isAdmin = true;
+                }
+
+                // Check if user needs email verification (new email/password signups only)
+                // Skip this check on verification-related pages
+                if (!skipEmailVerificationCheck &&
+                    profile &&
+                    profile.emailVerificationRequired &&
+                    !user.emailVerified) {
+                    // Redirect to verification pending page
+                    if (!window.location.pathname.includes('verify-pending.html') &&
+                        !window.location.pathname.includes('reset-password.html')) {
+                        window.location.href = 'verify-pending.html';
+                        return;
+                    }
                 }
             } catch (e) {
                 console.error('Error fetching user profile for auth check:', e);
@@ -163,4 +192,22 @@ export function resetPassword(email) {
     };
 
     return sendPasswordResetEmail(auth, email, actionCodeSettings);
+}
+
+export async function resendVerificationEmail() {
+    const user = auth.currentUser;
+    if (!user) {
+        throw new Error('No user is currently signed in');
+    }
+
+    const actionCodeSettings = {
+        url: 'https://allplays.ai/reset-password.html',
+        handleCodeInApp: true
+    };
+
+    return sendEmailVerification(user, actionCodeSettings);
+}
+
+export function getCurrentUser() {
+    return auth.currentUser;
 }
