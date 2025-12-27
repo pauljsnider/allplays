@@ -655,29 +655,35 @@ export async function getParentDashboardData(userId) {
     const children = userProfile.parentOf;
     const upcomingGames = [];
 
-    // Fetch games for each team
-    // Note: In a real app, we might query 'events' collection group or optimize this.
-    // Here we loop through unique teams.
-    const teamIds = [...new Set(children.map(c => c.teamId))];
-    
-    for (const teamId of teamIds) {
-        const events = await getEvents(teamId); // Helper that gets games+practices
-        const teamChild = children.find(c => c.teamId === teamId);
-        
-        // Filter for future events
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
-        
-        const futureEvents = events.filter(e => {
-            const d = e.date.toDate ? e.date.toDate() : new Date(e.date);
-            return d >= now;
-        }).map(e => ({
-            ...e,
-            teamId,
-            teamName: teamChild.teamName,
-            childName: teamChild.playerName // Associate with the specific child for this team
-        }));
-        
+    // Cache events per team to avoid duplicate reads when a parent
+    // has multiple players on the same team.
+    const eventsByTeam = new Map();
+
+    // Use a single "today" boundary for all filtering
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+
+    for (const child of children) {
+        if (!child.teamId) continue;
+
+        let events = eventsByTeam.get(child.teamId);
+        if (!events) {
+            events = await getEvents(child.teamId);
+            eventsByTeam.set(child.teamId, events);
+        }
+
+        const futureEvents = events
+            .filter(e => {
+                const d = e.date?.toDate ? e.date.toDate() : new Date(e.date);
+                return d >= now;
+            })
+            .map(e => ({
+                ...e,
+                teamId: child.teamId,
+                teamName: child.teamName,
+                childName: child.playerName
+            }));
+
         upcomingGames.push(...futureEvents);
     }
 
