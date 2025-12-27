@@ -660,8 +660,10 @@ export async function redeemParentInvite(userId, code) {
             })
         });
     } catch (err) {
-        console.error('redeemParentInvite: error updating player parents', err);
-        throw new Error('Unable to link parent (player). ' + (err?.message || ''));
+        // If this fails (e.g., due to stricter live rules), we still
+        // consider the parent linked via their user profile. Coaches
+        // simply won't see the connection until rules are updated.
+        console.error('redeemParentInvite: error updating player parents (non-fatal)', err);
     }
 
     // 5. Mark Code Used
