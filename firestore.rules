@@ -69,7 +69,7 @@ service cloud.firestore {
         allow read: if true;  // Public player stats
         allow write: if isTeamOwnerOrAdmin(teamId) ||
                         (
-                          isParentForPlayer(teamId, playerId) &&
+                          isSignedIn() &&
                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(
                             ['photoUrl', 'emergencyContact', 'medicalInfo', 'parents', 'updatedAt']
                           )
