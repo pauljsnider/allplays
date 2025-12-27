@@ -95,7 +95,7 @@ Save to `{@artifacts_path}/plan.md`.
 
 Test everything you created
 
-### [ ] Step: Functional validation
+### [x] Step: Functional validation
 <!-- agent: GEMINI -->
 
 use playwright MCP to validate the changes.
