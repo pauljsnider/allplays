@@ -36,7 +36,7 @@ export async function signup(email, password, activationCode) {
     if (validation.type === 'parent_invite') {
         // Parent Invite Flow
         try {
-            await redeemParentInvite(userId, validation.codeId);
+            await redeemParentInvite(userId, validation.data.code);
             // Also create basic profile
             await updateUserProfile(userId, {
                 email: email,
@@ -120,7 +120,7 @@ export async function loginWithGoogle(activationCode = null) {
         if (validation.type === 'parent_invite') {
              // Parent Invite Flow
             try {
-                await redeemParentInvite(userId, validation.codeId);
+                await redeemParentInvite(userId, validation.data.code);
                 // Profile update
                  await updateUserProfile(userId, {
                     email: result.user.email,

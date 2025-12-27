@@ -1,4 +1,4 @@
-import { db } from './firebase.js';
+import { db, auth } from './firebase.js';
 import { imageStorage, ensureImageAuth } from './firebase-images.js';
 import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
@@ -537,6 +537,11 @@ export async function markAccessCodeAsUsed(codeId, userId) {
 // ============================================
 
 export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        throw new Error('You must be signed in to invite a parent');
+    }
+
     const code = generateAccessCode();
     const accessCodeData = {
         code,
@@ -546,9 +551,13 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         playerNum, // Added for quick context
         relation,
         email: parentEmail || null,
+        generatedBy: currentUser.uid,
         createdAt: Timestamp.now(),
-        expiresAt: new Timestamp(Date.now() / 1000 + 7 * 24 * 60 * 60, 0), // 7 days
-        used: false
+        // 7 days from now
+        expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        used: false,
+        usedBy: null,
+        usedAt: null
     };
     const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
     return { id: docRef.id, code };

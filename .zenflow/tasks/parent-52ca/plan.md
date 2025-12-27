@@ -88,3 +88,14 @@ Save to `{@artifacts_path}/plan.md`.
     - Allow parents to update specific fields on player docs.
     - Protect team writes.
 - **Verification**: Run Firestore emulator tests or manual verification.
+
+### [x] Step: Validation
+<!-- chat-id: cd883a90-ba4a-4c2a-adbe-ec5b95915db8 -->
+<!-- agent: CODEX -->
+
+Test everything you created
+
+### [ ] Step: Functional validation
+<!-- agent: GEMINI -->
+
+use playwright MCP to validate the changes.
