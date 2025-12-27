@@ -67,12 +67,9 @@ service cloud.firestore {
                           // Allow User to Link themselves (Redeem Invite) - appending to parents
                           (
                             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents', 'updatedAt']) &&
-                            (
-                              // First-time parent link when no parents array exists yet
-                              (resource.data.parents == null && request.resource.data.parents.size() > 0) ||
-                              // Subsequent links must strictly increase parent count
-                              (resource.data.parents != null && request.resource.data.parents.size() > resource.data.parents.size())
-                            )
+                            request.resource.data.parents != null &&
+                            // Allow parent to write when they are present in the resulting parents array
+                            request.auth.uid in request.resource.data.parents.map(p => p.userId)
                           )
                         );
       }
