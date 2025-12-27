@@ -736,39 +736,24 @@ export async function getParentDashboardData(userId) {
         return { upcomingGames: [], children: [] };
     }
 
-    // Start from stored parentOf links but verify that each entry
-    // still has an active parent connection on the player doc.
-    const rawChildren = userProfile.parentOf;
-    const children = [];
+    // Use the cached parentOf links on the user profile as the
+    // source of truth for which players this parent can see.
+    // We no longer require the player doc to have a matching
+    // parents[] entry, because production rules may block that
+    // write even when the profile is updated successfully.
+    const children = userProfile.parentOf;
     const upcomingGames = [];
 
     // Cache events per team to avoid duplicate reads when a parent
     // has multiple players on the same team.
     const eventsByTeam = new Map();
-    const playersByTeam = new Map();
 
     // Use a single "today" boundary for all filtering
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    for (const child of rawChildren) {
+    for (const child of children) {
         if (!child.teamId) continue;
-
-        // Verify this user is still listed as a parent on the player doc
-        let teamPlayers = playersByTeam.get(child.teamId);
-        if (!teamPlayers) {
-            teamPlayers = await getPlayers(child.teamId);
-            playersByTeam.set(child.teamId, teamPlayers);
-        }
-        const player = teamPlayers.find(p => p.id === child.playerId);
-        const stillParent = !!(player && Array.isArray(player.parents) && player.parents.some(p => p.userId === userId));
-        if (!stillParent) {
-            // Skip outdated link
-            continue;
-        }
-
-        // Keep only verified children for UI
-        children.push(child);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
