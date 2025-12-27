@@ -65,8 +65,15 @@ service cloud.firestore {
                            request.auth.uid in resource.data.parents.map(p => p.userId) &&
                            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'emergencyContact', 'medicalInfo', 'updatedAt'])) ||
                           // Allow User to Link themselves (Redeem Invite) - appending to parents
-                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents', 'updatedAt']) &&
-                           request.resource.data.parents.size() > resource.data.parents.size())
+                          (
+                            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents', 'updatedAt']) &&
+                            (
+                              // First-time parent link when no parents array exists yet
+                              (resource.data.parents == null && request.resource.data.parents.size() > 0) ||
+                              // Subsequent links must strictly increase parent count
+                              (resource.data.parents != null && request.resource.data.parents.size() > resource.data.parents.size())
+                            )
+                          )
                         );
       }
 
