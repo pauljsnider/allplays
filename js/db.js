@@ -660,7 +660,8 @@ export async function redeemParentInvite(userId, code) {
                 teamName: team.name,
                 playerName: player.name,
                 playerNumber: player.number,
-                playerPhotoUrl: player.photoUrl || null
+                playerPhotoUrl: player.photoUrl || null,
+                relation: codeData.relation || null
             }),
             roles: arrayUnion('parent')
         }, { merge: true });

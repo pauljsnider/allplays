@@ -326,7 +326,8 @@
                     existing.push({
                         userId: user.id,
                         email: user.email || 'Pending',
-                        name: user.fullName || user.displayName || user.email || 'Parent'
+                        name: user.fullName || user.displayName || user.email || 'Parent',
+                        relation: link.relation || null
                     });
                     parentsByPlayerId.set(link.playerId, existing);
                 });
@@ -339,19 +340,13 @@
 
             tbody.innerHTML = players.map(p => {
                 const profileParents = parentsByPlayerId.get(p.id) || [];
-                const relationByUserId = {};
-                (p.parents || []).forEach(parent => {
-                    if (parent.userId) {
-                        relationByUserId[parent.userId] = parent.relation || '';
-                    }
-                });
 
                 const parentChips = profileParents.length > 0 ? `
                                 <div class="mt-1 flex flex-wrap gap-1 text-xs">
                                     ${profileParents.map(parent => `
                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600">
                                             <span>${escapeHtml(parent.email)}</span>
-                                            ${relationByUserId[parent.userId] ? `<span class="text-gray-400">(${escapeHtml(relationByUserId[parent.userId])})</span>` : ''}
+                                            ${parent.relation ? `<span class="text-gray-400">(${escapeHtml(parent.relation)})</span>` : ''}
                                             <button type="button"
                                                 class="remove-parent-btn text-[10px] text-red-500 hover:text-red-700 ml-1"
                                                 data-player-id="${p.id}"
