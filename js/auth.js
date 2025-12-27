@@ -1,6 +1,6 @@
 import { auth } from './firebase.js';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, sendEmailVerification } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile } from './db.js';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams } from './db.js';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -31,35 +31,50 @@ export async function signup(email, password, activationCode) {
 
     // Create user account
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const userId = userCredential.user.uid;
 
-    // Create user profile in Firestore with emailVerificationRequired flag
-    try {
-        await updateUserProfile(userCredential.user.uid, {
-            email: email,
-            createdAt: new Date(),
-            emailVerificationRequired: true  // Flag for new email/password signups
-        });
-    } catch (e) {
-        console.error('Error creating user profile:', e);
+    if (validation.type === 'parent_invite') {
+        // Parent Invite Flow
+        try {
+            await redeemParentInvite(userId, validation.codeId);
+            // Also create basic profile
+            await updateUserProfile(userId, {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true
+            });
+        } catch (e) {
+            console.error('Error linking parent:', e);
+            // Don't fail the whole signup, but log it
+        }
+    } else {
+        // Standard Flow (Coach/Admin)
+        // Create user profile in Firestore with emailVerificationRequired flag
+        try {
+            await updateUserProfile(userId, {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true  // Flag for new email/password signups
+            });
+        } catch (e) {
+            console.error('Error creating user profile:', e);
+        }
+
+        // Mark the code as used
+        try {
+            await markAccessCodeAsUsed(validation.codeId, userId);
+        } catch (error) {
+            console.error('Error marking code as used:', error);
+        }
     }
 
-    // Send verification email using Firebase defaults (configured in Firebase Console)
-    // No actionCodeSettings - let Firebase handle it with console-configured template
+    // Send verification email using Firebase defaults
     try {
         await sendEmailVerification(userCredential.user);
         console.log('Verification email sent successfully');
     } catch (e) {
         console.error('Error sending verification email:', e);
-        alert('Failed to send verification email: ' + e.message);
         // Don't fail signup if email fails - user can request resend
-    }
-
-    // Mark the code as used (optional - don't fail if this doesn't work)
-    try {
-        await markAccessCodeAsUsed(validation.codeId, userCredential.user.uid);
-    } catch (error) {
-        console.error('Error marking code as used:', error);
-        // Don't fail signup if we can't mark the code, user is already created
     }
 
     return userCredential;
@@ -86,7 +101,7 @@ export async function loginWithGoogle(activationCode = null) {
             throw new Error('Activation code is required for new accounts');
         }
 
-        // Validate activation code BEFORE marking as used
+        // Validate activation code
         const validation = await validateAccessCode(activationCode);
         if (!validation.valid) {
             // Delete the newly created user account and sign out
@@ -100,31 +115,42 @@ export async function loginWithGoogle(activationCode = null) {
             throw new Error(validation.message || 'Invalid activation code');
         }
 
-        // Mark code as used (optional - don't fail if this doesn't work)
-        try {
-            await markAccessCodeAsUsed(validation.codeId, result.user.uid);
-        } catch (error) {
-            console.error('Error marking code as used:', error);
-            // Don't fail signup if we can't mark the code, user is already created
-        }
-        // Mark code as used (optional - don't fail if this doesn't work)
-        try {
-            await markAccessCodeAsUsed(validation.codeId, result.user.uid);
-        } catch (error) {
-            console.error('Error marking code as used:', error);
-            // Don't fail signup if we can't mark the code, user is already created
-        }
+        const userId = result.user.uid;
 
-        // Create user profile in Firestore
-        try {
-            await updateUserProfile(result.user.uid, {
-                email: result.user.email,
-                fullName: result.user.displayName,
-                photoUrl: result.user.photoURL,
-                createdAt: new Date()
-            });
-        } catch (e) {
-            console.error('Error creating user profile:', e);
+        if (validation.type === 'parent_invite') {
+             // Parent Invite Flow
+            try {
+                await redeemParentInvite(userId, validation.codeId);
+                // Profile update
+                 await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                 console.error('Error linking parent:', e);
+            }
+        } else {
+            // Standard Flow
+            // Mark code as used
+            try {
+                await markAccessCodeAsUsed(validation.codeId, userId);
+            } catch (error) {
+                console.error('Error marking code as used:', error);
+            }
+
+            // Create user profile in Firestore
+            try {
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error creating user profile:', e);
+            }
         }
     }
 
@@ -149,7 +175,18 @@ export function requireAuth() {
     });
 }
 
-import { getUserProfile } from './db.js';
+export function getRedirectUrl(user) {
+    // 1. If Coach or Admin, go to main dashboard
+    if (user.isAdmin || (user.coachOf && user.coachOf.length > 0)) {
+        return 'dashboard.html';
+    }
+    // 2. If Parent, go to parent dashboard
+    if (user.parentOf && user.parentOf.length > 0) {
+        return 'parent-dashboard.html';
+    }
+    // 3. Default fallback
+    return 'dashboard.html';
+}
 
 export function checkAuth(callback, options = {}) {
     const { skipEmailVerificationCheck = false } = options;
@@ -158,8 +195,25 @@ export function checkAuth(callback, options = {}) {
         if (user) {
             try {
                 const profile = await getUserProfile(user.uid);
-                if (profile && profile.isAdmin) {
-                    user.isAdmin = true;
+                if (profile) {
+                    if (profile.isAdmin) user.isAdmin = true;
+                    if (profile.parentOf) user.parentOf = profile.parentOf;
+                    
+                    if (profile.coachOf) {
+                        user.coachOf = profile.coachOf;
+                    } else {
+                        // Dynamic check for owned teams (backward compatibility)
+                        try {
+                            const ownedTeams = await getUserTeams(user.uid);
+                            if (ownedTeams && ownedTeams.length > 0) {
+                                user.coachOf = ownedTeams.map(t => t.id);
+                            }
+                        } catch (err) {
+                            console.warn('Error fetching owned teams in auth check:', err);
+                        }
+                    }
+                    
+                    if (profile.roles) user.roles = profile.roles;
                 }
 
                 // Check if user needs email verification (new email/password signups only)

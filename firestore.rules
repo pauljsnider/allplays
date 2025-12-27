@@ -58,7 +58,16 @@ service cloud.firestore {
                         (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
                          (request.auth.token.email != null &&
                           request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
-                          isGlobalAdmin());
+                          isGlobalAdmin() ||
+                          // Allow Parents to update specific fields
+                          (resource.data.parents != null && 
+                           // Check if user is in parents list (requires rules_version='2')
+                           request.auth.uid in resource.data.parents.map(p => p.userId) &&
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'emergencyContact', 'medicalInfo', 'updatedAt'])) ||
+                          // Allow User to Link themselves (Redeem Invite) - appending to parents
+                          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents', 'updatedAt']) &&
+                           request.resource.data.parents.size() > resource.data.parents.size())
+                        );
       }
 
       // Games subcollection

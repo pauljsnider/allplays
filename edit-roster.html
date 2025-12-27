@@ -203,10 +203,54 @@
         </div>
     </main>
 
+    <!-- Invite Parent Modal -->
+    <div id="invite-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3 text-center">
+                <h3 class="text-lg leading-6 font-medium text-gray-900">Invite Parent</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500 mb-4">
+                        Generate an invite code for <span id="invite-player-name" class="font-bold"></span>.
+                    </p>
+                    <div class="text-left">
+                        <label class="block text-sm font-medium text-gray-700">Relation (optional)</label>
+                        <select id="invite-relation" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 mb-3">
+                            <option value="Parent">Parent</option>
+                            <option value="Mother">Mother</option>
+                            <option value="Father">Father</option>
+                            <option value="Guardian">Guardian</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <label class="block text-sm font-medium text-gray-700">Parent Email (optional)</label>
+                        <input type="email" id="invite-email" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2" placeholder="parent@example.com">
+                    </div>
+                    
+                    <!-- Result Area -->
+                    <div id="invite-result" class="hidden mt-4 p-3 bg-green-50 rounded border border-green-200">
+                        <p class="text-xs text-green-800 mb-1">Invite Code Generated:</p>
+                        <div class="flex items-center justify-between bg-white border border-green-300 rounded px-2 py-1">
+                            <code id="generated-code" class="text-lg font-bold text-green-600 tracking-widest"></code>
+                            <button id="copy-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Share this code with the parent.</p>
+                    </div>
+                </div>
+                <div class="items-center px-4 py-3">
+                    <button id="generate-invite-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        Generate Code
+                    </button>
+                    <button id="close-invite-modal" class="mt-3 px-4 py-2 bg-white text-gray-700 text-base font-medium rounded-md w-full shadow-sm border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer } from './js/db.js';
+        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -295,6 +339,7 @@
                         </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex items-center gap-3 justify-end">
+                            <button data-id="${p.id}" class="text-green-600 hover:text-green-800 invite-btn text-xs uppercase font-bold tracking-wide border border-green-200 bg-green-50 px-2 py-1 rounded">Invite Parent</button>
                             <button data-id="${p.id}" class="text-indigo-600 hover:text-indigo-800 edit-btn">Edit</button>
                             <button data-id="${p.id}" class="text-red-600 hover:text-red-900 delete-btn">Delete</button>
                         </div>
@@ -311,10 +356,60 @@
                 });
             });
 
+            document.querySelectorAll('.invite-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => startInviteParent(players.find(p => p.id === e.target.dataset.id)));
+            });
+
             document.querySelectorAll('.edit-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => startEditPlayer(players.find(p => p.id === e.target.dataset.id)));
             });
         }
+
+        let currentInvitePlayer = null;
+
+        function startInviteParent(player) {
+            currentInvitePlayer = player;
+            document.getElementById('invite-player-name').textContent = player.name;
+            document.getElementById('invite-modal').classList.remove('hidden');
+            document.getElementById('invite-result').classList.add('hidden');
+            document.getElementById('generate-invite-btn').classList.remove('hidden');
+            document.getElementById('invite-email').value = '';
+        }
+
+        document.getElementById('close-invite-modal').addEventListener('click', () => {
+             document.getElementById('invite-modal').classList.add('hidden');
+             currentInvitePlayer = null;
+        });
+
+        document.getElementById('generate-invite-btn').addEventListener('click', async () => {
+             if (!currentInvitePlayer) return;
+             const relation = document.getElementById('invite-relation').value;
+             const email = document.getElementById('invite-email').value;
+             const btn = document.getElementById('generate-invite-btn');
+             
+             btn.disabled = true;
+             btn.textContent = 'Generating...';
+
+             try {
+                 const result = await inviteParent(currentTeamId, currentInvitePlayer.id, currentInvitePlayer.number, email, relation);
+                 document.getElementById('generated-code').textContent = result.code;
+                 document.getElementById('invite-result').classList.remove('hidden');
+                 document.getElementById('generate-invite-btn').classList.add('hidden');
+             } catch (e) {
+                 alert('Error generating code: ' + e.message);
+                 console.error(e);
+             } finally {
+                 btn.disabled = false;
+                 btn.textContent = 'Generate Code';
+             }
+        });
+
+        document.getElementById('copy-code-btn').addEventListener('click', () => {
+             const code = document.getElementById('generated-code').textContent;
+             navigator.clipboard.writeText(code);
+             document.getElementById('copy-code-btn').textContent = 'Copied!';
+             setTimeout(() => document.getElementById('copy-code-btn').textContent = 'Copy', 2000);
+        });
 
         function resetForm() {
             editingPlayerId = null;

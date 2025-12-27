@@ -506,9 +506,21 @@ export async function validateAccessCode(code) {
     if (snapshot.empty) {
         return { valid: false, message: "Invalid access code" };
     }
+    
+    const codeDoc = snapshot.docs[0];
+    const data = codeDoc.data();
 
-    // Code exists, so it's valid (codes can be reused)
-    return { valid: true, codeId: snapshot.docs[0].id };
+    if (data.used) {
+        return { valid: false, message: "Code already used" };
+    }
+
+    // Code exists and is not used
+    return { 
+        valid: true, 
+        codeId: codeDoc.id,
+        type: data.type || 'standard',
+        data: data 
+    };
 }
 
 export async function markAccessCodeAsUsed(codeId, userId) {
@@ -518,4 +530,146 @@ export async function markAccessCodeAsUsed(codeId, userId) {
         usedBy: userId,
         usedAt: Timestamp.now()
     });
+}
+
+// ============================================
+// Parent Role Functions
+// ============================================
+
+export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
+    const code = generateAccessCode();
+    const accessCodeData = {
+        code,
+        type: 'parent_invite',
+        teamId,
+        playerId,
+        playerNum, // Added for quick context
+        relation,
+        email: parentEmail || null,
+        createdAt: Timestamp.now(),
+        expiresAt: new Timestamp(Date.now() / 1000 + 7 * 24 * 60 * 60, 0), // 7 days
+        used: false
+    };
+    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
+    return { id: docRef.id, code };
+}
+
+export async function redeemParentInvite(userId, code) {
+    // 1. Validate Code
+    const q = query(
+        collection(db, "accessCodes"),
+        where("code", "==", code.toUpperCase()),
+        where("used", "==", false)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) throw new Error("Invalid or used code");
+    
+    const codeDoc = snapshot.docs[0];
+    const codeData = codeDoc.data();
+    
+    if (codeData.type !== 'parent_invite') throw new Error("Not a parent invite code");
+
+    // 2. Get Team & Player details for caching
+    const [team, player] = await Promise.all([
+        getTeam(codeData.teamId),
+        getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
+    ]);
+
+    if (!team || !player) throw new Error("Team or Player not found");
+
+    // 3. Update User Profile (parentOf)
+    const userRef = doc(db, "users", userId);
+    await setDoc(userRef, {
+        parentOf: arrayUnion({
+            teamId: codeData.teamId,
+            playerId: codeData.playerId,
+            teamName: team.name,
+            playerName: player.name,
+            playerNumber: player.number,
+            playerPhotoUrl: player.photoUrl || null
+        }),
+        roles: arrayUnion('parent')
+    }, { merge: true });
+
+    // 4. Update Player Doc (parents list)
+    const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+    await updateDoc(playerRef, {
+        parents: arrayUnion({
+            userId,
+            email: codeData.email || 'pending', // Will be updated if email not provided in invite
+            relation: codeData.relation,
+            addedAt: Timestamp.now()
+        })
+    });
+
+    // 5. Mark Code Used
+    await updateDoc(codeDoc.ref, {
+        used: true,
+        usedBy: userId,
+        usedAt: Timestamp.now()
+    });
+
+    return { success: true, teamId: codeData.teamId };
+}
+
+export async function getParentDashboardData(userId) {
+    const userProfile = await getUserProfile(userId);
+    if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
+        return { upcomingGames: [], children: [] };
+    }
+
+    const children = userProfile.parentOf;
+    const upcomingGames = [];
+
+    // Fetch games for each team
+    // Note: In a real app, we might query 'events' collection group or optimize this.
+    // Here we loop through unique teams.
+    const teamIds = [...new Set(children.map(c => c.teamId))];
+    
+    for (const teamId of teamIds) {
+        const events = await getEvents(teamId); // Helper that gets games+practices
+        const teamChild = children.find(c => c.teamId === teamId);
+        
+        // Filter for future events
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        
+        const futureEvents = events.filter(e => {
+            const d = e.date.toDate ? e.date.toDate() : new Date(e.date);
+            return d >= now;
+        }).map(e => ({
+            ...e,
+            teamId,
+            teamName: teamChild.teamName,
+            childName: teamChild.playerName // Associate with the specific child for this team
+        }));
+        
+        upcomingGames.push(...futureEvents);
+    }
+
+    // Sort by date
+    upcomingGames.sort((a, b) => {
+        const dA = a.date.toDate ? a.date.toDate() : new Date(a.date);
+        const dB = b.date.toDate ? b.date.toDate() : new Date(b.date);
+        return dA - dB;
+    });
+
+    return { upcomingGames, children };
+}
+
+export async function updatePlayerProfile(teamId, playerId, data) {
+    // Restricted update for parents
+    const allowedKeys = ['photoUrl', 'emergencyContact', 'medicalInfo'];
+    const updateData = {};
+    
+    Object.keys(data).forEach(key => {
+        if (allowedKeys.includes(key)) {
+            updateData[key] = data[key];
+        }
+    });
+
+    if (Object.keys(updateData).length === 0) return;
+
+    updateData.updatedAt = Timestamp.now();
+    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), updateData);
 }

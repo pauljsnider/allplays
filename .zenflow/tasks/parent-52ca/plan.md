@@ -20,7 +20,7 @@ Create a Product Requirements Document (PRD) based on the feature description.
 
 Save the PRD to `{@artifacts_path}/requirements.md`.
 
-### [ ] Step: Technical Specification
+### [x] Step: Technical Specification
 
 Create a technical specification based on the PRD in `{@artifacts_path}/requirements.md`.
 
@@ -49,8 +49,42 @@ If the feature is trivial and doesn't warrant full specification, update this wo
 
 Save to `{@artifacts_path}/plan.md`.
 
-### [ ] Step: Implementation
+### [x] Step: Implementation
 
-This step should be replaced with detailed implementation tasks from the Planning step.
+#### [x] Task 1: Database & Auth Logic
+- **File**: `js/db.js`
+    - Implement `inviteParent(teamId, playerId, relation)`
+    - Implement `redeemAccessCode(code)`
+    - Implement `getParentDashboardData(userId)`
+- **File**: `js/auth.js`
+    - Update `checkAuth` to process `parentOf` and `coachOf` fields.
+    - Update Login redirect logic.
+- **Verification**: Test generating code and redeeming it in console.
 
-If Planning didn't replace this step, execute the tasks in `{@artifacts_path}/plan.md`, updating checkboxes as you go. Run planned tests/lint and record results in plan.md.
+#### [x] Task 2: Parent Dashboard UI
+- **File**: `parent-dashboard.html` (New)
+- **File**: `js/parent-dashboard.js` (New)
+    - Implement fetching logic using `getParentDashboardData`.
+    - Render "Upcoming Games" (combined).
+    - Render "My Players".
+- **Verification**: Login as parent, verify dashboard loads correct data.
+
+#### [x] Task 3: Coach Invite UI
+- **File**: `edit-roster.html`
+- **File**: `js/edit-roster.js` (or inline script)
+    - Add "Invite Parent" button to player rows.
+    - Add Modal to collect email/relation and show code.
+- **Verification**: Invite a parent, copy code.
+
+#### [x] Task 4: Player Profile Edit (Parent View)
+- **File**: `player.html`
+    - Add "Edit Profile" button (visible to parent).
+    - Add Modal for editing Photo, Emergency Contact.
+    - Implement `updatePlayerProfile` restricted call.
+- **Verification**: As parent, change photo. Verify success. Try changing name (should fail).
+
+#### [x] Task 5: Security Rules
+- **File**: `firestore.rules`
+    - Allow parents to update specific fields on player docs.
+    - Protect team writes.
+- **Verification**: Run Firestore emulator tests or manual verification.

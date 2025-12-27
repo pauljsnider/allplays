@@ -95,7 +95,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { login, signup, checkAuth, loginWithGoogle, resetPassword } from './js/auth.js?v=4';
+        import { login, signup, checkAuth, loginWithGoogle, resetPassword, getRedirectUrl } from './js/auth.js?v=4';
+        import { getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter } from './js/utils.js?v=7';
 
         renderFooter(document.getElementById('footer-container'));
@@ -106,7 +107,7 @@
         checkAuth((user) => {
             // Only auto-redirect if not currently processing login/signup
             if (user && !isProcessingAuth) {
-                window.location.href = 'dashboard.html';
+                window.location.href = getRedirectUrl(user);
             }
             renderHeader(document.getElementById('header-container'), user);
         });
@@ -155,9 +156,11 @@
 
             try {
                 if (isLogin) {
-                    await login(email, password);
-                    // Login - redirect to dashboard (checkAuth will handle verification redirect if needed)
-                    window.location.href = 'dashboard.html';
+                    const userCredential = await login(email, password);
+                    // Fetch profile to determine redirect
+                    const profile = await getUserProfile(userCredential.user.uid);
+                    const userWithRoles = { ...userCredential.user, ...profile };
+                    window.location.href = getRedirectUrl(userWithRoles);
                 } else {
                     // Signup mode - validate password confirmation
                     const confirmPassword = document.getElementById('confirm-password').value;
@@ -198,9 +201,12 @@
                     }
                 }
 
-                await loginWithGoogle(activationCode);
-                // Success - redirect to dashboard
-                window.location.href = 'dashboard.html';
+                const result = await loginWithGoogle(activationCode);
+                
+                // Fetch profile to determine redirect
+                const profile = await getUserProfile(result.user.uid);
+                const userWithRoles = { ...result.user, ...profile };
+                window.location.href = getRedirectUrl(userWithRoles);
             } catch (error) {
                 isProcessingAuth = false; // Reset flag on error
                 errorDiv.textContent = error.message;

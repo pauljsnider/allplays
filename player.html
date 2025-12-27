@@ -153,16 +153,65 @@
 
     <div id="footer-container"></div>
 
+    <!-- Edit Player Modal -->
+    <div id="edit-player-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">Edit Profile</h3>
+                    <button id="close-edit-modal" class="text-gray-400 hover:text-gray-500">
+                        <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+                <form id="edit-player-form" class="space-y-4">
+                    <div class="text-center mb-4">
+                         <div id="edit-photo-preview" class="inline-block h-24 w-24 rounded-full overflow-hidden bg-gray-100 border border-gray-200 mb-2"></div>
+                         <label class="block text-sm text-indigo-600 font-medium cursor-pointer hover:text-indigo-500">
+                             Change Photo
+                             <input type="file" id="edit-photo-input" accept="image/*" class="hidden">
+                         </label>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Emergency Contact Name</label>
+                        <input type="text" id="edit-ec-name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Emergency Contact Phone</label>
+                        <input type="tel" id="edit-ec-phone" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Medical Info / Notes</label>
+                        <textarea id="edit-medical-info" rows="2" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2" placeholder="Allergies, conditions, etc."></textarea>
+                    </div>
+
+                    <div class="pt-4">
+                        <button type="submit" id="save-player-btn" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                            Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames } from './js/db.js';
+        import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, uploadPlayerPhoto } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
 
+        let currentUser = null;
+        let currentPlayer = null; // Store for modal access
+        let currentTeamId = null;
+
         checkAuth((user) => {
-            // Allow viewing without login - user can be null
+            currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
+            updateEditButton();
         });
 
         renderFooter(document.getElementById('footer-container'));
@@ -205,6 +254,7 @@
             }
 
             try {
+                currentTeamId = teamId; // Store global
                 const [team, players, games] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId),
@@ -216,6 +266,7 @@
                     document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Player not found</div>';
                     return;
                 }
+                currentPlayer = player; // Store global
 
                 // Build per-game stats across all games
                 const perGameStats = [];
@@ -276,7 +327,13 @@
 
                 // Render Player Header
                 document.getElementById('player-header').innerHTML = `
-                    <div class="text-center">
+                    <div class="relative text-center">
+                        <div id="edit-btn-container" class="absolute top-0 right-0 hidden">
+                             <button id="open-edit-modal" class="flex items-center gap-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition font-medium">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                Edit Profile
+                             </button>
+                        </div>
                         <div class="text-gray-500 font-semibold uppercase tracking-wider text-sm mb-3">${escapeHtml(team.name)}</div>
                         <div class="flex justify-center mb-4">
                             <span class="inline-flex h-28 w-28 rounded-full bg-gray-100 overflow-hidden border-2 border-gray-200">
@@ -731,8 +788,87 @@
             } catch (error) {
                 console.error('Error loading player details:', error);
                 document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Error loading player details</div>';
+            } finally {
+                updateEditButton();
             }
         }
+
+        function updateEditButton() {
+            if (!currentUser || !currentPlayer) return;
+            const isParent = currentPlayer.parents && currentPlayer.parents.some(p => p.userId === currentUser.uid);
+            const canEdit = currentUser.isAdmin || isParent;
+
+            if (canEdit) {
+                const btnContainer = document.getElementById('edit-btn-container');
+                if (btnContainer) {
+                    btnContainer.classList.remove('hidden');
+                    document.getElementById('open-edit-modal').onclick = openEditModal;
+                }
+            }
+        }
+
+        function openEditModal() {
+             if (!currentPlayer) return;
+             document.getElementById('edit-player-modal').classList.remove('hidden');
+             document.getElementById('edit-ec-name').value = currentPlayer.emergencyContact?.name || '';
+             document.getElementById('edit-ec-phone').value = currentPlayer.emergencyContact?.phone || '';
+             document.getElementById('edit-medical-info').value = currentPlayer.medicalInfo || '';
+             
+             const preview = document.getElementById('edit-photo-preview');
+             if (currentPlayer.photoUrl) {
+                 preview.innerHTML = `<img src="${currentPlayer.photoUrl}" class="w-full h-full object-cover">`;
+             } else {
+                 preview.innerHTML = '';
+             }
+        }
+
+        document.getElementById('close-edit-modal').addEventListener('click', () => {
+            document.getElementById('edit-player-modal').classList.add('hidden');
+        });
+
+        document.getElementById('edit-photo-input').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('edit-photo-preview').innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        document.getElementById('edit-player-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('save-player-btn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const data = {
+                    emergencyContact: {
+                        name: document.getElementById('edit-ec-name').value,
+                        phone: document.getElementById('edit-ec-phone').value
+                    },
+                    medicalInfo: document.getElementById('edit-medical-info').value
+                };
+
+                const photoFile = document.getElementById('edit-photo-input').files[0];
+                if (photoFile) {
+                    const url = await uploadPlayerPhoto(photoFile);
+                    data.photoUrl = url;
+                }
+
+                await updatePlayerProfile(currentTeamId, currentPlayer.id, data);
+                
+                alert('Profile updated!');
+                location.reload();
+            } catch (err) {
+                console.error(err);
+                alert('Error updating profile: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = 'Save Changes';
+            }
+        });
 
         loadPlayerDetails();
     </script>
