@@ -45,11 +45,7 @@ export async function signup(email, password, activationCode) {
 
     // Send verification email
     try {
-        const actionCodeSettings = {
-            url: 'https://allplays.ai/reset-password.html',
-            handleCodeInApp: true
-        };
-        await sendEmailVerification(userCredential.user, actionCodeSettings);
+        await sendEmailVerification(userCredential.user);
     } catch (e) {
         console.error('Error sending verification email:', e);
         // Don't fail signup if email fails - user can request resend
@@ -200,12 +196,7 @@ export async function resendVerificationEmail() {
         throw new Error('No user is currently signed in');
     }
 
-    const actionCodeSettings = {
-        url: 'https://allplays.ai/reset-password.html',
-        handleCodeInApp: true
-    };
-
-    return sendEmailVerification(user, actionCodeSettings);
+    return sendEmailVerification(user);
 }
 
 export function getCurrentUser() {
