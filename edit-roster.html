@@ -250,8 +250,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
+        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer } from './js/db.js';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
@@ -336,6 +336,22 @@
                                 </span>
                                 <span>${p.name}</span>
                             </a>
+                            ${(p.parents && p.parents.length > 0) ? `
+                                <div class="mt-1 flex flex-wrap gap-1 text-xs">
+                                    ${p.parents.map(parent => `
+                                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-gray-200 bg-gray-50 text-gray-600">
+                                            <span>${escapeHtml(parent.email || 'Pending')}</span>
+                                            ${parent.relation ? `<span class="text-gray-400">(${escapeHtml(parent.relation)})</span>` : ''}
+                                            <button type="button"
+                                                class="remove-parent-btn text-[10px] text-red-500 hover:text-red-700 ml-1"
+                                                data-player-id="${p.id}"
+                                                data-parent-id="${parent.userId}">
+                                                ✕
+                                            </button>
+                                        </span>
+                                    `).join('')}
+                                </div>
+                            ` : ''}
                         </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex items-center gap-3 justify-end">
@@ -362,6 +378,25 @@
 
             document.querySelectorAll('.edit-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => startEditPlayer(players.find(p => p.id === e.target.dataset.id)));
+            });
+
+            document.querySelectorAll('.remove-parent-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const buttonEl = e.currentTarget;
+                    const playerId = buttonEl.dataset.playerId;
+                    const parentId = buttonEl.dataset.parentId;
+                    if (!playerId || !parentId) return;
+                    if (!confirm('Remove this parent connection from the player?')) return;
+                    try {
+                        buttonEl.disabled = true;
+                        await removeParentFromPlayer(currentTeamId, playerId, parentId);
+                        await loadRoster();
+                    } catch (err) {
+                        console.error('Error removing parent from player', err);
+                        alert('Error removing parent connection: ' + (err?.message || 'Please try again.'));
+                        buttonEl.disabled = false;
+                    }
+                });
             });
         }
 

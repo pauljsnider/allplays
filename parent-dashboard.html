@@ -78,9 +78,11 @@
             <!-- Right Column: Combined Schedule -->
             <div class="lg:col-span-2">
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden min-h-[500px]">
-                    <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                    <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3">
                         <h2 class="text-xl font-bold text-gray-900">Upcoming Schedule</h2>
-                        <span class="text-xs font-medium bg-white px-2 py-1 rounded border border-gray-200 text-gray-500">All Teams</span>
+                        <select id="player-filter" class="text-xs font-medium bg-white px-2 py-1 rounded border border-gray-200 text-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="">All Players</option>
+                        </select>
                     </div>
                     <div id="schedule-list" class="divide-y divide-gray-100">
                         <div class="text-center py-12">
@@ -102,6 +104,8 @@
 
         renderFooter(document.getElementById('footer-container'));
 
+        let allScheduleEvents = [];
+
         async function init() {
             try {
                 const user = await requireAuth();
@@ -114,7 +118,9 @@
                 const data = await getParentDashboardData(user.uid);
                 renderPlayers(data.children);
                 const combinedSchedule = await buildCombinedSchedule(data.children);
-                renderSchedule(combinedSchedule);
+                allScheduleEvents = combinedSchedule;
+                initPlayerFilter(data.children);
+                renderSchedule(allScheduleEvents);
 
                 // Redeem Code Logic
                 document.getElementById('redeem-code-btn').addEventListener('click', async () => {
@@ -183,6 +189,7 @@
                             opponent,
                             teamId,
                             id,
+                            childId: child.playerId,
                             childName: child.playerName
                         });
                     }
@@ -220,6 +227,7 @@
                                         opponent,
                                         teamId,
                                         id: event.uid || null,
+                                        childId: child.playerId,
                                         childName: child.playerName
                                     });
                                 }
@@ -233,6 +241,27 @@
 
             allEvents.sort((a, b) => a.date - b.date);
             return allEvents;
+        }
+
+        function initPlayerFilter(children) {
+            const select = document.getElementById('player-filter');
+            if (!select) return;
+
+            // Populate options
+            select.innerHTML = `
+                <option value="">All Players</option>
+                ${children.map(child => `
+                    <option value="${child.playerId}">${escapeHtml(child.playerName)}</option>
+                `).join('')}
+            `;
+
+            select.addEventListener('change', (e) => {
+                const playerId = e.target.value || '';
+                const filtered = playerId
+                    ? allScheduleEvents.filter(ev => ev.childId === playerId)
+                    : allScheduleEvents;
+                renderSchedule(filtered);
+            });
         }
 
         function renderPlayers(children) {

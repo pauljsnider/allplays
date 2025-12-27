@@ -198,6 +198,24 @@ export async function deletePlayer(teamId, playerId) {
     await deleteDoc(doc(db, `teams/${teamId}/players`, playerId));
 }
 
+/**
+ * Remove a parent link from a player document.
+ * This updates the player's parents array; user.profile.parentOf
+ * is treated as a cache and is filtered at read time.
+ */
+export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
+    const playerRef = doc(db, `teams/${teamId}/players`, playerId);
+    const snap = await getDoc(playerRef);
+    if (!snap.exists()) return;
+    const data = snap.data() || {};
+    const parents = Array.isArray(data.parents) ? data.parents : [];
+    const updatedParents = parents.filter(p => p.userId !== parentUserId);
+    await updateDoc(playerRef, {
+        parents: updatedParents,
+        updatedAt: Timestamp.now()
+    });
+}
+
 // Games
 export async function getGames(teamId) {
     const q = query(collection(db, `teams/${teamId}/games`), orderBy("date"));
@@ -652,19 +670,39 @@ export async function getParentDashboardData(userId) {
         return { upcomingGames: [], children: [] };
     }
 
-    const children = userProfile.parentOf;
+    // Start from stored parentOf links but verify that each entry
+    // still has an active parent connection on the player doc.
+    const rawChildren = userProfile.parentOf;
+    const children = [];
     const upcomingGames = [];
 
     // Cache events per team to avoid duplicate reads when a parent
     // has multiple players on the same team.
     const eventsByTeam = new Map();
+    const playersByTeam = new Map();
 
     // Use a single "today" boundary for all filtering
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    for (const child of children) {
+    for (const child of rawChildren) {
         if (!child.teamId) continue;
+
+        // Verify this user is still listed as a parent on the player doc
+        let teamPlayers = playersByTeam.get(child.teamId);
+        if (!teamPlayers) {
+            teamPlayers = await getPlayers(child.teamId);
+            playersByTeam.set(child.teamId, teamPlayers);
+        }
+        const player = teamPlayers.find(p => p.id === child.playerId);
+        const stillParent = !!(player && Array.isArray(player.parents) && player.parents.some(p => p.userId === userId));
+        if (!stillParent) {
+            // Skip outdated link
+            continue;
+        }
+
+        // Keep only verified children for UI
+        children.push(child);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
