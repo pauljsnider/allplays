@@ -630,36 +630,51 @@ export async function redeemParentInvite(userId, code) {
     if (!team || !player) throw new Error("Team or Player not found");
 
     // 3. Update User Profile (parentOf)
-    const userRef = doc(db, "users", userId);
-    await setDoc(userRef, {
-        parentOf: arrayUnion({
-            teamId: codeData.teamId,
-            playerId: codeData.playerId,
-            teamName: team.name,
-            playerName: player.name,
-            playerNumber: player.number,
-            playerPhotoUrl: player.photoUrl || null
-        }),
-        roles: arrayUnion('parent')
-    }, { merge: true });
+    try {
+        const userRef = doc(db, "users", userId);
+        await setDoc(userRef, {
+            parentOf: arrayUnion({
+                teamId: codeData.teamId,
+                playerId: codeData.playerId,
+                teamName: team.name,
+                playerName: player.name,
+                playerNumber: player.number,
+                playerPhotoUrl: player.photoUrl || null
+            }),
+            roles: arrayUnion('parent')
+        }, { merge: true });
+    } catch (err) {
+        console.error('redeemParentInvite: error updating user profile', err);
+        throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
+    }
 
     // 4. Update Player Doc (parents list)
-    const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
-    await updateDoc(playerRef, {
-        parents: arrayUnion({
-            userId,
-            email: codeData.email || 'pending', // Will be updated if email not provided in invite
-            relation: codeData.relation,
-            addedAt: Timestamp.now()
-        })
-    });
+    try {
+        const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+        await updateDoc(playerRef, {
+            parents: arrayUnion({
+                userId,
+                email: codeData.email || 'pending', // Will be updated if email not provided in invite
+                relation: codeData.relation,
+                addedAt: Timestamp.now()
+            })
+        });
+    } catch (err) {
+        console.error('redeemParentInvite: error updating player parents', err);
+        throw new Error('Unable to link parent (player). ' + (err?.message || ''));
+    }
 
     // 5. Mark Code Used
-    await updateDoc(codeDoc.ref, {
-        used: true,
-        usedBy: userId,
-        usedAt: Timestamp.now()
-    });
+    try {
+        await updateDoc(codeDoc.ref, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+    } catch (err) {
+        console.error('redeemParentInvite: error marking code used', err);
+        throw new Error('Unable to link parent (access code). ' + (err?.message || ''));
+    }
 
     return { success: true, teamId: codeData.teamId };
 }
