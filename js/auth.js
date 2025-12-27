@@ -46,8 +46,10 @@ export async function signup(email, password, activationCode) {
     // Send verification email
     try {
         await sendEmailVerification(userCredential.user);
+        console.log('Verification email sent successfully');
     } catch (e) {
         console.error('Error sending verification email:', e);
+        alert('Failed to send verification email: ' + e.message);
         // Don't fail signup if email fails - user can request resend
     }
 
