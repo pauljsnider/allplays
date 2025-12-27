@@ -796,7 +796,8 @@
         function updateEditButton() {
             if (!currentUser || !currentPlayer) return;
             const isParent = currentPlayer.parents && currentPlayer.parents.some(p => p.userId === currentUser.uid);
-            const canEdit = currentUser.isAdmin || isParent;
+            const isCoachForTeam = Array.isArray(currentUser.coachOf) && currentUser.coachOf.includes(currentTeamId);
+            const canEdit = currentUser.isAdmin || isParent || isCoachForTeam;
 
             if (canEdit) {
                 const btnContainer = document.getElementById('edit-btn-container');

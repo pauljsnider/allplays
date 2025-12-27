@@ -99,3 +99,17 @@ Test everything you created
 <!-- agent: GEMINI -->
 
 use playwright MCP to validate the changes.
+
+### [x] Step: Updates
+<!-- chat-id: 45b2a796-3fbb-4363-ae4e-f042cbe83908 -->
+<!-- agent: CODEX -->
+
+I feel like we need navigation updated for "my players" and "my teams" that both coaches and parents can access.
+
+right now a coach can't add a player.
+
+My Players - both coaches and parents can access it, both need the ability to edit a player with the same UI as a coach.  You'll have to update all pages with this navigation if they are logged in.
+
+My Teams - 
+- Parent can see teams that they have a player on, they can only view the team details.  They can create a team and become a coach/admin of the team.
+- Coaches - works the same as it does today.

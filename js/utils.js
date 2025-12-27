@@ -55,6 +55,8 @@ export function renderHeader(container, user) {
             <!-- Desktop Nav -->
             <div class="hidden md:flex items-center gap-4" id="nav-auth-actions-desktop">
               <a href="teams.html" class="text-sm font-medium text-gray-600 hover:text-primary-600 transition">Browse Teams</a>
+              <a id="nav-my-players-desktop" href="parent-dashboard.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">My Players</a>
+              <a id="nav-my-teams-desktop" href="dashboard.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">My Teams</a>
               <a id="nav-profile-desktop" href="profile.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
               <a id="nav-signin-desktop" href="login.html" class="text-sm font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
               <a id="nav-cta-desktop" href="login.html#signup" class="text-sm font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg">Get Started</a>
@@ -73,6 +75,8 @@ export function renderHeader(container, user) {
           <div id="mobile-menu" class="hidden md:hidden mt-4 pb-4 border-t border-gray-100">
             <div class="flex flex-col space-y-3 pt-4" id="nav-auth-actions-mobile">
               <a href="teams.html" class="block text-base font-medium text-gray-600 hover:text-primary-600 transition">Browse Teams</a>
+              <a id="nav-my-players-mobile" href="parent-dashboard.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">My Players</a>
+              <a id="nav-my-teams-mobile" href="dashboard.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">My Teams</a>
               <a id="nav-profile-mobile" href="profile.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
               <a id="nav-signin-mobile" href="login.html" class="block text-base font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
               <a id="nav-cta-mobile" href="login.html#signup" class="block text-center text-base font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md">Get Started</a>
@@ -96,20 +100,28 @@ export function renderHeader(container, user) {
     const navCta = container.querySelector(`#nav-cta-${suffix}`);
     const navLogout = container.querySelector(`#nav-logout-${suffix}`);
     const navProfile = container.querySelector(`#nav-profile-${suffix}`);
+    const navMyPlayers = container.querySelector(`#nav-my-players-${suffix}`);
+    const navMyTeams = container.querySelector(`#nav-my-teams-${suffix}`);
 
     if (user) {
       const hasParentLinks = Array.isArray(user.parentOf) && user.parentOf.length > 0;
       const hasCoachAccess = user.isAdmin || (Array.isArray(user.coachOf) && user.coachOf.length > 0);
 
-      // Primary nav destination based on role
-      if (hasParentLinks && !hasCoachAccess) {
-        // Parent-only: send to parent dashboard
-        navSignIn.textContent = 'My Players';
-        navSignIn.href = 'parent-dashboard.html';
-      } else {
-        // Coaches/admins (or mixed roles): send to main dashboard
-        navSignIn.textContent = 'My Teams';
-        navSignIn.href = 'dashboard.html';
+      if (navMyPlayers) {
+        navMyPlayers.classList.remove('hidden');
+        navMyPlayers.href = 'parent-dashboard.html';
+        // Optional: if user has no parent links, we still let them in;
+        // the page will explain they have no linked players.
+      }
+
+      if (navMyTeams) {
+        navMyTeams.classList.remove('hidden');
+        navMyTeams.href = 'dashboard.html';
+      }
+
+      if (navSignIn) {
+        // Hide the generic Sign In link when logged in
+        navSignIn.classList.add('hidden');
       }
 
       // CTA button logic
@@ -126,8 +138,14 @@ export function renderHeader(container, user) {
       navLogout.classList.remove('hidden');
       navProfile.classList.remove('hidden');
     } else {
-      navSignIn.textContent = 'Sign In';
-      navSignIn.href = 'login.html';
+      if (navMyPlayers) navMyPlayers.classList.add('hidden');
+      if (navMyTeams) navMyTeams.classList.add('hidden');
+
+      if (navSignIn) {
+        navSignIn.classList.remove('hidden');
+        navSignIn.textContent = 'Sign In';
+        navSignIn.href = 'login.html';
+      }
 
       navCta.textContent = 'Get Started';
       navCta.href = 'login.html#signup';

@@ -86,6 +86,31 @@ export async function getUserTeamsWithAccess(userId, email) {
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Get teams where the user is connected as a parent (via parentOf)
+ * This is used to power the "My Teams" view for parents, in a read-only way.
+ */
+export async function getParentTeams(userId) {
+    const profile = await getUserProfile(userId);
+    if (!profile || !Array.isArray(profile.parentOf) || profile.parentOf.length === 0) {
+        return [];
+    }
+
+    const teamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))];
+    if (teamIds.length === 0) return [];
+
+    const teams = [];
+    for (const teamId of teamIds) {
+        const team = await getTeam(teamId);
+        if (team) {
+            teams.push(team);
+        }
+    }
+
+    // Sort by name for consistency with other helpers
+    return teams.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+
 // User profiles
 export async function getUserProfile(userId) {
     const docRef = doc(db, "users", userId);
