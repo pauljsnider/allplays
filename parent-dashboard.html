@@ -96,8 +96,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getParentDashboardData, redeemParentInvite } from './js/db.js?v=2';
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=7';
+        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=2';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=7';
         import { requireAuth, checkAuth } from './js/auth.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -113,7 +113,8 @@
 
                 const data = await getParentDashboardData(user.uid);
                 renderPlayers(data.children);
-                renderSchedule(data.upcomingGames);
+                const combinedSchedule = await buildCombinedSchedule(data.children);
+                renderSchedule(combinedSchedule);
 
                 // Redeem Code Logic
                 document.getElementById('redeem-code-btn').addEventListener('click', async () => {
@@ -139,6 +140,99 @@
             } catch (error) {
                 console.error(error);
             }
+        }
+
+        async function buildCombinedSchedule(children) {
+            if (!children || children.length === 0) return [];
+
+            const byTeam = new Map();
+            for (const child of children) {
+                if (!child.teamId) continue;
+                if (!byTeam.has(child.teamId)) {
+                    byTeam.set(child.teamId, []);
+                }
+                byTeam.get(child.teamId).push(child);
+            }
+
+            const allEvents = [];
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            for (const [teamId, teamChildren] of byTeam.entries()) {
+                const team = await getTeam(teamId);
+                if (!team) continue;
+
+                const dbGames = await getGames(teamId);
+                const trackedUids = await getTrackedCalendarEventUids(teamId);
+
+                // DB games for this team
+                for (const game of dbGames) {
+                    const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+                    if (date < today) continue;
+                    const isPractice = game.type === 'practice';
+                    const type = isPractice ? 'practice' : 'game';
+                    const location = game.location || 'TBD';
+                    const opponent = game.opponent || 'TBD';
+                    const id = game.id || game.gameId;
+
+                    for (const child of teamChildren) {
+                        allEvents.push({
+                            type,
+                            date,
+                            location,
+                            opponent,
+                            teamId,
+                            id,
+                            childName: child.playerName
+                        });
+                    }
+                }
+
+                // Calendar (ICS) events for this team
+                if (team.calendarUrls && team.calendarUrls.length > 0) {
+                    for (const calendarUrl of team.calendarUrls) {
+                        try {
+                            const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+
+                            calendarEvents.forEach(event => {
+                                if (trackedUids.includes(event.uid)) return;
+
+                                const eventDate = event.dtstart;
+                                if (!eventDate || eventDate < today) return;
+
+                                // Skip if a DB game already occupies this slot (within 1 minute)
+                                const hasConflict = dbGames.some(dbGame => {
+                                    const dbDate = dbGame.date?.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                                    return Math.abs(dbDate - eventDate) < 60000;
+                                });
+                                if (hasConflict) return;
+
+                                const isPractice = isPracticeEvent(event.summary);
+                                const opponent = extractOpponent(event.summary, team.name);
+                                const location = event.location || 'TBD';
+                                const type = isPractice ? 'practice' : 'game';
+
+                                for (const child of teamChildren) {
+                                    allEvents.push({
+                                        type,
+                                        date: eventDate,
+                                        location,
+                                        opponent,
+                                        teamId,
+                                        id: event.uid || null,
+                                        childName: child.playerName
+                                    });
+                                }
+                            });
+                        } catch (err) {
+                            console.error('Error fetching calendar for parent dashboard:', calendarUrl, err);
+                        }
+                    }
+                }
+            }
+
+            allEvents.sort((a, b) => a.date - b.date);
+            return allEvents;
         }
 
         function renderPlayers(children) {
