@@ -205,11 +205,16 @@ export async function resendVerificationEmail() {
         throw new Error('No user is currently signed in');
     }
 
+    // Reload user to ensure we have fresh state
+    await user.reload();
+
     const actionCodeSettings = {
         url: 'https://allplays.ai/reset-password.html',
         handleCodeInApp: true
     };
-    return sendEmailVerification(user, actionCodeSettings);
+
+    await sendEmailVerification(user, actionCodeSettings);
+    console.log('Resend verification email sent successfully');
 }
 
 export function getCurrentUser() {
