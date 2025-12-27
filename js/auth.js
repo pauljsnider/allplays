@@ -44,6 +44,9 @@ export async function signup(email, password, activationCode) {
     }
 
     // Send verification email (use same settings as password reset which works)
+    // Small delay to ensure user is fully created in Firebase
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     try {
         const actionCodeSettings = {
             url: 'https://allplays.ai/reset-password.html',
