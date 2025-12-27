@@ -2,6 +2,16 @@
 <html lang="en">
 
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="img/logo_small.png">
@@ -60,6 +70,36 @@
                 <div class="h-10 bg-gray-200 rounded w-1/2"></div>
             </div>
         </div>
+
+        <!-- Playing Time Insights (Beta Basketball) -->
+        <section id="playing-time-insights" class="mb-8 hidden">
+            <button id="playing-time-toggle" class="w-full text-left group">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Playing Time Snapshot</h2>
+                    </div>
+                    <svg id="playing-time-chevron" class="w-6 h-6 text-gray-400 transition-transform duration-200"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </div>
+            </button>
+            <div id="playing-time-content"
+                class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden transition-all duration-300"
+                style="max-height: 0px;">
+                <div class="p-6 md:p-8">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                        <div>
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Rotation</div>
+                            <p class="text-sm text-gray-500 mt-1">Available for games tracked with the beta basketball tracker.</p>
+                        </div>
+                        <div id="playing-time-insights-meta" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div id="playing-time-insights-body"></div>
+                </div>
+            </div>
+        </section>
 
         <!-- Advanced Team Analytics (Premium Feature Preview) -->
         <div class="mb-8">
@@ -157,8 +197,27 @@
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
+        import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+        import { db } from './js/firebase.js';
 
         renderFooter(document.getElementById('footer-container'));
+
+        // Playing time toggle functionality
+        let playingTimeExpanded = false;
+        const playingTimeToggle = document.getElementById('playing-time-toggle');
+        const playingTimeContent = document.getElementById('playing-time-content');
+        const playingTimeChevron = document.getElementById('playing-time-chevron');
+
+        playingTimeToggle.addEventListener('click', () => {
+            playingTimeExpanded = !playingTimeExpanded;
+            if (playingTimeExpanded) {
+                playingTimeContent.style.maxHeight = playingTimeContent.scrollHeight + 'px';
+                playingTimeChevron.style.transform = 'rotate(0deg)';
+            } else {
+                playingTimeContent.style.maxHeight = '0px';
+                playingTimeChevron.style.transform = 'rotate(-90deg)';
+            }
+        });
 
         let currentUser = null;
         let currentTeam = null;
@@ -191,6 +250,153 @@
             });
 
             return { wins, losses, ties };
+        }
+
+        function formatMMSS(ms) {
+            const totalSeconds = Math.max(0, Math.floor((ms || 0) / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        async function findLatestGameWithPlayingTime(teamId, games, maxLookback = 6) {
+            const completed = (games || [])
+                .filter(g => g.status === 'completed')
+                .sort((a, b) => {
+                    const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+                    const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+                    return bDate - aDate;
+                })
+                .slice(0, maxLookback);
+
+            for (const game of completed) {
+                const snap = await getDocs(collection(db, `teams/${teamId}/games/${game.id}/aggregatedStats`));
+                if (snap.empty) continue;
+
+                const timeByPlayer = {};
+                let hasAny = false;
+                snap.docs.forEach(d => {
+                    const t = d.data()?.timeMs;
+                    if (typeof t === 'number') {
+                        timeByPlayer[d.id] = t;
+                        if (t > 0) hasAny = true;
+                    }
+                });
+
+                if (hasAny) return { game, timeByPlayer };
+            }
+
+            return null;
+        }
+
+        async function renderPlayingTimeInsights(teamId, team, players, games) {
+            const section = document.getElementById('playing-time-insights');
+            const meta = document.getElementById('playing-time-insights-meta');
+            const body = document.getElementById('playing-time-insights-body');
+            if (!section || !meta || !body) return;
+
+            const result = await findLatestGameWithPlayingTime(teamId, games);
+            if (!result) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            section.classList.remove('hidden');
+
+            // Set initial collapsed state
+            playingTimeChevron.style.transform = 'rotate(-90deg)';
+
+            const gameDate = result.game.date?.toDate ? result.game.date.toDate() : new Date(result.game.date);
+            const roster = (players || []).map(p => {
+                const timeMs = result.timeByPlayer[p.id] || 0;
+                return {
+                    id: p.id,
+                    name: p.name || '',
+                    number: p.number || '-',
+                    timeMs
+                };
+            });
+
+            const maxTime = Math.max(...roster.map(p => p.timeMs), 1);
+            const totalTime = roster.reduce((sum, p) => sum + p.timeMs, 0);
+            const playedCount = roster.filter(p => p.timeMs > 0).length;
+            const above40 = roster.filter(p => (p.timeMs / maxTime) >= 0.4).length;
+            const balancePct = roster.length ? Math.round((above40 / roster.length) * 100) : 0;
+
+            meta.innerHTML = `
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 border border-primary-200">
+                    <span class="font-mono">${formatDate(gameDate)}</span>
+                    <span class="text-gray-400">•</span>
+                    <span class="truncate max-w-[18ch]">vs ${escapeHtml(result.game.opponent || 'Opponent')}</span>
+                </span>
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-50 text-gray-700 border border-gray-200">
+                    Coverage <span class="font-mono text-gray-900">${playedCount}/${roster.length}</span>
+                </span>
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-50 text-gray-700 border border-gray-200">
+                    Team Minutes <span class="font-mono text-gray-900">${(totalTime / 60000).toFixed(0)}</span>
+                </span>
+                <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${balancePct >= 70 ? 'bg-green-50 text-green-700 border-green-200' : balancePct >= 40 ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'} border">
+                    Balance <span class="font-mono">${balancePct}%</span>
+                </span>
+            `;
+
+            const sorted = [...roster].sort((a, b) => b.timeMs - a.timeMs);
+            const top = sorted.slice(0, Math.min(10, sorted.length));
+
+            body.innerHTML = `
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-gradient-to-br from-gray-50 to-white rounded-xl p-6 border border-gray-200">
+                        <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Top Minutes
+                        </h3>
+                        <div class="space-y-3">
+                            ${top.map(p => {
+                                const pct = Math.round((p.timeMs / maxTime) * 100);
+                                const href = `player.html#teamId=${teamId}&gameId=${result.game.id}&playerId=${p.id}`;
+                                return `
+                                    <a href="${href}" class="block group/item">
+                                        <div class="flex items-center justify-between gap-3 mb-1">
+                                            <div class="min-w-0">
+                                                <div class="text-sm font-semibold text-gray-900 truncate group-hover/item:text-primary-700 transition">#${escapeHtml(p.number)} ${escapeHtml(p.name)}</div>
+                                            </div>
+                                            <div class="text-sm font-mono font-semibold text-gray-700">${formatMMSS(p.timeMs)}</div>
+                                        </div>
+                                        <div class="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                                            <div class="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-700 transition-all" style="width:${pct}%"></div>
+                                        </div>
+                                    </a>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl p-6 shadow-md border border-gray-200">
+                        <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                            Rotation Notes
+                        </h3>
+                        <div class="space-y-3 text-sm text-gray-700">
+                            <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <span class="font-semibold text-gray-600">Longest playing time</span>
+                                <span class="font-mono font-bold text-gray-900">${formatMMSS(top[0]?.timeMs || 0)}</span>
+                            </div>
+                            <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                <span class="font-semibold text-gray-600">40%+ of max minutes</span>
+                                <span class="font-mono font-bold text-gray-900">${above40}/${roster.length}</span>
+                            </div>
+                            <div class="p-4 bg-primary-50 rounded-lg border border-primary-200">
+                                <div class="font-semibold text-primary-800 mb-1">How it works</div>
+                                <div class="text-primary-700">Minutes are tracked while the game clock is running and a player is on court in the beta basketball tracker.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         function getNextGame(allEvents) {
@@ -379,6 +585,8 @@
                     updateCountdown();
                     setInterval(updateCountdown, 60000); // Update every minute
                 }
+
+                await renderPlayingTimeInsights(teamId, team, players, dbGames);
 
                 // Render Team Advanced Stats
                 const teamAdvancedStatsDiv = document.getElementById('team-advanced-stats');

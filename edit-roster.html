@@ -2,6 +2,16 @@
 <html lang="en">
 
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="img/logo_small.png">
@@ -33,9 +43,7 @@
     <div id="header-container"></div>
 
     <main class="container mx-auto px-4 py-8">
-        <div class="mb-4">
-            <a href="dashboard.html" class="text-indigo-600 hover:underline">&larr; Back to Dashboard</a>
-        </div>
+        <div id="team-admin-banner" class="mb-6"></div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
             <!-- Add Player Form -->
@@ -201,12 +209,14 @@
         import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
 
         renderFooter(document.getElementById('footer-container'));
 
         let currentTeamId = null;
+        let currentTeam = null;
         let currentUser = null;
         let editingPlayerId = null;
         let editingPhotoUrl = null;
@@ -242,6 +252,8 @@
                 window.location.href = 'dashboard.html';
                 return;
             }
+            currentTeam = team;
+            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'roster' });
 
             document.getElementById('team-name-display').textContent = team.name;
             loadRoster();

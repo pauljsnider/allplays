@@ -2,6 +2,16 @@
 <html lang="en">
 
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="img/logo_small.png">
@@ -33,6 +43,7 @@
     <div id="header-container"></div>
 
     <main class="container mx-auto px-4 py-8">
+        <div id="team-admin-banner" class="mb-6"></div>
         <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-md p-8">
             <h1 id="page-title" class="text-2xl font-bold mb-6">Create New Team</h1>
 
@@ -158,6 +169,7 @@
         import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
+        import { renderTeamAdminBanner } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -231,6 +243,7 @@
                     // Update management links
                     document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${teamId}`;
                     document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${teamId}`;
+                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'team' });
                 }
             }
         }

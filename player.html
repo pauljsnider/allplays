@@ -2,6 +2,16 @@
 <html lang="en">
 
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="img/logo_small.png">
@@ -180,6 +190,13 @@
         // Set initial active tab
         document.getElementById('tab-games').click();
 
+        function formatMMSS(ms) {
+            const totalSeconds = Math.max(0, Math.floor((ms || 0) / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
         async function loadPlayerDetails() {
             const { teamId, gameId, playerId } = getUrlParams();
             if (!teamId || !playerId) {
@@ -205,21 +222,29 @@
                 let gamesPlayed = 0;
                 const seasonTotals = {};
                 const allEvents = [];
+                let totalTimeMs = 0;
+                let gamesWithTime = 0;
 
                 for (const game of games) {
                     const gameIdIter = game.id;
                     const statsDoc = await getDoc(doc(db, `teams/${teamId}/games/${gameIdIter}/aggregatedStats`, playerId));
                     if (statsDoc.exists()) {
                         const stats = statsDoc.data().stats || {};
+                        const timeMs = typeof statsDoc.data().timeMs === 'number' ? statsDoc.data().timeMs : 0;
                         gamesPlayed++;
                         Object.entries(stats).forEach(([stat, value]) => {
                             seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
                         });
+                        if (timeMs > 0) {
+                            totalTimeMs += timeMs;
+                            gamesWithTime++;
+                        }
                         perGameStats.push({
                             gameId: gameIdIter,
                             date: game.date.toDate ? game.date.toDate() : new Date(game.date),
                             opponent: game.opponent || 'Opponent',
-                            stats
+                            stats,
+                            timeMs
                         });
 
                         // Collect events for this game
@@ -276,13 +301,40 @@
                     averages[stat] = (total / gamesPlayed).toFixed(1);
                 });
 
-                // Render Season Overview Cards (top 4 stats)
-                const topStats = statKeys.slice(0, 4);
-                document.getElementById('season-overview').innerHTML = topStats.map(stat => `
+                // Render Season Overview Cards (include playing time when available)
+                const overviewCards = [];
+                if (gamesWithTime > 0) {
+                    const avgMin = (totalTimeMs / 60000 / gamesWithTime).toFixed(1);
+                    overviewCards.push({
+                        label: 'MIN/G',
+                        value: avgMin,
+                        sub: 'beta tracker'
+                    });
+                    overviewCards.push({
+                        label: 'TOTAL MIN',
+                        value: (totalTimeMs / 60000).toFixed(0),
+                        sub: `${gamesWithTime} game${gamesWithTime === 1 ? '' : 's'}`
+                    });
+                }
+
+                statKeys.forEach(stat => {
+                    if (overviewCards.length >= 4) return;
+                    overviewCards.push({
+                        label: stat,
+                        value: averages[stat],
+                        sub: 'per game'
+                    });
+                });
+
+                while (overviewCards.length < 4) {
+                    overviewCards.push({ label: '—', value: '—', sub: '' });
+                }
+
+                document.getElementById('season-overview').innerHTML = overviewCards.slice(0, 4).map(card => `
                     <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
-                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">${stat}</div>
-                        <div class="text-3xl md:text-4xl font-bold text-primary-600">${averages[stat]}</div>
-                        <div class="text-xs text-gray-500 mt-1">per game</div>
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">${escapeHtml(card.label)}</div>
+                        <div class="text-3xl md:text-4xl font-bold text-primary-600">${escapeHtml(card.value)}</div>
+                        ${card.sub ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(card.sub)}</div>` : ''}
                     </div>
                 `).join('');
 
@@ -424,6 +476,72 @@
                             </div>
                         </div>
                     `;
+
+                    // Append playing time trend (beta tracker)
+                    if (gamesWithTime >= 2) {
+                        const timeSeries = [...perGameStats]
+                            .filter(g => (g.timeMs || 0) > 0)
+                            .sort((a, b) => a.date - b.date)
+                            .slice(-8);
+                        const maxTime = Math.max(...timeSeries.map(g => g.timeMs), 1);
+                        advancedStatsDiv.innerHTML += `
+                            <div class="bg-white rounded-xl shadow-md border border-gray-200">
+                                <button class="w-full text-left p-6 pb-4 group playing-time-trend-toggle">
+                                    <div class="flex items-center justify-between gap-3">
+                                        <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                            </svg>
+                                            Playing Time Trend
+                                        </h3>
+                                        <svg class="playing-time-trend-chevron w-5 h-5 text-gray-400 transition-transform duration-200" style="transform: rotate(-90deg);"
+                                            fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                        </svg>
+                                    </div>
+                                </button>
+                                <div class="playing-time-trend-content overflow-hidden transition-all duration-300" style="max-height: 0px;">
+                                    <div class="px-6 pb-6">
+                                        <div class="flex items-end justify-around gap-1 h-40 bg-gradient-to-t from-gray-50 to-transparent rounded-lg p-4">
+                                            ${timeSeries.map(g => {
+                                                const h = Math.max(8, Math.round((g.timeMs / maxTime) * 100));
+                                                const label = g.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                                return `
+                                                    <div class="flex-1 flex flex-col items-center gap-2">
+                                                        <div class="text-[11px] font-mono text-gray-600">${formatMMSS(g.timeMs)}</div>
+                                                        <div class="w-full rounded-t-lg bg-gradient-to-t from-primary-600 to-primary-400" style="height:${h}%"></div>
+                                                        <div class="text-[10px] text-gray-500 font-semibold">${label}</div>
+                                                    </div>
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                        <div class="text-center mt-2 text-sm text-gray-600">Beta tracker minutes (last ${timeSeries.length} games)</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+
+                        // Add toggle functionality for playing time trend
+                        setTimeout(() => {
+                            const toggle = document.querySelector('.playing-time-trend-toggle');
+                            const content = document.querySelector('.playing-time-trend-content');
+                            const chevron = document.querySelector('.playing-time-trend-chevron');
+                            let expanded = false;
+
+                            if (toggle && content && chevron) {
+                                toggle.addEventListener('click', () => {
+                                    expanded = !expanded;
+                                    if (expanded) {
+                                        content.style.maxHeight = content.scrollHeight + 'px';
+                                        chevron.style.transform = 'rotate(0deg)';
+                                    } else {
+                                        content.style.maxHeight = '0px';
+                                        chevron.style.transform = 'rotate(-90deg)';
+                                    }
+                                });
+                            }
+                        }, 100);
+                    }
                 } else {
                     advancedStatsDiv.innerHTML = `
                         <div class="text-center py-12">
@@ -448,6 +566,7 @@
                                     <div class="text-lg font-bold text-gray-900">vs. ${escapeHtml(g.opponent)}</div>
                                 </div>
                                 <div class="flex items-center gap-2">
+                                    ${(g.timeMs || 0) > 0 ? `<span class="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-700 font-semibold border border-gray-200">⏱ ${formatMMSS(g.timeMs)}</span>` : ''}
                                     ${g.gameId === selectedGameId ? '<span class="text-xs px-3 py-1 rounded-full bg-primary-100 text-primary-700 font-semibold">Current</span>' : ''}
                                     <a class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 transition font-medium"
                                        href="game.html#teamId=${teamId}&gameId=${g.gameId}"
@@ -461,6 +580,12 @@
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                                ${(g.timeMs || 0) > 0 ? `
+                                    <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                                        <div class="text-2xl md:text-3xl font-bold text-primary-600">${(g.timeMs / 60000).toFixed(1)}</div>
+                                        <div class="text-xs text-gray-600 uppercase mt-1 font-medium">MIN</div>
+                                    </div>
+                                ` : ''}
                                 ${Object.entries(g.stats).map(([stat, value]) => `
                                     <div class="text-center p-4 bg-white rounded-lg border border-gray-200 hover:border-primary-300 transition">
                                         <div class="text-2xl md:text-3xl font-bold text-primary-600">${value}</div>
@@ -484,14 +609,26 @@
                 // Season totals/averages
                 const seasonStatsDiv = document.getElementById('season-stats');
                 if (gamesPlayed > 0) {
+                    const avgMin = gamesWithTime > 0 ? (totalTimeMs / 60000 / gamesWithTime).toFixed(1) : null;
                     seasonStatsDiv.innerHTML = `
                         <div class="mb-6">
-                            <div class="inline-flex items-center gap-3 bg-gradient-to-r from-primary-50 to-primary-100 px-6 py-3 rounded-xl border border-primary-200">
-                                <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                                </svg>
-                                <span class="font-semibold text-gray-700">Games Played:</span>
-                                <span class="text-xl font-bold text-primary-600">${gamesPlayed}</span>
+                            <div class="flex flex-wrap gap-3">
+                                <div class="inline-flex items-center gap-3 bg-gradient-to-r from-primary-50 to-primary-100 px-6 py-3 rounded-xl border border-primary-200">
+                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    <span class="font-semibold text-gray-700">Games Played:</span>
+                                    <span class="text-xl font-bold text-primary-600">${gamesPlayed}</span>
+                                </div>
+                                ${avgMin ? `
+                                    <div class="inline-flex items-center gap-3 bg-white px-6 py-3 rounded-xl border border-gray-200">
+                                        <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                        <span class="font-semibold text-gray-700">MIN/G (beta):</span>
+                                        <span class="text-xl font-bold text-gray-900">${avgMin}</span>
+                                    </div>
+                                ` : ''}
                             </div>
                         </div>
                         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">

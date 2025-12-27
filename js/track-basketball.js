@@ -13,6 +13,8 @@ let currentUser = null;
 let currentConfig = null;
 
 let roster = [];
+let isFinishing = false;
+let allowNavigation = false;
 
 function statDefaults(columns) {
   const stats = { time: 0 };
@@ -580,7 +582,8 @@ async function saveAndComplete() {
       batch.set(statsRef, {
         playerName: player.name,
         playerNumber: player.num,
-        stats: statsObj
+        stats: statsObj,
+        timeMs: state.stats[player.id]?.time || 0
       });
     });
 
@@ -608,6 +611,7 @@ async function saveAndComplete() {
     });
 
     await batch.commit();
+    isFinishing = true;
 
     if (sendEmail) {
       const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
@@ -901,6 +905,48 @@ function attachEvents() {
   if (els.autoFill) {
     els.autoFill.addEventListener('click', autoFillStarters);
   }
+}
+
+function hasUnsavedActivity() {
+  return !isFinishing && state.clock > 0;
+}
+
+function setupNavigationWarning() {
+  window.addEventListener('beforeunload', (event) => {
+    if (!hasUnsavedActivity()) return;
+    event.preventDefault();
+    event.returnValue = '';
+    return '';
+  });
+
+  try {
+    history.replaceState({ trackingPage: true }, '', window.location.href);
+    history.pushState({ trackingPage: true }, '', window.location.href);
+  } catch {
+    // ignore
+  }
+
+  window.addEventListener('popstate', () => {
+    if (allowNavigation) {
+      allowNavigation = false;
+      return;
+    }
+
+    if (!hasUnsavedActivity()) return;
+
+    const confirmLeave = confirm('Game in progress. Leaving now will lose unsaved changes. Leave this page?');
+    if (!confirmLeave) {
+      try {
+        history.pushState({ trackingPage: true }, '', window.location.href);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    allowNavigation = true;
+    history.back();
+  });
 }
 
 function handleLineupClick(e) {
@@ -1210,6 +1256,9 @@ async function init() {
       if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
       const existing = d.data().stats || {};
       Object.assign(state.stats[d.id], existing);
+      if (typeof d.data().timeMs === 'number') {
+        state.stats[d.id].time = d.data().timeMs;
+      }
     });
 
     // Recalculate home score if needed based on points column
@@ -1251,6 +1300,7 @@ async function init() {
     renderQueue();
     attachEvents();
     updateSubsButton();
+    setupNavigationWarning();
   } catch (error) {
     console.error(error);
     alert('Error loading game data.');

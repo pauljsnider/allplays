@@ -2,6 +2,16 @@
 <html lang="en">
 
 <head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/png" href="img/logo_small.png">
@@ -132,6 +142,36 @@
                 </div>
             </div>
         </div>
+
+        <!-- Playing Time Insights Section (Beta Basketball) -->
+        <div id="playing-time-insights" class="mb-8 md:mb-10 hidden">
+            <button id="playing-time-toggle" class="w-full text-left group">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Playing Time Distribution</h2>
+                    </div>
+                    <svg id="playing-time-chevron" class="w-6 h-6 text-gray-400 transition-transform duration-200"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </div>
+            </button>
+            <div id="playing-time-content"
+                class="bg-white shadow-lg rounded-2xl border border-gray-200 overflow-hidden transition-all duration-300"
+                style="max-height: 0px;">
+                <div class="p-6 md:p-8">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                        <div>
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Rotation</div>
+                            <p class="text-sm text-gray-500 mt-1">Minutes played during this game.</p>
+                        </div>
+                        <div id="playing-time-meta" class="flex flex-wrap gap-2"></div>
+                    </div>
+                    <div id="playing-time-body"></div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <div id="footer-container"></div>
@@ -164,6 +204,23 @@
             } else {
                 summaryContent.style.maxHeight = '0px';
                 summaryChevron.style.transform = 'rotate(-90deg)';
+            }
+        });
+
+        // Playing time toggle functionality
+        let playingTimeExpanded = false;
+        const playingTimeToggle = document.getElementById('playing-time-toggle');
+        const playingTimeContent = document.getElementById('playing-time-content');
+        const playingTimeChevron = document.getElementById('playing-time-chevron');
+
+        playingTimeToggle.addEventListener('click', () => {
+            playingTimeExpanded = !playingTimeExpanded;
+            if (playingTimeExpanded) {
+                playingTimeContent.style.maxHeight = playingTimeContent.scrollHeight + 'px';
+                playingTimeChevron.style.transform = 'rotate(0deg)';
+            } else {
+                playingTimeContent.style.maxHeight = '0px';
+                playingTimeChevron.style.transform = 'rotate(-90deg)';
             }
         });
 
@@ -254,8 +311,11 @@
                 // We need to fetch from subcollection: teams/{teamId}/games/{gameId}/aggregatedStats
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 const statsMap = {};
+                const timeMap = {};
                 statsSnapshot.forEach(doc => {
-                    statsMap[doc.id] = doc.data().stats;
+                    const data = doc.data();
+                    statsMap[doc.id] = data.stats;
+                    timeMap[doc.id] = data.timeMs || 0;
                 });
 
                 // Fetch the config used for this game
@@ -333,6 +393,9 @@
                     });
                 }
 
+                // Check if we have any playing time data
+                const hasPlayingTime = Object.values(timeMap).some(t => t > 0);
+
                 // Render Table Header
                 const headerRow = document.getElementById('stats-header-row');
                 statKeys.forEach(key => {
@@ -342,6 +405,22 @@
                     headerRow.appendChild(th);
                 });
 
+                // Add Minutes column if we have playing time data
+                if (hasPlayingTime) {
+                    const minTh = document.createElement('th');
+                    minTh.className = "px-4 py-4 text-center";
+                    minTh.textContent = "MIN";
+                    headerRow.appendChild(minTh);
+                }
+
+                // Helper function to format milliseconds to MM:SS
+                function formatMMSS(ms) {
+                    const totalSeconds = Math.max(0, Math.floor((ms || 0) / 1000));
+                    const minutes = Math.floor(totalSeconds / 60);
+                    const seconds = totalSeconds % 60;
+                    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                }
+
                 // Render Table Body
                 const tbody = document.getElementById('stats-body');
                 if (players.length === 0) {
@@ -349,9 +428,13 @@
                 } else {
                     tbody.innerHTML = players.map(p => {
                         const pStats = statsMap[p.id] || {};
+                        const pTime = timeMap[p.id] || 0;
                         const statCells = statKeys.map(key => `
                             <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${pStats[key] || 0}</td>
                         `).join('');
+                        const minutesCell = hasPlayingTime ? `
+                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${formatMMSS(pTime)}</td>
+                        ` : '';
                         return `
                             <tr class="bg-white hover:bg-gray-50 transition">
                                     <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number || '-')}</td>
@@ -369,9 +452,109 @@
                                         </a>
                                     </td>
                                 ${statCells}
+                                ${minutesCell}
                             </tr>
                         `;
                     }).join('');
+                }
+
+                // Render Playing Time Insights
+                if (hasPlayingTime) {
+                    const playingTimeSection = document.getElementById('playing-time-insights');
+                    playingTimeSection.classList.remove('hidden');
+
+                    // Set initial collapsed state
+                    playingTimeChevron.style.transform = 'rotate(-90deg)';
+
+                    const roster = players.map(p => ({
+                        id: p.id,
+                        name: p.name || '',
+                        number: p.number || '-',
+                        timeMs: timeMap[p.id] || 0,
+                        photoUrl: p.photoUrl
+                    }));
+
+                    const maxTime = Math.max(...roster.map(p => p.timeMs), 1);
+                    const totalTime = roster.reduce((sum, p) => sum + p.timeMs, 0);
+                    const playedCount = roster.filter(p => p.timeMs > 0).length;
+                    const above40 = roster.filter(p => (p.timeMs / maxTime) >= 0.4).length;
+                    const balancePct = roster.length ? Math.round((above40 / roster.length) * 100) : 0;
+
+                    const meta = document.getElementById('playing-time-meta');
+                    meta.innerHTML = `
+                        <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-primary-50 border border-primary-200 text-primary-800 rounded-lg text-sm font-semibold">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                            </svg>
+                            ${playedCount} played
+                        </span>
+                        <span class="inline-flex items-center gap-2 px-3 py-1.5 ${balancePct >= 60 ? 'bg-green-50 border-green-200 text-green-800' : balancePct >= 40 ? 'bg-yellow-50 border-yellow-200 text-yellow-800' : 'bg-red-50 border-red-200 text-red-800'} border rounded-lg text-sm font-semibold">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            ${balancePct}% balanced
+                        </span>
+                    `;
+
+                    const sorted = [...roster].sort((a, b) => b.timeMs - a.timeMs);
+                    const body = document.getElementById('playing-time-body');
+
+                    body.innerHTML = `
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <div class="lg:col-span-2">
+                                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">
+                                    Players
+                                </h3>
+                                <div class="space-y-3">
+                                    ${sorted.map(p => {
+                                        const pct = Math.round((p.timeMs / maxTime) * 100);
+                                        const href = `player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}`;
+                                        return `
+                                            <a href="${href}" class="block group/item">
+                                                <div class="flex items-center justify-between gap-3 mb-1.5">
+                                                    <div class="flex items-center gap-3 min-w-0 flex-1">
+                                                        <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200 flex-shrink-0">
+                                                            ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                                                                <svg class="w-full h-full text-gray-400 p-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                                                                </svg>
+                                                            `}
+                                                        </span>
+                                                        <div class="min-w-0">
+                                                            <div class="text-sm font-semibold text-gray-900 truncate group-hover/item:text-primary-700 transition">#${escapeHtml(p.number)} ${escapeHtml(p.name)}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="text-sm font-mono font-semibold text-gray-700">${formatMMSS(p.timeMs)}</div>
+                                                </div>
+                                                <div class="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                                                    <div class="h-full rounded-full bg-gradient-to-r from-primary-500 to-primary-700 transition-all" style="width:${pct}%"></div>
+                                                </div>
+                                            </a>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                            <div class="lg:col-span-1">
+                                <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">
+                                    Summary
+                                </h3>
+                                <div class="space-y-3 text-sm text-gray-700">
+                                    <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                        <span class="font-semibold text-gray-600">Longest time</span>
+                                        <span class="font-mono font-bold text-gray-900">${formatMMSS(sorted[0]?.timeMs || 0)}</span>
+                                    </div>
+                                    <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                        <span class="font-semibold text-gray-600">40%+ of max</span>
+                                        <span class="font-mono font-bold text-gray-900">${above40} / ${roster.length}</span>
+                                    </div>
+                                    <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                        <span class="font-semibold text-gray-600">Players used</span>
+                                        <span class="font-mono font-bold text-gray-900">${playedCount}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
                 }
 
                 // Render Opponent Stats
