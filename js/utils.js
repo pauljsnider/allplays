@@ -98,9 +98,19 @@ export function renderHeader(container, user) {
     const navProfile = container.querySelector(`#nav-profile-${suffix}`);
 
     if (user) {
-      // "Sign In" becomes "My Teams" for everyone
-      navSignIn.textContent = 'My Teams';
-      navSignIn.href = 'dashboard.html';
+      const hasParentLinks = Array.isArray(user.parentOf) && user.parentOf.length > 0;
+      const hasCoachAccess = user.isAdmin || (Array.isArray(user.coachOf) && user.coachOf.length > 0);
+
+      // Primary nav destination based on role
+      if (hasParentLinks && !hasCoachAccess) {
+        // Parent-only: send to parent dashboard
+        navSignIn.textContent = 'My Players';
+        navSignIn.href = 'parent-dashboard.html';
+      } else {
+        // Coaches/admins (or mixed roles): send to main dashboard
+        navSignIn.textContent = 'My Teams';
+        navSignIn.href = 'dashboard.html';
+      }
 
       // CTA button logic
       if (user.isAdmin) {
