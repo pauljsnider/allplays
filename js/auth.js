@@ -43,16 +43,10 @@ export async function signup(email, password, activationCode) {
         console.error('Error creating user profile:', e);
     }
 
-    // Send verification email (use same settings as password reset which works)
-    // Small delay to ensure user is fully created in Firebase
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
+    // Send verification email using Firebase defaults (configured in Firebase Console)
+    // No actionCodeSettings - let Firebase handle it with console-configured template
     try {
-        const actionCodeSettings = {
-            url: 'https://allplays.ai/reset-password.html',
-            handleCodeInApp: true
-        };
-        await sendEmailVerification(userCredential.user, actionCodeSettings);
+        await sendEmailVerification(userCredential.user);
         console.log('Verification email sent successfully');
     } catch (e) {
         console.error('Error sending verification email:', e);
@@ -208,12 +202,9 @@ export async function resendVerificationEmail() {
     // Reload user to ensure we have fresh state
     await user.reload();
 
-    const actionCodeSettings = {
-        url: 'https://allplays.ai/reset-password.html',
-        handleCodeInApp: true
-    };
-
-    await sendEmailVerification(user, actionCodeSettings);
+    // Use Firebase defaults - no actionCodeSettings needed
+    // Firebase will use the template configured in Firebase Console
+    await sendEmailVerification(user);
     console.log('Resend verification email sent successfully');
 }
 
