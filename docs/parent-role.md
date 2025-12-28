@@ -34,6 +34,7 @@
 - Invite: `edit-roster.html` adds "Invite Parent" per player; coach enters email + relation; show code to share/copy; display parent connections with status badges.
 - Signup/Login: `login.html` surfaces code role/team/player; parent signup requires code; on success go to parent dashboard.
 - Parent dashboard (new `parent-dashboard.html` + `js/parent.js`): list linked players with photo/number/team; quick links to latest game recap, player stats, team schedule; all read-only.
+- My Teams (`dashboard.html`): parent-linked teams show a single "View" action; all other actions hidden.
 - Existing pages (`player.html`, `team.html`, `game.html`): hide edit controls for parent-only; ensure data fetch works with new read rules.
 - Admin: `admin.html` users table shows `roles` and parent link counts; coach dashboard may flag players with active parent connections.
 
@@ -44,5 +45,6 @@
 ## Testing Ideas
 - Parent signup with valid/invalid code; cannot sign up without code.
 - Parent login sees only linked player(s); no edit buttons; Firestore rejects writes.
+- Parent My Teams view shows one action button per team card.
 - Coach invites parent; status flips pending->active after signup.
 - Admin can still access everything; public viewer still reads public data.

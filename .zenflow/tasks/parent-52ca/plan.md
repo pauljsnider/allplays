@@ -113,3 +113,10 @@ My Players - both coaches and parents can access it, both need the ability to ed
 My Teams - 
 - Parent can see teams that they have a player on, they can only view the team details.  They can create a team and become a coach/admin of the team.
 - Coaches - works the same as it does today.
+
+### [ ] Step: fixes
+<!-- chat-id: 0eeab8de-12e2-4988-a6bf-69cfc40c8d34 -->
+<!-- agent: CODEX -->
+
+Parent FLow:
+dashboard.html - has 2 buttons for View and View only that do the same thing.  Keep one of them.
