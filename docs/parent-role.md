@@ -32,6 +32,8 @@
 
 ## UI/Flows
 - Invite: `edit-roster.html` adds "Invite Parent" per player; coach enters email + relation; show code to share/copy; display parent connections with status badges.
+- Add player: optional parent email field on the single-player form; store as pending parent entry (no invite required). If provided, coach can still send/trigger an invite later.
+- Bulk AI/image upload: allow optional parent email in parsed rows (e.g. `#12 Sarah Jones G parent:sarah@example.com` or `Sarah Jones - 12 (parent sarah@example.com)`); if missing, leave blank.
 - Signup/Login: `login.html` surfaces code role/team/player; parent signup requires code; on success go to parent dashboard.
 - Parent dashboard (new `parent-dashboard.html` + `js/parent.js`): list linked players with photo/number/team; quick links to latest game recap, player stats, team schedule; all read-only.
 - My Teams (`dashboard.html`): parent-linked teams show a single "View" action; all other actions hidden.

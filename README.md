@@ -9,6 +9,7 @@ A static HTML + JavaScript sports team management and stat tracking application,
 - **Schedule**: Manage upcoming games and past results.
 - **Live Stat Tracking**: Track stats live during games with a mobile-friendly interface.
 - **Match Reports**: View detailed summaries and aggregated stats for completed games.
+- **Parent Workflow**: Invite parents to players, view parent-only dashboards, and allow limited profile edits.
 - **Admin Dashboard**: Comprehensive admin section for user and data management (restricted access).
 - **Public/Private Teams**: Control team visibility in the public directory.
 - **Email Summaries**: Generate a mailto draft of the game summary from the tracker UI (no backend send).
@@ -95,12 +96,14 @@ The password reset flow:
 - **Global Admin Functions**: Admins can manage any team or user data
 - **Team Privacy**: Teams can be marked as public/private to control visibility
 - **Access Code System**: Controlled signup with invitation codes
+- **Parent Access Controls**: Parents can view linked players/teams and edit limited player profile fields
 - **XSS Protection**: HTML escaping for user-generated content in admin dashboard
 
 ## Folder Structure
 
 - `index.html`: Public home page.
 - `dashboard.html`: User dashboard (protected).
+- `parent-dashboard.html`: Parent dashboard (linked players + combined schedule).
 - `admin.html`: Admin dashboard (admin users only).
 - `team.html`: Public team details.
 - `game.html`: Match report.
