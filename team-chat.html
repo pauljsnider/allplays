@@ -231,6 +231,7 @@
         let canModerate = false;
         let unsubscribeChat = null;
         let initialSnapshotLoaded = false;
+        let pendingScrollToBottom = false;
         const senderPhotoCache = new Map();
 
         // Get teamId from URL
@@ -363,6 +364,9 @@
             liveOldestDoc = null;
 
             unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50 }, async (newMessages, oldestDoc) => {
+                const container = document.getElementById('messages-container');
+                const wasNearBottom = isNearBottom(container);
+
                 liveOldestDoc = oldestDoc;
                 liveMessages = newMessages.reverse();
 
@@ -383,7 +387,10 @@
                             console.warn('Failed to update last read:', err)
                         );
                     }
+                } else if (pendingScrollToBottom || wasNearBottom) {
+                    scrollToBottom();
                 }
+                pendingScrollToBottom = false;
             });
         }
 
@@ -540,6 +547,11 @@
             });
         }
 
+        function isNearBottom(container) {
+            const threshold = 80;
+            return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
+        }
+
         function showError(message) {
             const errorEl = document.getElementById('send-error');
             errorEl.textContent = message;
@@ -628,6 +640,7 @@
             sendBtn.textContent = 'Sending...';
 
             try {
+                pendingScrollToBottom = true;
                 await postChatMessage(teamId, {
                     text,
                     senderId: currentUser.uid,
@@ -642,6 +655,7 @@
             } catch (error) {
                 console.error('Error sending message:', error);
                 showError('Failed to send message. Please try again.');
+                pendingScrollToBottom = false;
             } finally {
                 sendBtn.disabled = !input.value.trim();
                 sendBtn.textContent = 'Send';
