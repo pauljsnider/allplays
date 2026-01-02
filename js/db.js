@@ -304,6 +304,16 @@ export async function getGame(teamId, gameId) {
     }
 }
 
+export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {
+    const q = query(
+        collection(db, `teams/${teamId}/games/${gameId}/events`),
+        orderBy('timestamp', 'desc'),
+        limitQuery(limit)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
 export async function addGame(teamId, gameData) {
     gameData.createdAt = Timestamp.now();
     const docRef = await addDoc(collection(db, `teams/${teamId}/games`), gameData);

@@ -145,7 +145,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
-        import { getTeam, getUserProfile, getPlayers, getGames, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -266,6 +266,9 @@
         const AI_MENTION_REGEX = /@all\s*plays/ig;
         const AI_STATS_GAMES_LIMIT = 10;
         const AI_GAMES_CONTEXT_LIMIT = 20;
+        const AI_EVENTS_GAMES_LIMIT = 3;
+        const AI_EVENTS_PER_GAME_LIMIT = 25;
+        let aiModelCache = null;
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
@@ -698,7 +701,11 @@
         }
 
         function shouldFetchStats(question) {
-            return /(stats|scorer|score|points|rebounds|assists|goals|saves|leader|leading|top)/i.test(question);
+            return /(stats|scorer|score|points|rebounds|assists|goals|saves|leader|leading|top|better|improv|improve|development|progress|player\s*#?\s*\d+)/i.test(question);
+        }
+
+        function shouldFetchEvents(question) {
+            return /(play\s*by\s*play|play-by-play|timeline|game\s*log|event\s*log|events|possessions|highlights|what happened|sequence)/i.test(question);
         }
 
         function hasAiMention(text) {
@@ -720,6 +727,13 @@
             return Number.isNaN(date.getTime()) ? null : date;
         }
 
+        function truncateText(text, maxLen) {
+            if (!text) return null;
+            const clean = String(text).trim();
+            if (clean.length <= maxLen) return clean;
+            return `${clean.slice(0, maxLen).trim()}…`;
+        }
+
         function serializeGame(game) {
             const date = toDate(game.date);
             return {
@@ -729,15 +743,42 @@
                 location: game.location || null,
                 status: game.status || null,
                 homeScore: game.homeScore ?? null,
-                awayScore: game.awayScore ?? null
+                awayScore: game.awayScore ?? null,
+                summary: truncateText(game.summary, 700)
             };
         }
 
-        async function buildAiContext(question) {
+        function findMatchedPlayer(question, players) {
+            const match = question.match(/player\s*#?\s*(\d{1,3})/i);
+            if (!match) return null;
+            const target = String(Number(match[1]));
+            return players.find(p => String(p.number ?? '') === target) || null;
+        }
+
+        function serializeEvent(event, playersById) {
+            const player = event.playerId ? playersById.get(event.playerId) : null;
+            return {
+                id: event.id,
+                timestamp: event.timestamp ?? null,
+                period: event.period ?? null,
+                gameTime: event.gameTime ?? null,
+                text: event.text || null,
+                type: event.type || null,
+                playerId: event.playerId || null,
+                playerName: player?.name || null,
+                playerNumber: player?.number ?? null,
+                statKey: event.statKey || null,
+                value: event.value ?? null,
+                isOpponent: event.isOpponent === true
+            };
+        }
+
+        async function buildAiContext(question, { fetchStats, fetchEvents }) {
             const [players, games] = await Promise.all([
                 getPlayers(teamId),
                 getGames(teamId)
             ]);
+            const playersById = new Map(players.map(p => [p.id, p]));
 
             const now = new Date();
             const gamesWithDates = games
@@ -757,13 +798,12 @@
                 .map(serializeGame);
 
             let statsSummary = null;
-            if (shouldFetchStats(question)) {
+            if (fetchStats) {
                 const completedGames = gamesWithDates
                     .filter(isCompletedGame)
                     .sort((a, b) => b._date - a._date)
                     .slice(0, AI_STATS_GAMES_LIMIT);
                 const totals = await getAggregatedStatsForGames(teamId, completedGames.map(g => g.id));
-                const playersById = new Map(players.map(p => [p.id, p]));
 
                 statsSummary = {
                     gamesUsed: completedGames.map(serializeGame),
@@ -773,6 +813,33 @@
                         number: playersById.get(playerId)?.number || null,
                         stats
                     }))
+                };
+            }
+
+            let eventsSummary = null;
+            if (fetchEvents) {
+                const recentCompleted = gamesWithDates
+                    .filter(isCompletedGame)
+                    .sort((a, b) => b._date - a._date)
+                    .slice(0, AI_EVENTS_GAMES_LIMIT);
+
+                const eventsByGame = await Promise.all(
+                    recentCompleted.map(async (game) => {
+                        const events = await getGameEvents(teamId, game.id, { limit: AI_EVENTS_PER_GAME_LIMIT });
+                        const ordered = events
+                            .slice()
+                            .reverse()
+                            .map(evt => serializeEvent(evt, playersById));
+                        return {
+                            game: serializeGame(game),
+                            events: ordered
+                        };
+                    })
+                );
+
+                eventsSummary = {
+                    gamesUsed: recentCompleted.map(serializeGame),
+                    eventsByGame
                 };
             }
 
@@ -787,30 +854,92 @@
                     name: p.name || null,
                     number: p.number || null
                 })),
+                matchedPlayer: (() => {
+                    const match = findMatchedPlayer(question, players);
+                    if (!match) return null;
+                    return {
+                        id: match.id,
+                        name: match.name || null,
+                        number: match.number ?? null
+                    };
+                })(),
                 gamesUpcoming: upcomingGames,
                 gamesRecent: recentGames,
-                stats: statsSummary
+                stats: statsSummary,
+                playByPlay: eventsSummary
             };
         }
 
-        async function askAllPlays(question) {
-            const context = await buildAiContext(question);
+        async function getAiModel() {
+            if (aiModelCache) return aiModelCache;
+            const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
+            const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
+            const firebaseApp = getApp();
+            const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+            aiModelCache = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+            return aiModelCache;
+        }
+
+        function parseJsonObject(text) {
+            const match = text.match(/\{[\s\S]*\}/);
+            if (!match) return null;
+            try {
+                return JSON.parse(match[0]);
+            } catch (err) {
+                return null;
+            }
+        }
+
+        async function inferDataNeeds(question) {
+            if (shouldFetchStats(question) || shouldFetchEvents(question)) {
+                return {
+                    fetchStats: shouldFetchStats(question),
+                    fetchEvents: shouldFetchEvents(question),
+                    source: 'heuristic'
+                };
+            }
+            try {
+                const model = await getAiModel();
+                const prompt = `You are a routing helper. Return ONLY valid JSON.\\n` +
+                    `Determine whether stats are needed to answer the question.\\n` +
+                    `If the question asks about performance, improvement, rankings, scoring, or a specific player number, set fetchStats=true.\\n` +
+                    `Determine whether play-by-play events are needed (timeline, sequence, highlights, game log).\\n` +
+                    `JSON format: {"fetchStats": true|false, "fetchEvents": true|false}\\n` +
+                    `QUESTION: ${question}`;
+                const result = await model.generateContent(prompt);
+                const parsed = parseJsonObject(result.response.text().trim());
+                if (parsed && typeof parsed.fetchStats === 'boolean') {
+                    return {
+                        fetchStats: parsed.fetchStats,
+                        fetchEvents: parsed.fetchEvents === true,
+                        source: 'router'
+                    };
+                }
+            } catch (err) {
+                console.warn('AI router failed, falling back to heuristic.', err);
+            }
+            return { fetchStats: false, fetchEvents: false, source: 'fallback' };
+        }
+
+        async function askAllPlays(question, { fetchStats, fetchEvents }) {
+            const context = await buildAiContext(question, { fetchStats, fetchEvents });
             const prompt = `You are ALL PLAYS, a sports management expert for youth teams.\\n` +
                 `You are speaking to coaches, admins, and parents.\\n` +
                 `Use ONLY the provided DATA to answer. If the data is insufficient, say so.\\n` +
                 `Respond in a clear, readable format with short paragraphs or bullet points.\\n` +
+                `Limit to at most 6 bullets total.\\n` +
                 `When you use bullets, start each bullet with "- " (dash + space).\\n` +
+                `Use *bold* only for short labels, not full sentences.\\n` +
+                `Do not use "*" as a bullet character.\\n` +
                 `When referencing dates/times, prefer a readable format (e.g., \"Tue Jan 6, 7:07 PM\").\\n` +
-                `If the question is about stats, summarize with top performers and include key numbers.\\n\\n` +
+                `If the question is about stats, summarize with top performers and include key numbers.\\n` +
+                `If game summaries are provided, use them to mention recent performance or highlights.\\n` +
+                `If play-by-play events are provided, use them to answer timeline or highlight questions.\\n` +
+                `If individual stats are missing, give 3-5 general improvement tips aligned to the team's sport and ask a short follow-up question.\\n\\n` +
                 `QUESTION:\\n${question}\\n\\n` +
                 `DATA (JSON):\\n${JSON.stringify(context)}\\n`;
 
-            const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
-            const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
-
-            const firebaseApp = getApp();
-            const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
-            const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+            const model = await getAiModel();
             const result = await model.generateContent(prompt);
             return result.response.text();
         }
@@ -826,7 +955,8 @@
             aiInFlight = true;
             showAiThinking(true);
             try {
-                const responseText = await askAllPlays(question);
+                const needs = await inferDataNeeds(question);
+                const responseText = await askAllPlays(question, needs);
                 await postChatMessage(teamId, {
                     text: responseText,
                     senderId: currentUser.uid,
@@ -838,7 +968,12 @@
                     aiQuestion: question,
                     aiMeta: {
                         statsGameLimit: AI_STATS_GAMES_LIMIT,
-                        gamesContextLimit: AI_GAMES_CONTEXT_LIMIT
+                        gamesContextLimit: AI_GAMES_CONTEXT_LIMIT,
+                        statsRequested: needs.fetchStats,
+                        eventsGameLimit: AI_EVENTS_GAMES_LIMIT,
+                        eventsPerGameLimit: AI_EVENTS_PER_GAME_LIMIT,
+                        eventsRequested: needs.fetchEvents,
+                        statsRequestSource: needs.source
                     }
                 });
             } catch (error) {
