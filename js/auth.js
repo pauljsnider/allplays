@@ -68,9 +68,13 @@ export async function signup(email, password, activationCode) {
         }
     }
 
-    // Send verification email using Firebase defaults
+    // Send verification email with actionCodeSettings
     try {
-        await sendEmailVerification(userCredential.user);
+        const actionCodeSettings = {
+            url: 'https://allplays.ai/reset-password.html',
+            handleCodeInApp: true
+        };
+        await sendEmailVerification(userCredential.user, actionCodeSettings);
         console.log('Verification email sent successfully');
     } catch (e) {
         console.error('Error sending verification email:', e);
@@ -198,7 +202,21 @@ export function checkAuth(callback, options = {}) {
                 if (profile) {
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;
-                    
+
+                    // Auto-migrate: ensure parentTeamIds is in sync with parentOf
+                    if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) {
+                        const expectedTeamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))].sort();
+                        const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
+                        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds)) {
+                            try {
+                                await updateUserProfile(user.uid, { parentTeamIds: expectedTeamIds });
+                                console.log('[auth] Auto-migrated parentTeamIds for user');
+                            } catch (err) {
+                                console.warn('[auth] Failed to auto-migrate parentTeamIds:', err);
+                            }
+                        }
+                    }
+
                     if (profile.coachOf) {
                         user.coachOf = profile.coachOf;
                     } else {
@@ -212,7 +230,7 @@ export function checkAuth(callback, options = {}) {
                             console.warn('Error fetching owned teams in auth check:', err);
                         }
                     }
-                    
+
                     if (profile.roles) user.roles = profile.roles;
                 }
 
@@ -256,9 +274,11 @@ export async function resendVerificationEmail() {
     // Reload user to ensure we have fresh state
     await user.reload();
 
-    // Use Firebase defaults - no actionCodeSettings needed
-    // Firebase will use the template configured in Firebase Console
-    await sendEmailVerification(user);
+    const actionCodeSettings = {
+        url: 'https://allplays.ai/reset-password.html',
+        handleCodeInApp: true
+    };
+    await sendEmailVerification(user, actionCodeSettings);
     console.log('Resend verification email sent successfully');
 }
 
