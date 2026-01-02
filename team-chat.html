@@ -651,6 +651,7 @@
 
                 input.value = '';
                 document.getElementById('send-error').classList.add('hidden');
+                scrollToBottom();
 
             } catch (error) {
                 console.error('Error sending message:', error);
