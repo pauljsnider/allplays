@@ -68,25 +68,15 @@ export async function signup(email, password, activationCode) {
         }
     }
 
-    // Send verification email - wait for auth state to settle first
+    // Send verification email - use userCredential.user directly (not auth.currentUser)
     try {
-        // Wait for auth state change to confirm user is fully signed in
-        await new Promise((resolve) => {
-            const unsubscribe = onAuthStateChanged(auth, (user) => {
-                if (user && user.uid === userId) {
-                    unsubscribe();
-                    resolve(user);
-                }
-            });
-        });
-
-        // Now get fresh user and send email
-        const user = auth.currentUser;
-        await user.reload();
-        await sendEmailVerification(user);
-        console.log('Verification email sent successfully to:', user.email);
+        console.log('SIGNUP: About to reload user:', userCredential.user.email);
+        await userCredential.user.reload();
+        console.log('SIGNUP: User reloaded, about to send verification email');
+        await sendEmailVerification(userCredential.user);
+        console.log('SIGNUP: Verification email sent successfully to:', userCredential.user.email);
     } catch (e) {
-        console.error('Error sending verification email:', e.code, e.message);
+        console.error('SIGNUP ERROR sending verification email:', e.code, e.message, e);
         // Don't throw - let signup succeed, user can resend
     }
 
