@@ -1,6 +1,6 @@
 import { db, auth } from './firebase.js';
 import { imageStorage, ensureImageAuth } from './firebase-images.js';
-import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer, onSnapshot } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -920,6 +920,20 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
 
     const snapshot = await getDocs(q);
     return snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+}
+
+/**
+ * Subscribe to chat messages in real time (newest first).
+ * Returns an unsubscribe function.
+ */
+export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages) {
+    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
+    return onSnapshot(q, (snapshot) => {
+        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+        const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
+        onMessages(docs, oldestDoc);
+    });
 }
 
 /**

@@ -131,7 +131,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
-        import { getTeam, getUserProfile, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead } from './js/db.js';
+        import { getTeam, getUserProfile, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -224,9 +224,13 @@
         let currentTeam = null;
         let teamId = null;
         let messages = [];
-        let lastDoc = null;
+        let liveMessages = [];
+        let olderMessages = [];
+        let liveOldestDoc = null;
         let hasMoreMessages = true;
         let canModerate = false;
+        let unsubscribeChat = null;
+        let initialSnapshotLoaded = false;
         const senderPhotoCache = new Map();
 
         // Get teamId from URL
@@ -296,8 +300,8 @@
                     renderParentChatHeader(document.getElementById('team-banner'), currentTeam);
                 }
 
-                // Load messages
-                await loadMessages();
+                // Load messages (real-time)
+                startRealtimeUpdates();
 
                 // Setup event listeners
                 setupEventListeners();
@@ -311,51 +315,31 @@
         async function loadMessages(loadMore = false) {
             try {
                 if (!loadMore) {
-                    document.getElementById('messages-container').innerHTML = `
-                        <div class="text-center py-8">
-                            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
-                            <p class="text-sm text-gray-500">Loading messages...</p>
-                        </div>
-                    `;
+                    return;
                 }
 
-                const options = { limit: 50 };
-                if (loadMore && lastDoc) {
-                    options.startAfterDoc = lastDoc;
+                const cursor = olderMessages.length > 0 ? olderMessages[0]._doc : liveOldestDoc;
+                if (!cursor) {
+                    hasMoreMessages = false;
+                    updateLoadMoreButton();
+                    return;
                 }
 
-                const newMessages = await getChatMessages(teamId, options);
+                const newMessages = await getChatMessages(teamId, { limit: 50, startAfterDoc: cursor });
 
                 if (newMessages.length < 50) {
                     hasMoreMessages = false;
                 }
 
-                if (newMessages.length > 0) {
-                    lastDoc = newMessages[newMessages.length - 1]._doc;
+                const olderBatch = newMessages.reverse();
+                if (olderBatch.length > 0) {
+                    olderMessages = [...olderBatch, ...olderMessages];
+                    await hydrateSenderPhotos(olderBatch);
+                    messages = [...olderMessages, ...liveMessages];
                 }
 
-                if (loadMore) {
-                    // Prepend older messages
-                    messages = [...newMessages.reverse(), ...messages];
-                } else {
-                    // Initial load - reverse to show oldest first
-                    messages = newMessages.reverse();
-                    lastDoc = newMessages.length > 0 ? newMessages[0]._doc : null;
-                }
-
-                await hydrateSenderPhotos(messages);
                 renderMessages();
                 updateLoadMoreButton();
-
-                if (!loadMore) {
-                    scrollToBottom();
-                    // Mark messages as read
-                    if (currentUser?.uid) {
-                        updateChatLastRead(currentUser.uid, teamId).catch(err =>
-                            console.warn('Failed to update last read:', err)
-                        );
-                    }
-                }
 
             } catch (error) {
                 console.error('Error loading messages:', error);
@@ -368,6 +352,39 @@
                     </div>
                 `;
             }
+        }
+
+        function startRealtimeUpdates() {
+            if (unsubscribeChat) {
+                unsubscribeChat();
+            }
+            initialSnapshotLoaded = false;
+            liveMessages = [];
+            liveOldestDoc = null;
+
+            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50 }, async (newMessages, oldestDoc) => {
+                liveOldestDoc = oldestDoc;
+                liveMessages = newMessages.reverse();
+
+                if (olderMessages.length === 0) {
+                    hasMoreMessages = newMessages.length === 50;
+                }
+
+                await hydrateSenderPhotos(liveMessages);
+                messages = [...olderMessages, ...liveMessages];
+                renderMessages();
+                updateLoadMoreButton();
+
+                if (!initialSnapshotLoaded) {
+                    initialSnapshotLoaded = true;
+                    scrollToBottom();
+                    if (currentUser?.uid) {
+                        updateChatLastRead(currentUser.uid, teamId).catch(err =>
+                            console.warn('Failed to update last read:', err)
+                        );
+                    }
+                }
+            });
         }
 
         function renderMessages() {
@@ -505,7 +522,8 @@
 
         function updateLoadMoreButton() {
             const container = document.getElementById('load-more-container');
-            if (hasMoreMessages && messages.length >= 50) {
+            const totalMessages = olderMessages.length + liveMessages.length;
+            if (hasMoreMessages && totalMessages >= 50) {
                 container.classList.remove('hidden');
             } else {
                 container.classList.add('hidden');
@@ -545,10 +563,18 @@
             document.getElementById('refresh-btn').addEventListener('click', async () => {
                 const btn = document.getElementById('refresh-btn');
                 btn.disabled = true;
+                document.getElementById('messages-container').innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                        <p class="text-sm text-gray-500">Loading messages...</p>
+                    </div>
+                `;
                 messages = [];
-                lastDoc = null;
+                olderMessages = [];
+                liveMessages = [];
+                liveOldestDoc = null;
                 hasMoreMessages = true;
-                await loadMessages();
+                startRealtimeUpdates();
                 btn.disabled = false;
             });
 
@@ -613,12 +639,6 @@
                 input.value = '';
                 document.getElementById('send-error').classList.add('hidden');
 
-                // Refresh to show new message
-                messages = [];
-                lastDoc = null;
-                hasMoreMessages = true;
-                await loadMessages();
-
             } catch (error) {
                 console.error('Error sending message:', error);
                 showError('Failed to send message. Please try again.');
@@ -663,12 +683,6 @@
                 await editChatMessage(teamId, editingMessageId, newText);
                 closeEditModal();
 
-                // Refresh messages
-                messages = [];
-                lastDoc = null;
-                hasMoreMessages = true;
-                await loadMessages();
-
             } catch (error) {
                 console.error('Error editing message:', error);
                 alert('Failed to edit message. Please try again.');
@@ -684,12 +698,6 @@
 
             try {
                 await deleteChatMessage(teamId, messageId);
-
-                // Refresh messages
-                messages = [];
-                lastDoc = null;
-                hasMoreMessages = true;
-                await loadMessages();
 
             } catch (error) {
                 console.error('Error deleting message:', error);
