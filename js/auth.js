@@ -69,13 +69,20 @@ export async function signup(email, password, activationCode) {
     }
 
     // Send verification email with actionCodeSettings
+    // Use auth.currentUser and wait briefly to ensure user is fully initialized
     try {
-        const actionCodeSettings = {
-            url: 'https://allplays.ai/reset-password.html',
-            handleCodeInApp: true
-        };
-        await sendEmailVerification(userCredential.user, actionCodeSettings);
-        console.log('Verification email sent successfully');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+            const actionCodeSettings = {
+                url: 'https://allplays.ai/reset-password.html',
+                handleCodeInApp: true
+            };
+            await sendEmailVerification(currentUser, actionCodeSettings);
+            console.log('Verification email sent successfully');
+        } else {
+            console.error('No current user found after signup');
+        }
     } catch (e) {
         console.error('Error sending verification email:', e);
         // Don't fail signup if email fails - user can request resend
