@@ -162,6 +162,12 @@
             // First escape HTML to prevent XSS
             let formatted = escapeHtml(text);
 
+            // Basic bullet formatting for lines starting with "- " or "* "
+            formatted = formatted.replace(
+                /(^|\n)\s*[-*]\s+(?=\S)/g,
+                '$1&bull; '
+            );
+
             // Highlight ALL PLAYS mention
             formatted = formatted.replace(
                 /@all\s*plays/gi,
@@ -793,6 +799,7 @@
                 `You are speaking to coaches, admins, and parents.\\n` +
                 `Use ONLY the provided DATA to answer. If the data is insufficient, say so.\\n` +
                 `Respond in a clear, readable format with short paragraphs or bullet points.\\n` +
+                `When you use bullets, start each bullet with "- " (dash + space).\\n` +
                 `When referencing dates/times, prefer a readable format (e.g., \"Tue Jan 6, 7:07 PM\").\\n` +
                 `If the question is about stats, summarize with top performers and include key numbers.\\n\\n` +
                 `QUESTION:\\n${question}\\n\\n` +
