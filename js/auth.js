@@ -69,11 +69,11 @@ export async function signup(email, password, activationCode) {
     }
 
     // Send verification email - use Firebase defaults (no actionCodeSettings)
-    // Wait briefly to ensure user is fully initialized
+    // Reload user first to ensure fully synced with Firebase (same as resend)
     try {
-        await new Promise(resolve => setTimeout(resolve, 1000));
         const currentUser = auth.currentUser;
         if (currentUser) {
+            await currentUser.reload();
             await sendEmailVerification(currentUser);
             console.log('Verification email sent successfully to:', currentUser.email);
         } else {
