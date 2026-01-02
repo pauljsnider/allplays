@@ -795,7 +795,15 @@
 
         function updateEditButton() {
             if (!currentUser || !currentPlayer) return;
-            const isParent = currentPlayer.parents && currentPlayer.parents.some(p => p.userId === currentUser.uid);
+
+            // Check if parent via player.parents array (legacy)
+            const isParentViaPlayer = currentPlayer.parents && currentPlayer.parents.some(p => p.userId === currentUser.uid);
+
+            // Check if parent via user.parentOf array (preferred source of truth)
+            const isParentViaProfile = Array.isArray(currentUser.parentOf) &&
+                currentUser.parentOf.some(p => p.teamId === currentTeamId && p.playerId === currentPlayer.id);
+
+            const isParent = isParentViaPlayer || isParentViaProfile;
             const isCoachForTeam = Array.isArray(currentUser.coachOf) && currentUser.coachOf.includes(currentTeamId);
             const canEdit = currentUser.isAdmin || isParent || isCoachForTeam;
 

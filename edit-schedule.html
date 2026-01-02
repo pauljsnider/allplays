@@ -485,7 +485,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries } from './js/db.js';
+        import { getTeam, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -547,7 +547,15 @@
 
             currentTeam = team;
             document.getElementById('team-name-display').textContent = team.name;
-            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'schedule' });
+
+            // Fetch unread count and render banner
+            let unreadCount = 0;
+            try {
+                unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
+            } catch (e) {
+                console.warn('Failed to get unread count:', e);
+            }
+            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'schedule', unreadCount });
 
             // Respect persisted checkbox state on reloads
             const practiceToggle = document.getElementById('show-practices');

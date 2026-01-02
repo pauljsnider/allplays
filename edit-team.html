@@ -166,7 +166,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig } from './js/db.js';
+        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -243,7 +243,15 @@
                     // Update management links
                     document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${teamId}`;
                     document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${teamId}`;
-                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'team' });
+
+                    // Fetch unread count and render banner
+                    let unreadCount = 0;
+                    try {
+                        unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
+                    } catch (e) {
+                        console.warn('Failed to get unread count:', e);
+                    }
+                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'team', unreadCount });
                 }
             }
         }

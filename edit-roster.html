@@ -250,7 +250,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers } from './js/db.js';
+        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -297,7 +297,15 @@
                 return;
             }
             currentTeam = team;
-            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'roster' });
+
+            // Fetch unread count and render banner
+            let unreadCount = 0;
+            try {
+                unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
+            } catch (e) {
+                console.warn('Failed to get unread count:', e);
+            }
+            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'roster', unreadCount });
 
             document.getElementById('team-name-display').textContent = team.name;
             loadRoster();

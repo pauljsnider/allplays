@@ -31,6 +31,11 @@ function icon(name) {
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
     </svg>`;
   }
+  if (name === 'chat') {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+    </svg>`;
+  }
   if (name === 'exit') {
     return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v8a2 2 0 002 2h4"></path>
@@ -40,28 +45,36 @@ function icon(name) {
   return '';
 }
 
-function actionCard({ href, label, iconName, active }) {
+function actionCard({ href, label, iconName, active, unreadCount = 0 }) {
+  const hasUnread = iconName === 'chat' && unreadCount > 0;
   const base =
-    'flex flex-col items-center justify-center p-3 rounded-lg border transition group/btn';
+    'relative flex flex-col items-center justify-center p-3 rounded-lg border transition group/btn';
   const activeCls = active
     ? 'border-primary-300 bg-primary-50'
-    : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50';
-  const iconCls = active
+    : hasUnread
+      ? 'border-primary-400 bg-primary-50'
+      : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50';
+  const iconCls = active || hasUnread
     ? 'text-primary-600'
     : 'text-gray-600 group-hover/btn:text-primary-600';
-  const textCls = active
+  const textCls = active || hasUnread
     ? 'text-primary-700'
     : 'text-gray-600 group-hover/btn:text-primary-700';
 
+  const badge = hasUnread
+    ? `<span class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unreadCount > 99 ? '99+' : unreadCount}</span>`
+    : '';
+
   return `
     <a href="${href}" class="${base} ${activeCls}">
+      ${badge}
       <div class="${iconCls}">${icon(iconName)}</div>
       <span class="text-xs font-medium ${textCls} mt-1">${escapeHtml(label)}</span>
     </a>
   `;
 }
 
-export function renderTeamAdminBanner(container, { team, teamId, active = '' } = {}) {
+export function renderTeamAdminBanner(container, { team, teamId, active = '', unreadCount = 0 } = {}) {
   if (!container) return;
   if (!teamId) {
     container.innerHTML = '';
@@ -78,6 +91,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '' } =
     roster: `edit-roster.html#teamId=${teamId}`,
     schedule: `edit-schedule.html#teamId=${teamId}`,
     stats: `edit-config.html#teamId=${teamId}`,
+    chat: `team-chat.html#teamId=${teamId}`,
     exit: 'dashboard.html'
   };
 
@@ -104,12 +118,13 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '' } =
       </div>
 
       <div class="p-5">
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
           ${actionCard({ href: hrefs.public, label: 'Public', iconName: 'public', active: active === 'public' })}
           ${actionCard({ href: hrefs.team, label: 'Team', iconName: 'team', active: active === 'team' })}
           ${actionCard({ href: hrefs.roster, label: 'Roster', iconName: 'roster', active: active === 'roster' })}
           ${actionCard({ href: hrefs.schedule, label: 'Schedule', iconName: 'schedule', active: active === 'schedule' })}
           ${actionCard({ href: hrefs.stats, label: 'Stats', iconName: 'stats', active: active === 'stats' })}
+          ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
           ${actionCard({ href: hrefs.exit, label: 'Dashboard', iconName: 'exit', active: active === 'exit' })}
         </div>
       </div>

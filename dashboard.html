@@ -72,7 +72,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile } from './js/db.js?v=2';
+        import { getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=3';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=7';
         import { requireAuth as authRequireAuth } from './js/auth.js';
 
@@ -113,6 +113,10 @@
                 const teams = Array.from(mergedMap.values());
                 const container = document.getElementById('my-teams-list');
 
+                // Fetch unread chat counts for all teams
+                const teamIds = teams.map(t => t.id);
+                const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts(user.uid, teamIds) : {};
+
                 if (teams.length === 0) {
                     container.innerHTML = `
                         <div class="text-center py-16 bg-white rounded-2xl shadow-md border border-gray-200">
@@ -134,6 +138,11 @@
 
                 container.innerHTML = teams.map(team => {
                     const hasFullAccess = team._access === 'full';
+                    const unread = unreadCounts[team.id] || 0;
+                    const unreadBadge = unread > 0
+                        ? `<span class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
+                        : '';
+                    const chatHighlight = unread > 0 ? 'border-primary-400 bg-primary-50' : 'border-gray-200 hover:border-primary-300 hover:bg-primary-50';
                     return `
                     <div class="group bg-white rounded-2xl shadow-md hover:shadow-xl transition duration-300 border border-gray-200 hover:border-primary-300 overflow-hidden" data-team-card="${team.id}">
                         <!-- Team Header -->
@@ -168,6 +177,14 @@
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
                                     </svg>
                                     <span class="text-xs font-medium text-gray-600 group-hover/btn:text-primary-700">View</span>
+                                </a>
+                                <a href="team-chat.html#teamId=${team.id}"
+                                   class="relative flex flex-col items-center justify-center p-3 rounded-lg border ${chatHighlight} transition group/btn">
+                                    ${unreadBadge}
+                                    <svg class="w-5 h-5 ${unread > 0 ? 'text-primary-600' : 'text-gray-600 group-hover/btn:text-primary-600'} transition mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                                    </svg>
+                                    <span class="text-xs font-medium ${unread > 0 ? 'text-primary-700' : 'text-gray-600 group-hover/btn:text-primary-700'}">Chat</span>
                                 </a>
                                 ${hasFullAccess ? `
                                 <a href="edit-team.html#teamId=${team.id}"
@@ -207,8 +224,7 @@
                                     <span class="text-xs font-medium text-gray-600 group-hover/btn:text-primary-700">Stats</span>
                                 </a>
                                 ` : `
-                                <!-- Parent-only view: keep actions read-only -->
-                                <div class="hidden sm:block"></div>
+                                <!-- Parent-only view: keep actions read-only (filler for grid) -->
                                 <div class="hidden sm:block"></div>
                                 ` }
                             </div>

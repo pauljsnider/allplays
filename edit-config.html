@@ -103,7 +103,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getConfigs, createConfig, deleteConfig } from './js/db.js';
+        import { getTeam, getConfigs, createConfig, deleteConfig, getUnreadChatCount } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -144,7 +144,14 @@
                 return;
             }
 
-            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'stats' });
+            // Fetch unread count and render banner
+            let unreadCount = 0;
+            try {
+                unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
+            } catch (e) {
+                console.warn('Failed to get unread count:', e);
+            }
+            renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'stats', unreadCount });
             document.getElementById('team-name-display').textContent = team.name;
             loadConfigs();
 

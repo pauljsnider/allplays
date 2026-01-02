@@ -240,7 +240,12 @@ export async function fetchAndParseCalendar(url) {
     return parseICS(icsText);
   } catch (error) {
     // If direct fetch fails, try with CORS proxy
-    if (error.message.includes('fetch') || error.message.includes('CORS')) {
+    // Check for common fetch failure types: CORS errors (TypeError), timeouts (AbortError), or messages containing 'fetch'/'CORS'
+    const shouldTryProxy = error.name === 'TypeError' ||
+                           error.name === 'AbortError' ||
+                           error.message.includes('fetch') ||
+                           error.message.includes('CORS');
+    if (shouldTryProxy) {
       try {
         console.log('Direct fetch failed, trying CORS proxy...');
         const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;

@@ -64,6 +64,16 @@
                     </div>
                 </div>
                 
+                <!-- My Teams -->
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 bg-gray-50">
+                        <h2 class="text-lg font-bold text-gray-900">My Teams</h2>
+                    </div>
+                    <div id="team-chats-list" class="p-4 space-y-2">
+                        <div class="text-center py-4 text-gray-500 text-sm">Loading...</div>
+                    </div>
+                </div>
+
                 <!-- Coach Invite Info -->
                 <div class="bg-blue-50 rounded-2xl p-6 border border-blue-100">
                     <h3 class="font-semibold text-blue-900 mb-2">Need to add another player?</h3>
@@ -80,9 +90,17 @@
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden min-h-[500px]">
                     <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3">
                         <h2 class="text-xl font-bold text-gray-900">Upcoming Schedule</h2>
-                        <select id="player-filter" class="text-xs font-medium bg-white px-2 py-1 rounded border border-gray-200 text-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500">
-                            <option value="">All Players</option>
-                        </select>
+                        <div class="flex items-center gap-2">
+                            <select id="player-filter" class="text-xs font-medium bg-white px-2 py-1 rounded border border-gray-200 text-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500">
+                                <option value="">All Players</option>
+                            </select>
+                            <button id="download-ics" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition border border-primary-200">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                                </svg>
+                                .ics
+                            </button>
+                        </div>
                     </div>
                     <div id="schedule-list" class="divide-y divide-gray-100">
                         <div class="text-center py-12">
@@ -98,18 +116,20 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=2';
+        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts } from './js/db.js?v=2';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=7';
         import { requireAuth, checkAuth } from './js/auth.js';
 
         renderFooter(document.getElementById('footer-container'));
 
         let allScheduleEvents = [];
+        let currentUserId = null;
 
         async function init() {
             try {
                 const user = await requireAuth();
-                
+                currentUserId = user.uid;
+
                 // Allow checkAuth to populate user object fully
                 checkAuth((updatedUser) => {
                      renderHeader(document.getElementById('header-container'), updatedUser);
@@ -117,6 +137,11 @@
 
                 const data = await getParentDashboardData(user.uid);
                 renderPlayers(data.children);
+
+                // Get unique team IDs and fetch unread counts
+                const teamIds = [...new Set(data.children.map(c => c.teamId).filter(Boolean))];
+                const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
+                renderTeamChats(data.children, unreadCounts);
                 const combinedSchedule = await buildCombinedSchedule(data.children);
                 allScheduleEvents = combinedSchedule;
                 initPlayerFilter(data.children);
@@ -200,9 +225,12 @@
 
                 // Calendar (ICS) events for this team
                 if (team.calendarUrls && team.calendarUrls.length > 0) {
+                    console.log(`[parent-dashboard] Team ${team.name} has ${team.calendarUrls.length} calendar URL(s)`);
                     for (const calendarUrl of team.calendarUrls) {
                         try {
+                            console.log(`[parent-dashboard] Fetching calendar: ${calendarUrl}`);
                             const calendarEvents = await fetchAndParseCalendar(calendarUrl);
+                            console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
 
                             calendarEvents.forEach(event => {
                                 if (trackedUids.includes(event.uid)) return;
@@ -299,6 +327,64 @@
             `).join('');
         }
 
+        function renderTeamChats(children, unreadCounts = {}) {
+            const container = document.getElementById('team-chats-list');
+            if (!children || children.length === 0) {
+                container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No teams available.</div>`;
+                return;
+            }
+
+            // Get unique teams from children, collecting player names per team
+            const teamsMap = new Map();
+            children.forEach(child => {
+                if (!teamsMap.has(child.teamId)) {
+                    teamsMap.set(child.teamId, {
+                        teamId: child.teamId,
+                        teamName: child.teamName,
+                        playerNames: []
+                    });
+                }
+                teamsMap.get(child.teamId).playerNames.push(child.playerName);
+            });
+
+            const teams = Array.from(teamsMap.values());
+
+            container.innerHTML = teams.map(team => {
+                const unread = unreadCounts[team.teamId] || 0;
+                const unreadBadge = unread > 0
+                    ? `<span class="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold text-white bg-red-500 rounded-full min-w-[18px]">${unread > 99 ? '99+' : unread}</span>`
+                    : '';
+
+                return `
+                <div class="flex items-center gap-3 p-3 rounded-xl border border-gray-200">
+                    <div class="flex-shrink-0 w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                        <span class="text-primary-700 font-bold text-sm">${escapeHtml(team.teamName.charAt(0).toUpperCase())}</span>
+                    </div>
+                    <div class="flex-grow min-w-0">
+                        <div class="font-semibold text-gray-900 truncate">${escapeHtml(team.teamName)}</div>
+                        <div class="text-xs text-gray-500 truncate">${escapeHtml(team.playerNames.join(', '))}</div>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <a href="team.html#teamId=${team.teamId}"
+                           class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                            </svg>
+                            View
+                        </a>
+                        <a href="team-chat.html#teamId=${team.teamId}"
+                           class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium ${unread > 0 ? 'text-white bg-primary-600 hover:bg-primary-700' : 'text-gray-600 bg-gray-100 hover:bg-gray-200'} rounded-lg transition">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                            </svg>
+                            Chat${unreadBadge}
+                        </a>
+                    </div>
+                </div>
+            `}).join('');
+        }
+
         function renderSchedule(games) {
             const container = document.getElementById('schedule-list');
             if (!games || games.length === 0) {
@@ -360,6 +446,79 @@
                 </div>
             `}).join('');
         }
+
+        // ICS export helpers
+        function formatIcsDate(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+        }
+
+        function buildIcs(events) {
+            const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
+
+            // Dedupe events by id to avoid duplicates for multiple kids on same team
+            const seen = new Set();
+            events.forEach((event) => {
+                const eventKey = `${event.teamId}-${event.id}-${event.date.getTime()}`;
+                if (seen.has(eventKey)) return;
+                seen.add(eventKey);
+
+                const date = event.date instanceof Date ? event.date : new Date(event.date);
+                const start = formatIcsDate(date);
+                const endDate = new Date(date.getTime() + 60 * 60 * 1000); // default 1 hour
+                const end = formatIcsDate(endDate);
+                const summary = event.type === 'practice'
+                    ? `${event.childName} - Practice`
+                    : `${event.childName} vs ${event.opponent || 'TBD'}`;
+                const uid = `${event.id || eventKey}@allplays`;
+                lines.push(
+                    'BEGIN:VEVENT',
+                    `UID:${uid}`,
+                    `DTSTAMP:${formatIcsDate(new Date())}`,
+                    `DTSTART:${start}`,
+                    `DTEND:${end}`,
+                    `SUMMARY:${summary}`,
+                    `LOCATION:${(event.location || 'TBD').replace(/,/g, '\\,')}`,
+                    `DESCRIPTION:For ${event.childName}`,
+                    'END:VEVENT'
+                );
+            });
+
+            lines.push('END:VCALENDAR');
+            return lines.join('\r\n');
+        }
+
+        document.getElementById('download-ics')?.addEventListener('click', () => {
+            if (!allScheduleEvents || allScheduleEvents.length === 0) {
+                alert('No games to export yet.');
+                return;
+            }
+
+            // Use filtered events if a player is selected
+            const filterValue = document.getElementById('player-filter')?.value;
+            const eventsToExport = filterValue
+                ? allScheduleEvents.filter(ev => ev.childId === filterValue)
+                : allScheduleEvents;
+
+            if (eventsToExport.length === 0) {
+                alert('No games to export for selected player.');
+                return;
+            }
+
+            const ics = buildIcs(eventsToExport);
+            const blob = new Blob([ics], { type: 'text/calendar' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            const filename = filterValue
+                ? `${eventsToExport[0]?.childName || 'player'}-schedule.ics`.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+                : 'family-schedule.ics';
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        });
 
         init();
     </script>

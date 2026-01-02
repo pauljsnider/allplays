@@ -1,6 +1,6 @@
 import { db, auth } from './firebase.js';
 import { imageStorage, ensureImageAuth } from './firebase-images.js';
-import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -45,6 +45,25 @@ export async function uploadPlayerPhoto(file) {
     const snapshot = await uploadBytes(storageRef, file);
     const downloadURL = await getDownloadURL(snapshot.ref);
     console.log('Player photo URL:', downloadURL);
+
+    return downloadURL;
+}
+
+export async function uploadUserPhoto(file) {
+    console.log('Starting user photo upload...', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
+    });
+
+    await ensureImageAuth();
+
+    const path = `user-photos/${Date.now()}_${file.name}`;
+    const storageRef = ref(imageStorage, path);
+
+    const snapshot = await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(snapshot.ref);
+    console.log('User photo URL:', downloadURL);
 
     return downloadURL;
 }
@@ -199,21 +218,44 @@ export async function deletePlayer(teamId, playerId) {
 }
 
 /**
- * Remove a parent link from a player document.
- * This updates the player's parents array; user.profile.parentOf
- * is treated as a cache and is filtered at read time.
+ * Remove a parent link from both the player document and user profile.
+ * Updates player.parents array and user.parentOf/parentTeamIds.
  */
 export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
+    // 1. Update player doc
     const playerRef = doc(db, `teams/${teamId}/players`, playerId);
     const snap = await getDoc(playerRef);
-    if (!snap.exists()) return;
-    const data = snap.data() || {};
-    const parents = Array.isArray(data.parents) ? data.parents : [];
-    const updatedParents = parents.filter(p => p.userId !== parentUserId);
-    await updateDoc(playerRef, {
-        parents: updatedParents,
-        updatedAt: Timestamp.now()
-    });
+    if (snap.exists()) {
+        const data = snap.data() || {};
+        const parents = Array.isArray(data.parents) ? data.parents : [];
+        const updatedParents = parents.filter(p => p.userId !== parentUserId);
+        await updateDoc(playerRef, {
+            parents: updatedParents,
+            updatedAt: Timestamp.now()
+        });
+    }
+
+    // 2. Update user profile (parentOf and parentTeamIds)
+    const userRef = doc(db, "users", parentUserId);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+        const userData = userSnap.data() || {};
+        const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+
+        // Remove the specific parent link
+        const updatedParentOf = parentOf.filter(
+            p => !(p.teamId === teamId && p.playerId === playerId)
+        );
+
+        // Rebuild parentTeamIds from remaining parentOf entries
+        const updatedParentTeamIds = [...new Set(updatedParentOf.map(p => p.teamId).filter(Boolean))];
+
+        await updateDoc(userRef, {
+            parentOf: updatedParentOf,
+            parentTeamIds: updatedParentTeamIds,
+            updatedAt: Timestamp.now()
+        });
+    }
 }
 
 // Games
@@ -549,7 +591,7 @@ export async function validateAccessCode(code) {
     if (snapshot.empty) {
         return { valid: false, message: "Invalid access code" };
     }
-    
+
     const codeDoc = snapshot.docs[0];
     const data = codeDoc.data();
 
@@ -557,12 +599,20 @@ export async function validateAccessCode(code) {
         return { valid: false, message: "Code already used" };
     }
 
-    // Code exists and is not used
-    return { 
-        valid: true, 
+    // Check expiration for codes that have expiresAt
+    if (data.expiresAt) {
+        const expiresAtMs = data.expiresAt.toMillis ? data.expiresAt.toMillis() : data.expiresAt;
+        if (Date.now() > expiresAtMs) {
+            return { valid: false, message: "Code has expired" };
+        }
+    }
+
+    // Code exists, not used, and not expired
+    return {
+        valid: true,
         codeId: codeDoc.id,
         type: data.type || 'standard',
-        data: data 
+        data: data
     };
 }
 
@@ -650,7 +700,7 @@ export async function redeemParentInvite(userId, code) {
         playerNumber: player.number
     });
 
-    // 3. Update User Profile (parentOf)
+    // 3. Update User Profile (parentOf + parentTeamIds for Firestore rules)
     try {
         const userRef = doc(db, "users", userId);
         await setDoc(userRef, {
@@ -663,6 +713,8 @@ export async function redeemParentInvite(userId, code) {
                 playerPhotoUrl: player.photoUrl || null,
                 relation: codeData.relation || null
             }),
+            // Denormalized array for fast Firestore rules lookup
+            parentTeamIds: arrayUnion(codeData.teamId),
             roles: arrayUnion('parent')
         }, { merge: true });
         console.log('[redeemParentInvite] user profile updated');
@@ -791,7 +843,7 @@ export async function updatePlayerProfile(teamId, playerId, data) {
     // Restricted update for parents
     const allowedKeys = ['photoUrl', 'emergencyContact', 'medicalInfo'];
     const updateData = {};
-    
+
     Object.keys(data).forEach(key => {
         if (allowedKeys.includes(key)) {
             updateData[key] = data[key];
@@ -802,4 +854,174 @@ export async function updatePlayerProfile(teamId, playerId, data) {
 
     updateData.updatedAt = Timestamp.now();
     await updateDoc(doc(db, `teams/${teamId}/players`, playerId), updateData);
+}
+
+// ============================================
+// Team Chat Functions
+// ============================================
+
+/**
+ * Check if a user can access a team's chat.
+ * Access granted to: team owner, team admins, global admins, and parents of players on the team.
+ */
+export function canAccessTeamChat(user, team) {
+    if (!user || !team) return false;
+
+    // Team owner
+    if (team.ownerId === user.uid) return true;
+
+    // Team admin (email in adminEmails)
+    if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {
+        return true;
+    }
+
+    // Global admin
+    if (user.isAdmin) return true;
+
+    // Parent (has parentOf entry for this team)
+    if (user.parentOf?.some(p => p.teamId === team.id)) return true;
+
+    return false;
+}
+
+/**
+ * Check if a user can moderate (delete others' messages) in a team's chat.
+ * Moderation allowed for: team owner, team admins, global admins.
+ * Parents can only delete their own messages.
+ */
+export function canModerateChat(user, team) {
+    if (!user || !team) return false;
+
+    // Team owner
+    if (team.ownerId === user.uid) return true;
+
+    // Team admin (email in adminEmails)
+    if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {
+        return true;
+    }
+
+    // Global admin
+    if (user.isAdmin) return true;
+
+    return false;
+}
+
+/**
+ * Get chat messages for a team with pagination support.
+ * Returns messages ordered by createdAt descending (newest first).
+ */
+export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null } = {}) {
+    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
+
+    if (startAfterDoc) {
+        q = query(messagesRef, orderBy('createdAt', 'desc'), startAfterQuery(startAfterDoc), limitQuery(limit));
+    }
+
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+}
+
+/**
+ * Post a new chat message.
+ */
+export async function postChatMessage(teamId, { text, senderId, senderName, senderEmail, senderPhotoUrl }) {
+    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    return await addDoc(messagesRef, {
+        text,
+        senderId,
+        senderName: senderName || null,
+        senderEmail: senderEmail || null,
+        senderPhotoUrl: senderPhotoUrl || null,
+        createdAt: Timestamp.now(),
+        editedAt: null,
+        deleted: false
+    });
+}
+
+/**
+ * Edit an existing chat message (sender only).
+ */
+export async function editChatMessage(teamId, messageId, newText) {
+    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    return await updateDoc(messageRef, {
+        text: newText,
+        editedAt: Timestamp.now()
+    });
+}
+
+/**
+ * Soft-delete a chat message.
+ */
+export async function deleteChatMessage(teamId, messageId) {
+    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    return await updateDoc(messageRef, {
+        deleted: true
+    });
+}
+
+/**
+ * Update the user's last read timestamp for a team chat
+ * @param {string} userId - The user's ID
+ * @param {string} teamId - The team ID
+ */
+export async function updateChatLastRead(userId, teamId) {
+    const userRef = doc(db, 'users', userId);
+    const fieldPath = `chatLastRead.${teamId}`;
+    return await updateDoc(userRef, {
+        [fieldPath]: Timestamp.now()
+    });
+}
+
+/**
+ * Get unread message count for a team chat
+ * @param {string} userId - The user's ID
+ * @param {string} teamId - The team ID
+ * @returns {Promise<number>} Number of unread messages
+ */
+export async function getUnreadChatCount(userId, teamId) {
+    // Get user's last read timestamp
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    const userData = userDoc.data();
+    const lastRead = userData?.chatLastRead?.[teamId];
+
+    // Query messages after last read
+    // Note: Firestore doesn't support inequality on multiple fields, so we filter senderId in memory
+    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    let q;
+    if (lastRead) {
+        q = query(messagesRef, where('createdAt', '>', lastRead));
+    } else {
+        // Never read - get all messages
+        q = query(messagesRef);
+    }
+
+    const snapshot = await getDocs(q);
+    // Filter out own messages in memory
+    let count = 0;
+    snapshot.docs.forEach(doc => {
+        if (doc.data().senderId !== userId) {
+            count++;
+        }
+    });
+    return count;
+}
+
+/**
+ * Get unread counts for multiple teams
+ * @param {string} userId - The user's ID
+ * @param {string[]} teamIds - Array of team IDs
+ * @returns {Promise<Object>} Map of teamId to unread count
+ */
+export async function getUnreadChatCounts(userId, teamIds) {
+    const counts = {};
+    await Promise.all(teamIds.map(async (teamId) => {
+        try {
+            counts[teamId] = await getUnreadChatCount(userId, teamId);
+        } catch (err) {
+            console.warn(`Failed to get unread count for team ${teamId}:`, err);
+            counts[teamId] = 0;
+        }
+    }));
+    return counts;
 }
