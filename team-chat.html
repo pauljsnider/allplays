@@ -227,6 +227,7 @@
         let lastDoc = null;
         let hasMoreMessages = true;
         let canModerate = false;
+        const senderPhotoCache = new Map();
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
@@ -264,6 +265,9 @@
 
                 // Load user profile
                 currentUserProfile = await getUserProfile(user.uid);
+                if (currentUserProfile?.photoUrl) {
+                    senderPhotoCache.set(user.uid, currentUserProfile.photoUrl);
+                }
 
                 // Check access
                 const userWithProfile = {
@@ -339,6 +343,7 @@
                     lastDoc = newMessages.length > 0 ? newMessages[0]._doc : null;
                 }
 
+                await hydrateSenderPhotos(messages);
                 renderMessages();
                 updateLoadMoreButton();
 
@@ -382,6 +387,37 @@
             }
 
             container.innerHTML = messages.map(msg => renderMessage(msg)).join('');
+        }
+
+        async function hydrateSenderPhotos(messageList) {
+            const missing = new Set();
+            messageList.forEach(msg => {
+                if (!msg.senderPhotoUrl && msg.senderId && !senderPhotoCache.has(msg.senderId)) {
+                    missing.add(msg.senderId);
+                }
+            });
+
+            if (missing.size === 0) return;
+
+            await Promise.all(Array.from(missing).map(async (senderId) => {
+                try {
+                    const profile = await getUserProfile(senderId);
+                    if (profile?.photoUrl) {
+                        senderPhotoCache.set(senderId, profile.photoUrl);
+                    } else {
+                        senderPhotoCache.set(senderId, null);
+                    }
+                } catch (err) {
+                    console.warn('Failed to load sender profile for chat avatar:', err);
+                    senderPhotoCache.set(senderId, null);
+                }
+            }));
+
+            messageList.forEach(msg => {
+                if (!msg.senderPhotoUrl && msg.senderId && senderPhotoCache.has(msg.senderId)) {
+                    msg.senderPhotoUrl = senderPhotoCache.get(msg.senderId);
+                }
+            });
         }
 
         function renderMessage(msg) {
