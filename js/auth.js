@@ -68,24 +68,21 @@ export async function signup(email, password, activationCode) {
         }
     }
 
-    // Send verification email with actionCodeSettings
-    // Use auth.currentUser and wait briefly to ensure user is fully initialized
+    // Send verification email - use Firebase defaults (no actionCodeSettings)
+    // Wait briefly to ensure user is fully initialized
     try {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1000));
         const currentUser = auth.currentUser;
         if (currentUser) {
-            const actionCodeSettings = {
-                url: 'https://allplays.ai/reset-password.html',
-                handleCodeInApp: true
-            };
-            await sendEmailVerification(currentUser, actionCodeSettings);
-            console.log('Verification email sent successfully');
+            await sendEmailVerification(currentUser);
+            console.log('Verification email sent successfully to:', currentUser.email);
         } else {
             console.error('No current user found after signup');
         }
     } catch (e) {
-        console.error('Error sending verification email:', e);
-        // Don't fail signup if email fails - user can request resend
+        console.error('Error sending verification email:', e.code, e.message);
+        // Re-throw so caller knows email failed
+        throw new Error('Signup succeeded but verification email failed: ' + e.message);
     }
 
     return userCredential;
@@ -281,12 +278,9 @@ export async function resendVerificationEmail() {
     // Reload user to ensure we have fresh state
     await user.reload();
 
-    const actionCodeSettings = {
-        url: 'https://allplays.ai/reset-password.html',
-        handleCodeInApp: true
-    };
-    await sendEmailVerification(user, actionCodeSettings);
-    console.log('Resend verification email sent successfully');
+    console.log('Attempting to send verification email to:', user.email);
+    await sendEmailVerification(user);
+    console.log('Verification email sent successfully to:', user.email);
 }
 
 export function getCurrentUser() {
