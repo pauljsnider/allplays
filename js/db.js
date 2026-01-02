@@ -265,6 +265,35 @@ export async function getGames(teamId) {
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
+export async function getAggregatedStatsForGames(teamId, gameIds) {
+    const totalsByPlayer = {};
+    const validGameIds = Array.isArray(gameIds) ? gameIds.filter(Boolean) : [];
+    if (validGameIds.length === 0) return totalsByPlayer;
+
+    const snapshots = await Promise.all(
+        validGameIds.map(gameId =>
+            getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`))
+        )
+    );
+
+    snapshots.forEach((snap) => {
+        snap.forEach((docSnap) => {
+            const data = docSnap.data() || {};
+            const stats = data.stats || {};
+            const playerId = docSnap.id;
+            if (!totalsByPlayer[playerId]) {
+                totalsByPlayer[playerId] = {};
+            }
+            Object.entries(stats).forEach(([key, value]) => {
+                const num = typeof value === 'number' ? value : parseFloat(value) || 0;
+                totalsByPlayer[playerId][key] = (totalsByPlayer[playerId][key] || 0) + num;
+            });
+        });
+    });
+
+    return totalsByPlayer;
+}
+
 export async function getGame(teamId, gameId) {
     const docRef = doc(db, `teams/${teamId}/games`, gameId);
     const docSnap = await getDoc(docRef);
@@ -939,7 +968,7 @@ export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages)
 /**
  * Post a new chat message.
  */
-export async function postChatMessage(teamId, { text, senderId, senderName, senderEmail, senderPhotoUrl }) {
+export async function postChatMessage(teamId, { text, senderId, senderName, senderEmail, senderPhotoUrl, ai = false, aiName = null, aiQuestion = null, aiMeta = null }) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
     return await addDoc(messagesRef, {
         text,
@@ -949,7 +978,11 @@ export async function postChatMessage(teamId, { text, senderId, senderName, send
         senderPhotoUrl: senderPhotoUrl || null,
         createdAt: Timestamp.now(),
         editedAt: null,
-        deleted: false
+        deleted: false,
+        ai: ai === true,
+        aiName: aiName || null,
+        aiQuestion: aiQuestion || null,
+        aiMeta: aiMeta || null
     });
 }
 

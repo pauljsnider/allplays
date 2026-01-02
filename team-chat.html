@@ -70,6 +70,14 @@
                 </button>
             </div>
 
+            <!-- Load More Button (hidden by default) -->
+            <div id="load-more-container" class="hidden px-4 py-2 border-b border-gray-100 bg-white">
+                <button id="load-more-btn"
+                    class="w-full text-sm text-primary-600 hover:text-primary-700 font-medium py-2">
+                    Load older messages...
+                </button>
+            </div>
+
             <!-- Messages Area -->
             <div id="messages-container" class="chat-container overflow-y-auto p-4 space-y-4">
                 <div class="text-center py-8">
@@ -78,25 +86,31 @@
                 </div>
             </div>
 
-            <!-- Load More Button (hidden by default) -->
-            <div id="load-more-container" class="hidden px-4 py-2 border-t border-gray-100">
-                <button id="load-more-btn"
-                    class="w-full text-sm text-primary-600 hover:text-primary-700 font-medium py-2">
-                    Load older messages...
-                </button>
-            </div>
-
             <!-- Composer -->
             <div class="p-4 border-t border-gray-200 bg-gray-50">
                 <div class="flex gap-2">
-                    <input type="text" id="message-input"
-                        placeholder="Type a message..."
-                        class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                        maxlength="2000">
+                    <div class="relative flex-1">
+                        <input type="text" id="message-input"
+                            placeholder="Type a message..."
+                            class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                            maxlength="2000">
+                        <div id="mention-menu"
+                            class="hidden absolute bottom-full left-0 mb-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
+                            <button type="button" id="mention-allplays"
+                                class="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2">
+                                <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary-100 text-primary-700 font-bold text-xs">AP</span>
+                                <span class="text-sm font-medium text-gray-900">@ALL PLAYS</span>
+                            </button>
+                        </div>
+                    </div>
                     <button id="send-btn"
                         class="px-5 py-2.5 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition">
                         Send
                     </button>
+                </div>
+                <div id="ai-thinking" class="hidden mt-2 text-sm text-indigo-600 flex items-center gap-2">
+                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
+                    <span>ALL PLAYS is thinking…</span>
                 </div>
                 <div id="send-error" class="hidden mt-2 text-sm text-red-600"></div>
                 <div class="mt-1.5 text-xs text-gray-400">
@@ -131,7 +145,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
-        import { getTeam, getUserProfile, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
+        import { getTeam, getUserProfile, getPlayers, getGames, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -147,6 +161,12 @@
         function formatMessageText(text) {
             // First escape HTML to prevent XSS
             let formatted = escapeHtml(text);
+
+            // Highlight ALL PLAYS mention
+            formatted = formatted.replace(
+                /@all\s*plays/gi,
+                '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold text-xs">@ALL PLAYS</span>'
+            );
 
             // Auto-link URLs (must come before other formatting)
             // Matches http://, https://, and www. URLs
@@ -232,7 +252,14 @@
         let unsubscribeChat = null;
         let initialSnapshotLoaded = false;
         let pendingScrollToBottom = false;
+        let aiInFlight = false;
+        let aiThinkingStartedAt = null;
+        let aiUiPending = false;
         const senderPhotoCache = new Map();
+        const mentionState = { active: false, atPos: null };
+        const AI_MENTION_REGEX = /@all\s*plays/ig;
+        const AI_STATS_GAMES_LIMIT = 10;
+        const AI_GAMES_CONTEXT_LIMIT = 20;
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
@@ -410,7 +437,24 @@
                 return;
             }
 
-            container.innerHTML = messages.map(msg => renderMessage(msg)).join('');
+            let html = messages.map(msg => renderMessage(msg)).join('');
+            if (aiUiPending) {
+                html += `
+                    <div id="ai-thinking-placeholder" class="flex justify-start gap-2">
+                        <img src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">
+                        <div class="max-w-[75%]">
+                            <div class="text-xs text-gray-500 mb-1">
+                                <span class="font-medium">ALL PLAYS</span>
+                                <span class="ml-1 italic">thinking…</span>
+                            </div>
+                            <div class="bg-indigo-50 text-gray-900 border border-indigo-100 rounded-lg px-4 py-2 rounded-bl-sm">
+                                <p class="text-sm">Working on that…</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
         }
 
         async function hydrateSenderPhotos(messageList) {
@@ -445,9 +489,10 @@
         }
 
         function renderMessage(msg) {
-            const isOwn = msg.senderId === currentUser.uid;
+            const isAi = msg.ai === true;
+            const isOwn = !isAi && msg.senderId === currentUser.uid;
             const isDeleted = msg.deleted === true;
-            const displayName = msg.senderName || msg.senderEmail || 'Unknown';
+            const displayName = isAi ? (msg.aiName || 'ALL PLAYS') : (msg.senderName || msg.senderEmail || 'Unknown');
             const timestamp = msg.createdAt?.toDate ?
                 msg.createdAt.toDate().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
             const date = msg.createdAt?.toDate ?
@@ -463,14 +508,16 @@
                 `;
             }
 
-            const avatar = msg.senderPhotoUrl
-                ? `<img src="${escapeHtml(msg.senderPhotoUrl)}" class="w-8 h-8 rounded-full object-cover">`
-                : `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
-                     <span class="text-xs font-bold text-gray-600">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
-                   </div>`;
+            const avatar = isAi
+                ? `<img src="img/logo_small.png" class="w-8 h-8 rounded-full object-cover border border-indigo-200">`
+                : msg.senderPhotoUrl
+                    ? `<img src="${escapeHtml(msg.senderPhotoUrl)}" class="w-8 h-8 rounded-full object-cover">`
+                    : `<div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
+                         <span class="text-xs font-bold text-gray-600">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
+                       </div>`;
 
             const canEdit = isOwn;
-            const canDelete = isOwn || canModerate;
+            const canDelete = !isAi && (isOwn || canModerate);
 
             const actions = [];
             if (canEdit) {
@@ -480,9 +527,11 @@
                 actions.push(`<button onclick="window.deleteMessage('${msg.id}')" class="text-gray-400 hover:text-red-600 text-xs">Delete</button>`);
             }
 
-            const bubbleClass = isOwn
-                ? 'bg-primary-100 text-gray-900'
-                : 'bg-gray-100 text-gray-900';
+            const bubbleClass = isAi
+                ? 'bg-indigo-50 text-gray-900 border border-indigo-100'
+                : isOwn
+                    ? 'bg-primary-100 text-gray-900'
+                    : 'bg-gray-100 text-gray-900';
 
             if (isOwn) {
                 return `
@@ -529,8 +578,9 @@
 
         function updateLoadMoreButton() {
             const container = document.getElementById('load-more-container');
+            const list = document.getElementById('messages-container');
             const totalMessages = olderMessages.length + liveMessages.length;
-            if (hasMoreMessages && totalMessages >= 50) {
+            if (list && hasMoreMessages && totalMessages >= 50 && isNearTop(list)) {
                 container.classList.remove('hidden');
             } else {
                 container.classList.add('hidden');
@@ -552,6 +602,11 @@
             return container.scrollHeight - container.scrollTop - container.clientHeight <= threshold;
         }
 
+        function isNearTop(container) {
+            const threshold = 120;
+            return container.scrollTop <= threshold;
+        }
+
         function showError(message) {
             const errorEl = document.getElementById('send-error');
             errorEl.textContent = message;
@@ -559,15 +614,246 @@
             setTimeout(() => errorEl.classList.add('hidden'), 5000);
         }
 
+        function showAiThinking(show) {
+            const el = document.getElementById('ai-thinking');
+            if (!el) return;
+            if (show) {
+                el.classList.remove('hidden');
+                aiThinkingStartedAt = Date.now();
+            } else {
+                el.classList.add('hidden');
+                aiThinkingStartedAt = null;
+            }
+        }
+
+        async function hideAiThinkingWithMinDelay() {
+            if (!aiThinkingStartedAt) {
+                showAiThinking(false);
+                return;
+            }
+            const minMs = 2000;
+            const elapsed = Date.now() - aiThinkingStartedAt;
+            if (elapsed < minMs) {
+                await new Promise(resolve => setTimeout(resolve, minMs - elapsed));
+            }
+            showAiThinking(false);
+        }
+
+        function hideMentionMenu() {
+            const menu = document.getElementById('mention-menu');
+            menu.classList.add('hidden');
+            mentionState.active = false;
+            mentionState.atPos = null;
+        }
+
+        function isMentionMenuOpen() {
+            const menu = document.getElementById('mention-menu');
+            return mentionState.active && menu && !menu.classList.contains('hidden');
+        }
+
+        function updateMentionMenu() {
+            const input = document.getElementById('message-input');
+            const menu = document.getElementById('mention-menu');
+            const cursorPos = input.selectionStart || 0;
+            const value = input.value || '';
+            const atPos = value.lastIndexOf('@', cursorPos - 1);
+
+            if (atPos === -1) {
+                hideMentionMenu();
+                return;
+            }
+
+            const query = value.slice(atPos + 1, cursorPos);
+            if (query.includes(' ') || query.length > 20) {
+                hideMentionMenu();
+                return;
+            }
+
+            mentionState.active = true;
+            mentionState.atPos = atPos;
+            menu.classList.remove('hidden');
+        }
+
+        function insertMention() {
+            const input = document.getElementById('message-input');
+            const value = input.value || '';
+            const cursorPos = input.selectionStart || value.length;
+            const atPos = mentionState.atPos;
+            if (atPos === null) return;
+
+            const before = value.slice(0, atPos);
+            const after = value.slice(cursorPos);
+            const mentionText = '@ALL PLAYS ';
+            input.value = `${before}${mentionText}${after}`;
+            const newCursor = (before + mentionText).length;
+            input.setSelectionRange(newCursor, newCursor);
+            input.focus();
+            hideMentionMenu();
+        }
+
+        function shouldFetchStats(question) {
+            return /(stats|scorer|score|points|rebounds|assists|goals|saves|leader|leading|top)/i.test(question);
+        }
+
+        function hasAiMention(text) {
+            return (text || '').toLowerCase().includes('@all plays');
+        }
+
+        function isCompletedGame(game) {
+            const status = (game.status || '').toLowerCase();
+            if (status === 'final' || status === 'completed') return true;
+            const homeScore = Number(game.homeScore || 0);
+            const awayScore = Number(game.awayScore || 0);
+            return homeScore > 0 || awayScore > 0;
+        }
+
+        function toDate(value) {
+            if (!value) return null;
+            if (value.toDate) return value.toDate();
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+
+        function serializeGame(game) {
+            const date = toDate(game.date);
+            return {
+                id: game.id,
+                date: date ? date.toISOString() : null,
+                opponent: game.opponent || null,
+                location: game.location || null,
+                status: game.status || null,
+                homeScore: game.homeScore ?? null,
+                awayScore: game.awayScore ?? null
+            };
+        }
+
+        async function buildAiContext(question) {
+            const [players, games] = await Promise.all([
+                getPlayers(teamId),
+                getGames(teamId)
+            ]);
+
+            const now = new Date();
+            const gamesWithDates = games
+                .map(g => ({ ...g, _date: toDate(g.date) }))
+                .filter(g => g._date);
+
+            const upcomingGames = gamesWithDates
+                .filter(g => g._date >= now)
+                .sort((a, b) => a._date - b._date)
+                .slice(0, 10)
+                .map(serializeGame);
+
+            const recentGames = gamesWithDates
+                .filter(g => g._date < now)
+                .sort((a, b) => b._date - a._date)
+                .slice(0, AI_GAMES_CONTEXT_LIMIT)
+                .map(serializeGame);
+
+            let statsSummary = null;
+            if (shouldFetchStats(question)) {
+                const completedGames = gamesWithDates
+                    .filter(isCompletedGame)
+                    .sort((a, b) => b._date - a._date)
+                    .slice(0, AI_STATS_GAMES_LIMIT);
+                const totals = await getAggregatedStatsForGames(teamId, completedGames.map(g => g.id));
+                const playersById = new Map(players.map(p => [p.id, p]));
+
+                statsSummary = {
+                    gamesUsed: completedGames.map(serializeGame),
+                    totalsByPlayer: Object.entries(totals).map(([playerId, stats]) => ({
+                        id: playerId,
+                        name: playersById.get(playerId)?.name || 'Unknown',
+                        number: playersById.get(playerId)?.number || null,
+                        stats
+                    }))
+                };
+            }
+
+            return {
+                team: {
+                    id: teamId,
+                    name: currentTeam?.name || null,
+                    sport: currentTeam?.sport || null
+                },
+                players: players.map(p => ({
+                    id: p.id,
+                    name: p.name || null,
+                    number: p.number || null
+                })),
+                gamesUpcoming: upcomingGames,
+                gamesRecent: recentGames,
+                stats: statsSummary
+            };
+        }
+
+        async function askAllPlays(question) {
+            const context = await buildAiContext(question);
+            const prompt = `You are ALL PLAYS, a sports management expert for youth teams.\\n` +
+                `You are speaking to coaches, admins, and parents.\\n` +
+                `Use ONLY the provided DATA to answer. If the data is insufficient, say so.\\n` +
+                `Respond in a clear, readable format with short paragraphs or bullet points.\\n` +
+                `When referencing dates/times, prefer a readable format (e.g., \"Tue Jan 6, 7:07 PM\").\\n` +
+                `If the question is about stats, summarize with top performers and include key numbers.\\n\\n` +
+                `QUESTION:\\n${question}\\n\\n` +
+                `DATA (JSON):\\n${JSON.stringify(context)}\\n`;
+
+            const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
+            const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
+
+            const firebaseApp = getApp();
+            const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+            const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+            const result = await model.generateContent(prompt);
+            return result.response.text();
+        }
+
+        async function handleAiMention(rawText) {
+            if (aiInFlight) return;
+            const question = rawText.replace(AI_MENTION_REGEX, '').trim();
+            if (!question) {
+                showError('Ask a question after @ALL PLAYS.');
+                return;
+            }
+
+            aiInFlight = true;
+            showAiThinking(true);
+            try {
+                const responseText = await askAllPlays(question);
+                await postChatMessage(teamId, {
+                    text: responseText,
+                    senderId: currentUser.uid,
+                    senderName: null,
+                    senderEmail: null,
+                    senderPhotoUrl: null,
+                    ai: true,
+                    aiName: 'ALL PLAYS',
+                    aiQuestion: question,
+                    aiMeta: {
+                        statsGameLimit: AI_STATS_GAMES_LIMIT,
+                        gamesContextLimit: AI_GAMES_CONTEXT_LIMIT
+                    }
+                });
+            } catch (error) {
+                console.error('ALL PLAYS error:', error);
+                showError('ALL PLAYS could not answer. Please try again.');
+            } finally {
+                aiInFlight = false;
+                await hideAiThinkingWithMinDelay();
+                aiUiPending = false;
+                renderMessages();
+            }
+        }
+
         function setupEventListeners() {
             // Send button
-            document.getElementById('send-btn').addEventListener('click', sendMessage);
+            document.getElementById('send-btn').addEventListener('click', triggerSend);
 
             // Enter key to send
             document.getElementById('message-input').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    sendMessage();
+                    triggerSend();
                 }
             });
 
@@ -609,6 +895,14 @@
                 btn.textContent = 'Load older messages...';
             });
 
+            // Show load-older only when scrolling up
+            const messagesContainer = document.getElementById('messages-container');
+            if (messagesContainer) {
+                messagesContainer.addEventListener('scroll', () => {
+                    updateLoadMoreButton();
+                });
+            }
+
             // Edit modal
             document.getElementById('edit-cancel-btn').addEventListener('click', closeEditModal);
             document.getElementById('edit-save-btn').addEventListener('click', saveEdit);
@@ -625,14 +919,52 @@
             const sendBtn = document.getElementById('send-btn');
             input.addEventListener('input', () => {
                 sendBtn.disabled = !input.value.trim();
+                updateMentionMenu();
+            });
+            input.addEventListener('keydown', (e) => {
+                if (isMentionMenuOpen()) {
+                    const acceptKeys = ['Tab', 'ArrowDown', 'ArrowUp'];
+                    if (acceptKeys.includes(e.key) || (e.key === 'Enter' && !e.shiftKey)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        insertMention();
+                        return;
+                    }
+                }
+                if (e.key === 'Escape') {
+                    hideMentionMenu();
+                }
+            });
+            input.addEventListener('blur', () => {
+                setTimeout(() => hideMentionMenu(), 150);
+            });
+            document.getElementById('mention-allplays').addEventListener('click', insertMention);
+            document.addEventListener('click', (e) => {
+                const menu = document.getElementById('mention-menu');
+                if (!menu.contains(e.target) && e.target !== input) {
+                    hideMentionMenu();
+                }
             });
             sendBtn.disabled = true;
+        }
+
+        function triggerSend() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+            if (/@all\s*plays/i.test(text)) {
+                aiUiPending = true;
+                renderMessages();
+                scrollToBottom();
+                showAiThinking(true);
+            }
+            sendMessage();
         }
 
         async function sendMessage() {
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
             const text = input.value.trim();
+            const wantsAi = /@all\s*plays/i.test(text);
 
             if (!text) return;
 
@@ -652,6 +984,11 @@
                 input.value = '';
                 document.getElementById('send-error').classList.add('hidden');
                 scrollToBottom();
+                hideMentionMenu();
+
+                if (wantsAi) {
+                    handleAiMention(text);
+                }
 
             } catch (error) {
                 console.error('Error sending message:', error);
