@@ -68,16 +68,17 @@ export async function signup(email, password, activationCode) {
         }
     }
 
-    // Send verification email - use userCredential.user directly (not auth.currentUser)
+    // Send verification email - use auth.currentUser exactly like resend does
     try {
-        console.log('SIGNUP: About to reload user:', userCredential.user.email);
-        await userCredential.user.reload();
-        console.log('SIGNUP: User reloaded, about to send verification email');
-        await sendEmailVerification(userCredential.user);
-        console.log('SIGNUP: Verification email sent successfully to:', userCredential.user.email);
+        const user = auth.currentUser;
+        if (user) {
+            await user.reload();
+            console.log('SIGNUP: Sending verification email to:', user.email);
+            await sendEmailVerification(user);
+            console.log('SIGNUP: Verification email sent successfully');
+        }
     } catch (e) {
-        console.error('SIGNUP ERROR sending verification email:', e.code, e.message, e);
-        // Don't throw - let signup succeed, user can resend
+        console.error('SIGNUP ERROR:', e.code, e.message);
     }
 
     return userCredential;
