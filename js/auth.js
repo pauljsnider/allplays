@@ -68,21 +68,26 @@ export async function signup(email, password, activationCode) {
         }
     }
 
-    // Send verification email - use Firebase defaults (no actionCodeSettings)
-    // Reload user first to ensure fully synced with Firebase (same as resend)
+    // Send verification email - wait for auth state to settle first
     try {
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-            await currentUser.reload();
-            await sendEmailVerification(currentUser);
-            console.log('Verification email sent successfully to:', currentUser.email);
-        } else {
-            console.error('No current user found after signup');
-        }
+        // Wait for auth state change to confirm user is fully signed in
+        await new Promise((resolve) => {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+                if (user && user.uid === userId) {
+                    unsubscribe();
+                    resolve(user);
+                }
+            });
+        });
+
+        // Now get fresh user and send email
+        const user = auth.currentUser;
+        await user.reload();
+        await sendEmailVerification(user);
+        console.log('Verification email sent successfully to:', user.email);
     } catch (e) {
         console.error('Error sending verification email:', e.code, e.message);
-        // Re-throw so caller knows email failed
-        throw new Error('Signup succeeded but verification email failed: ' + e.message);
+        // Don't throw - let signup succeed, user can resend
     }
 
     return userCredential;
