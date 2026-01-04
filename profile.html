@@ -100,6 +100,44 @@
                     </button>
                     <span id="profile-status" class="text-sm text-gray-500"></span>
                 </div>
+
+                <!-- Set Password Section (for passwordless users) -->
+                <div id="set-password-section" class="hidden mt-6 pt-6 border-t border-gray-200">
+                    <div class="flex items-start gap-3 mb-4">
+                        <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900">Set a Password</h3>
+                            <p class="text-sm text-gray-600">You signed in with an email link. Add a password to sign in the traditional way.</p>
+                        </div>
+                    </div>
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">New Password</label>
+                                <input type="password" id="new-password" minlength="6"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                    placeholder="At least 6 characters">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Confirm Password</label>
+                                <input type="password" id="confirm-password" minlength="6"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                    placeholder="Re-enter password">
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button id="set-password-btn"
+                                    class="px-4 py-2 bg-amber-600 text-white rounded-md text-sm font-semibold hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500">
+                                    Set Password
+                                </button>
+                                <span id="password-status" class="text-sm"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -303,7 +341,7 @@
 
     <script type="module">
         import { renderHeader, renderFooter } from './js/utils.js?v=7';
-        import { checkAuth } from './js/auth.js';
+        import { checkAuth, setUserPassword } from './js/auth.js';
         import { getUserProfile, updateUserProfile, generateAccessCode, createAccessCode, getUserAccessCodes, uploadUserPhoto } from './js/db.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -311,18 +349,6 @@
         let currentUser = null;
         let currentPhotoUrl = null;
         let photoChanged = false;
-
-        checkAuth(async (user) => {
-            if (!user) {
-                window.location.href = 'login.html';
-                return;
-            }
-            currentUser = user;
-            renderHeader(document.getElementById('header-container'), user);
-            document.getElementById('email').value = user.email || '';
-            await loadProfile();
-            await loadAccessCodes();
-        });
 
         async function loadProfile() {
             try {
@@ -593,6 +619,81 @@
                 console.error('Failed to copy code:', e);
             }
         };
+
+        // Check if user needs to set password (passwordless sign-in)
+        async function checkPasswordlessUser() {
+            const profile = await getUserProfile(currentUser.uid);
+            // Show password section if:
+            // 1. User signed in with email link (signInMethod: 'emailLink')
+            // 2. User doesn't have a password set yet (hasPassword: false or undefined)
+            if (profile?.signInMethod === 'emailLink' && !profile?.hasPassword) {
+                document.getElementById('set-password-section').classList.remove('hidden');
+            }
+        }
+
+        // Set Password Handler
+        document.getElementById('set-password-btn').addEventListener('click', async () => {
+            const newPassword = document.getElementById('new-password').value;
+            const confirmPassword = document.getElementById('confirm-password').value;
+            const status = document.getElementById('password-status');
+            const btn = document.getElementById('set-password-btn');
+
+            // Validate
+            if (!newPassword || newPassword.length < 6) {
+                status.textContent = 'Password must be at least 6 characters';
+                status.className = 'text-sm text-red-600';
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                status.textContent = 'Passwords do not match';
+                status.className = 'text-sm text-red-600';
+                return;
+            }
+
+            try {
+                btn.disabled = true;
+                btn.textContent = 'Setting password...';
+                status.textContent = '';
+
+                await setUserPassword(newPassword);
+
+                // Success - hide the section
+                status.textContent = 'Password set successfully!';
+                status.className = 'text-sm text-green-600';
+
+                // Clear inputs
+                document.getElementById('new-password').value = '';
+                document.getElementById('confirm-password').value = '';
+
+                // Hide section after 2 seconds
+                setTimeout(() => {
+                    document.getElementById('set-password-section').classList.add('hidden');
+                }, 2000);
+
+            } catch (e) {
+                console.error('Error setting password:', e);
+                status.textContent = 'Error: ' + (e.message || 'Failed to set password');
+                status.className = 'text-sm text-red-600';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Set Password';
+            }
+        });
+
+        // Check for passwordless user after auth check
+        checkAuth(async (user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+            document.getElementById('email').value = user.email || '';
+            await loadProfile();
+            await loadAccessCodes();
+            await checkPasswordlessUser();
+        });
     </script>
 </body>
 

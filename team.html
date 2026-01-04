@@ -43,6 +43,9 @@
     <div id="header-container"></div>
 
     <main class="container mx-auto px-4 py-8">
+        <!-- Team Navigation Banner (for logged-in team members) -->
+        <div id="team-nav-banner" class="mb-6"></div>
+
         <!-- Team Header -->
         <div id="team-header" class="mb-8 bg-white rounded-2xl shadow-lg p-6 md:p-8 border border-gray-200">
             <div class="animate-pulse flex flex-col md:flex-row items-center gap-6">
@@ -194,11 +197,12 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids } from './js/db.js';
+        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -475,6 +479,45 @@
                 }
 
                 currentTeam = team;
+
+                // Render team navigation banner if user has access
+                if (currentUser) {
+                    // Enrich user profile if needed
+                    try {
+                        const profile = await getUserProfile(currentUser.uid);
+                        if (profile) {
+                            if (profile.isAdmin) currentUser.isAdmin = true;
+                            if (profile.parentOf) currentUser.parentOf = profile.parentOf;
+                            if (profile.coachOf) currentUser.coachOf = profile.coachOf;
+                        }
+                    } catch (e) {
+                        console.error('Error loading user profile for banner:', e);
+                    }
+
+                    const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
+                    if (accessInfo.hasAccess) {
+                        // Fetch unread count for chat badge
+                        let unreadCount = 0;
+                        try {
+                            const counts = await getUnreadChatCounts(currentUser.uid, [teamId]);
+                            unreadCount = counts[teamId] || 0;
+                        } catch (e) {
+                            console.error('Error fetching unread counts:', e);
+                        }
+
+                        renderTeamAdminBanner(
+                            document.getElementById('team-nav-banner'),
+                            {
+                                team,
+                                teamId,
+                                active: 'view',
+                                unreadCount,
+                                accessLevel: accessInfo.accessLevel,
+                                exitUrl: accessInfo.exitUrl
+                            }
+                        );
+                    }
+                }
 
                 // Calculate season record
                 const record = calculateSeasonRecord(dbGames);

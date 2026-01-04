@@ -674,6 +674,13 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         throw new Error('You must be signed in to invite a parent');
     }
 
+    // Get team and player info for the invite
+    const [team, players] = await Promise.all([
+        getTeam(teamId),
+        getPlayers(teamId)
+    ]);
+    const player = players.find(p => p.id === playerId);
+
     const code = generateAccessCode();
     const accessCodeData = {
         code,
@@ -681,6 +688,8 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         teamId,
         playerId,
         playerNum, // Added for quick context
+        playerName: player?.name || null,
+        teamName: team?.name || null,
         relation,
         email: parentEmail || null,
         generatedBy: currentUser.uid,
@@ -692,7 +701,65 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         usedAt: null
     };
     const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
-    return { id: docRef.id, code };
+
+    // Check if user with this email already exists
+    let existingUser = null;
+    if (parentEmail) {
+        existingUser = await getUserByEmail(parentEmail);
+    }
+
+    return {
+        id: docRef.id,
+        code,
+        teamName: team?.name || null,
+        playerName: player?.name || null,
+        existingUser: !!existingUser
+    };
+}
+
+/**
+ * Invite an admin to a team
+ * @param {string} teamId - The team ID
+ * @param {string} adminEmail - The admin's email address
+ * @returns {Promise<{id: string, code: string, teamName: string, existingUser: boolean}>}
+ */
+export async function inviteAdmin(teamId, adminEmail) {
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+        throw new Error('You must be signed in to invite an admin');
+    }
+
+    const team = await getTeam(teamId);
+    if (!team) {
+        throw new Error('Team not found');
+    }
+
+    const code = generateAccessCode();
+    const accessCodeData = {
+        code,
+        type: 'admin_invite',
+        teamId,
+        teamName: team.name || null,
+        email: adminEmail,
+        generatedBy: currentUser.uid,
+        createdAt: Timestamp.now(),
+        // 7 days from now
+        expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        used: false,
+        usedBy: null,
+        usedAt: null
+    };
+    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
+
+    // Check if user already exists
+    const existingUser = await getUserByEmail(adminEmail);
+
+    return {
+        id: docRef.id,
+        code,
+        teamName: team.name || null,
+        existingUser: !!existingUser
+    };
 }
 
 export async function redeemParentInvite(userId, code) {

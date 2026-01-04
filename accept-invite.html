@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Accept Invite - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 flex flex-col min-h-screen">
+    <div id="header-container"></div>
+
+    <main class="flex-grow flex items-center justify-center px-4">
+        <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+            <!-- Loading State -->
+            <div id="loading-state" class="text-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                <h1 class="text-xl font-bold mb-2">Processing Invite...</h1>
+                <p class="text-gray-600 text-sm">Please wait while we set up your account.</p>
+            </div>
+
+            <!-- Email Required State (when opened on different device) -->
+            <div id="email-required-state" class="hidden">
+                <h1 class="text-2xl font-bold mb-4 text-center">Confirm Your Email</h1>
+                <p class="text-gray-600 text-sm mb-4 text-center">
+                    It looks like you opened this link on a different device. Please enter your email address to continue.
+                </p>
+                <form id="email-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Email Address</label>
+                        <input type="email" id="email-input" required
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="Enter the email you were invited with">
+                    </div>
+                    <div id="email-error" class="text-red-500 text-sm hidden"></div>
+                    <button type="submit" id="confirm-email-btn"
+                        class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                        Continue
+                    </button>
+                </form>
+            </div>
+
+            <!-- Manual Code Entry State (fallback) -->
+            <div id="manual-code-state" class="hidden">
+                <h1 class="text-2xl font-bold mb-4 text-center">Enter Invite Code</h1>
+                <p class="text-gray-600 text-sm mb-4 text-center">
+                    Enter the 8-character invite code you received.
+                </p>
+                <form id="code-form" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Invite Code</label>
+                        <input type="text" id="code-input" required maxlength="8"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 uppercase text-center text-lg tracking-widest font-mono"
+                            placeholder="XXXXXXXX">
+                    </div>
+                    <div id="code-error" class="text-red-500 text-sm hidden"></div>
+                    <button type="submit" id="submit-code-btn"
+                        class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                        Join Team
+                    </button>
+                </form>
+                <p class="text-xs text-gray-500 mt-4 text-center">
+                    Need to create an account? <a href="login.html" class="text-indigo-600 hover:underline">Sign up here</a> with your invite code.
+                </p>
+            </div>
+
+            <!-- Success State -->
+            <div id="success-state" class="hidden text-center">
+                <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold mb-2">You're In!</h1>
+                <p id="success-message" class="text-gray-600 mb-4">You've been added to the team.</p>
+                <p class="text-sm text-gray-500 mb-4">Redirecting you now...</p>
+            </div>
+
+            <!-- Error State -->
+            <div id="error-state" class="hidden text-center">
+                <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </div>
+                <h1 class="text-2xl font-bold mb-2">Something Went Wrong</h1>
+                <p id="error-message" class="text-gray-600 mb-4">There was an error processing your invite.</p>
+                <div class="space-y-2">
+                    <button id="try-manual-code-btn"
+                        class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                        Enter Code Manually
+                    </button>
+                    <a href="login.html"
+                        class="block w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-200 transition text-center">
+                        Go to Login
+                    </a>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=4';
+        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile } from './js/db.js';
+        import { renderHeader, renderFooter } from './js/utils.js?v=7';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteCode = urlParams.get('code') || window.localStorage.getItem('inviteCode');
+        const inviteType = urlParams.get('type') || window.localStorage.getItem('inviteType') || 'parent';
+
+        // State elements
+        const loadingState = document.getElementById('loading-state');
+        const emailRequiredState = document.getElementById('email-required-state');
+        const manualCodeState = document.getElementById('manual-code-state');
+        const successState = document.getElementById('success-state');
+        const errorState = document.getElementById('error-state');
+
+        function showState(state) {
+            [loadingState, emailRequiredState, manualCodeState, successState, errorState].forEach(s => s.classList.add('hidden'));
+            state.classList.remove('hidden');
+        }
+
+        function showError(message) {
+            document.getElementById('error-message').textContent = message;
+            showState(errorState);
+        }
+
+        function showSuccess(message, redirectUrl) {
+            document.getElementById('success-message').textContent = message;
+            showState(successState);
+            setTimeout(() => {
+                window.location.href = redirectUrl;
+            }, 2000);
+        }
+
+        async function processInvite(userId, code) {
+            // Validate the invite code
+            const validation = await validateAccessCode(code);
+            if (!validation.valid) {
+                throw new Error(validation.message || 'Invalid or expired invite code');
+            }
+
+            if (validation.type === 'parent_invite') {
+                // Process parent invite
+                await redeemParentInvite(userId, code);
+                const team = await getTeam(validation.data.teamId);
+                return {
+                    success: true,
+                    message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : 'a player'} on ${team?.name || 'the team'}!`,
+                    redirectUrl: 'parent-dashboard.html'
+                };
+            } else if (validation.type === 'admin_invite') {
+                // Process admin invite - add email to team's adminEmails
+                const team = await getTeam(validation.data.teamId);
+                if (!team) {
+                    throw new Error('Team not found');
+                }
+
+                // Get current user's email
+                const profile = await getUserProfile(userId);
+                const userEmail = profile?.email;
+
+                if (userEmail) {
+                    const adminEmails = team.adminEmails || [];
+                    if (!adminEmails.map(e => e.toLowerCase()).includes(userEmail.toLowerCase())) {
+                        adminEmails.push(userEmail.toLowerCase());
+                        // Note: We need to update the team, but we should use db.js
+                        // For now, we'll update user profile with coach role
+                    }
+                }
+
+                // Update user profile to add coachOf
+                await updateUserProfile(userId, {
+                    coachOf: [validation.data.teamId],
+                    roles: ['coach']
+                });
+
+                // Mark code as used is handled by validateAccessCode flow
+
+                return {
+                    success: true,
+                    message: `You've been added as an admin of ${team?.name || 'the team'}!`,
+                    redirectUrl: 'dashboard.html'
+                };
+            } else {
+                throw new Error('Unknown invite type');
+            }
+        }
+
+        async function init() {
+            renderHeader(document.getElementById('header-container'), null);
+
+            // Check if this is an email sign-in link
+            if (isEmailSignInLink()) {
+                // Get the email from localStorage (same device) or ask user
+                let email = window.localStorage.getItem('emailForSignIn');
+
+                if (!email) {
+                    // User opened link on different device - ask for email
+                    showState(emailRequiredState);
+                    return;
+                }
+
+                try {
+                    // Complete the sign-in
+                    const result = await completeEmailLinkSignIn(email);
+                    const userId = result.user.uid;
+
+                    // Create/update user profile
+                    await updateUserProfile(userId, {
+                        email: email,
+                        lastLogin: new Date(),
+                        signInMethod: 'emailLink'
+                    });
+
+                    // Process the invite code
+                    if (inviteCode) {
+                        const inviteResult = await processInvite(userId, inviteCode);
+                        showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                    } else {
+                        // No invite code - just redirect to dashboard
+                        const profile = await getUserProfile(userId);
+                        const redirectUrl = getRedirectUrl({ ...result.user, ...profile });
+                        showSuccess('Welcome to ALL PLAYS!', redirectUrl);
+                    }
+
+                    // Clean up localStorage
+                    window.localStorage.removeItem('emailForSignIn');
+                    window.localStorage.removeItem('inviteCode');
+                    window.localStorage.removeItem('inviteType');
+
+                } catch (error) {
+                    console.error('Error completing email sign-in:', error);
+                    showError(error.message || 'Failed to complete sign-in. Please try again.');
+                }
+            } else {
+                // Not an email link - check if user is already logged in
+                checkAuth(async (user) => {
+                    renderHeader(document.getElementById('header-container'), user);
+
+                    if (user && inviteCode) {
+                        // User is logged in and has an invite code - process it
+                        try {
+                            const inviteResult = await processInvite(user.uid, inviteCode);
+                            showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                        } catch (error) {
+                            console.error('Error processing invite:', error);
+                            showError(error.message);
+                        }
+                    } else if (user) {
+                        // User is logged in but no invite code
+                        showState(manualCodeState);
+                    } else if (inviteCode) {
+                        // Has invite code but not logged in - show manual entry
+                        showState(manualCodeState);
+                        document.getElementById('code-input').value = inviteCode;
+                    } else {
+                        // No invite code, not logged in
+                        showState(manualCodeState);
+                    }
+                }, { skipEmailVerificationCheck: true });
+            }
+        }
+
+        // Handle email form submission (when opened on different device)
+        document.getElementById('email-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email-input').value.trim();
+            const errorDiv = document.getElementById('email-error');
+            const btn = document.getElementById('confirm-email-btn');
+
+            errorDiv.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+
+            try {
+                const result = await completeEmailLinkSignIn(email);
+                const userId = result.user.uid;
+
+                // Create/update user profile
+                await updateUserProfile(userId, {
+                    email: email,
+                    lastLogin: new Date(),
+                    signInMethod: 'emailLink'
+                });
+
+                // Process the invite code
+                if (inviteCode) {
+                    const inviteResult = await processInvite(userId, inviteCode);
+                    showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                } else {
+                    const profile = await getUserProfile(userId);
+                    const redirectUrl = getRedirectUrl({ ...result.user, ...profile });
+                    showSuccess('Welcome to ALL PLAYS!', redirectUrl);
+                }
+
+                // Clean up
+                window.localStorage.removeItem('emailForSignIn');
+                window.localStorage.removeItem('inviteCode');
+                window.localStorage.removeItem('inviteType');
+
+            } catch (error) {
+                console.error('Error:', error);
+                errorDiv.textContent = error.message || 'Invalid email or expired link. Please try again.';
+                errorDiv.classList.remove('hidden');
+                btn.disabled = false;
+                btn.textContent = 'Continue';
+            }
+        });
+
+        // Handle manual code form submission
+        document.getElementById('code-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const code = document.getElementById('code-input').value.trim().toUpperCase();
+            const errorDiv = document.getElementById('code-error');
+            const btn = document.getElementById('submit-code-btn');
+
+            if (!code || code.length !== 8) {
+                errorDiv.textContent = 'Please enter a valid 8-character code';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            errorDiv.classList.add('hidden');
+            btn.disabled = true;
+            btn.textContent = 'Processing...';
+
+            // Check if user is logged in
+            checkAuth(async (user) => {
+                if (!user) {
+                    // Not logged in - redirect to login with the code
+                    window.location.href = `login.html?code=${code}`;
+                    return;
+                }
+
+                try {
+                    const inviteResult = await processInvite(user.uid, code);
+                    showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                } catch (error) {
+                    console.error('Error:', error);
+                    errorDiv.textContent = error.message || 'Invalid or expired code';
+                    errorDiv.classList.remove('hidden');
+                    btn.disabled = false;
+                    btn.textContent = 'Join Team';
+                }
+            }, { skipEmailVerificationCheck: true });
+        });
+
+        // Handle "try manual code" button
+        document.getElementById('try-manual-code-btn').addEventListener('click', () => {
+            showState(manualCodeState);
+        });
+
+        // Initialize
+        init();
+    </script>
+</body>
+
+</html>

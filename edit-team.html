@@ -117,9 +117,11 @@
                     <div id="add-admin-form" class="hidden mt-3 p-3 bg-white rounded border border-indigo-200">
                         <input type="email" id="admin-email-input" placeholder="coach@example.com"
                             class="w-full px-3 py-2 border border-gray-300 rounded mb-2 text-sm">
+                        <p class="text-xs text-gray-500 mb-2">We'll send them an email invite with a link to join.</p>
+                        <div id="admin-invite-status" class="hidden mb-2 text-sm p-2 rounded"></div>
                         <div class="flex gap-2">
                             <button id="save-admin-btn" type="button"
-                                class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Save</button>
+                                class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Send Invite</button>
                             <button id="cancel-admin-btn" type="button"
                                 class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">Cancel</button>
                         </div>
@@ -166,9 +168,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount } from './js/db.js';
+        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=7';
-        import { checkAuth } from './js/auth.js';
+        import { checkAuth, sendInviteEmail } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -251,7 +253,7 @@
                     } catch (e) {
                         console.warn('Failed to get unread count:', e);
                     }
-                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'team', unreadCount });
+                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'edit', unreadCount });
                 }
             }
         }
@@ -294,24 +296,86 @@
             document.getElementById('admin-email-input').value = '';
         });
 
-        document.getElementById('save-admin-btn').addEventListener('click', () => {
+        document.getElementById('save-admin-btn').addEventListener('click', async () => {
             const input = document.getElementById('admin-email-input');
+            const btn = document.getElementById('save-admin-btn');
+            const statusDiv = document.getElementById('admin-invite-status');
             const email = (input.value || '').trim().toLowerCase();
+
             if (!email) {
-                alert('Please enter an email.');
+                showAdminStatus('Please enter an email.', 'error');
                 return;
             }
             if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-                alert('Please enter a valid email.');
+                showAdminStatus('Please enter a valid email.', 'error');
                 return;
             }
-            if (!adminEmails.includes(email)) {
+            if (adminEmails.includes(email)) {
+                showAdminStatus('This email is already an admin.', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            statusDiv.classList.add('hidden');
+
+            try {
+                // If we have a team ID (editing existing team), send invite email
+                if (currentTeamId) {
+                    const result = await inviteAdmin(currentTeamId, email);
+
+                    if (result.existingUser) {
+                        // User exists - show code for them
+                        showAdminStatus(`${email} already has an account. Share this code with them: ${result.code}`, 'info');
+                    } else {
+                        // New user - send email
+                        try {
+                            await sendInviteEmail(email, result.code, 'admin', {
+                                teamName: result.teamName
+                            });
+                            showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
+                        } catch (emailError) {
+                            console.error('Failed to send admin invite email:', emailError);
+                            showAdminStatus(`Could not send email. Share this code with them: ${result.code}`, 'warning');
+                        }
+                    }
+                }
+
+                // Add to local list and update UI
                 adminEmails.push(email);
                 renderAdminList();
+                input.value = '';
+
+                // Auto-hide form after success (after a delay so user sees message)
+                setTimeout(() => {
+                    document.getElementById('add-admin-form').classList.add('hidden');
+                    statusDiv.classList.add('hidden');
+                }, 3000);
+
+            } catch (e) {
+                console.error('Error inviting admin:', e);
+                showAdminStatus('Error: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send Invite';
             }
-            input.value = '';
-            document.getElementById('add-admin-form').classList.add('hidden');
         });
+
+        function showAdminStatus(message, type) {
+            const statusDiv = document.getElementById('admin-invite-status');
+            statusDiv.textContent = message;
+            statusDiv.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800', 'bg-blue-100', 'text-blue-800', 'bg-yellow-100', 'text-yellow-800');
+
+            if (type === 'success') {
+                statusDiv.classList.add('bg-green-100', 'text-green-800');
+            } else if (type === 'error') {
+                statusDiv.classList.add('bg-red-100', 'text-red-800');
+            } else if (type === 'info') {
+                statusDiv.classList.add('bg-blue-100', 'text-blue-800');
+            } else if (type === 'warning') {
+                statusDiv.classList.add('bg-yellow-100', 'text-yellow-800');
+            }
+        }
 
         document.getElementById('team-form').addEventListener('submit', async (e) => {
             e.preventDefault();

@@ -208,9 +208,11 @@
         <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
             <div class="mt-3 text-center">
                 <h3 class="text-lg leading-6 font-medium text-gray-900">Invite Parent</h3>
-                <div class="mt-2 px-7 py-3">
+
+                <!-- Initial Form State -->
+                <div id="invite-form-state" class="mt-2 px-7 py-3">
                     <p class="text-sm text-gray-500 mb-4">
-                        Generate an invite code for <span id="invite-player-name" class="font-bold"></span>.
+                        Invite a parent to follow <span id="invite-player-name" class="font-bold"></span>.
                     </p>
                     <div class="text-left">
                         <label class="block text-sm font-medium text-gray-700">Relation (optional)</label>
@@ -221,27 +223,101 @@
                             <option value="Guardian">Guardian</option>
                             <option value="Other">Other</option>
                         </select>
-                        <label class="block text-sm font-medium text-gray-700">Parent Email (optional)</label>
+                        <label class="block text-sm font-medium text-gray-700">Parent Email</label>
                         <input type="email" id="invite-email" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2" placeholder="parent@example.com">
+                        <p class="text-xs text-gray-500 mt-1">We'll send them an email invite. Leave blank to get a code to share manually.</p>
                     </div>
-                    
-                    <!-- Result Area -->
-                    <div id="invite-result" class="hidden mt-4 p-3 bg-green-50 rounded border border-green-200">
-                        <p class="text-xs text-green-800 mb-1">Invite Code Generated:</p>
+                    <div class="items-center pt-4">
+                        <button id="generate-invite-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            Send Invite
+                        </button>
+                        <button id="close-invite-modal" class="mt-3 px-4 py-2 bg-white text-gray-700 text-base font-medium rounded-md w-full shadow-sm border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Email Sent State -->
+                <div id="invite-email-sent-state" class="hidden mt-2 px-7 py-3">
+                    <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                        </svg>
+                    </div>
+                    <p class="text-sm text-gray-700 mb-2">
+                        <span class="font-bold">Email sent!</span>
+                    </p>
+                    <p id="invite-email-sent-message" class="text-sm text-gray-500 mb-4"></p>
+
+                    <!-- Fallback Code Section -->
+                    <div class="bg-gray-50 rounded border border-gray-200 p-3 mt-4">
+                        <p class="text-xs text-gray-600 mb-2">If they don't receive the email, share this code:</p>
+                        <div class="flex items-center justify-between bg-white border border-gray-300 rounded px-2 py-1">
+                            <code id="fallback-code" class="text-lg font-bold text-gray-700 tracking-widest"></code>
+                            <button id="copy-fallback-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
+                        </div>
+                    </div>
+
+                    <div class="items-center pt-4">
+                        <button id="done-email-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            Done
+                        </button>
+                        <button id="invite-another-btn" class="mt-3 px-4 py-2 bg-white text-gray-700 text-base font-medium rounded-md w-full shadow-sm border border-gray-300 hover:bg-gray-50">
+                            Invite Another Parent
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Existing User Email Sent State -->
+                <div id="invite-existing-user-state" class="hidden mt-2 px-7 py-3">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                        </svg>
+                    </div>
+                    <p class="text-sm text-gray-700 mb-2">
+                        <span class="font-bold">This parent already has an account!</span>
+                    </p>
+                    <p id="invite-existing-message" class="text-sm text-gray-500 mb-4"></p>
+
+                    <!-- Code Section for Existing User -->
+                    <div class="bg-blue-50 rounded border border-blue-200 p-3 mt-4">
+                        <p class="text-xs text-blue-700 mb-2">Share this code with them to add your player:</p>
+                        <div class="flex items-center justify-between bg-white border border-blue-300 rounded px-2 py-1">
+                            <code id="existing-user-code" class="text-lg font-bold text-blue-700 tracking-widest"></code>
+                            <button id="copy-existing-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">They can enter this code at allplays.ai/accept-invite.html</p>
+                    </div>
+
+                    <div class="items-center pt-4">
+                        <button id="done-existing-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            Done
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Manual Code State (no email provided) -->
+                <div id="invite-manual-state" class="hidden mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500 mb-4">
+                        Share this code with the parent for <span id="manual-player-name" class="font-bold"></span>.
+                    </p>
+                    <div class="bg-green-50 rounded border border-green-200 p-3">
+                        <p class="text-xs text-green-800 mb-2">Invite Code:</p>
                         <div class="flex items-center justify-between bg-white border border-green-300 rounded px-2 py-1">
                             <code id="generated-code" class="text-lg font-bold text-green-600 tracking-widest"></code>
                             <button id="copy-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
                         </div>
-                        <p class="text-xs text-gray-500 mt-2">Share this code with the parent.</p>
+                        <p class="text-xs text-gray-500 mt-2">They can use this code to sign up at allplays.ai</p>
                     </div>
-                </div>
-                <div class="items-center px-4 py-3">
-                    <button id="generate-invite-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        Generate Code
-                    </button>
-                    <button id="close-invite-modal" class="mt-3 px-4 py-2 bg-white text-gray-700 text-base font-medium rounded-md w-full shadow-sm border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300">
-                        Close
-                    </button>
+                    <div class="items-center pt-4">
+                        <button id="done-manual-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            Done
+                        </button>
+                        <button id="invite-another-manual-btn" class="mt-3 px-4 py-2 bg-white text-gray-700 text-base font-medium rounded-md w-full shadow-sm border border-gray-300 hover:bg-gray-50">
+                            Invite Another Parent
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -252,7 +328,7 @@
     <script type="module">
         import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
-        import { checkAuth } from './js/auth.js';
+        import { checkAuth, sendInviteEmail } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
@@ -434,49 +510,113 @@
 
         let currentInvitePlayer = null;
 
+        // Helper to show/hide modal states
+        function showInviteState(stateName) {
+            const states = ['invite-form-state', 'invite-email-sent-state', 'invite-existing-user-state', 'invite-manual-state'];
+            states.forEach(s => {
+                document.getElementById(s).classList.add('hidden');
+            });
+            document.getElementById(stateName).classList.remove('hidden');
+        }
+
         function startInviteParent(player) {
             currentInvitePlayer = player;
             document.getElementById('invite-player-name').textContent = player.name;
+            document.getElementById('manual-player-name').textContent = player.name;
             document.getElementById('invite-modal').classList.remove('hidden');
-            document.getElementById('invite-result').classList.add('hidden');
-            document.getElementById('generate-invite-btn').classList.remove('hidden');
+            showInviteState('invite-form-state');
             document.getElementById('invite-email').value = '';
+            document.getElementById('invite-relation').value = 'Parent';
         }
 
-        document.getElementById('close-invite-modal').addEventListener('click', () => {
-             document.getElementById('invite-modal').classList.add('hidden');
-             currentInvitePlayer = null;
+        function closeInviteModal() {
+            document.getElementById('invite-modal').classList.add('hidden');
+            currentInvitePlayer = null;
+        }
+
+        document.getElementById('close-invite-modal').addEventListener('click', closeInviteModal);
+        document.getElementById('done-email-btn').addEventListener('click', closeInviteModal);
+        document.getElementById('done-existing-btn').addEventListener('click', closeInviteModal);
+        document.getElementById('done-manual-btn').addEventListener('click', closeInviteModal);
+
+        // "Invite another" buttons reset the modal to form state
+        document.getElementById('invite-another-btn').addEventListener('click', () => {
+            showInviteState('invite-form-state');
+            document.getElementById('invite-email').value = '';
+        });
+        document.getElementById('invite-another-manual-btn').addEventListener('click', () => {
+            showInviteState('invite-form-state');
+            document.getElementById('invite-email').value = '';
         });
 
         document.getElementById('generate-invite-btn').addEventListener('click', async () => {
              if (!currentInvitePlayer) return;
              const relation = document.getElementById('invite-relation').value;
-             const email = document.getElementById('invite-email').value;
+             const email = document.getElementById('invite-email').value.trim();
              const btn = document.getElementById('generate-invite-btn');
-             
+
              btn.disabled = true;
-             btn.textContent = 'Generating...';
+             btn.textContent = email ? 'Sending...' : 'Generating...';
 
              try {
+                 // Generate the invite code
                  const result = await inviteParent(currentTeamId, currentInvitePlayer.id, currentInvitePlayer.number, email, relation);
-                 document.getElementById('generated-code').textContent = result.code;
-                 document.getElementById('invite-result').classList.remove('hidden');
-                 document.getElementById('generate-invite-btn').classList.add('hidden');
+
+                 if (email) {
+                     // Email was provided - try to send email invite
+                     if (result.existingUser) {
+                         // User already has an account - show different message
+                         document.getElementById('invite-existing-message').textContent =
+                             `${email} already has an ALL PLAYS account. They just need to enter the code below to start following ${currentInvitePlayer.name}.`;
+                         document.getElementById('existing-user-code').textContent = result.code;
+                         showInviteState('invite-existing-user-state');
+                     } else {
+                         // New user - send email invite
+                         try {
+                             await sendInviteEmail(email, result.code, 'parent', {
+                                 teamName: result.teamName,
+                                 playerName: result.playerName
+                             });
+                             document.getElementById('invite-email-sent-message').textContent =
+                                 `We sent an invite to ${email}. They'll receive a link to join and follow ${currentInvitePlayer.name}.`;
+                             document.getElementById('fallback-code').textContent = result.code;
+                             showInviteState('invite-email-sent-state');
+                         } catch (emailError) {
+                             // Email failed - show manual code with error message
+                             console.error('Failed to send email:', emailError);
+                             document.getElementById('generated-code').textContent = result.code;
+                             showInviteState('invite-manual-state');
+                             alert('Could not send email. Please share the code manually.');
+                         }
+                     }
+                 } else {
+                     // No email - show manual code
+                     document.getElementById('generated-code').textContent = result.code;
+                     showInviteState('invite-manual-state');
+                 }
              } catch (e) {
-                 alert('Error generating code: ' + e.message);
+                 alert('Error generating invite: ' + e.message);
                  console.error(e);
              } finally {
                  btn.disabled = false;
-                 btn.textContent = 'Generate Code';
+                 btn.textContent = 'Send Invite';
              }
         });
 
-        document.getElementById('copy-code-btn').addEventListener('click', () => {
-             const code = document.getElementById('generated-code').textContent;
-             navigator.clipboard.writeText(code);
-             document.getElementById('copy-code-btn').textContent = 'Copied!';
-             setTimeout(() => document.getElementById('copy-code-btn').textContent = 'Copy', 2000);
-        });
+        // Copy code button handlers
+        function setupCopyButton(buttonId, codeId) {
+            document.getElementById(buttonId).addEventListener('click', () => {
+                const code = document.getElementById(codeId).textContent;
+                navigator.clipboard.writeText(code);
+                const btn = document.getElementById(buttonId);
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 2000);
+            });
+        }
+
+        setupCopyButton('copy-code-btn', 'generated-code');
+        setupCopyButton('copy-fallback-code-btn', 'fallback-code');
+        setupCopyButton('copy-existing-code-btn', 'existing-user-code');
 
         function resetForm() {
             editingPlayerId = null;

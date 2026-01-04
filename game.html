@@ -43,7 +43,11 @@
     <div id="header-container"></div>
 
     <main class="container mx-auto px-4 py-8 md:py-12">
-        <div class="mb-6">
+        <!-- Team Navigation Banner (for logged-in team members) -->
+        <div id="team-nav-banner" class="mb-6"></div>
+
+        <!-- Back link fallback (hidden when banner is shown) -->
+        <div id="back-link-container" class="mb-6">
             <a id="back-link" href="#"
                 class="inline-flex items-center text-primary-600 hover:text-primary-700 font-medium transition group">
                 <svg class="w-5 h-5 mr-2 group-hover:-translate-x-1 transition-transform" fill="none"
@@ -177,15 +181,19 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers } from './js/db.js';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
+        let currentUser = null;
         checkAuth((user) => {
             // Allow viewing without login - user can be null
+            currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
+            loadGame();
         });
 
         renderFooter(document.getElementById('footer-container'));
@@ -243,6 +251,48 @@
                 if (!game) {
                     document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Game not found</div>';
                     return;
+                }
+
+                // Render team navigation banner if user has access
+                if (currentUser) {
+                    // Enrich user profile if needed
+                    try {
+                        const profile = await getUserProfile(currentUser.uid);
+                        if (profile) {
+                            if (profile.isAdmin) currentUser.isAdmin = true;
+                            if (profile.parentOf) currentUser.parentOf = profile.parentOf;
+                            if (profile.coachOf) currentUser.coachOf = profile.coachOf;
+                        }
+                    } catch (e) {
+                        console.error('Error loading user profile for banner:', e);
+                    }
+
+                    const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
+                    if (accessInfo.hasAccess) {
+                        // Fetch unread count for chat badge
+                        let unreadCount = 0;
+                        try {
+                            const counts = await getUnreadChatCounts(currentUser.uid, [teamId]);
+                            unreadCount = counts[teamId] || 0;
+                        } catch (e) {
+                            console.error('Error fetching unread counts:', e);
+                        }
+
+                        renderTeamAdminBanner(
+                            document.getElementById('team-nav-banner'),
+                            {
+                                team,
+                                teamId,
+                                active: '', // No highlight on game page
+                                unreadCount,
+                                accessLevel: accessInfo.accessLevel,
+                                exitUrl: accessInfo.exitUrl
+                            }
+                        );
+                        // Hide fallback back link when banner is shown
+                        const backLinkContainer = document.getElementById('back-link-container');
+                        if (backLinkContainer) backLinkContainer.classList.add('hidden');
+                    }
                 }
 
                 // Practices don't have game reports - redirect to team page
@@ -656,8 +706,6 @@
                 console.error(error);
             }
         }
-
-        loadGame();
     </script>
 </body>
 

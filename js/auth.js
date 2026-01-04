@@ -1,6 +1,6 @@
 import { auth } from './firebase.js';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, sendEmailVerification } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams } from './db.js';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, sendEmailVerification, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, updatePassword } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -281,4 +281,108 @@ export async function resendVerificationEmail() {
 
 export function getCurrentUser() {
     return auth.currentUser;
+}
+
+// ============================================
+// Email Link Authentication (Passwordless)
+// ============================================
+
+/**
+ * Send an invite email using Firebase Email Link authentication.
+ * @param {string} email - The recipient's email address
+ * @param {string} inviteCode - The invite code to include in the link
+ * @param {string} inviteType - 'parent' or 'admin'
+ * @param {Object} metadata - Additional info like teamName, playerName
+ * @returns {Promise<{success: boolean, emailSent: boolean, existingUser: boolean}>}
+ */
+export async function sendInviteEmail(email, inviteCode, inviteType, metadata = {}) {
+    // Check if user already exists
+    const existingUser = await getUserByEmail(email);
+
+    // Build the continue URL with invite code
+    const continueUrl = `https://allplays.ai/accept-invite.html?code=${inviteCode}&type=${inviteType}`;
+
+    const actionCodeSettings = {
+        url: continueUrl,
+        handleCodeInApp: true
+    };
+
+    try {
+        await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+
+        // Store email locally so we can retrieve it on the landing page
+        // This helps when user opens link on a different device
+        window.localStorage.setItem('emailForSignIn', email);
+        window.localStorage.setItem('inviteCode', inviteCode);
+        window.localStorage.setItem('inviteType', inviteType);
+
+        return {
+            success: true,
+            emailSent: true,
+            existingUser: !!existingUser
+        };
+    } catch (error) {
+        console.error('Error sending invite email:', error);
+        throw error;
+    }
+}
+
+/**
+ * Check if the current URL is a sign-in email link
+ * @returns {boolean}
+ */
+export function isEmailSignInLink() {
+    return isSignInWithEmailLink(auth, window.location.href);
+}
+
+/**
+ * Complete sign-in with email link
+ * @param {string} email - The email address to sign in
+ * @returns {Promise<UserCredential>}
+ */
+export async function completeEmailLinkSignIn(email) {
+    if (!isSignInWithEmailLink(auth, window.location.href)) {
+        throw new Error('Invalid sign-in link');
+    }
+
+    const result = await signInWithEmailLink(auth, email, window.location.href);
+
+    // Clear the stored email
+    window.localStorage.removeItem('emailForSignIn');
+
+    return result;
+}
+
+/**
+ * Set password for a passwordless user
+ * @param {string} newPassword - The new password to set
+ * @returns {Promise<void>}
+ */
+export async function setUserPassword(newPassword) {
+    const user = auth.currentUser;
+    if (!user) {
+        throw new Error('No user is currently signed in');
+    }
+
+    await updatePassword(user, newPassword);
+
+    // Update profile to indicate they now have a password
+    await updateUserProfile(user.uid, {
+        hasPassword: true,
+        passwordSetAt: new Date()
+    });
+}
+
+/**
+ * Check if current user signed in with email link (passwordless)
+ * @returns {boolean}
+ */
+export function isPasswordlessUser() {
+    const user = auth.currentUser;
+    if (!user) return false;
+
+    // Check provider data - email link users won't have password provider
+    const providers = user.providerData.map(p => p.providerId);
+    return providers.includes('password') === false ||
+           (providers.length === 1 && providers[0] === 'password' && !user.emailVerified);
 }

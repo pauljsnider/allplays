@@ -325,17 +325,16 @@
 
                 canModerate = canModerateChat(userWithProfile, currentTeam);
 
-                // Render banner only for owners/admins, simple header for parents
-                if (canModerate) {
-                    renderTeamAdminBanner(document.getElementById('team-banner'), {
-                        team: currentTeam,
-                        teamId: teamId,
-                        active: 'chat'
-                    });
-                } else {
-                    // Simple header for parents (no edit options)
-                    renderParentChatHeader(document.getElementById('team-banner'), currentTeam);
-                }
+                // Render team navigation banner with appropriate access level
+                const accessLevel = canModerate ? 'full' : 'parent';
+                const exitUrl = canModerate ? 'dashboard.html' : 'parent-dashboard.html';
+                renderTeamAdminBanner(document.getElementById('team-banner'), {
+                    team: currentTeam,
+                    teamId: teamId,
+                    active: 'chat',
+                    accessLevel,
+                    exitUrl
+                });
 
                 // Load messages (real-time)
                 startRealtimeUpdates();

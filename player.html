@@ -43,13 +43,17 @@
     <div id="header-container"></div>
 
     <main class="container mx-auto px-4 py-8">
-        <div class="mb-6">
+        <!-- Team Navigation Banner (for logged-in team members) -->
+        <div id="team-nav-banner" class="mb-6"></div>
+
+        <!-- Back link fallback (hidden when banner is shown) -->
+        <div id="back-link-container" class="mb-6">
             <a id="back-link" href="#"
                 class="inline-flex items-center gap-2 text-primary-600 hover:text-primary-700 transition font-medium">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
                 </svg>
-                Back to Game
+                Back to Team
             </a>
         </div>
 
@@ -198,11 +202,12 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, uploadPlayerPhoto } from './js/db.js';
+        import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=7';
         import { checkAuth } from './js/auth.js';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
+        import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
@@ -211,7 +216,7 @@
         checkAuth((user) => {
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            updateEditButton();
+            loadPlayerDetails();
         });
 
         renderFooter(document.getElementById('footer-container'));
@@ -268,6 +273,48 @@
                 }
                 currentPlayer = player; // Store global
 
+                // Render team navigation banner if user has access
+                if (currentUser) {
+                    // Enrich user profile if needed
+                    try {
+                        const profile = await getUserProfile(currentUser.uid);
+                        if (profile) {
+                            if (profile.isAdmin) currentUser.isAdmin = true;
+                            if (profile.parentOf) currentUser.parentOf = profile.parentOf;
+                            if (profile.coachOf) currentUser.coachOf = profile.coachOf;
+                        }
+                    } catch (e) {
+                        console.error('Error loading user profile for banner:', e);
+                    }
+
+                    const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
+                    if (accessInfo.hasAccess) {
+                        // Fetch unread count for chat badge
+                        let unreadCount = 0;
+                        try {
+                            const counts = await getUnreadChatCounts(currentUser.uid, [teamId]);
+                            unreadCount = counts[teamId] || 0;
+                        } catch (e) {
+                            console.error('Error fetching unread counts:', e);
+                        }
+
+                        renderTeamAdminBanner(
+                            document.getElementById('team-nav-banner'),
+                            {
+                                team,
+                                teamId,
+                                active: '', // No highlight on player page
+                                unreadCount,
+                                accessLevel: accessInfo.accessLevel,
+                                exitUrl: accessInfo.exitUrl
+                            }
+                        );
+                        // Hide fallback back link when banner is shown
+                        const backLinkContainer = document.getElementById('back-link-container');
+                        if (backLinkContainer) backLinkContainer.classList.add('hidden');
+                    }
+                }
+
                 // Build per-game stats across all games
                 const perGameStats = [];
                 let gamesPlayed = 0;
@@ -321,9 +368,8 @@
                 const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
                     ? gameId
                     : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
-                document.getElementById('back-link').href = selectedGameId
-                    ? `game.html#teamId=${teamId}&gameId=${selectedGameId}`
-                    : `team.html#teamId=${teamId}`;
+                // Set back-link href to team page (fallback navigation when banner not shown)
+                document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
 
                 // Render Player Header
                 document.getElementById('player-header').innerHTML = `
@@ -878,8 +924,6 @@
                 btn.textContent = 'Save Changes';
             }
         });
-
-        loadPlayerDetails();
     </script>
 </body>
 
