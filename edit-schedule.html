@@ -1382,8 +1382,25 @@
                     calendarEventUid: calendarEvent.uid
                 });
 
-                // Redirect to stat tracker
-                window.location.href = `track.html#teamId=${currentTeamId}&gameId=${gameId}`;
+                // Check if this is a basketball game
+                let isBasketball = false;
+                if (configId) {
+                    const config = allConfigs.find(c => c.id === configId);
+                    if (config) {
+                        isBasketball = (config.baseType || '').toLowerCase() === 'basketball';
+                    }
+                } else {
+                    // No config - infer from team sport
+                    isBasketball = (currentTeam?.sport || '').toLowerCase().includes('basketball');
+                }
+
+                // If basketball, show chooser modal; otherwise go to standard tracker
+                if (isBasketball) {
+                    pendingTrackGameId = gameId;
+                    document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
+                } else {
+                    window.location.href = `track.html#teamId=${currentTeamId}&gameId=${gameId}`;
+                }
             } catch (error) {
                 console.error('Error tracking game:', error);
                 alert('Error tracking game: ' + error.message);
