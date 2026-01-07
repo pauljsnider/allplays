@@ -1,5 +1,5 @@
 import { auth } from './firebase.js';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, sendPasswordResetEmail, sendEmailVerification, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, updatePassword } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult, sendPasswordResetEmail, sendEmailVerification, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, updatePassword } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js';
 
 export async function login(email, password) {
@@ -86,12 +86,33 @@ export async function signup(email, password, activationCode) {
 
 export async function loginWithGoogle(activationCode = null) {
     const provider = new GoogleAuthProvider();
-    const result = await signInWithPopup(auth, provider);
+
+    // Store activation code in sessionStorage for redirect flow
+    if (activationCode) {
+        window.sessionStorage.setItem('pendingActivationCode', activationCode);
+    }
+
+    // Use redirect instead of popup for better compatibility with mobile and restrictive networks
+    await signInWithRedirect(auth, provider);
+    // Function returns here; user will be redirected to Google
+    // Result will be handled by handleGoogleRedirectResult() on return
+}
+
+export async function handleGoogleRedirectResult() {
+    const result = await getRedirectResult(auth);
+
+    if (!result || !result.user) {
+        // No redirect result (user didn't just come back from Google)
+        return null;
+    }
 
     // Check if this is a new user (first time signing in)
     const isNewUser = result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
 
     if (isNewUser) {
+        // Retrieve activation code from sessionStorage
+        const activationCode = window.sessionStorage.getItem('pendingActivationCode');
+
         // New user - require activation code
         if (!activationCode) {
             // Delete the newly created user account and sign out
@@ -156,6 +177,9 @@ export async function loginWithGoogle(activationCode = null) {
                 console.error('Error creating user profile:', e);
             }
         }
+
+        // Clear the activation code from sessionStorage
+        window.sessionStorage.removeItem('pendingActivationCode');
     }
 
     return result;

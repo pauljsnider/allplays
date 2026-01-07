@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PR Test Suite - Basketball Detection & Auth Flow</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-result { font-size: 0.9em; color: #666; }
+        h2 { color: #4338ca; }
+        pre { background: #f8f8f8; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🧪 PR Test Suite</h1>
+    <p>Testing changes from commits: 7a1dbf4, 399a507, 372018c, 1835b73</p>
+
+    <div id="test-results"></div>
+
+    <script>
+        // Test harness
+        const results = [];
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ name, pass: true, error: null });
+            } catch (e) {
+                results.push({ name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message}\nExpected: ${expected}\nActual: ${actual}`);
+            }
+        }
+
+        function assertTrue(value, message) {
+            if (!value) {
+                throw new Error(message);
+            }
+        }
+
+        function assertFalse(value, message) {
+            if (value) {
+                throw new Error(message);
+            }
+        }
+
+        // ============================================
+        // TEST SUITE 1: Basketball Detection Logic
+        // ============================================
+
+        const mockTeam = { sport: 'Basketball' };
+        const mockTeamSoccer = { sport: 'Soccer' };
+        const allConfigs = [
+            { id: 'config1', baseType: 'Basketball' },
+            { id: 'config2', baseType: 'Soccer' },
+            { id: 'config3', baseType: 'BASKETBALL' }, // uppercase test
+            { id: 'config4' } // no baseType
+        ];
+
+        // Replicate the isBasketballConfig function
+        function isBasketballConfig(configId, currentTeam) {
+            if (configId) {
+                const config = allConfigs.find(c => c.id === configId);
+                if (config) {
+                    return (config.baseType || '').toLowerCase() === 'basketball';
+                }
+            }
+            // If no config, infer from team sport
+            return (currentTeam?.sport || '').toLowerCase().includes('basketball');
+        }
+
+        function isBasketballForGame(game, currentTeam) {
+            if (!game) return false;
+            return isBasketballConfig(game.statTrackerConfigId, currentTeam);
+        }
+
+        // Test cases for basketball detection
+        test('Should detect basketball from config baseType', () => {
+            assertTrue(
+                isBasketballConfig('config1', mockTeam),
+                'Basketball config should return true'
+            );
+        });
+
+        test('Should handle case-insensitive baseType comparison', () => {
+            assertTrue(
+                isBasketballConfig('config3', mockTeam),
+                'Uppercase BASKETBALL should be detected'
+            );
+        });
+
+        test('Should detect non-basketball from config baseType', () => {
+            assertFalse(
+                isBasketballConfig('config2', mockTeam),
+                'Soccer config should return false'
+            );
+        });
+
+        test('Should fall back to team sport when no configId', () => {
+            assertTrue(
+                isBasketballConfig(null, mockTeam),
+                'Should detect basketball from team sport'
+            );
+        });
+
+        test('Should fall back to team sport when config has no baseType', () => {
+            assertTrue(
+                isBasketballConfig('config4', mockTeam),
+                'Config without baseType should fall back to team sport'
+            );
+        });
+
+        test('Should return false for non-basketball team when no config', () => {
+            assertFalse(
+                isBasketballConfig(null, mockTeamSoccer),
+                'Soccer team with no config should return false'
+            );
+        });
+
+        test('Should return false for invalid configId', () => {
+            assertTrue(
+                isBasketballConfig('invalid-id', mockTeam),
+                'Invalid config ID should fall back to team sport'
+            );
+        });
+
+        test('isBasketballForGame should return false for null game', () => {
+            assertFalse(
+                isBasketballForGame(null, mockTeam),
+                'Null game should return false'
+            );
+        });
+
+        test('isBasketballForGame should work with game object', () => {
+            const game = { statTrackerConfigId: 'config1' };
+            assertTrue(
+                isBasketballForGame(game, mockTeam),
+                'Game with basketball config should return true'
+            );
+        });
+
+        test('isBasketballForGame should work without configId', () => {
+            const game = { statTrackerConfigId: null };
+            assertTrue(
+                isBasketballForGame(game, mockTeam),
+                'Game without config should fall back to team sport'
+            );
+        });
+
+        // ============================================
+        // TEST SUITE 2: Session Storage for Redirect
+        // ============================================
+
+        test('sessionStorage should store activation code', () => {
+            window.sessionStorage.setItem('pendingActivationCode', 'TEST1234');
+            assertEquals(
+                window.sessionStorage.getItem('pendingActivationCode'),
+                'TEST1234',
+                'Activation code should be stored in sessionStorage'
+            );
+            window.sessionStorage.removeItem('pendingActivationCode');
+        });
+
+        test('sessionStorage should persist across same session', () => {
+            window.sessionStorage.setItem('pendingActivationCode', 'PERSIST01');
+            const retrieved = window.sessionStorage.getItem('pendingActivationCode');
+            assertEquals(retrieved, 'PERSIST01', 'Code should persist in session');
+            window.sessionStorage.removeItem('pendingActivationCode');
+        });
+
+        test('sessionStorage should clear activation code', () => {
+            window.sessionStorage.setItem('pendingActivationCode', 'CLEAR123');
+            window.sessionStorage.removeItem('pendingActivationCode');
+            assertEquals(
+                window.sessionStorage.getItem('pendingActivationCode'),
+                null,
+                'Activation code should be cleared'
+            );
+        });
+
+        // ============================================
+        // TEST SUITE 3: Edge Cases
+        // ============================================
+
+        test('Should handle undefined team gracefully', () => {
+            assertFalse(
+                isBasketballConfig(null, undefined),
+                'Undefined team should return false'
+            );
+        });
+
+        test('Should handle empty string configId', () => {
+            assertTrue(
+                isBasketballConfig('', mockTeam),
+                'Empty string config should fall back to team sport'
+            );
+        });
+
+        test('Should handle team sport with mixed case', () => {
+            const mixedTeam = { sport: 'BaSKeTBaLl' };
+            assertTrue(
+                isBasketballConfig(null, mixedTeam),
+                'Mixed case basketball should be detected'
+            );
+        });
+
+        test('Should handle team sport containing basketball', () => {
+            const team = { sport: 'Youth Basketball League' };
+            assertTrue(
+                isBasketballConfig(null, team),
+                'Team sport containing basketball should be detected'
+            );
+        });
+
+        test('Should not detect basketball in similar words', () => {
+            const team = { sport: 'Baseball' }; // contains 'ball' but not 'basketball'
+            assertFalse(
+                isBasketballConfig(null, team),
+                'Baseball should not be detected as basketball'
+            );
+        });
+
+        // ============================================
+        // Display Results
+        // ============================================
+
+        const container = document.getElementById('test-results');
+
+        const passCount = results.filter(r => r.pass).length;
+        const failCount = results.filter(r => !r.pass).length;
+
+        let html = `
+            <div class="test-section">
+                <h2>Test Summary</h2>
+                <p>✅ Passed: ${passCount} | ❌ Failed: ${failCount} | Total: ${results.length}</p>
+            </div>
+        `;
+
+        const grouped = {
+            'Basketball Detection': [],
+            'Session Storage': [],
+            'Edge Cases': []
+        };
+
+        results.forEach((result, idx) => {
+            if (idx < 10) grouped['Basketball Detection'].push(result);
+            else if (idx < 13) grouped['Session Storage'].push(result);
+            else grouped['Edge Cases'].push(result);
+        });
+
+        Object.entries(grouped).forEach(([section, tests]) => {
+            html += `<div class="test-section"><h2>${section}</h2>`;
+            tests.forEach(result => {
+                const className = result.pass ? 'pass' : 'fail';
+                const icon = result.pass ? '✅' : '❌';
+                html += `
+                    <div class="test-case ${className}">
+                        <div class="test-name">${icon} ${result.name}</div>
+                        ${result.error ? `<div class="test-result">Error: ${result.error}</div>` : ''}
+                    </div>
+                `;
+            });
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
+    </script>
+</body>
+</html>

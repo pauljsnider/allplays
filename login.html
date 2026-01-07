@@ -95,7 +95,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { login, signup, checkAuth, loginWithGoogle, resetPassword, getRedirectUrl } from './js/auth.js?v=4';
+        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=5';
         import { getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter } from './js/utils.js?v=7';
 
@@ -103,6 +103,32 @@
 
         let isLogin = true;
         let isProcessingAuth = false; // Flag to prevent auto-redirect during login/signup
+
+        // Handle Google redirect result on page load
+        (async () => {
+            // Block checkAuth auto-redirect until we finish validating redirect result
+            isProcessingAuth = true;
+
+            const errorDiv = document.getElementById('error-message');
+            try {
+                const result = await handleGoogleRedirectResult();
+                if (result && result.user) {
+                    // User just returned from Google sign-in
+                    const profile = await getUserProfile(result.user.uid);
+                    const userWithRoles = { ...result.user, ...profile };
+                    window.location.href = getRedirectUrl(userWithRoles);
+                    return; // Prevent further initialization
+                }
+            } catch (error) {
+                // Show error from Google sign-in
+                errorDiv.textContent = error.message;
+                errorDiv.classList.remove('hidden');
+                console.error('Google redirect error:', error);
+            } finally {
+                // Always clear the processing flag so checkAuth can work normally
+                isProcessingAuth = false;
+            }
+        })();
 
         checkAuth((user) => {
             // Only auto-redirect if not currently processing login/signup
@@ -189,10 +215,8 @@
             const errorDiv = document.getElementById('error-message');
             errorDiv.classList.add('hidden');
 
-            isProcessingAuth = true; // Prevent auto-redirect during process
-
             try {
-                // If in signup mode, pass the activation code
+                // If in signup mode, validate activation code before redirect
                 let activationCode = null;
                 if (!isLogin) {
                     activationCode = document.getElementById('activation-code').value.trim().toUpperCase();
@@ -201,14 +225,10 @@
                     }
                 }
 
-                const result = await loginWithGoogle(activationCode);
-                
-                // Fetch profile to determine redirect
-                const profile = await getUserProfile(result.user.uid);
-                const userWithRoles = { ...result.user, ...profile };
-                window.location.href = getRedirectUrl(userWithRoles);
+                // This will redirect to Google - result will be handled on return
+                await loginWithGoogle(activationCode);
+                // User will be redirected; code below won't execute
             } catch (error) {
-                isProcessingAuth = false; // Reset flag on error
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error(error);
