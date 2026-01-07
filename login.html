@@ -106,6 +106,9 @@
 
         // Handle Google redirect result on page load
         (async () => {
+            // Block checkAuth auto-redirect until we finish validating redirect result
+            isProcessingAuth = true;
+
             const errorDiv = document.getElementById('error-message');
             try {
                 const result = await handleGoogleRedirectResult();
@@ -121,6 +124,9 @@
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error('Google redirect error:', error);
+            } finally {
+                // Always clear the processing flag so checkAuth can work normally
+                isProcessingAuth = false;
             }
         })();
 
