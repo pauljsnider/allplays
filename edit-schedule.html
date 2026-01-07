@@ -865,15 +865,21 @@
         let gamesCache = {};
         let pendingTrackGameId = null;
 
+        // Helper function to check if a stat config is for basketball
+        function isBasketballConfig(configId) {
+            if (configId) {
+                const config = allConfigs.find(c => c.id === configId);
+                if (config) {
+                    return (config.baseType || '').toLowerCase() === 'basketball';
+                }
+            }
+            // If no config, infer from team sport
+            return (currentTeam?.sport || '').toLowerCase().includes('basketball');
+        }
+
         function isBasketballForGame(game) {
             if (!game) return false;
-            const configId = game.statTrackerConfigId;
-            const config = configId ? allConfigs.find(c => c.id === configId) : null;
-            if (config) {
-                return (config.baseType || '').toLowerCase() === 'basketball';
-            }
-            // If no config, follow current default behavior: infer from team sport.
-            return (currentTeam?.sport || '').toLowerCase().includes('basketball');
+            return isBasketballConfig(game.statTrackerConfigId);
         }
 
         function closeBasketballTrackerModal() {
@@ -1382,20 +1388,8 @@
                     calendarEventUid: calendarEvent.uid
                 });
 
-                // Check if this is a basketball game
-                let isBasketball = false;
-                if (configId) {
-                    const config = allConfigs.find(c => c.id === configId);
-                    if (config) {
-                        isBasketball = (config.baseType || '').toLowerCase() === 'basketball';
-                    }
-                } else {
-                    // No config - infer from team sport
-                    isBasketball = (currentTeam?.sport || '').toLowerCase().includes('basketball');
-                }
-
-                // If basketball, show chooser modal; otherwise go to standard tracker
-                if (isBasketball) {
+                // Check if this is a basketball game using shared helper
+                if (isBasketballConfig(configId)) {
                     pendingTrackGameId = gameId;
                     document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
                 } else {
