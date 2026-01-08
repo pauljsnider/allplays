@@ -99,22 +99,31 @@ export async function loginWithGoogle(activationCode = null) {
 }
 
 export async function handleGoogleRedirectResult() {
+    console.log('[Google Auth] Checking for redirect result...');
     const result = await getRedirectResult(auth);
+
+    console.log('[Google Auth] Redirect result:', result ? 'Found' : 'None', result?.user?.email || '');
 
     if (!result || !result.user) {
         // No redirect result (user didn't just come back from Google)
+        console.log('[Google Auth] No redirect result found');
         return null;
     }
 
+    console.log('[Google Auth] Processing redirect for user:', result.user.email);
+
     // Check if this is a new user (first time signing in)
     const isNewUser = result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
+    console.log('[Google Auth] Is new user:', isNewUser);
 
     if (isNewUser) {
         // Retrieve activation code from sessionStorage
         const activationCode = window.sessionStorage.getItem('pendingActivationCode');
+        console.log('[Google Auth] Activation code from storage:', activationCode || 'None');
 
         // New user - require activation code
         if (!activationCode) {
+            console.log('[Google Auth] No activation code - deleting unauthorized user');
             // Delete the newly created user account and sign out
             try {
                 await result.user.delete();
@@ -180,8 +189,12 @@ export async function handleGoogleRedirectResult() {
 
         // Clear the activation code from sessionStorage
         window.sessionStorage.removeItem('pendingActivationCode');
+        console.log('[Google Auth] New user setup complete');
+    } else {
+        console.log('[Google Auth] Existing user - no setup needed');
     }
 
+    console.log('[Google Auth] Returning result for user:', result.user.email);
     return result;
 }
 

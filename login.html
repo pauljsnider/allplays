@@ -95,7 +95,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=5';
+        import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=6';
         import { getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter } from './js/utils.js?v=7';
 
@@ -108,24 +108,35 @@
         (async () => {
             // Block checkAuth auto-redirect until we finish validating redirect result
             isProcessingAuth = true;
+            console.log('[Login Page] Starting Google redirect result check');
 
             const errorDiv = document.getElementById('error-message');
             try {
                 const result = await handleGoogleRedirectResult();
+                console.log('[Login Page] handleGoogleRedirectResult returned:', result ? 'Result found' : 'No result');
+
                 if (result && result.user) {
+                    console.log('[Login Page] User found, fetching profile for:', result.user.email);
                     // User just returned from Google sign-in
                     const profile = await getUserProfile(result.user.uid);
+                    console.log('[Login Page] Profile fetched:', profile);
                     const userWithRoles = { ...result.user, ...profile };
-                    window.location.href = getRedirectUrl(userWithRoles);
+                    const redirectUrl = getRedirectUrl(userWithRoles);
+                    console.log('[Login Page] Redirecting to:', redirectUrl);
+                    window.location.href = redirectUrl;
                     return; // Prevent further initialization
+                } else {
+                    console.log('[Login Page] No redirect result - normal page load');
                 }
             } catch (error) {
                 // Show error from Google sign-in
+                console.error('[Login Page] Error during Google redirect handling:', error);
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error('Google redirect error:', error);
             } finally {
                 // Always clear the processing flag so checkAuth can work normally
+                console.log('[Login Page] Clearing isProcessingAuth flag');
                 isProcessingAuth = false;
             }
         })();
