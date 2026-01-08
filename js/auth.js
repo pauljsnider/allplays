@@ -1,5 +1,5 @@
 import { auth } from './firebase.js';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithRedirect, getRedirectResult, sendPasswordResetEmail, sendEmailVerification, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, updatePassword } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, sendPasswordResetEmail, sendEmailVerification, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink, updatePassword } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js';
 
 export async function login(email, password) {
@@ -87,55 +87,78 @@ export async function signup(email, password, activationCode) {
 export async function loginWithGoogle(activationCode = null) {
     const provider = new GoogleAuthProvider();
 
-    // Store activation code in sessionStorage for redirect flow
+    // Store activation code in sessionStorage (needed for both popup and redirect flows)
     if (activationCode) {
         window.sessionStorage.setItem('pendingActivationCode', activationCode);
     }
 
-    // Use redirect instead of popup for better compatibility with mobile and restrictive networks
-    await signInWithRedirect(auth, provider);
-    // Function returns here; user will be redirected to Google
-    // Result will be handled by handleGoogleRedirectResult() on return
+    console.log('[Google Auth] Starting hybrid auth flow...');
+
+    try {
+        // Try popup first - works on most desktop browsers and is smoother UX
+        console.log('[Google Auth] Attempting popup sign-in...');
+        const result = await signInWithPopup(auth, provider);
+        console.log('[Google Auth] Popup succeeded for:', result.user.email);
+
+        // Process the result immediately (same logic as redirect handler)
+        return await processGoogleAuthResult(result, activationCode);
+    } catch (error) {
+        console.log('[Google Auth] Popup error:', error.code, error.message);
+
+        // Fall back to redirect for specific popup-related errors
+        if (error.code === 'auth/popup-blocked' ||
+            error.code === 'auth/popup-closed-by-user' ||
+            error.code === 'auth/cancelled-popup-request' ||
+            error.code === 'auth/operation-not-supported-in-this-environment') {
+
+            console.log('[Google Auth] Falling back to redirect flow...');
+            await signInWithRedirect(auth, provider);
+            // Function returns here; user will be redirected to Google
+            // Result will be handled by handleGoogleRedirectResult() on return
+            return null;
+        }
+
+        // For other errors, clear the stored activation code and re-throw
+        window.sessionStorage.removeItem('pendingActivationCode');
+        throw error;
+    }
 }
 
-export async function handleGoogleRedirectResult() {
-    const result = await getRedirectResult(auth);
-
-    if (!result || !result.user) {
-        // No redirect result (user didn't just come back from Google)
-        return null;
-    }
+// Shared function to process Google auth result (used by both popup and redirect flows)
+async function processGoogleAuthResult(result, activationCode = null) {
+    console.log('[Google Auth] Processing result for user:', result.user.email);
 
     // Check if this is a new user (first time signing in)
     const isNewUser = result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
+    console.log('[Google Auth] Is new user:', isNewUser);
 
     if (isNewUser) {
-        // Retrieve activation code from sessionStorage
-        const activationCode = window.sessionStorage.getItem('pendingActivationCode');
+        // Get activation code from parameter or sessionStorage
+        const code = activationCode || window.sessionStorage.getItem('pendingActivationCode');
+        console.log('[Google Auth] Activation code:', code || 'None');
 
         // New user - require activation code
-        if (!activationCode) {
-            // Delete the newly created user account and sign out
+        if (!code) {
+            console.log('[Google Auth] No activation code - deleting unauthorized user');
             try {
                 await result.user.delete();
                 await signOut(auth);
             } catch (deleteError) {
                 console.error('Error deleting unauthorized Google user:', deleteError);
-                await signOut(auth); // Ensure sign out even if delete fails
+                await signOut(auth);
             }
             throw new Error('Activation code is required for new accounts');
         }
 
         // Validate activation code
-        const validation = await validateAccessCode(activationCode);
+        const validation = await validateAccessCode(code);
         if (!validation.valid) {
-            // Delete the newly created user account and sign out
             try {
                 await result.user.delete();
                 await signOut(auth);
             } catch (deleteError) {
                 console.error('Error deleting user with invalid code:', deleteError);
-                await signOut(auth); // Ensure sign out even if delete fails
+                await signOut(auth);
             }
             throw new Error(validation.message || 'Invalid activation code');
         }
@@ -143,29 +166,24 @@ export async function handleGoogleRedirectResult() {
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
-             // Parent Invite Flow
             try {
                 await redeemParentInvite(userId, validation.data.code);
-                // Profile update
-                 await updateUserProfile(userId, {
+                await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
                     photoUrl: result.user.photoURL,
                     createdAt: new Date()
                 });
             } catch (e) {
-                 console.error('Error linking parent:', e);
+                console.error('Error linking parent:', e);
             }
         } else {
-            // Standard Flow
-            // Mark code as used
             try {
                 await markAccessCodeAsUsed(validation.codeId, userId);
             } catch (error) {
                 console.error('Error marking code as used:', error);
             }
 
-            // Create user profile in Firestore
             try {
                 await updateUserProfile(userId, {
                     email: result.user.email,
@@ -180,9 +198,29 @@ export async function handleGoogleRedirectResult() {
 
         // Clear the activation code from sessionStorage
         window.sessionStorage.removeItem('pendingActivationCode');
+        console.log('[Google Auth] New user setup complete');
+    } else {
+        console.log('[Google Auth] Existing user - no setup needed');
     }
 
+    console.log('[Google Auth] Returning result for user:', result.user.email);
     return result;
+}
+
+export async function handleGoogleRedirectResult() {
+    console.log('[Google Auth] Checking for redirect result...');
+    const result = await getRedirectResult(auth);
+
+    console.log('[Google Auth] Redirect result:', result ? 'Found' : 'None', result?.user?.email || '');
+
+    if (!result || !result.user) {
+        // No redirect result (user didn't just come back from Google)
+        console.log('[Google Auth] No redirect result found');
+        return null;
+    }
+
+    // Use shared processing function
+    return await processGoogleAuthResult(result);
 }
 
 export function logout() {
