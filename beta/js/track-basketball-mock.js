@@ -309,13 +309,13 @@ function renderLog() {
     }
     els.gameLog.innerHTML = gameState.log.map((ev, idx) => `
         <div class="p-2 rounded-lg border border-court-100 bg-white flex justify-between items-center">
-            <div>
+            <div class="flex-1">
                 <p class="font-semibold text-court-900">${ev.text}</p>
                 <p class="text-xs text-court-500">${ev.period} • ${ev.clock}</p>
             </div>
             <div class="flex items-center gap-2">
-                <button class="text-xs px-2 py-1 rounded bg-court-900 text-white" data-remove-log="${idx}">Remove</button>
                 <span class="text-xs text-court-500">${new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <button class="w-6 h-6 flex items-center justify-center rounded-full hover:bg-court-100 text-court-500 hover:text-court-900 transition" data-remove-log="${idx}" title="Remove event">✕</button>
             </div>
         </div>
     `).join('');
@@ -749,16 +749,28 @@ function init() {
 }
 
 function setActivePeriod(period) {
+    const previousPeriod = gameState.period;
     gameState.period = period;
     els.periodLabel.textContent = period;
     document.querySelectorAll('.period-btn').forEach(b => {
-        b.classList.remove('bg-court-100', 'text-court-900');
+        b.classList.remove('bg-court-900', 'text-white', 'font-bold');
         b.classList.add('bg-white', 'text-court-700');
         if (b.dataset.period === period) {
-            b.classList.add('bg-court-100', 'text-court-900');
+            b.classList.add('bg-court-900', 'text-white', 'font-bold');
             b.classList.remove('bg-white', 'text-court-700');
         }
     });
+
+    // Log period changes during live game
+    if (phaseIsLive() && previousPeriod !== period) {
+        addEvent({
+            type: 'period-change',
+            period: period,
+            clock: formatClock(gameState.clockMs),
+            ts: Date.now(),
+            text: `Period changed: ${previousPeriod} → ${period}`
+        });
+    }
 }
 
 function renderLiveReport() {
