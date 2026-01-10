@@ -300,15 +300,29 @@ function renderFairness() {
 }
 
 function renderLog() {
-  els.log.innerHTML = state.log.slice(0, 40).map(ev => `
+  els.log.innerHTML = state.log.slice(0, 40).map((ev, idx) => `
     <div class="flex justify-between items-center border border-slate/10 rounded-lg p-2 bg-white">
-      <div>
+      <div class="flex-1">
         <p class="text-xs font-semibold">${ev.text}</p>
         <p class="text-[10px] text-slate-500">${ev.period} · ${ev.clock}</p>
       </div>
-      <span class="text-[10px] text-slate-400">${new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] text-slate-400">${new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <button class="w-5 h-5 flex items-center justify-center rounded-full hover:bg-slate/10 text-slate-400 hover:text-slate-700 transition text-sm" data-remove-log="${idx}" title="Remove event">✕</button>
+      </div>
     </div>
   `).join('') || '<div class="text-xs text-slate-500 text-center py-4">No events yet</div>';
+
+  // Add event listeners for remove buttons
+  els.log.querySelectorAll('button[data-remove-log]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const index = Number(btn.dataset.removeLog);
+      if (!isNaN(index)) {
+        state.log.splice(index, 1);
+        renderLog();
+      }
+    });
+  });
 }
 
 function saveHistory(action) {
@@ -700,11 +714,25 @@ function tick() {
 }
 
 function setPeriod(p) {
+  const previousPeriod = state.period;
   state.period = p;
   document.querySelectorAll('.period-btn').forEach(b => {
-    b.classList.toggle('bg-teal', b.dataset.period === p);
-    b.classList.toggle('text-ink', b.dataset.period === p);
+    // Remove active state from all buttons
+    b.classList.remove('bg-teal', 'text-ink', 'border-teal', 'font-bold');
+    b.classList.add('bg-white', 'border-slate/10', 'font-semibold');
+
+    // Add active state to selected button
+    if (b.dataset.period === p) {
+      b.classList.remove('bg-white', 'border-slate/10', 'font-semibold');
+      b.classList.add('bg-teal', 'text-ink', 'border-teal', 'font-bold');
+    }
   });
+
+  // Log period changes during live game
+  if (state.running && previousPeriod !== p) {
+    addLog(`Period changed: ${previousPeriod} → ${p}`);
+  }
+
   renderHeader();
 }
 
