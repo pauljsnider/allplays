@@ -347,15 +347,19 @@ function renderLog() {
             if (isOpponent) {
               // Reverse opponent stat
               const opp = state.opp.find(o => o.id === playerId);
-              if (opp && opp.stats[statKey] !== undefined) {
-                opp.stats[statKey] -= value;
-                if (isPointsColumn(statKey)) state.away -= value;
+              if (opp && opp.stats && opp.stats[statKey] !== undefined) {
+                opp.stats[statKey] = safeDecrement(opp.stats[statKey], value);
+                if (isPointsColumn(statKey)) {
+                  state.away = safeDecrement(state.away, value);
+                }
               }
             } else {
               // Reverse team player stat
               if (state.stats[playerId] && state.stats[playerId][statKey] !== undefined) {
-                state.stats[playerId][statKey] -= value;
-                if (isPointsColumn(statKey)) state.home -= value;
+                state.stats[playerId][statKey] = safeDecrement(state.stats[playerId][statKey], value);
+                if (isPointsColumn(statKey)) {
+                  state.home = safeDecrement(state.home, value);
+                }
               }
             }
           }
@@ -416,6 +420,12 @@ function renderAll() {
   renderOpponents();
   renderLog();
   renderFairness();
+}
+
+function safeDecrement(currentValue, delta) {
+  const base = Number(currentValue || 0);
+  const change = Number(delta || 0);
+  return Math.max(0, base - change);
 }
 
 function addLog(text, undoData = null) {
