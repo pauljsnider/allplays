@@ -813,18 +813,6 @@ function addStat(id, key, delta) {
   saveHistory(`#${getNum(id)} ${key.toUpperCase()} +${delta}`);
   state.stats[id][key] += delta;
   if (isPointsColumn(key)) state.home += delta;
-
-  // Check for foul warnings
-  if (key === 'fouls') {
-    const newFoulCount = state.stats[id][key];
-    const pName = roster.find(r => r.id === id)?.name || `#${getNum(id)}`;
-    if (newFoulCount >= 5) {
-      alert(`⚠️ FOULED OUT! ${pName} has ${newFoulCount} fouls!`);
-    } else if (newFoulCount === 4) {
-      alert(`⚠️ WARNING: ${pName} has 4 fouls!`);
-    }
-  }
-
   addLog(`#${getNum(id)} ${key.toUpperCase()} +${delta}`, {
     type: 'stat',
     playerId: id,
@@ -846,18 +834,6 @@ function addOppStat(id, key, delta) {
   saveHistory(`Opp ${opp.name} ${key.toUpperCase()} +${delta}`);
   opp.stats[key] += delta;
   if (isPointsColumn(key)) state.away += delta;
-
-  // Check for foul warnings
-  if (key === 'fouls') {
-    const newFoulCount = opp.stats[key];
-    const oppName = opp.name || 'Opponent';
-    if (newFoulCount >= 5) {
-      alert(`⚠️ FOULED OUT! ${oppName} has ${newFoulCount} fouls!`);
-    } else if (newFoulCount === 4) {
-      alert(`⚠️ WARNING: ${oppName} has 4 fouls!`);
-    }
-  }
-
   addLog(`Opp ${opp.name} ${key.toUpperCase()} +${delta}`, {
     type: 'stat',
     playerId: id,
