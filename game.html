@@ -82,6 +82,19 @@
                 class="bg-white shadow-lg rounded-2xl p-6 md:p-8 text-gray-700 leading-relaxed border border-gray-200 overflow-hidden transition-all duration-300">
                 <p class="text-gray-500 italic">No summary available.</p>
             </div>
+            <!-- AI Summary Admin Controls -->
+            <div id="ai-summary-admin" class="hidden mt-4 bg-white shadow-sm rounded-xl p-4 border border-gray-200">
+                <div class="flex flex-wrap items-center gap-3">
+                    <button id="ai-summary-generate-btn"
+                        class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                        </svg>
+                        <span id="ai-summary-btn-text">Generate AI Summary</span>
+                    </button>
+                    <span id="ai-summary-status" class="text-sm text-gray-500"></span>
+                </div>
+            </div>
         </div>
 
         <!-- Score Sheet Photo -->
@@ -417,6 +430,141 @@
             });
         }
 
+        async function setupAISummaryControls(teamId, gameId, game, team, players, statKeys, statLabels) {
+            const admin = document.getElementById('ai-summary-admin');
+            const generateBtn = document.getElementById('ai-summary-generate-btn');
+            const btnText = document.getElementById('ai-summary-btn-text');
+            const status = document.getElementById('ai-summary-status');
+            const summaryDiv = document.getElementById('game-summary');
+
+            if (!admin || !generateBtn || !btnText || !status) return;
+
+            // Only show controls if user has management permissions
+            if (!canManageStatSheet) {
+                admin.classList.add('hidden');
+                return;
+            }
+
+            admin.classList.remove('hidden');
+
+            // Update button text based on whether summary already exists
+            if (game.summary) {
+                btnText.textContent = 'Regenerate AI Summary';
+            } else {
+                btnText.textContent = 'Generate AI Summary';
+            }
+
+            generateBtn.addEventListener('click', async () => {
+                generateBtn.disabled = true;
+                status.textContent = 'Generating AI summary…';
+
+                try {
+                    // Dynamically import Firebase AI
+                    const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
+                    const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
+
+                    // Build context from game data
+                    let context = `Game: ${team.name} vs ${game.opponent}\n`;
+                    context += `Final Score: ${game.homeScore || 0} - ${game.awayScore || 0}\n`;
+                    context += `Date: ${game.date ? new Date(game.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString()}\n`;
+                    context += `Sport: ${team.sport || 'Basketball'}\n\n`;
+
+                    // Fetch player stats
+                    const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                    const statsMap = {};
+                    statsSnapshot.forEach(doc => {
+                        statsMap[doc.id] = doc.data().stats;
+                    });
+
+                    // Add player stats to context
+                    context += `${team.name.toUpperCase()} PLAYERS:\n`;
+                    players.forEach(player => {
+                        const pStats = statsMap[player.id] || {};
+                        context += `#${player.number || '-'} ${player.name}: `;
+                        const stats = [];
+                        statKeys.forEach(key => {
+                            const label = statLabels[key] || key.toUpperCase();
+                            const val = pStats[key] || 0;
+                            if (val > 0 || key === 'fouls') {
+                                stats.push(`${label}:${val}`);
+                            }
+                        });
+                        context += stats.join(', ') + `\n`;
+                    });
+
+                    // Add opponent stats if available
+                    if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
+                        context += `\nOPPONENT PLAYERS:\n`;
+                        Object.values(game.opponentStats).forEach(opp => {
+                            const { name, number, notes, ...statValues } = opp;
+                            const hasAnyStats = Object.values(statValues).some(v => v > 0);
+                            if (name || hasAnyStats) {
+                                context += `#${number || '-'} ${name || 'Opponent Player'}: `;
+                                const stats = [];
+                                Object.entries(statValues).forEach(([key, val]) => {
+                                    if (val > 0) {
+                                        stats.push(`${key.toUpperCase()}:${val}`);
+                                    }
+                                });
+                                context += stats.join(', ') + `\n`;
+                            }
+                        });
+                    }
+
+                    // Add game log if available
+                    const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
+                    const eventsSnapshot = await getDocs(eventsQuery);
+                    const events = eventsSnapshot.docs.map(doc => doc.data());
+
+                    if (events.length > 0) {
+                        context += `\nGAME LOG:\n`;
+                        events.forEach(ev => {
+                            const period = ev.period || 'Q1';
+                            const gameTime = ev.gameTime || '';
+                            const text = ev.text || ev.message || 'Event logged';
+                            context += `${period} ${gameTime} - ${text}\n`;
+                        });
+                    }
+
+                    // Generate AI summary
+                    const prompt = `You are a sports reporter writing a match report for a youth sports game.
+Write a comprehensive but concise game summary in paragraph form (2-5 paragraphs).
+Make it engaging and professional, as if it would appear in a sports publication. Focus on the narrative, not just listing stats.
+
+GAME DATA:
+${context}
+
+Write the match report now:`;
+
+                    const firebaseApp = getApp();
+                    const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+                    const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+                    const result = await model.generateContent(prompt);
+                    const summaryText = result.response.text();
+
+                    // Save summary to Firebase
+                    await updateGame(teamId, gameId, { summary: summaryText });
+
+                    // Update UI
+                    summaryDiv.innerHTML = `<div class="prose prose-gray max-w-none">${escapeHtml(summaryText).replace(/\n/g, '<br>')}</div>`;
+
+                    // Update max-height for collapse animation
+                    setTimeout(() => {
+                        summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
+                    }, 100);
+
+                    status.textContent = 'Summary generated and saved!';
+                    btnText.textContent = 'Regenerate AI Summary';
+
+                } catch (error) {
+                    console.error('AI summary error:', error);
+                    status.textContent = `Error: ${error.message}`;
+                } finally {
+                    generateBtn.disabled = false;
+                }
+            });
+        }
+
         async function loadGame() {
             if (gameLoaded) return;
             gameLoaded = true;
@@ -642,6 +790,9 @@
                         statLabels['fouls'] = 'FOULS';
                     }
                 }
+
+                // Setup AI Summary controls
+                setupAISummaryControls(teamId, gameId, game, team, players, statKeys, statLabels);
 
                 // Check if we have any playing time data
                 const hasPlayingTime = Object.values(timeMap).some(t => t > 0);
