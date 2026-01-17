@@ -1,5 +1,5 @@
 import { db, auth, storage } from './firebase.js';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer, onSnapshot } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
