@@ -443,6 +443,16 @@
                     });
                 }
 
+                // Always include fouls if present in the data
+                if (!statKeys.includes('fouls')) {
+                    // Check if fouls exist in any player's stats
+                    const hasFouls = Object.values(statsMap).some(stats => stats.fouls !== undefined);
+                    if (hasFouls) {
+                        statKeys.push('fouls');
+                        statLabels['fouls'] = 'FOULS';
+                    }
+                }
+
                 // Check if we have any playing time data
                 const hasPlayingTime = Object.values(timeMap).some(t => t > 0);
 
@@ -622,7 +632,14 @@
                             }
                         });
                     });
-                    const oppKeys = Array.from(opponentStatKeys).sort();
+                    let oppKeys = Array.from(opponentStatKeys).sort();
+
+                    // Move fouls to the end if present (for better visual organization)
+                    const foulIndex = oppKeys.indexOf('fouls');
+                    if (foulIndex > -1) {
+                        oppKeys.splice(foulIndex, 1);
+                        oppKeys.push('fouls');
+                    }
 
                     // Render header
                     oppKeys.forEach(key => {
