@@ -186,6 +186,12 @@ function liveCard(id) {
   const row1Pills = row1Cols.map(col => statPill(col, s[col.toLowerCase()] || 0)).join('');
   const row2Pills = row2Cols.map(col => statPill(col, s[col.toLowerCase()] || 0)).join('');
 
+  // Foul pill with warning colors
+  const fouls = s.fouls || 0;
+  const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : 'bg-sand';
+  const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
+  const foulPill = `<div class="${foulBgClass} rounded-lg py-1">FOULS <span class="font-display text-sm">${fouls}${foulWarning}</span></div>`;
+
   const btnHtml = cols.map(col => {
     const key = col.toLowerCase();
     if (isPointsColumn(col)) {
@@ -193,11 +199,6 @@ function liveCard(id) {
     }
     return statBtn(id, key, 1, col);
   }).join(' ');
-
-  // Foul display with warning colors
-  const fouls = s.fouls || 0;
-  const foulClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-700';
-  const foulWarning = fouls >= 5 ? ' FOULED OUT!' : fouls >= 4 ? ' ⚠️' : '';
 
   return `
     <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
@@ -214,14 +215,11 @@ function liveCard(id) {
       <div class="grid grid-cols-3 gap-1 text-[10px] text-center">
         ${row2Pills}
       </div>
-      <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
-        ${btnHtml}
+      <div class="grid grid-cols-3 gap-1 text-[10px] text-center">
+        ${foulPill}
       </div>
-      <div class="flex items-center gap-1 pt-1 border-t border-slate/10">
-        <div class="flex-1 text-[10px] font-semibold ${foulClass} rounded px-2 py-1 text-center">
-          FOULS: ${fouls}${foulWarning}
-        </div>
-        <button class="stat-btn bg-orange-600 text-white rounded-lg px-3 py-1" data-stat="fouls" data-delta="1" data-player="${id}">+FOUL</button>
+      <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
+        ${btnHtml} ${statBtn(id, 'fouls', 1, 'FOULS')}
       </div>
     </div>`;
 }
@@ -254,6 +252,14 @@ function renderOpponents() {
     const cols = (currentConfig?.columns || []).map(c => c.toUpperCase());
     const quickCols = cols.slice(0, 2);
     const quickLine = quickCols.map(col => `${col} ${s[col.toLowerCase()] || 0}`).join(' · ');
+
+    // Add fouls to quick stats display
+    const fouls = s.fouls || 0;
+    const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : '';
+    const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
+    const foulDisplay = foulBgClass ? `<span class="${foulBgClass} px-1 rounded">FOULS ${fouls}${foulWarning}</span>` : `FOULS ${fouls}`;
+    const quickLineWithFouls = quickLine ? `${quickLine} · ${foulDisplay}` : foulDisplay;
+
     const oppBtns = cols.map(col => {
       const key = col.toLowerCase();
       if (isPointsColumn(col)) {
@@ -262,23 +268,12 @@ function renderOpponents() {
       return oppBtn(o.id, key, 1, col);
     }).join(' ');
 
-    // Foul display for opponent
-    const fouls = s.fouls || 0;
-    const foulClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-700';
-    const foulWarning = fouls >= 5 ? ' FOULED OUT!' : fouls >= 4 ? ' ⚠️' : '';
-
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
         <input data-opp-edit="${o.id}" value="${o.name}" class="w-full text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
-        <div class="text-[11px] text-slate-500">${quickLine || 'No stats yet'}</div>
+        <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
-          ${oppBtns} <span></span> <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
-        </div>
-        <div class="flex items-center gap-1 pt-1 border-t border-slate/10">
-          <div class="flex-1 text-[10px] font-semibold ${foulClass} rounded px-2 py-1 text-center">
-            FOULS: ${fouls}${foulWarning}
-          </div>
-          <button class="stat-btn bg-orange-600 text-white rounded-lg px-3 py-1" data-opp="${o.id}" data-opp-stat data-stat="fouls" data-delta="1">+FOUL</button>
+          ${oppBtns} ${oppBtn(o.id, 'fouls', 1, 'FOULS')} <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
         </div>
       </div>
     `;
