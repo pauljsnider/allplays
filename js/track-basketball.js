@@ -17,7 +17,7 @@ let isFinishing = false;
 let allowNavigation = false;
 
 function statDefaults(columns) {
-  const stats = { time: 0 };
+  const stats = { time: 0, fouls: 0 }; // Always track fouls
   columns.forEach(col => {
     stats[col.toLowerCase()] = 0;
   });
@@ -186,6 +186,12 @@ function liveCard(id) {
   const row1Pills = row1Cols.map(col => statPill(col, s[col.toLowerCase()] || 0)).join('');
   const row2Pills = row2Cols.map(col => statPill(col, s[col.toLowerCase()] || 0)).join('');
 
+  // Foul pill with warning colors
+  const fouls = s.fouls || 0;
+  const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : 'bg-sand';
+  const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
+  const foulPill = `<div class="${foulBgClass} rounded-lg py-1">FLS <span class="font-display text-sm">${fouls}${foulWarning}</span></div>`;
+
   const btnHtml = cols.map(col => {
     const key = col.toLowerCase();
     if (isPointsColumn(col)) {
@@ -193,6 +199,7 @@ function liveCard(id) {
     }
     return statBtn(id, key, 1, col);
   }).join(' ');
+
   return `
     <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
       <div class="flex justify-between items-center">
@@ -208,8 +215,11 @@ function liveCard(id) {
       <div class="grid grid-cols-3 gap-1 text-[10px] text-center">
         ${row2Pills}
       </div>
+      <div class="grid grid-cols-3 gap-1 text-[10px] text-center">
+        ${foulPill}
+      </div>
       <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
-        ${btnHtml}
+        ${btnHtml} ${statBtn(id, 'fouls', 1, 'FLS')}
       </div>
     </div>`;
 }
@@ -242,6 +252,14 @@ function renderOpponents() {
     const cols = (currentConfig?.columns || []).map(c => c.toUpperCase());
     const quickCols = cols.slice(0, 2);
     const quickLine = quickCols.map(col => `${col} ${s[col.toLowerCase()] || 0}`).join(' · ');
+
+    // Add fouls to quick stats display
+    const fouls = s.fouls || 0;
+    const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : '';
+    const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
+    const foulDisplay = foulBgClass ? `<span class="${foulBgClass} px-1 rounded">FLS ${fouls}${foulWarning}</span>` : `FLS ${fouls}`;
+    const quickLineWithFouls = quickLine ? `${quickLine} · ${foulDisplay}` : foulDisplay;
+
     const oppBtns = cols.map(col => {
       const key = col.toLowerCase();
       if (isPointsColumn(col)) {
@@ -249,12 +267,13 @@ function renderOpponents() {
       }
       return oppBtn(o.id, key, 1, col);
     }).join(' ');
+
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
         <input data-opp-edit="${o.id}" value="${o.name}" class="w-full text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
-        <div class="text-[11px] text-slate-500">${quickLine || 'No stats yet'}</div>
+        <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
-          ${oppBtns} <span></span> <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
+          ${oppBtns} ${oppBtn(o.id, 'fouls', 1, 'FLS')} <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
         </div>
       </div>
     `;
@@ -318,8 +337,39 @@ function renderLog() {
     btn.addEventListener('click', () => {
       const index = Number(btn.dataset.removeLog);
       if (!isNaN(index)) {
+        const logEntry = state.log[index];
+
+        // Reverse the stat change if undoData exists
+        if (logEntry && logEntry.undoData) {
+          const { type, playerId, statKey, value, isOpponent } = logEntry.undoData;
+
+          if (type === 'stat') {
+            if (isOpponent) {
+              // Reverse opponent stat
+              const opp = state.opp.find(o => o.id === playerId);
+              if (opp && opp.stats && opp.stats[statKey] !== undefined) {
+                opp.stats[statKey] = safeDecrement(opp.stats[statKey], value);
+                if (isPointsColumn(statKey)) {
+                  state.away = safeDecrement(state.away, value);
+                }
+              }
+            } else {
+              // Reverse team player stat
+              if (state.stats[playerId] && state.stats[playerId][statKey] !== undefined) {
+                state.stats[playerId][statKey] = safeDecrement(state.stats[playerId][statKey], value);
+                if (isPointsColumn(statKey)) {
+                  state.home = safeDecrement(state.home, value);
+                }
+              }
+            }
+          }
+        }
+
+        // Remove the log entry
         state.log.splice(index, 1);
-        renderLog();
+
+        // Re-render everything to reflect the changes
+        renderAll();
       }
     });
   });
@@ -370,6 +420,12 @@ function renderAll() {
   renderOpponents();
   renderLog();
   renderFairness();
+}
+
+function safeDecrement(currentValue, delta) {
+  const base = Number(currentValue || 0);
+  const change = Number(delta || 0);
+  return Math.max(0, base - change);
 }
 
 function addLog(text, undoData = null) {
@@ -442,13 +498,17 @@ async function generateAISummary() {
         const val = state.stats[player.id]?.[key] || 0;
         stats.push(`${col}:${val}`);
       });
+      // Always include fouls
+      const fouls = state.stats[player.id]?.fouls || 0;
+      stats.push(`FOULS:${fouls}`);
       context += stats.join(', ') + `\n`;
     });
 
     context += `\nOPPONENT PLAYERS:\n`;
     state.opp.forEach(opp => {
       const hasAny = (currentConfig?.columns || []).some(col => (opp.stats?.[col.toLowerCase()] || 0) > 0);
-      if (!opp.name && !hasAny) return;
+      const hasFouls = (opp.stats?.fouls || 0) > 0;
+      if (!opp.name && !hasAny && !hasFouls) return;
       context += `${opp.name || 'Opponent'}: `;
       const stats = [];
       (currentConfig?.columns || []).forEach(col => {
@@ -456,6 +516,9 @@ async function generateAISummary() {
         const val = opp.stats?.[key] || 0;
         if (val > 0) stats.push(`${col}:${val}`);
       });
+      // Always include fouls if present
+      const fouls = opp.stats?.fouls || 0;
+      if (fouls > 0) stats.push(`FOULS:${fouls}`);
       context += stats.join(', ') + `\n`;
     });
 
@@ -520,6 +583,9 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
       const val = state.stats[player.id]?.[key] || 0;
       body += `  ${col}: ${val}\n`;
     });
+    // Always include fouls
+    const fouls = state.stats[player.id]?.fouls || 0;
+    body += `  FOULS: ${fouls}\n`;
     body += `\n`;
   });
 
@@ -534,6 +600,9 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
       const val = opp.stats?.[key] || 0;
       if (val > 0) body += `  ${col}: ${val}\n`;
     });
+    // Always include fouls if present
+    const fouls = opp.stats?.fouls || 0;
+    if (fouls > 0) body += `  FOULS: ${fouls}\n`;
     body += `\n`;
   });
 
@@ -592,6 +661,8 @@ async function saveAndComplete() {
         const key = col.toLowerCase();
         statsObj[key] = state.stats[player.id]?.[key] || 0;
       });
+      // Always include fouls
+      statsObj.fouls = state.stats[player.id]?.fouls || 0;
       const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, player.id);
       batch.set(statsRef, {
         playerName: player.name,
@@ -612,6 +683,8 @@ async function saveAndComplete() {
         const key = col.toLowerCase();
         opponentStats[opp.id][key] = opp.stats?.[key] || 0;
       });
+      // Always include fouls
+      opponentStats[opp.id].fouls = opp.stats?.fouls || 0;
     });
 
     // 4. Update game doc

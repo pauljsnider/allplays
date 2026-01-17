@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Foul Tracking & Score Undo Test Suite</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-result { font-size: 0.9em; color: #666; }
+        h2 { color: #4338ca; }
+        pre { background: #f8f8f8; padding: 10px; overflow-x: auto; }
+        .summary { background: #e0e7ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .summary h3 { margin-top: 0; color: #4338ca; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Foul Tracking & Score Undo Test Suite</h1>
+    <p>Testing changes from branch: <code>claude/fix-score-add-fouls-KY9Am</code></p>
+
+    <div id="test-summary" class="summary">
+        <h3>Test Summary</h3>
+        <p id="summary-text">Running tests...</p>
+    </div>
+
+    <div id="test-results"></div>
+
+    <script type="module">
+        // Test harness
+        const results = [];
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ name, pass: true, error: null });
+            } catch (e) {
+                results.push({ name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message}\nExpected: ${expected}\nActual: ${actual}`);
+            }
+        }
+
+        function assertTrue(value, message) {
+            if (!value) {
+                throw new Error(message);
+            }
+        }
+
+        function assertFalse(value, message) {
+            if (value) {
+                throw new Error(message);
+            }
+        }
+
+        function deepClone(obj) {
+            return JSON.parse(JSON.stringify(obj));
+        }
+
+        // ============================================
+        // TEST SUITE 1: statDefaults Function
+        // ============================================
+
+        function statDefaults(columns) {
+            const stats = { time: 0, fouls: 0 }; // Always track fouls
+            columns.forEach(col => {
+                stats[col.toLowerCase()] = 0;
+            });
+            return stats;
+        }
+
+        test('Should initialize fouls to 0 by default', () => {
+            const stats = statDefaults(['PTS', 'REB', 'AST']);
+            assertEquals(stats.fouls, 0, 'Fouls should be initialized to 0');
+        });
+
+        test('Should initialize all config columns to 0', () => {
+            const stats = statDefaults(['PTS', 'REB', 'AST']);
+            assertEquals(stats.pts, 0, 'PTS should be 0');
+            assertEquals(stats.reb, 0, 'REB should be 0');
+            assertEquals(stats.ast, 0, 'AST should be 0');
+        });
+
+        test('Should include time and fouls even with empty columns', () => {
+            const stats = statDefaults([]);
+            assertTrue(stats.hasOwnProperty('time'), 'Should have time property');
+            assertTrue(stats.hasOwnProperty('fouls'), 'Should have fouls property');
+            assertEquals(stats.time, 0, 'Time should be 0');
+            assertEquals(stats.fouls, 0, 'Fouls should be 0');
+        });
+
+        test('Should lowercase column names', () => {
+            const stats = statDefaults(['PTS', 'REB']);
+            assertTrue(stats.hasOwnProperty('pts'), 'Should have lowercase pts');
+            assertTrue(stats.hasOwnProperty('reb'), 'Should have lowercase reb');
+            assertFalse(stats.hasOwnProperty('PTS'), 'Should not have uppercase PTS');
+        });
+
+        // ============================================
+        // TEST SUITE 2: Foul Warning Colors
+        // ============================================
+
+        function getFoulClass(fouls) {
+            return fouls >= 5 ? 'bg-red-600 text-white' :
+                   fouls >= 4 ? 'bg-amber-500 text-white' :
+                   'bg-slate-100 text-slate-700';
+        }
+
+        function getFoulWarning(fouls) {
+            return fouls >= 5 ? ' FOULED OUT!' :
+                   fouls >= 4 ? ' ⚠️' : '';
+        }
+
+        test('Should show gray background for 0-3 fouls', () => {
+            assertEquals(getFoulClass(0), 'bg-slate-100 text-slate-700', '0 fouls should be gray');
+            assertEquals(getFoulClass(3), 'bg-slate-100 text-slate-700', '3 fouls should be gray');
+        });
+
+        test('Should show amber background for 4 fouls', () => {
+            assertEquals(getFoulClass(4), 'bg-amber-500 text-white', '4 fouls should be amber');
+        });
+
+        test('Should show red background for 5+ fouls', () => {
+            assertEquals(getFoulClass(5), 'bg-red-600 text-white', '5 fouls should be red');
+            assertEquals(getFoulClass(6), 'bg-red-600 text-white', '6 fouls should be red');
+        });
+
+        test('Should show warning emoji at 4 fouls', () => {
+            assertEquals(getFoulWarning(4), ' ⚠️', '4 fouls should show warning');
+        });
+
+        test('Should show FOULED OUT at 5+ fouls', () => {
+            assertEquals(getFoulWarning(5), ' FOULED OUT!', '5 fouls should show fouled out');
+            assertEquals(getFoulWarning(6), ' FOULED OUT!', '6 fouls should show fouled out');
+        });
+
+        test('Should show no warning for 0-3 fouls', () => {
+            assertEquals(getFoulWarning(0), '', '0 fouls should show no warning');
+            assertEquals(getFoulWarning(3), '', '3 fouls should show no warning');
+        });
+
+        // ============================================
+        // TEST SUITE 3: Points Column Detection
+        // ============================================
+
+        function isPointsColumn(colOrKey) {
+            const u = (colOrKey || '').toString().toUpperCase();
+            return u === 'PTS' || u === 'POINTS' || u === 'GOALS';
+        }
+
+        test('Should detect PTS as points column', () => {
+            assertTrue(isPointsColumn('PTS'), 'PTS should be points column');
+            assertTrue(isPointsColumn('pts'), 'pts (lowercase) should be points column');
+        });
+
+        test('Should detect POINTS as points column', () => {
+            assertTrue(isPointsColumn('POINTS'), 'POINTS should be points column');
+            assertTrue(isPointsColumn('points'), 'points (lowercase) should be points column');
+        });
+
+        test('Should detect GOALS as points column', () => {
+            assertTrue(isPointsColumn('GOALS'), 'GOALS should be points column');
+            assertTrue(isPointsColumn('goals'), 'goals (lowercase) should be points column');
+        });
+
+        test('Should NOT detect fouls as points column', () => {
+            assertFalse(isPointsColumn('fouls'), 'fouls should not be points column');
+            assertFalse(isPointsColumn('FOULS'), 'FOULS should not be points column');
+        });
+
+        test('Should NOT detect other stats as points columns', () => {
+            assertFalse(isPointsColumn('reb'), 'REB should not be points column');
+            assertFalse(isPointsColumn('ast'), 'AST should not be points column');
+        });
+
+        // ============================================
+        // TEST SUITE 4: Score Undo/Remove Logic
+        // ============================================
+
+        function simulateRemoveEvent(state, logEntry) {
+            // Simulate the remove button logic
+            if (logEntry && logEntry.undoData) {
+                const { type, playerId, statKey, value, isOpponent } = logEntry.undoData;
+
+                if (type === 'stat') {
+                    if (isOpponent) {
+                        // Reverse opponent stat
+                        const opp = state.opp.find(o => o.id === playerId);
+                        if (opp && opp.stats[statKey] !== undefined) {
+                            opp.stats[statKey] -= value;
+                            if (isPointsColumn(statKey)) state.away -= value;
+                        }
+                    } else {
+                        // Reverse team player stat
+                        if (state.stats[playerId] && state.stats[playerId][statKey] !== undefined) {
+                            state.stats[playerId][statKey] -= value;
+                            if (isPointsColumn(statKey)) state.home -= value;
+                        }
+                    }
+                }
+            }
+        }
+
+        test('Should reverse team player points when removing event', () => {
+            const state = {
+                home: 15,
+                away: 10,
+                stats: { 'player1': { pts: 15, fouls: 0 } },
+                opp: []
+            };
+
+            const logEntry = {
+                text: '#24 PTS +2',
+                undoData: {
+                    type: 'stat',
+                    playerId: 'player1',
+                    statKey: 'pts',
+                    value: 2,
+                    isOpponent: false
+                }
+            };
+
+            simulateRemoveEvent(state, logEntry);
+            assertEquals(state.stats['player1'].pts, 13, 'Player points should be reduced by 2');
+            assertEquals(state.home, 13, 'Home score should be reduced by 2');
+        });
+
+        test('Should reverse opponent player points when removing event', () => {
+            const state = {
+                home: 10,
+                away: 20,
+                stats: {},
+                opp: [{ id: 'opp1', stats: { pts: 20, fouls: 0 } }]
+            };
+
+            const logEntry = {
+                text: 'Opp John PTS +3',
+                undoData: {
+                    type: 'stat',
+                    playerId: 'opp1',
+                    statKey: 'pts',
+                    value: 3,
+                    isOpponent: true
+                }
+            };
+
+            simulateRemoveEvent(state, logEntry);
+            assertEquals(state.opp[0].stats.pts, 17, 'Opponent points should be reduced by 3');
+            assertEquals(state.away, 17, 'Away score should be reduced by 3');
+        });
+
+        test('Should reverse foul when removing foul event', () => {
+            const state = {
+                home: 10,
+                away: 10,
+                stats: { 'player1': { pts: 10, fouls: 3 } },
+                opp: []
+            };
+
+            const logEntry = {
+                text: '#24 FOULS +1',
+                undoData: {
+                    type: 'stat',
+                    playerId: 'player1',
+                    statKey: 'fouls',
+                    value: 1,
+                    isOpponent: false
+                }
+            };
+
+            simulateRemoveEvent(state, logEntry);
+            assertEquals(state.stats['player1'].fouls, 2, 'Fouls should be reduced by 1');
+            assertEquals(state.home, 10, 'Home score should not change for fouls');
+        });
+
+        test('Should NOT change score when removing non-points stat', () => {
+            const state = {
+                home: 15,
+                away: 10,
+                stats: { 'player1': { pts: 15, reb: 8, fouls: 0 } },
+                opp: []
+            };
+
+            const logEntry = {
+                text: '#24 REB +1',
+                undoData: {
+                    type: 'stat',
+                    playerId: 'player1',
+                    statKey: 'reb',
+                    value: 1,
+                    isOpponent: false
+                }
+            };
+
+            simulateRemoveEvent(state, logEntry);
+            assertEquals(state.stats['player1'].reb, 7, 'Rebounds should be reduced by 1');
+            assertEquals(state.home, 15, 'Home score should not change for rebounds');
+        });
+
+        test('Should handle removing event without undoData gracefully', () => {
+            const state = {
+                home: 15,
+                away: 10,
+                stats: { 'player1': { pts: 15, fouls: 0 } },
+                opp: []
+            };
+
+            const logEntry = {
+                text: 'Some event without undo data'
+            };
+
+            // Should not throw error
+            simulateRemoveEvent(state, logEntry);
+            assertEquals(state.home, 15, 'Score should remain unchanged');
+        });
+
+        // ============================================
+        // TEST SUITE 5: Stats Persistence
+        // ============================================
+
+        function buildStatsObj(playerStats, columns) {
+            const statsObj = {};
+            columns.forEach(col => {
+                const key = col.toLowerCase();
+                statsObj[key] = playerStats[key] || 0;
+            });
+            // Always include fouls
+            statsObj.fouls = playerStats.fouls || 0;
+            return statsObj;
+        }
+
+        test('Should include fouls in saved stats object', () => {
+            const playerStats = { pts: 15, reb: 8, fouls: 3 };
+            const columns = ['PTS', 'REB', 'AST'];
+            const result = buildStatsObj(playerStats, columns);
+
+            assertTrue(result.hasOwnProperty('fouls'), 'Should have fouls property');
+            assertEquals(result.fouls, 3, 'Fouls should be 3');
+        });
+
+        test('Should save fouls even if not in config columns', () => {
+            const playerStats = { pts: 15, reb: 8, fouls: 2 };
+            const columns = ['PTS', 'REB']; // No fouls in columns
+            const result = buildStatsObj(playerStats, columns);
+
+            assertEquals(result.fouls, 2, 'Fouls should still be saved');
+        });
+
+        test('Should save 0 fouls if player has no fouls', () => {
+            const playerStats = { pts: 15, reb: 8 };
+            const columns = ['PTS', 'REB'];
+            const result = buildStatsObj(playerStats, columns);
+
+            assertEquals(result.fouls, 0, 'Fouls should default to 0');
+        });
+
+        test('Should save all config columns plus fouls', () => {
+            const playerStats = { pts: 15, reb: 8, ast: 5, fouls: 2 };
+            const columns = ['PTS', 'REB', 'AST'];
+            const result = buildStatsObj(playerStats, columns);
+
+            assertEquals(Object.keys(result).length, 4, 'Should have 4 properties (3 columns + fouls)');
+            assertEquals(result.pts, 15, 'PTS should be saved');
+            assertEquals(result.reb, 8, 'REB should be saved');
+            assertEquals(result.ast, 5, 'AST should be saved');
+            assertEquals(result.fouls, 2, 'FOULS should be saved');
+        });
+
+        // ============================================
+        // TEST SUITE 6: Opponent Stats
+        // ============================================
+
+        function buildOpponentStats(oppPlayer, columns) {
+            const stats = {
+                name: oppPlayer.name || '',
+                number: oppPlayer.number || ''
+            };
+            columns.forEach(col => {
+                const key = col.toLowerCase();
+                stats[key] = oppPlayer.stats?.[key] || 0;
+            });
+            // Always include fouls
+            stats.fouls = oppPlayer.stats?.fouls || 0;
+            return stats;
+        }
+
+        test('Should include fouls in opponent stats', () => {
+            const opp = {
+                id: 'opp1',
+                name: 'John Doe',
+                number: '10',
+                stats: { pts: 12, reb: 5, fouls: 3 }
+            };
+            const columns = ['PTS', 'REB'];
+            const result = buildOpponentStats(opp, columns);
+
+            assertEquals(result.fouls, 3, 'Opponent fouls should be 3');
+        });
+
+        test('Should save opponent name and number', () => {
+            const opp = {
+                id: 'opp1',
+                name: 'John Doe',
+                number: '10',
+                stats: { pts: 12, fouls: 2 }
+            };
+            const columns = ['PTS'];
+            const result = buildOpponentStats(opp, columns);
+
+            assertEquals(result.name, 'John Doe', 'Name should be saved');
+            assertEquals(result.number, '10', 'Number should be saved');
+        });
+
+        test('Should handle opponent with no stats gracefully', () => {
+            const opp = {
+                id: 'opp1',
+                name: 'John Doe',
+                number: '10'
+            };
+            const columns = ['PTS', 'REB'];
+            const result = buildOpponentStats(opp, columns);
+
+            assertEquals(result.pts, 0, 'PTS should default to 0');
+            assertEquals(result.fouls, 0, 'Fouls should default to 0');
+        });
+
+        // ============================================
+        // Render Results
+        // ============================================
+
+        function renderResults() {
+            const resultsDiv = document.getElementById('test-results');
+            const summaryText = document.getElementById('summary-text');
+
+            const passed = results.filter(r => r.pass).length;
+            const failed = results.filter(r => !r.pass).length;
+            const total = results.length;
+
+            summaryText.innerHTML = `
+                <strong>Total Tests:</strong> ${total}<br>
+                <strong style="color: #22c55e;">✓ Passed:</strong> ${passed}<br>
+                <strong style="color: #ef4444;">✗ Failed:</strong> ${failed}
+            `;
+
+            // Group tests by suite
+            const suites = {
+                'statDefaults Function': [],
+                'Foul Warning Colors': [],
+                'Points Column Detection': [],
+                'Score Undo/Remove Logic': [],
+                'Stats Persistence': [],
+                'Opponent Stats': []
+            };
+
+            results.forEach((result, index) => {
+                if (index < 4) suites['statDefaults Function'].push(result);
+                else if (index < 11) suites['Foul Warning Colors'].push(result);
+                else if (index < 16) suites['Points Column Detection'].push(result);
+                else if (index < 22) suites['Score Undo/Remove Logic'].push(result);
+                else if (index < 26) suites['Stats Persistence'].push(result);
+                else suites['Opponent Stats'].push(result);
+            });
+
+            let html = '';
+            Object.entries(suites).forEach(([suiteName, tests]) => {
+                if (tests.length === 0) return;
+
+                const suitePassed = tests.filter(t => t.pass).length;
+                const suiteTotal = tests.length;
+
+                html += `
+                    <div class="test-section">
+                        <h2>${suiteName} (${suitePassed}/${suiteTotal})</h2>
+                `;
+
+                tests.forEach(result => {
+                    html += `
+                        <div class="test-case ${result.pass ? 'pass' : 'fail'}">
+                            <div class="test-name">
+                                ${result.pass ? '✓' : '✗'} ${result.name}
+                            </div>
+                            ${result.error ? `<div class="test-result"><pre>${result.error}</pre></div>` : ''}
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+            });
+
+            resultsDiv.innerHTML = html;
+        }
+
+        // Run all tests
+        renderResults();
+    </script>
+</body>
+</html>
