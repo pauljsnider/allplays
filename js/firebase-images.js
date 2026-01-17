@@ -20,19 +20,28 @@ const imgAuth = getAuth(imgApp);
 export const imageStorage = getStorage(imgApp);
 
 let authReady = false;
+let cachedUser = null;
+let lastAuthError = null;
+const AUTH_TIMEOUT_MS = 5000;
 const authPromise = new Promise((resolve) => {
     onAuthStateChanged(imgAuth, async (user) => {
         if (user) {
             authReady = true;
+            cachedUser = user;
+            lastAuthError = null;
             resolve(user);
         } else {
             try {
                 await setPersistence(imgAuth, browserLocalPersistence);
                 const cred = await signInAnonymously(imgAuth);
                 authReady = true;
+                cachedUser = cred.user || null;
+                lastAuthError = null;
                 resolve(cred.user);
             } catch (e) {
                 console.warn('Image auth failed (anonymous). Storage may reject writes if rules require auth.', e);
+                cachedUser = null;
+                lastAuthError = e;
                 resolve(null);
             }
         }
@@ -40,6 +49,34 @@ const authPromise = new Promise((resolve) => {
 });
 
 export async function ensureImageAuth() {
-    if (authReady) return;
-    await authPromise;
+    if (authReady) return cachedUser;
+    const timeout = new Promise((resolve) => setTimeout(() => resolve(null), AUTH_TIMEOUT_MS));
+    const user = await Promise.race([authPromise, timeout]);
+    if (user) return user;
+    if (authReady) return cachedUser;
+    try {
+        await setPersistence(imgAuth, browserLocalPersistence);
+        const cred = await signInAnonymously(imgAuth);
+        authReady = true;
+        cachedUser = cred.user || null;
+        lastAuthError = null;
+        return cachedUser;
+    } catch (e) {
+        console.warn('Image auth retry failed (anonymous).', e);
+        lastAuthError = e;
+        return null;
+    }
+}
+
+export async function requireImageAuth() {
+    const user = await ensureImageAuth();
+    if (!user) {
+        const message = lastAuthError?.message ? `Image auth failed: ${lastAuthError.message}` : 'Image auth failed. Anonymous sign-in is required for uploads.';
+        throw new Error(message);
+    }
+    return user;
+}
+
+export function getImageAuthError() {
+    return lastAuthError;
 }

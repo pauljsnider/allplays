@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+  <title>Track from Stat Sheet - ALL PLAYS</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/styles.css">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              800: '#3730a3',
+              900: '#312e81'
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+  <div id="header-container"></div>
+
+  <main class="container mx-auto px-4 py-8 max-w-6xl">
+    <div id="team-admin-banner" class="mb-6"></div>
+    <div id="page-header" class="bg-white shadow-lg rounded-2xl p-6 md:p-8 border border-gray-200 mb-6">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <p class="text-xs uppercase tracking-widest text-gray-400 font-semibold">Photo Stat Sheet</p>
+          <h1 id="game-title" class="text-2xl md:text-3xl font-bold text-gray-900">Loading game…</h1>
+          <p id="game-meta" class="text-sm text-gray-500 mt-1"></p>
+        </div>
+        <div class="flex items-center gap-3">
+          <a id="back-to-game" href="#" class="px-4 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100">
+            Back to Game
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <section class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Upload Stat Sheet</h2>
+        <div class="space-y-4">
+          <input id="stat-sheet-input" type="file" accept="image/*" class="block w-full text-sm text-gray-600">
+          <div id="stat-sheet-preview" class="hidden">
+            <img id="stat-sheet-preview-img" src="" alt="Stat sheet preview" class="rounded-xl border border-gray-200 w-full h-auto object-contain">
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <button id="analyze-btn" class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700">Analyze Photo</button>
+            <button id="clear-btn" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-100">Clear</button>
+            <span id="analyze-status" class="text-sm text-gray-500"></span>
+          </div>
+          <div id="analyze-loading" class="hidden text-sm text-indigo-600 flex items-center gap-2">
+            <div class="w-3 h-3 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin"></div>
+            Analyzing stat sheet…
+          </div>
+        </div>
+      </section>
+
+      <section class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Review Scores</h2>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-sm font-medium text-gray-700">Home Final</label>
+            <input id="home-score-input" type="number" min="0" class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2" value="0">
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-700">Visitor Final</label>
+            <input id="visitor-score-input" type="number" min="0" class="mt-1 w-full border border-gray-300 rounded-lg px-3 py-2" value="0">
+          </div>
+        </div>
+        <div class="mt-4 space-y-2">
+          <label class="flex items-center gap-2 text-sm text-gray-700">
+            <input id="swap-toggle" type="checkbox" class="rounded text-primary-600">
+            Current team appears on the visitor side of the stat sheet
+          </label>
+          <p id="match-hint" class="text-xs text-gray-500">Scores default to the stat sheet totals; edit if needed.</p>
+        </div>
+      </section>
+    </div>
+
+    <section id="analysis-section" class="hidden mt-6 space-y-6">
+      <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+        <div class="flex items-center justify-between gap-4 mb-4">
+          <h2 id="home-team-title" class="text-xl font-semibold text-gray-900">Home Players</h2>
+          <p class="text-xs text-gray-500">Map unmatched rows to roster players before saving.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold">
+              <tr>
+                <th class="px-3 py-3 text-left">Include</th>
+                <th class="px-3 py-3 text-left">#</th>
+                <th class="px-3 py-3 text-left">Name</th>
+                <th class="px-3 py-3 text-center">PTS</th>
+                <th class="px-3 py-3 text-center">Fouls</th>
+                <th class="px-3 py-3 text-left">Roster Match</th>
+              </tr>
+            </thead>
+            <tbody id="home-rows" class="divide-y divide-gray-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+        <div class="flex items-center justify-between gap-4 mb-4">
+          <h2 id="visitor-team-title" class="text-xl font-semibold text-gray-900">Visitor Players</h2>
+          <p class="text-xs text-gray-500">Visitor stats will be saved on the game report.</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600 uppercase text-xs font-semibold">
+              <tr>
+                <th class="px-3 py-3 text-left">Include</th>
+                <th class="px-3 py-3 text-left">#</th>
+                <th class="px-3 py-3 text-left">Name</th>
+                <th class="px-3 py-3 text-center">PTS</th>
+                <th class="px-3 py-3 text-center">Fouls</th>
+              </tr>
+            </thead>
+            <tbody id="visitor-rows" class="divide-y divide-gray-100"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between gap-4">
+        <p id="apply-status" class="text-sm text-gray-500"></p>
+        <button id="apply-btn" class="px-5 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold">Apply to Game</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="footer-container"></div>
+
+  <script type="module">
+    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, deleteDoc, uploadStatSheetPhoto } from './js/db.js?v=12';
+    import { db } from './js/firebase.js';
+    import { writeBatch, doc, setDoc } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
+    import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=8';
+    import { checkAuth } from './js/auth.js';
+    import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+    import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=3';
+    import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+    import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+
+    renderFooter(document.getElementById('footer-container'));
+
+    let currentTeamId = null;
+    let currentGameId = null;
+    let currentTeam = null;
+    let currentGame = null;
+    let currentConfig = null;
+    let roster = [];
+    let statSheetFile = null;
+    let homeRows = [];
+    let visitorRows = [];
+    let parsedHomeRows = [];
+    let parsedVisitorRows = [];
+    let isSwapped = false;
+
+    checkAuth((user) => {
+      if (!user) {
+        window.location.href = 'login.html';
+        return;
+      }
+      renderHeader(document.getElementById('header-container'), user);
+      init();
+    });
+
+    async function init() {
+      const { teamId, gameId } = getUrlParams();
+      if (!teamId || !gameId) {
+        window.location.href = 'dashboard.html';
+        return;
+      }
+      currentTeamId = teamId;
+      currentGameId = gameId;
+
+      const [team, game, players] = await Promise.all([
+        getTeam(teamId),
+        getGame(teamId, gameId),
+        getPlayers(teamId)
+      ]);
+
+      if (!game) {
+        alert('Game not found.');
+        window.location.href = 'dashboard.html';
+        return;
+      }
+
+      if (game.type === 'practice') {
+        alert('Practice events cannot be tracked.');
+        window.location.href = `edit-schedule.html#teamId=${teamId}`;
+        return;
+      }
+
+      currentTeam = team;
+      currentGame = game;
+      roster = players || [];
+
+      renderTeamAdminBanner(document.getElementById('team-admin-banner'), {
+        team,
+        teamId,
+        active: 'schedule'
+      });
+
+      try {
+        const user = await ensureImageAuth();
+        if (!user) {
+          const err = getImageAuthError();
+          console.warn('Image auth failed', err?.message || err);
+        }
+      } catch (error) {
+        console.warn('Image auth error:', error?.message || error);
+      }
+
+      if (game.statTrackerConfigId) {
+        const configs = await getConfigs(teamId);
+        currentConfig = configs.find(c => c.id === game.statTrackerConfigId) || null;
+      }
+
+      if (!currentConfig) {
+        currentConfig = {
+          name: 'Default',
+          columns: ['PTS', 'REB', 'AST', 'STL', 'TO']
+        };
+      }
+
+      document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
+      document.getElementById('game-meta').textContent = `${escapeHtml(team.name)} · ${formatDate(game.date)}`;
+      document.getElementById('back-to-game').href = `game.html#teamId=${teamId}&gameId=${gameId}`;
+      document.getElementById('home-team-title').textContent = escapeHtml(team.name);
+      document.getElementById('visitor-team-title').textContent = escapeHtml(game.opponent || 'Opponents');
+    }
+
+    function normalizeNumber(value) {
+      return (value || '').toString().replace(/\s+/g, '').trim();
+    }
+
+    function normalizeName(value) {
+      return (value || '')
+        .toString()
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function isPointsColumn(colOrKey) {
+      const u = (colOrKey || '').toString().toUpperCase();
+      return u === 'PTS' || u === 'POINTS' || u === 'GOALS';
+    }
+
+    function getPointsKey() {
+      const cols = currentConfig?.columns || [];
+      const match = cols.find(col => isPointsColumn(col));
+      return (match || 'PTS').toLowerCase();
+    }
+
+    function pickRosterMatch(row, usedIds) {
+      const normalizedNumber = normalizeNumber(row.number);
+      if (normalizedNumber) {
+        const matches = roster.filter(p => normalizeNumber(p.number) === normalizedNumber);
+        if (matches.length === 1 && !usedIds.has(matches[0].id)) {
+          return matches[0].id;
+        }
+      }
+
+      const normalizedName = normalizeName(row.name);
+      if (normalizedName) {
+        const nameTokens = normalizedName.split(' ').filter(Boolean);
+        const lastName = nameTokens[nameTokens.length - 1] || '';
+
+        const matches = roster.filter(p => {
+          const rosterName = normalizeName(p.name);
+          if (!rosterName) return false;
+          if (rosterName === normalizedName) return true;
+          if (normalizedName.length > 2 && rosterName.includes(normalizedName)) return true;
+          if (lastName && rosterName.includes(lastName)) return true;
+          return false;
+        });
+
+        const available = matches.filter(m => !usedIds.has(m.id));
+        if (available.length === 1) {
+          return available[0].id;
+        }
+      }
+
+      return '';
+    }
+
+    function countRosterMatches(rows) {
+      const usedIds = new Set();
+      let count = 0;
+      rows.forEach(row => {
+        const match = pickRosterMatch(row, usedIds);
+        if (match) {
+          usedIds.add(match);
+          count += 1;
+        }
+      });
+      return count;
+    }
+
+    function autoAssignRosterMatches(rows) {
+      const usedIds = new Set();
+      return rows.map(row => {
+        const next = { ...row };
+        next.mappedPlayerId = pickRosterMatch(row, usedIds);
+        if (next.mappedPlayerId) {
+          usedIds.add(next.mappedPlayerId);
+        }
+        return next;
+      });
+    }
+
+    function clampFouls(value) {
+      const num = Number(value || 0);
+      if (!Number.isFinite(num)) return 0;
+      return Math.min(Math.max(num, 0), 5);
+    }
+
+    function sanitizeRow(row) {
+      const totalPoints = Number.isFinite(row.totalPoints) ? row.totalPoints :
+        (Number(row.firstHalfPoints || 0) + Number(row.secondHalfPoints || 0) + Number(row.otPoints || 0));
+      return {
+        number: row.number || '',
+        name: row.name || '',
+        fouls: clampFouls(row.fouls),
+        totalPoints: Number(row.totalPoints || totalPoints || 0) || 0,
+        include: true,
+        mappedPlayerId: ''
+      };
+    }
+
+    function swapArrays() {
+      const temp = homeRows;
+      homeRows = visitorRows;
+      visitorRows = temp;
+    }
+
+    function swapScores() {
+      const homeScoreInput = document.getElementById('home-score-input');
+      const visitorScoreInput = document.getElementById('visitor-score-input');
+      const temp = homeScoreInput.value;
+      homeScoreInput.value = visitorScoreInput.value;
+      visitorScoreInput.value = temp;
+    }
+
+    function applySwap(shouldSwap) {
+      if (shouldSwap === isSwapped) return;
+      swapArrays();
+      swapScores();
+      homeRows = autoAssignRosterMatches(homeRows);
+      isSwapped = shouldSwap;
+      renderRows();
+    }
+
+    function renderRows() {
+      const homeContainer = document.getElementById('home-rows');
+      const visitorContainer = document.getElementById('visitor-rows');
+
+      homeContainer.innerHTML = homeRows.map((row, index) => {
+        const selectOptions = roster.map(player => {
+          const label = `#${player.number || '-'} ${player.name || 'Player'}`;
+          const selected = row.mappedPlayerId === player.id ? 'selected' : '';
+          return `<option value="${player.id}" ${selected}>${escapeHtml(label)}</option>`;
+        }).join('');
+
+        return `
+          <tr data-index="${index}">
+            <td class="px-3 py-3">
+              <input type="checkbox" data-field="include" ${row.include ? 'checked' : ''}>
+            </td>
+            <td class="px-3 py-3">
+              <input type="text" data-field="number" value="${escapeHtml(row.number)}" class="w-16 border border-gray-200 rounded px-2 py-1">
+            </td>
+            <td class="px-3 py-3">
+              <input type="text" data-field="name" value="${escapeHtml(row.name)}" class="w-full border border-gray-200 rounded px-2 py-1">
+            </td>
+            <td class="px-3 py-3 text-center">
+              <input type="number" data-field="totalPoints" value="${row.totalPoints}" min="0" class="w-20 border border-gray-200 rounded px-2 py-1 text-center">
+            </td>
+            <td class="px-3 py-3 text-center">
+              <input type="number" data-field="fouls" value="${row.fouls}" min="0" class="w-16 border border-gray-200 rounded px-2 py-1 text-center">
+            </td>
+            <td class="px-3 py-3">
+              <select data-field="mappedPlayerId" class="w-full border border-gray-200 rounded px-2 py-1">
+                <option value="">Unmatched</option>
+                ${selectOptions}
+              </select>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      visitorContainer.innerHTML = visitorRows.map((row, index) => `
+        <tr data-index="${index}">
+          <td class="px-3 py-3">
+            <input type="checkbox" data-field="include" ${row.include ? 'checked' : ''}>
+          </td>
+          <td class="px-3 py-3">
+            <input type="text" data-field="number" value="${escapeHtml(row.number)}" class="w-16 border border-gray-200 rounded px-2 py-1">
+          </td>
+          <td class="px-3 py-3">
+            <input type="text" data-field="name" value="${escapeHtml(row.name)}" class="w-full border border-gray-200 rounded px-2 py-1">
+          </td>
+          <td class="px-3 py-3 text-center">
+            <input type="number" data-field="totalPoints" value="${row.totalPoints}" min="0" class="w-20 border border-gray-200 rounded px-2 py-1 text-center">
+          </td>
+          <td class="px-3 py-3 text-center">
+            <input type="number" data-field="fouls" value="${row.fouls}" min="0" class="w-16 border border-gray-200 rounded px-2 py-1 text-center">
+          </td>
+        </tr>
+      `).join('');
+
+      document.getElementById('analysis-section').classList.remove('hidden');
+    }
+
+    function bindRowUpdates() {
+      document.getElementById('home-rows').addEventListener('input', (event) => {
+        const row = event.target.closest('tr');
+        if (!row) return;
+        const index = Number(row.dataset.index);
+        const field = event.target.dataset.field;
+        if (field) {
+          if (field === 'include') {
+            homeRows[index][field] = event.target.checked;
+          } else if (field === 'totalPoints') {
+            homeRows[index][field] = Number(event.target.value || 0);
+          } else if (field === 'fouls') {
+            homeRows[index][field] = clampFouls(event.target.value);
+          } else {
+            homeRows[index][field] = event.target.value;
+          }
+        }
+      });
+
+      document.getElementById('home-rows').addEventListener('change', (event) => {
+        const row = event.target.closest('tr');
+        if (!row) return;
+        const index = Number(row.dataset.index);
+        const field = event.target.dataset.field;
+        if (field === 'mappedPlayerId') {
+          homeRows[index][field] = event.target.value;
+        }
+      });
+
+      document.getElementById('visitor-rows').addEventListener('input', (event) => {
+        const row = event.target.closest('tr');
+        if (!row) return;
+        const index = Number(row.dataset.index);
+        const field = event.target.dataset.field;
+        if (field) {
+          if (field === 'include') {
+            visitorRows[index][field] = event.target.checked;
+          } else if (field === 'totalPoints') {
+            visitorRows[index][field] = Number(event.target.value || 0);
+          } else if (field === 'fouls') {
+            visitorRows[index][field] = clampFouls(event.target.value);
+          } else {
+            visitorRows[index][field] = event.target.value;
+          }
+        }
+      });
+    }
+
+    document.getElementById('stat-sheet-input').addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      statSheetFile = file || null;
+      if (!file) {
+        document.getElementById('stat-sheet-preview').classList.add('hidden');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        document.getElementById('stat-sheet-preview-img').src = e.target.result;
+        document.getElementById('stat-sheet-preview').classList.remove('hidden');
+      };
+      reader.readAsDataURL(file);
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      statSheetFile = null;
+      homeRows = [];
+      visitorRows = [];
+      document.getElementById('stat-sheet-input').value = '';
+      document.getElementById('stat-sheet-preview').classList.add('hidden');
+      document.getElementById('analysis-section').classList.add('hidden');
+      document.getElementById('analyze-status').textContent = '';
+    });
+
+    async function fileToGenerativePart(file) {
+      const base64EncodedDataPromise = new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(file);
+      });
+      return {
+        inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+      };
+    }
+
+    function updateScoreInputs() {
+      const homeTotal = homeRows.filter(r => r.include).reduce((sum, r) => sum + Number(r.totalPoints || 0), 0);
+      const visitorTotal = visitorRows.filter(r => r.include).reduce((sum, r) => sum + Number(r.totalPoints || 0), 0);
+      const homeScoreInput = document.getElementById('home-score-input');
+      const visitorScoreInput = document.getElementById('visitor-score-input');
+      if (!homeScoreInput.value || Number(homeScoreInput.value) === 0) {
+        homeScoreInput.value = homeTotal;
+      }
+      if (!visitorScoreInput.value || Number(visitorScoreInput.value) === 0) {
+        visitorScoreInput.value = visitorTotal;
+      }
+    }
+
+    document.getElementById('analyze-btn').addEventListener('click', async () => {
+      if (!statSheetFile) {
+        alert('Please upload a stat sheet image first.');
+        return;
+      }
+
+      const loading = document.getElementById('analyze-loading');
+      const status = document.getElementById('analyze-status');
+      loading.classList.remove('hidden');
+      status.textContent = '';
+
+      try {
+        const jsonSchema = Schema.object({
+          properties: {
+            metadata: Schema.object({
+              properties: {
+                date: Schema.string(),
+                time: Schema.string(),
+                location: Schema.string(),
+                homeCoach: Schema.string(),
+                visitorCoach: Schema.string()
+              },
+              optionalProperties: ['date', 'time', 'location', 'homeCoach', 'visitorCoach']
+            }),
+            scores: Schema.object({
+              properties: {
+                homeFirstHalf: Schema.number(),
+                visitorFirstHalf: Schema.number(),
+                homeSecondHalf: Schema.number(),
+                visitorSecondHalf: Schema.number(),
+                homeFinal: Schema.number(),
+                visitorFinal: Schema.number()
+              },
+              optionalProperties: ['homeFirstHalf', 'visitorFirstHalf', 'homeSecondHalf', 'visitorSecondHalf', 'homeFinal', 'visitorFinal']
+            }),
+            homePlayers: Schema.array({
+              items: Schema.object({
+                properties: {
+                  number: Schema.string(),
+                  name: Schema.string(),
+                  fouls: Schema.number(),
+                  firstHalfPoints: Schema.number(),
+                  secondHalfPoints: Schema.number(),
+                  otPoints: Schema.number(),
+                  totalPoints: Schema.number()
+                },
+                optionalProperties: ['number', 'name', 'fouls', 'firstHalfPoints', 'secondHalfPoints', 'otPoints', 'totalPoints']
+              })
+            }),
+            visitorPlayers: Schema.array({
+              items: Schema.object({
+                properties: {
+                  number: Schema.string(),
+                  name: Schema.string(),
+                  fouls: Schema.number(),
+                  firstHalfPoints: Schema.number(),
+                  secondHalfPoints: Schema.number(),
+                  otPoints: Schema.number(),
+                  totalPoints: Schema.number()
+                },
+                optionalProperties: ['number', 'name', 'fouls', 'firstHalfPoints', 'secondHalfPoints', 'otPoints', 'totalPoints']
+              })
+            })
+          },
+          optionalProperties: ['metadata', 'scores', 'homePlayers', 'visitorPlayers']
+        });
+
+        const promptText = `You are reading a basketball official scoresheet photo. Extract stats in strict JSON.
+
+SHEET LAYOUT RULES:
+- The home team roster table is on the LEFT. The visitor team roster table is on the RIGHT.
+- Each roster table has columns: No, Name, Fouls, 1st Half Scoring, 2nd Half Scoring, Overtime, Total Pts.
+- Fouls are tally marks inside the FOULS column boxes; count only those marks (ignore running score grids).
+- Fouls per player should be 0-5. If unclear, prefer the lower count.
+- Use the Total Pts column when present. If it is blank, sum the 1st half, 2nd half, and overtime tallies.
+- The score box at the top-right includes 1st Half, 2nd Half, and Final scores for Home and Visitor.
+- Ignore running score grids, timeouts, and technicals.
+
+RETURN JSON:
+- homePlayers and visitorPlayers should include number, name, fouls, totalPoints.
+- scores should include homeFinal and visitorFinal if present.
+- Use 0 when a numeric value is blank.
+`;
+
+        const firebaseApp = getApp();
+        const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+        const model = getGenerativeModel(ai, {
+          model: 'gemini-2.5-flash',
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: jsonSchema
+          }
+        });
+
+        const imagePart = await fileToGenerativePart(statSheetFile);
+        const result = await model.generateContent([promptText, imagePart]);
+        const responseText = result.response.text();
+        const response = JSON.parse(responseText);
+
+        parsedHomeRows = (response.homePlayers || []).map(row => sanitizeRow(row))
+          .filter(row => row.name || row.number || row.totalPoints || row.fouls);
+        parsedVisitorRows = (response.visitorPlayers || []).map(row => sanitizeRow(row))
+          .filter(row => row.name || row.number || row.totalPoints || row.fouls);
+
+        const homeMatches = countRosterMatches(parsedHomeRows);
+        const visitorMatches = countRosterMatches(parsedVisitorRows);
+        const shouldSwap = visitorMatches > homeMatches;
+        const homeScoreInput = document.getElementById('home-score-input');
+        const visitorScoreInput = document.getElementById('visitor-score-input');
+        homeScoreInput.value = Number(response?.scores?.homeFinal || 0);
+        visitorScoreInput.value = Number(response?.scores?.visitorFinal || 0);
+
+        isSwapped = shouldSwap;
+        homeRows = autoAssignRosterMatches(shouldSwap ? parsedVisitorRows : parsedHomeRows);
+        visitorRows = shouldSwap ? parsedHomeRows : parsedVisitorRows;
+        document.getElementById('swap-toggle').checked = shouldSwap;
+        if (shouldSwap) {
+          swapScores();
+        }
+
+        renderRows();
+        updateScoreInputs();
+        const matchHint = document.getElementById('match-hint');
+        if (homeMatches || visitorMatches) {
+          matchHint.textContent = `Roster matches: home ${homeMatches}, visitor ${visitorMatches}.`;
+        }
+        status.textContent = 'Analysis complete. Review and adjust as needed.';
+      } catch (error) {
+        console.error('AI analysis failed:', error);
+        alert('Failed to analyze stat sheet: ' + error.message);
+      } finally {
+        loading.classList.add('hidden');
+      }
+    });
+
+    bindRowUpdates();
+    document.getElementById('swap-toggle').addEventListener('change', (event) => {
+      applySwap(event.target.checked);
+    });
+
+    document.getElementById('apply-btn').addEventListener('click', async () => {
+      const applyStatus = document.getElementById('apply-status');
+      const applyBtn = document.getElementById('apply-btn');
+      applyStatus.textContent = '';
+
+      const includedHome = homeRows.filter(r => r.include);
+      const includedVisitor = visitorRows.filter(r => r.include);
+
+      if (!includedHome.length) {
+        alert('Please include at least one home player.');
+        return;
+      }
+
+      const unmatched = includedHome.filter(r => !r.mappedPlayerId);
+      if (unmatched.length) {
+        alert('Please map every included home row to a roster player or uncheck it.');
+        return;
+      }
+
+      const duplicateCheck = new Set();
+      for (const row of includedHome) {
+        if (duplicateCheck.has(row.mappedPlayerId)) {
+          alert('A roster player is selected more than once. Please fix duplicates.');
+          return;
+        }
+        duplicateCheck.add(row.mappedPlayerId);
+      }
+
+      try {
+        applyBtn.disabled = true;
+        applyBtn.classList.add('opacity-60');
+
+        let statSheetUrl = currentGame.statSheetPhotoUrl || '';
+        if (statSheetFile) {
+          applyStatus.textContent = 'Uploading stat sheet…';
+          const uploadPromise = uploadStatSheetPhoto(statSheetFile);
+          const uploadTimeout = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Stat sheet upload timed out. Please try again.')), 30000);
+          });
+          statSheetUrl = await Promise.race([uploadPromise, uploadTimeout]);
+        }
+
+        const homeScore = Number(document.getElementById('home-score-input').value || 0);
+        const visitorScore = Number(document.getElementById('visitor-score-input').value || 0);
+        const pointsKey = getPointsKey();
+        const configColumns = (currentConfig?.columns || []).map(col => col.toLowerCase());
+
+        applyStatus.textContent = 'Checking existing game data…';
+        const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
+        if (eventsSnap.size > 0 || statsSnap.size > 0) {
+          const confirmClear = confirm('This game already has tracked data. Replace it with the stat sheet results?');
+          if (!confirmClear) {
+            applyStatus.textContent = 'Cancelled.';
+            return;
+          }
+          applyStatus.textContent = 'Clearing existing stats…';
+          await Promise.all(eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
+          await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
+        }
+
+        const batch = writeBatch(db);
+        includedHome.forEach(row => {
+          const player = roster.find(p => p.id === row.mappedPlayerId);
+          if (!player) return;
+          const statsObj = {};
+          configColumns.forEach(col => {
+            statsObj[col] = 0;
+          });
+          statsObj[pointsKey] = row.totalPoints || 0;
+          statsObj.fouls = row.fouls || 0;
+          const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, player.id);
+          batch.set(statsRef, {
+            playerName: player.name,
+            playerNumber: player.number,
+            stats: statsObj
+          });
+        });
+
+        const opponentStats = {};
+        includedVisitor.forEach((row, index) => {
+          const oppId = `statsheet_${index + 1}`;
+          opponentStats[oppId] = {
+            name: row.name || '',
+            number: row.number || '',
+            fouls: row.fouls || 0
+          };
+          opponentStats[oppId][pointsKey] = row.totalPoints || 0;
+          configColumns.forEach(col => {
+            if (opponentStats[oppId][col] === undefined) {
+              opponentStats[oppId][col] = 0;
+            }
+          });
+        });
+
+        const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
+        batch.update(gameRef, {
+          homeScore,
+          awayScore: visitorScore,
+          opponentStats,
+          status: 'completed',
+          statSheetPhotoUrl: statSheetUrl || null
+        });
+
+        applyStatus.textContent = 'Saving stats…';
+        const commitPromise = batch.commit();
+        const commitTimeout = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Save timed out. Please try again.')), 30000);
+        });
+        await Promise.race([commitPromise, commitTimeout]);
+        applyStatus.textContent = 'Saved! Redirecting to game report…';
+        window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
+      } catch (error) {
+        console.error('Failed to save stats:', error);
+        alert('Failed to save stats: ' + error.message);
+        applyStatus.textContent = `Error: ${error.message}`;
+      } finally {
+        applyBtn.disabled = false;
+        applyBtn.classList.remove('opacity-60');
+      }
+    });
+  </script>
+</body>
+
+</html>

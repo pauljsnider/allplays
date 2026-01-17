@@ -385,6 +385,10 @@
                     class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                     Beta
                 </button>
+                <button id="basketball-tracker-photo"
+                    class="w-full px-4 py-3 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 transition font-semibold">
+                    Photo Stat Sheet
+                </button>
             </div>
             <div class="flex justify-end mt-4">
                 <button id="basketball-tracker-cancel" class="px-4 py-2 text-gray-600 hover:text-gray-800">Cancel</button>
@@ -1849,6 +1853,12 @@ PARSING RULES:
             const gameId = pendingTrackGameId;
             closeBasketballTrackerModal();
             window.location.href = `track-basketball.html#teamId=${currentTeamId}&gameId=${gameId}`;
+        });
+        document.getElementById('basketball-tracker-photo')?.addEventListener('click', () => {
+            if (!pendingTrackGameId) return closeBasketballTrackerModal();
+            const gameId = pendingTrackGameId;
+            closeBasketballTrackerModal();
+            window.location.href = `track-statsheet.html#teamId=${currentTeamId}&gameId=${gameId}`;
         });
     </script>
 </body>

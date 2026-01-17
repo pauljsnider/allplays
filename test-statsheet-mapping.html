@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stat Sheet Mapping Tests</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .pass { border-left-color: #22c55e; background: #f0fdf4; }
+    .fail { border-left-color: #ef4444; background: #fef2f2; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-bold mb-2">Stat Sheet Mapping Tests</h1>
+    <p class="text-sm text-gray-500 mb-6">Validates stat sheet parsing helpers and swap logic.</p>
+
+    <div class="flex items-center gap-3 mb-6">
+      <button id="run-tests" class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Run Tests</button>
+      <span id="summary" class="text-sm text-gray-600"></span>
+    </div>
+
+    <div id="results" class="space-y-3"></div>
+  </main>
+
+  <script type="module">
+    const resultsEl = document.getElementById('results');
+    const summaryEl = document.getElementById('summary');
+
+    function normalizeNumber(value) {
+      return (value || '').toString().replace(/\s+/g, '').trim();
+    }
+
+    function normalizeName(value) {
+      return (value || '')
+        .toString()
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function clampFouls(value) {
+      const num = Number(value || 0);
+      if (!Number.isFinite(num)) return 0;
+      return Math.min(Math.max(num, 0), 5);
+    }
+
+    function sanitizeRow(row) {
+      const totalPoints = Number.isFinite(row.totalPoints)
+        ? row.totalPoints
+        : (Number(row.firstHalfPoints || 0) + Number(row.secondHalfPoints || 0) + Number(row.otPoints || 0));
+      return {
+        number: row.number || '',
+        name: row.name || '',
+        fouls: clampFouls(row.fouls),
+        totalPoints: Number(row.totalPoints || totalPoints || 0) || 0
+      };
+    }
+
+    function pickRosterMatch(row, roster, usedIds) {
+      const normalizedNumber = normalizeNumber(row.number);
+      if (normalizedNumber) {
+        const matches = roster.filter(p => normalizeNumber(p.number) === normalizedNumber);
+        if (matches.length === 1 && !usedIds.has(matches[0].id)) {
+          return matches[0].id;
+        }
+      }
+
+      const normalizedName = normalizeName(row.name);
+      if (normalizedName) {
+        const nameTokens = normalizedName.split(' ').filter(Boolean);
+        const lastName = nameTokens[nameTokens.length - 1] || '';
+
+        const matches = roster.filter(p => {
+          const rosterName = normalizeName(p.name);
+          if (!rosterName) return false;
+          if (rosterName === normalizedName) return true;
+          if (normalizedName.length > 2 && rosterName.includes(normalizedName)) return true;
+          if (lastName && rosterName.includes(lastName)) return true;
+          return false;
+        });
+
+        const available = matches.filter(m => !usedIds.has(m.id));
+        if (available.length === 1) {
+          return available[0].id;
+        }
+      }
+
+      return '';
+    }
+
+    function countRosterMatches(rows, roster) {
+      const usedIds = new Set();
+      let count = 0;
+      rows.forEach(row => {
+        const match = pickRosterMatch(row, roster, usedIds);
+        if (match) {
+          usedIds.add(match);
+          count += 1;
+        }
+      });
+      return count;
+    }
+
+    function test(name, fn) {
+      try {
+        fn();
+        return { name, pass: true };
+      } catch (error) {
+        return { name, pass: false, error: error.message };
+      }
+    }
+
+    function assertEqual(actual, expected, message) {
+      if (actual !== expected) {
+        throw new Error(`${message} (expected ${expected}, got ${actual})`);
+      }
+    }
+
+    function assertTrue(value, message) {
+      if (!value) throw new Error(message);
+    }
+
+    function run() {
+      const roster = [
+        { id: 'p1', number: '10', name: 'Emma' },
+        { id: 'p2', number: '15', name: 'Teagan' },
+        { id: 'p3', number: '22', name: 'Samantha Lee' }
+      ];
+
+      const tests = [
+        test('clampFouls caps at 5', () => {
+          assertEqual(clampFouls(7), 5, 'Fouls should cap at 5');
+        }),
+        test('sanitizeRow sums points when total is missing', () => {
+          const row = sanitizeRow({ number: '1', name: 'Test', firstHalfPoints: 3, secondHalfPoints: 4, otPoints: 2 });
+          assertEqual(row.totalPoints, 9, 'Total points should sum');
+        }),
+        test('pickRosterMatch uses jersey number when unique', () => {
+          const used = new Set();
+          const match = pickRosterMatch({ number: '10', name: 'Emma' }, roster, used);
+          assertEqual(match, 'p1', 'Should match player by number');
+        }),
+        test('pickRosterMatch uses last name fallback', () => {
+          const used = new Set();
+          const match = pickRosterMatch({ number: '', name: 'Lee' }, roster, used);
+          assertEqual(match, 'p3', 'Should match by last name token');
+        }),
+        test('countRosterMatches prefers visitor side when more matches', () => {
+          const homeRows = [
+            sanitizeRow({ number: '1', name: 'Opp One' }),
+            sanitizeRow({ number: '2', name: 'Opp Two' })
+          ];
+          const visitorRows = [
+            sanitizeRow({ number: '10', name: 'Emma' }),
+            sanitizeRow({ number: '15', name: 'Teagan' })
+          ];
+          const homeCount = countRosterMatches(homeRows, roster);
+          const visitorCount = countRosterMatches(visitorRows, roster);
+          assertTrue(visitorCount > homeCount, 'Visitor should have more matches');
+        })
+      ];
+
+      resultsEl.innerHTML = tests.map(result => `
+        <div class="border-l-4 p-3 rounded ${result.pass ? 'pass' : 'fail'}">
+          <div class="font-semibold">${result.pass ? '✓' : '✗'} ${result.name}</div>
+          ${result.pass ? '' : `<div class="text-sm text-red-600">${result.error}</div>`}
+        </div>
+      `).join('');
+
+      const failed = tests.filter(t => !t.pass).length;
+      summaryEl.textContent = failed
+        ? `${failed} failed, ${tests.length - failed} passed`
+        : `All ${tests.length} tests passed`;
+    }
+
+    document.getElementById('run-tests').addEventListener('click', run);
+  </script>
+</body>
+</html>

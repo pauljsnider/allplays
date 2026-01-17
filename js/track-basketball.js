@@ -190,7 +190,7 @@ function liveCard(id) {
   const fouls = s.fouls || 0;
   const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : 'bg-sand';
   const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
-  const foulPill = `<div class="${foulBgClass} rounded-lg py-1">FOULS <span class="font-display text-sm">${fouls}${foulWarning}</span></div>`;
+  const foulPill = `<div class="${foulBgClass} rounded-lg py-1">FLS <span class="font-display text-sm">${fouls}${foulWarning}</span></div>`;
 
   const btnHtml = cols.map(col => {
     const key = col.toLowerCase();
@@ -219,7 +219,7 @@ function liveCard(id) {
         ${foulPill}
       </div>
       <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
-        ${btnHtml} ${statBtn(id, 'fouls', 1, 'FOULS')}
+        ${btnHtml} ${statBtn(id, 'fouls', 1, 'FLS')}
       </div>
     </div>`;
 }
@@ -257,7 +257,7 @@ function renderOpponents() {
     const fouls = s.fouls || 0;
     const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : '';
     const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
-    const foulDisplay = foulBgClass ? `<span class="${foulBgClass} px-1 rounded">FOULS ${fouls}${foulWarning}</span>` : `FOULS ${fouls}`;
+    const foulDisplay = foulBgClass ? `<span class="${foulBgClass} px-1 rounded">FLS ${fouls}${foulWarning}</span>` : `FLS ${fouls}`;
     const quickLineWithFouls = quickLine ? `${quickLine} · ${foulDisplay}` : foulDisplay;
 
     const oppBtns = cols.map(col => {
@@ -273,7 +273,7 @@ function renderOpponents() {
         <input data-opp-edit="${o.id}" value="${o.name}" class="w-full text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
-          ${oppBtns} ${oppBtn(o.id, 'fouls', 1, 'FOULS')} <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
+          ${oppBtns} ${oppBtn(o.id, 'fouls', 1, 'FLS')} <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
         </div>
       </div>
     `;

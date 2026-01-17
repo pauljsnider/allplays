@@ -1,5 +1,5 @@
-import { db, auth } from './firebase.js';
-import { imageStorage, ensureImageAuth } from './firebase-images.js';
+import { db, auth, storage } from './firebase.js';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js';
 import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer, onSnapshot } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
@@ -66,6 +66,36 @@ export async function uploadUserPhoto(file) {
     console.log('User photo URL:', downloadURL);
 
     return downloadURL;
+}
+
+export async function uploadStatSheetPhoto(file) {
+    console.log('Starting stat sheet upload...', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
+    });
+
+    await requireImageAuth();
+
+    const path = `team-photos/${Date.now()}_stat-sheet_${file.name}`;
+    try {
+        const storageRef = ref(imageStorage, path);
+        const snapshot = await uploadBytes(storageRef, file);
+        const downloadURL = await getDownloadURL(snapshot.ref);
+        console.log('Stat sheet URL (image storage):', downloadURL);
+        return downloadURL;
+    } catch (error) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+            console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
+            const fallbackRef = ref(storage, `stat-sheets/${Date.now()}_${file.name}`);
+            const snapshot = await uploadBytes(fallbackRef, file);
+            const downloadURL = await getDownloadURL(snapshot.ref);
+            console.log('Stat sheet URL (main storage):', downloadURL);
+            return downloadURL;
+        }
+        throw error;
+    }
 }
 
 // Teams
