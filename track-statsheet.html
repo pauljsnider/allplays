@@ -150,6 +150,50 @@
         <button id="apply-btn" class="px-5 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold">Apply to Game</button>
       </div>
     </section>
+
+    <!-- Summary Section (shown after Apply to Game) -->
+    <section id="summary-section" class="hidden mt-6 bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+      <h2 class="text-xl font-semibold text-gray-900 mb-4">Game Summary (Optional)</h2>
+      <p class="text-sm text-gray-600 mb-4">Add a summary for this game. You can write your own or use AI to generate one based on the stats.</p>
+
+      <textarea id="summary-notes" class="w-full px-4 py-3 rounded-lg border border-gray-300 text-sm mb-4" rows="6" placeholder="Write a game summary, key moments, standout performances..."></textarea>
+
+      <div class="flex flex-wrap items-center gap-3 mb-4">
+        <button id="generate-summary-btn" class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+          </svg>
+          📝 Generate AI Summary
+        </button>
+        <span id="summary-status" class="text-sm text-gray-500"></span>
+      </div>
+
+      <!-- AI Summary Preview -->
+      <div id="summary-preview" class="hidden mb-4 bg-gradient-to-br from-primary-50 to-primary-100 border border-primary-200 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h4 class="text-sm font-semibold text-primary-900">AI-Generated Summary Preview</h4>
+          <button id="close-summary-preview" class="text-primary-600 hover:text-primary-800 font-semibold text-sm">✕</button>
+        </div>
+        <div id="summary-preview-text" class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-white rounded-lg p-4 border border-primary-200 max-h-96 overflow-y-auto"></div>
+        <div class="flex gap-2">
+          <button id="use-summary-btn" class="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+            Use This Summary
+          </button>
+          <button id="cancel-summary-btn" class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold text-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <div class="flex gap-3">
+        <button id="save-continue-btn" class="flex-1 px-5 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-semibold">
+          Save & Continue to Game
+        </button>
+        <button id="skip-summary-btn" class="px-5 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold">
+          Skip to Game
+        </button>
+      </div>
+    </section>
   </main>
 
   <div id="footer-container"></div>
@@ -786,8 +830,15 @@ RETURN JSON:
           setTimeout(() => reject(new Error('Save timed out. Please try again.')), 30000);
         });
         await Promise.race([commitPromise, commitTimeout]);
-        applyStatus.textContent = 'Saved! Redirecting to game report…';
-        window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
+        applyStatus.textContent = 'Stats saved! Now you can add a game summary.';
+
+        // Show summary section instead of redirecting
+        document.getElementById('summary-section').classList.remove('hidden');
+        document.getElementById('summary-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Hide the apply button and analysis section
+        document.getElementById('apply-btn').classList.add('hidden');
+
       } catch (error) {
         console.error('Failed to save stats:', error);
         alert('Failed to save stats: ' + error.message);
@@ -796,6 +847,132 @@ RETURN JSON:
         applyBtn.disabled = false;
         applyBtn.classList.remove('opacity-60');
       }
+    });
+
+    // AI Summary Generation
+    let generatedSummary = '';
+
+    document.getElementById('generate-summary-btn').addEventListener('click', async () => {
+      const generateBtn = document.getElementById('generate-summary-btn');
+      const status = document.getElementById('summary-status');
+      const preview = document.getElementById('summary-preview');
+      const previewText = document.getElementById('summary-preview-text');
+
+      generateBtn.disabled = true;
+      status.textContent = 'Generating AI summary…';
+      preview.classList.add('hidden');
+
+      try {
+        const firebaseApp = getApp();
+        const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+        const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+
+        // Build context from the applied data
+        const homeScore = Number(document.getElementById('home-score-input').value || 0);
+        const visitorScore = Number(document.getElementById('visitor-score-input').value || 0);
+        const pointsKey = getPointsKey();
+
+        let context = `Game: ${currentTeam.name} vs ${currentGame.opponent}\n`;
+        context += `Final Score: ${homeScore} - ${visitorScore}\n`;
+        context += `Date: ${formatDate(currentGame.date)}\n`;
+        context += `Sport: ${currentTeam.sport || 'Basketball'}\n\n`;
+
+        // Add home players stats
+        const includedHome = homeRows.filter(r => r.include);
+        context += `${currentTeam.name.toUpperCase()} PLAYERS:\n`;
+        includedHome.forEach(row => {
+          const player = roster.find(p => p.id === row.mappedPlayerId);
+          if (player) {
+            context += `#${player.number || row.number || '-'} ${player.name}: `;
+            context += `${pointsKey.toUpperCase()}:${row.totalPoints || 0}, FOULS:${row.fouls || 0}\n`;
+          }
+        });
+
+        // Add visitor stats
+        const includedVisitor = visitorRows.filter(r => r.include);
+        if (includedVisitor.length > 0) {
+          context += `\n${(currentGame.opponent || 'OPPONENT').toUpperCase()} PLAYERS:\n`;
+          includedVisitor.forEach(row => {
+            context += `#${row.number || '-'} ${row.name || 'Player'}: `;
+            context += `${pointsKey.toUpperCase()}:${row.totalPoints || 0}, FOULS:${row.fouls || 0}\n`;
+          });
+        }
+
+        const prompt = `You are a sports reporter writing a match report for a youth sports game.
+Write a comprehensive but concise game summary in paragraph form (2-5 paragraphs).
+Make it engaging and professional, as if it would appear in a sports publication. Focus on the narrative, not just listing stats.
+
+NOTE: This summary is based on final stats from a score sheet, without play-by-play details.
+
+GAME DATA:
+${context}
+
+Write the match report now:`;
+
+        const result = await model.generateContent(prompt);
+        generatedSummary = result.response.text();
+
+        // Show preview
+        previewText.textContent = generatedSummary;
+        preview.classList.remove('hidden');
+        status.textContent = '';
+
+      } catch (error) {
+        console.error('AI summary error:', error);
+        status.textContent = `Error: ${error.message}`;
+      } finally {
+        generateBtn.disabled = false;
+      }
+    });
+
+    // Use Summary button - populates textarea
+    document.getElementById('use-summary-btn').addEventListener('click', () => {
+      const textarea = document.getElementById('summary-notes');
+      textarea.value = generatedSummary;
+      document.getElementById('summary-preview').classList.add('hidden');
+      document.getElementById('summary-status').textContent = 'Summary added to text area. You can edit it before saving.';
+    });
+
+    // Cancel/Close preview buttons
+    const hideSummaryPreview = () => {
+      document.getElementById('summary-preview').classList.add('hidden');
+      document.getElementById('summary-status').textContent = '';
+    };
+
+    document.getElementById('cancel-summary-btn').addEventListener('click', hideSummaryPreview);
+    document.getElementById('close-summary-preview').addEventListener('click', hideSummaryPreview);
+
+    // Save & Continue button
+    document.getElementById('save-continue-btn').addEventListener('click', async () => {
+      const saveBtn = document.getElementById('save-continue-btn');
+      const status = document.getElementById('summary-status');
+      const summaryText = document.getElementById('summary-notes').value.trim();
+
+      saveBtn.disabled = true;
+
+      try {
+        if (summaryText) {
+          status.textContent = 'Saving summary…';
+          const { updateGame } = await import('./js/db.js?v=12');
+          await updateGame(currentTeamId, currentGameId, { summary: summaryText });
+          status.textContent = 'Summary saved!';
+        }
+
+        // Redirect to game
+        setTimeout(() => {
+          window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
+        }, summaryText ? 500 : 0);
+
+      } catch (error) {
+        console.error('Error saving summary:', error);
+        status.textContent = `Error: ${error.message}`;
+        saveBtn.disabled = false;
+      }
+    });
+
+    // Skip to Game button
+    document.getElementById('skip-summary-btn').addEventListener('click', () => {
+      window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
     });
   </script>
 </body>
