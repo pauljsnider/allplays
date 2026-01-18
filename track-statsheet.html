@@ -912,10 +912,12 @@ Write the match report now:`;
         const result = await model.generateContent(prompt);
         generatedSummary = result.response.text();
 
-        // Show preview
+        // Show preview + populate textarea
         previewText.textContent = generatedSummary;
         preview.classList.remove('hidden');
-        status.textContent = '';
+        const textarea = document.getElementById('summary-notes');
+        textarea.value = generatedSummary;
+        status.textContent = 'Summary added to text area. You can edit it before saving.';
 
       } catch (error) {
         console.error('AI summary error:', error);
@@ -946,7 +948,7 @@ Write the match report now:`;
     document.getElementById('save-continue-btn').addEventListener('click', async () => {
       const saveBtn = document.getElementById('save-continue-btn');
       const status = document.getElementById('summary-status');
-      const summaryText = document.getElementById('summary-notes').value.trim();
+      const summaryText = document.getElementById('summary-notes').value.trim() || generatedSummary.trim();
 
       saveBtn.disabled = true;
 
