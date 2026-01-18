@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-3J13LHWFT3');
+  </script>
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Live Game - ALL PLAYS</title>
+  <link rel="icon" type="image/png" href="img/logo_small.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0b132b',
+            slate: '#1c2541',
+            teal: '#5bc0be',
+            coral: '#ff6b6b',
+            gold: '#ffd93d',
+            sand: '#f7f5ed'
+          },
+          fontFamily: {
+            display: ['"Space Grotesk"', 'ui-sans-serif'],
+            body: ['"Inter Tight"', 'ui-sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --nav-height: 0px;
+      --scoreboard-height: 0px;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 20% 20%, rgba(91,192,190,0.15), transparent 40%),
+        radial-gradient(circle at 80% 0%, rgba(255,217,61,0.12), transparent 35%),
+        #0b132b;
+    }
+
+    #header-container header {
+      background: rgba(11, 19, 43, 0.95);
+      border-bottom: 1px solid rgba(91, 192, 190, 0.2);
+    }
+
+    #header-container a,
+    #header-container button,
+    #header-container p,
+    #header-container span,
+    #header-container h1,
+    #header-container h2 {
+      color: #f7f5ed;
+    }
+
+    #header-container a:hover,
+    #header-container button:hover {
+      color: #5bc0be;
+    }
+
+    #header-container h1 {
+      background: none;
+      color: #5bc0be;
+      -webkit-text-fill-color: currentColor;
+    }
+
+    #header-container .bg-clip-text {
+      background-clip: initial;
+      -webkit-background-clip: initial;
+    }
+
+    #header-container .text-transparent {
+      color: #5bc0be;
+      -webkit-text-fill-color: #5bc0be;
+    }
+
+    #header-container .bg-gradient-to-r,
+    #header-container .from-primary-600,
+    #header-container .to-primary-700 {
+      background: none;
+      box-shadow: none;
+    }
+
+    #header-container .text-primary-600,
+    #header-container .text-primary-700,
+    #header-container .text-gray-900,
+    #header-container .text-gray-600,
+    #header-container .text-gray-500 {
+      color: #f7f5ed;
+    }
+
+    #header-container .bg-white\/80,
+    #header-container .bg-white {
+      background: transparent;
+    }
+
+    #header-container .border-gray-200,
+    #header-container .border-gray-100 {
+      border-color: rgba(91, 192, 190, 0.2);
+    }
+
+    #footer-container footer {
+      background: #0f1b35;
+      color: rgba(247, 245, 237, 0.7);
+    }
+
+    #footer-container h4 {
+      color: #f7f5ed;
+    }
+
+    #footer-container a {
+      color: rgba(247, 245, 237, 0.7);
+    }
+
+    #footer-container a:hover {
+      color: #5bc0be;
+    }
+
+    #footer-container .border-gray-800 {
+      border-color: rgba(91, 192, 190, 0.2);
+    }
+
+    #scoreboard {
+      top: var(--nav-height);
+    }
+
+    #mobile-tabs {
+      top: calc(var(--nav-height) + var(--scoreboard-height));
+    }
+
+    @keyframes float-up {
+      0% { transform: translateY(0) scale(1); opacity: 1; }
+      100% { transform: translateY(-200px) scale(1.4); opacity: 0; }
+    }
+    .reaction-float { animation: float-up 2s ease-out forwards; }
+
+    @keyframes score-pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.15); }
+    }
+    .score-pulse { animation: score-pulse 0.4s ease-in-out; }
+
+    @keyframes slide-in {
+      from { transform: translateX(-12px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .event-slide { animation: slide-in 0.25s ease-out; }
+  </style>
+</head>
+
+<body class="bg-ink text-sand min-h-screen font-body">
+  <div id="header-container"></div>
+
+  <!-- SCOREBOARD HEADER -->
+  <header id="scoreboard" class="sticky z-40 bg-slate/90 backdrop-blur border-b border-teal/20">
+    <div class="max-w-5xl mx-auto px-4 py-3">
+      <div class="flex items-center justify-between text-xs text-teal/70 mb-1">
+        <span id="home-team-name">Home Team</span>
+        <span id="away-team-name">Away Team</span>
+      </div>
+      <div class="flex items-center justify-between">
+        <span id="home-score" class="text-5xl font-display font-bold">0</span>
+        <div class="text-center">
+          <div id="period" class="text-teal font-medium">Q1</div>
+          <div id="clock" class="text-sand/70 text-sm">0:00</div>
+          <div id="live-badge" class="inline-flex items-center gap-1 mt-1">
+            <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+            <span class="text-red-400 text-xs font-medium">LIVE</span>
+          </div>
+        </div>
+        <span id="away-score" class="text-5xl font-display font-bold">0</span>
+      </div>
+      <div class="text-center mt-2">
+        <span id="viewer-count" class="text-teal/60 text-xs">0 watching</span>
+      </div>
+    </div>
+  </header>
+
+  <div id="connection-banner" class="hidden bg-red-600 text-white text-xs text-center py-2">
+    Connection lost. Reconnecting...
+  </div>
+
+  <!-- MOBILE TABS -->
+  <nav id="mobile-tabs" class="sticky z-30 bg-ink border-b border-teal/20 md:hidden">
+    <div class="flex">
+      <button data-tab="plays" class="flex-1 py-3 text-sm font-medium text-teal border-b-2 border-teal">Plays</button>
+      <button data-tab="stats" class="flex-1 py-3 text-sm font-medium text-sand/50 border-b-2 border-transparent">Stats</button>
+      <button data-tab="chat" class="flex-1 py-3 text-sm font-medium text-sand/50 border-b-2 border-transparent relative">
+        Chat
+        <span id="chat-badge" class="hidden absolute top-2 right-4 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">0</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <main class="max-w-6xl mx-auto px-4 py-4 pb-24">
+    <div class="md:grid md:grid-cols-3 md:gap-6">
+      <!-- PLAY-BY-PLAY -->
+      <section id="plays-panel" class="md:col-span-2">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2">
+          <span class="text-lg">&#9654;</span>
+          Play-by-Play
+        </h2>
+        <div id="plays-feed" class="space-y-2 max-h-[60vh] overflow-y-auto">
+          <div class="text-center text-sand/40 py-8">Waiting for game to start...</div>
+        </div>
+      </section>
+
+      <!-- STATS PANEL -->
+      <section id="stats-panel" class="hidden md:block">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2">
+          <span class="text-lg">&#9205;</span>
+          Player Stats
+        </h2>
+        <div class="mb-4">
+          <div class="text-teal/70 text-xs uppercase tracking-[0.2em]">Lineup</div>
+          <div class="mt-2">
+            <div class="text-sand/60 text-xs mb-2">On Court</div>
+            <div id="lineup-oncourt" class="grid grid-cols-1 gap-2"></div>
+          </div>
+          <div class="mt-3">
+            <div class="text-sand/60 text-xs mb-2">Bench</div>
+            <div id="lineup-bench" class="grid grid-cols-1 gap-2"></div>
+          </div>
+        </div>
+        <div id="stats-list" class="hidden"></div>
+        <div class="mt-4">
+          <div class="text-teal/70 text-sm mb-2">Opponent Stats</div>
+          <div id="opponent-stats" class="space-y-2"></div>
+        </div>
+      </section>
+
+      <!-- CHAT PANEL -->
+      <section id="chat-panel" class="hidden md:block md:col-span-3 lg:col-span-1">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2">
+          <span class="text-lg">&#128172;</span>
+          Live Chat
+        </h2>
+        <div id="chat-container" class="bg-slate/50 rounded-lg border border-teal/20">
+          <div id="chat-messages" class="h-64 overflow-y-auto p-3 space-y-2"></div>
+          <form id="chat-form" class="p-3 border-t border-teal/20">
+            <div class="flex gap-2">
+              <div class="relative flex-1">
+                <input type="text" id="chat-input" placeholder="Send a message..." class="w-full bg-ink border border-teal/30 rounded-lg px-3 py-2 text-sand text-sm">
+                <div id="mention-menu" class="hidden absolute bottom-full left-0 mb-2 w-48 bg-slate border border-teal/30 rounded-lg shadow-lg overflow-hidden">
+                  <button type="button" id="mention-allplays" class="w-full text-left px-3 py-2 hover:bg-ink/70 flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-teal/20 text-teal font-bold text-xs">AP</span>
+                    <span class="text-sm font-medium text-sand">@ALL PLAYS</span>
+                  </button>
+                </div>
+              </div>
+              <button type="submit" class="bg-teal text-ink px-4 py-2 rounded-lg font-medium text-sm">Send</button>
+            </div>
+            <p id="chat-anon-notice" class="hidden text-sand/40 text-xs mt-2 flex items-center gap-2">
+              Chatting as <span id="anon-name">Fan1234</span>
+              <button id="anon-change-btn" type="button" class="text-teal/80 hover:text-teal text-xs underline">Change name</button>
+            </p>
+            <div id="ai-thinking" class="hidden mt-2 text-xs text-teal/80 flex items-center gap-2">
+              <div class="animate-spin rounded-full h-3 w-3 border-b-2 border-teal"></div>
+              <span>ALL PLAYS is thinking...</span>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- REACTIONS BAR -->
+  <div id="reactions-bar" class="fixed bottom-0 left-0 right-0 bg-slate/95 backdrop-blur border-t border-teal/20 p-3">
+    <div class="max-w-lg mx-auto flex justify-center gap-4">
+      <button data-reaction="fire" class="reaction-btn w-11 h-11 flex items-center justify-center text-2xl hover:scale-125 transition-transform" aria-label="Fire">
+        <span>&#128293;</span>
+      </button>
+      <button data-reaction="clap" class="reaction-btn w-11 h-11 flex items-center justify-center text-2xl hover:scale-125 transition-transform" aria-label="Clap">
+        <span>&#128079;</span>
+      </button>
+      <button data-reaction="wow" class="reaction-btn w-11 h-11 flex items-center justify-center text-2xl hover:scale-125 transition-transform" aria-label="Wow">
+        <span>&#128562;</span>
+      </button>
+      <button data-reaction="heart" class="reaction-btn w-11 h-11 flex items-center justify-center text-2xl hover:scale-125 transition-transform" aria-label="Heart">
+        <span>&#10084;&#65039;</span>
+      </button>
+      <button data-reaction="hundred" class="reaction-btn w-11 h-11 flex items-center justify-center text-2xl hover:scale-125 transition-transform" aria-label="Hundred">
+        <span>&#128175;</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- REACTIONS OVERLAY -->
+  <div id="reactions-overlay" class="fixed inset-0 pointer-events-none z-50 overflow-hidden"></div>
+
+  <!-- REPLAY CONTROLS -->
+  <div id="replay-controls" class="hidden fixed bottom-16 left-0 right-0 bg-ink/95 border-t border-teal/20 p-3">
+    <div class="max-w-lg mx-auto">
+      <div class="mb-3">
+        <input type="range" id="replay-progress" min="0" max="100" value="0" class="w-full h-2 bg-slate rounded-lg appearance-none cursor-pointer">
+        <div class="flex justify-between text-xs text-sand/50 mt-1">
+          <span id="replay-current">0:00</span>
+          <span id="replay-duration">0:00</span>
+        </div>
+      </div>
+      <div class="flex justify-center items-center gap-4">
+        <button id="replay-play" class="bg-teal text-ink w-10 h-10 rounded-full flex items-center justify-center" aria-label="Play">
+          <span class="text-lg">&#9654;</span>
+        </button>
+        <div class="flex gap-2">
+          <button data-speed="1" class="speed-btn px-3 py-1 rounded bg-teal text-ink text-sm font-medium">1x</button>
+          <button data-speed="2" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">2x</button>
+          <button data-speed="3" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">3x</button>
+          <button data-speed="4" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">4x</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME NOT LIVE STATE -->
+  <div id="not-live-overlay" class="hidden fixed inset-0 bg-ink/95 z-50 flex items-center justify-center">
+    <div class="text-center p-8">
+      <div class="text-6xl mb-4">&#127936;</div>
+      <h2 class="text-2xl font-bold mb-2">Game Not Live Yet</h2>
+      <p class="text-sand/60 mb-4">Check back when the game starts!</p>
+      <p id="game-start-time" class="text-teal">Scheduled: --</p>
+    </div>
+  </div>
+
+  <!-- GAME ENDED STATE -->
+  <div id="ended-overlay" class="hidden fixed inset-0 bg-ink/95 z-50 flex items-center justify-center">
+    <div class="text-center p-8">
+      <div class="text-6xl mb-4">&#127942;</div>
+      <h2 class="text-2xl font-bold mb-2">Game Ended</h2>
+      <p id="final-score" class="text-3xl text-teal font-bold mb-4">0 - 0</p>
+      <button id="watch-replay-btn" class="bg-teal text-ink px-6 py-3 rounded-lg font-medium">Watch Replay</button>
+    </div>
+  </div>
+
+  <div id="footer-container"></div>
+
+  <script type="module" src="js/live-game.js"></script>
+</body>
+</html>

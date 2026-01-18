@@ -1,6 +1,6 @@
 import { db, auth, storage } from './firebase.js';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
-import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer, onSnapshot } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
+import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer, onSnapshot, serverTimestamp, collectionGroup } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -1178,4 +1178,262 @@ export async function getUnreadChatCounts(userId, teamIds) {
         }
     }));
     return counts;
+}
+
+// ============ LIVE GAME EVENTS ============
+
+/**
+ * Broadcast a live event (fire-and-forget from tracker)
+ */
+export async function broadcastLiveEvent(teamId, gameId, eventData) {
+    const eventsRef = collection(db, 'teams', teamId, 'games', gameId, 'liveEvents');
+    return addDoc(eventsRef, {
+        ...eventData,
+        createdAt: serverTimestamp()
+    });
+}
+
+/**
+ * Subscribe to live events (for viewer)
+ */
+export function subscribeLiveEvents(teamId, gameId, callback, onError) {
+    const eventsRef = collection(db, 'teams', teamId, 'games', gameId, 'liveEvents');
+    const q = query(eventsRef, orderBy('createdAt', 'asc'));
+
+    return onSnapshot(q, (snapshot) => {
+        const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        callback(events);
+    }, onError);
+}
+
+/**
+ * Get all live events (for replay)
+ */
+export async function getLiveEvents(teamId, gameId) {
+    const eventsRef = collection(db, 'teams', teamId, 'games', gameId, 'liveEvents');
+    const q = query(eventsRef, orderBy('createdAt', 'asc'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+/**
+ * Update game live status
+ */
+export async function setGameLiveStatus(teamId, gameId, status) {
+    const gameRef = doc(db, 'teams', teamId, 'games', gameId);
+    const updates = { liveStatus: status };
+
+    if (status === 'live') {
+        updates.liveStartedAt = serverTimestamp();
+    }
+
+    return updateDoc(gameRef, updates);
+}
+
+// ============ LIVE CHAT ============
+
+/**
+ * Subscribe to live game chat
+ */
+export function subscribeLiveChat(teamId, gameId, options, callback, onError) {
+    const chatRef = collection(db, 'teams', teamId, 'games', gameId, 'liveChat');
+    const q = query(chatRef, orderBy('createdAt', 'desc'), limitQuery(options.limit || 100));
+
+    return onSnapshot(q, (snapshot) => {
+        const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        callback(messages);
+    }, onError);
+}
+
+/**
+ * Post a message to live game chat
+ */
+export async function postLiveChatMessage(teamId, gameId, messageData) {
+    const chatRef = collection(db, 'teams', teamId, 'games', gameId, 'liveChat');
+    return addDoc(chatRef, {
+        ...messageData,
+        createdAt: serverTimestamp()
+    });
+}
+
+/**
+ * Get all chat messages (for replay)
+ */
+export async function getLiveChatHistory(teamId, gameId) {
+    const chatRef = collection(db, 'teams', teamId, 'games', gameId, 'liveChat');
+    const q = query(chatRef, orderBy('createdAt', 'asc'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+// ============ LIVE REACTIONS ============
+
+/**
+ * Send a reaction (ephemeral)
+ */
+export async function sendReaction(teamId, gameId, reactionData) {
+    const reactionsRef = collection(db, 'teams', teamId, 'games', gameId, 'liveReactions');
+    return addDoc(reactionsRef, {
+        ...reactionData,
+        createdAt: serverTimestamp()
+    });
+}
+
+/**
+ * Subscribe to reactions (real-time) - only recent reactions
+ */
+export function subscribeReactions(teamId, gameId, callback, onError) {
+    const reactionsRef = collection(db, 'teams', teamId, 'games', gameId, 'liveReactions');
+    const q = query(reactionsRef, orderBy('createdAt', 'desc'), limitQuery(20));
+
+    return onSnapshot(q, (snapshot) => {
+        snapshot.docChanges().forEach(change => {
+            if (change.type === 'added') {
+                callback({ id: change.doc.id, ...change.doc.data() });
+            }
+        });
+    }, onError);
+}
+
+/**
+ * Get all reactions (for replay)
+ */
+export async function getLiveReactions(teamId, gameId) {
+    const reactionsRef = collection(db, 'teams', teamId, 'games', gameId, 'liveReactions');
+    const q = query(reactionsRef, orderBy('createdAt', 'asc'));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
+// ============ VIEWER PRESENCE ============
+
+/**
+ * Track viewer presence and get count updates
+ */
+export function trackViewerPresence(teamId, gameId, onCountChange) {
+    const gameRef = doc(db, 'teams', teamId, 'games', gameId);
+
+    // Increment on connect
+    updateDoc(gameRef, {
+        liveViewerCount: increment(1)
+    }).catch(err => console.warn('Failed to increment viewer count:', err));
+
+    // Subscribe to count changes
+    const unsubscribe = onSnapshot(gameRef, (snapshot) => {
+        const data = snapshot.data();
+        onCountChange(data?.liveViewerCount || 0);
+    });
+
+    // Decrement on disconnect
+    const cleanup = () => {
+        updateDoc(gameRef, {
+            liveViewerCount: increment(-1)
+        }).catch(err => console.warn('Failed to decrement viewer count:', err));
+        unsubscribe();
+    };
+
+    // Handle page unload
+    window.addEventListener('beforeunload', cleanup);
+
+    return () => {
+        window.removeEventListener('beforeunload', cleanup);
+        cleanup();
+    };
+}
+
+// ============ GAME DISCOVERY ============
+
+/**
+ * Get upcoming live games across all public teams
+ */
+export async function getUpcomingLiveGames(limitCount = 10) {
+    const now = new Date();
+    const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    const gamesRef = collectionGroup(db, 'games');
+    const q = query(
+        gamesRef,
+        where('type', '==', 'game'),
+        where('date', '>=', Timestamp.fromDate(now)),
+        where('date', '<=', Timestamp.fromDate(oneWeekFromNow)),
+        orderBy('date', 'asc'),
+        limitQuery(limitCount)
+    );
+
+    const snapshot = await getDocs(q);
+    const games = [];
+
+    for (const docSnap of snapshot.docs) {
+        const gameData = { id: docSnap.id, ...docSnap.data() };
+        // Get team info (parent document)
+        const teamRef = docSnap.ref.parent.parent;
+        const teamSnap = await getDoc(teamRef);
+        if (teamSnap.exists()) {
+            gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+            gameData.teamId = teamSnap.id;
+        }
+        games.push(gameData);
+    }
+
+    return games;
+}
+
+/**
+ * Get currently live games
+ */
+export async function getLiveGamesNow() {
+    const gamesRef = collectionGroup(db, 'games');
+    const q = query(
+        gamesRef,
+        where('liveStatus', '==', 'live')
+    );
+
+    const snapshot = await getDocs(q);
+    const games = [];
+
+    for (const docSnap of snapshot.docs) {
+        const gameData = { id: docSnap.id, ...docSnap.data() };
+        const teamRef = docSnap.ref.parent.parent;
+        const teamSnap = await getDoc(teamRef);
+        if (teamSnap.exists()) {
+            gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+            gameData.teamId = teamSnap.id;
+        }
+        games.push(gameData);
+    }
+
+    return games;
+}
+
+/**
+ * Get recently completed live-tracked games (for replay section)
+ */
+export async function getRecentLiveTrackedGames(limitCount = 6) {
+    const now = new Date();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const gamesRef = collectionGroup(db, 'games');
+    const q = query(
+        gamesRef,
+        where('liveStatus', '==', 'completed'),
+        where('date', '>=', Timestamp.fromDate(oneWeekAgo)),
+        orderBy('date', 'desc'),
+        limitQuery(limitCount)
+    );
+
+    const snapshot = await getDocs(q);
+    const games = [];
+
+    for (const docSnap of snapshot.docs) {
+        const gameData = { id: docSnap.id, ...docSnap.data() };
+        const teamRef = docSnap.ref.parent.parent;
+        const teamSnap = await getDoc(teamRef);
+        if (teamSnap.exists()) {
+            gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+            gameData.teamId = teamSnap.id;
+        }
+        games.push(gameData);
+    }
+
+    return games;
 }

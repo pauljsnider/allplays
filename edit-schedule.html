@@ -385,6 +385,14 @@
                     class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
                     Beta
                 </button>
+                <button id="basketball-tracker-live"
+                    class="w-full px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-semibold flex items-center justify-center gap-2">
+                    <span class="inline-flex items-center gap-1 bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
+                        LIVE
+                    </span>
+                    Live Broadcast Tracker
+                </button>
                 <button id="basketball-tracker-photo"
                     class="w-full px-4 py-3 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 transition font-semibold">
                     Photo Score Sheet
@@ -918,10 +926,12 @@
                         </div>
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
                     </div>
-                    <div class="flex space-x-2">
+                    <div class="flex flex-wrap gap-2">
                         <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
                         ${!isCompleted ? `<button data-game-id="${game.id}" class="track-game-btn px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</button>` : ''}
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
+                        ${!isCompleted ? `<button data-live-link="${game.id}" class="copy-live-link-btn px-3 py-1 bg-rose-100 text-rose-700 rounded text-sm hover:bg-rose-200">Copy Live Link</button>` : ''}
+                        ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
                     </div>
@@ -1854,11 +1864,36 @@ PARSING RULES:
             closeBasketballTrackerModal();
             window.location.href = `track-basketball.html#teamId=${currentTeamId}&gameId=${gameId}`;
         });
+        document.getElementById('basketball-tracker-live')?.addEventListener('click', () => {
+            if (!pendingTrackGameId) return closeBasketballTrackerModal();
+            const gameId = pendingTrackGameId;
+            closeBasketballTrackerModal();
+            window.location.href = `live-tracker.html#teamId=${currentTeamId}&gameId=${gameId}`;
+        });
         document.getElementById('basketball-tracker-photo')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;
             closeBasketballTrackerModal();
             window.location.href = `track-statsheet.html#teamId=${currentTeamId}&gameId=${gameId}`;
+        });
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+
+        document.addEventListener('click', (event) => {
+            const btn = event.target.closest('[data-live-link]');
+            if (!btn) return;
+            const gameId = btn.dataset.liveLink;
+            const url = `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${gameId}`;
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('Live game link copied!');
+            }).catch(() => {
+                showToast('Failed to copy link.');
+            });
         });
     </script>
 </body>

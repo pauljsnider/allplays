@@ -122,6 +122,28 @@ service cloud.firestore {
                             request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
                             isGlobalAdmin());
         }
+
+        // Live Events subcollection - for real-time game broadcasting
+        match /liveEvents/{eventId} {
+          allow read: if true;  // Public read for viewers
+          allow create: if isTeamOwnerOrAdmin(teamId);  // Only stat tracker can write
+          allow update, delete: if false;  // Events are immutable
+        }
+
+        // Live Chat subcollection - game-specific chat for live viewers
+        match /liveChat/{messageId} {
+          allow read: if true;  // Public read for all viewers
+          allow create: if true;  // Anyone can post (anonymous or authenticated)
+          allow update: if false;  // Messages are immutable
+          allow delete: if isTeamOwnerOrAdmin(teamId);  // Moderation only
+        }
+
+        // Live Reactions subcollection - ephemeral reactions during live games
+        match /liveReactions/{reactionId} {
+          allow read: if true;  // Public read
+          allow create: if true;  // Anyone can react
+          allow update, delete: if false;  // Reactions are immutable
+        }
       }
 
       // Stat tracker configs subcollection
