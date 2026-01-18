@@ -217,15 +217,23 @@ function renderPlayByPlay(event, isNew = false) {
   if (!els.playsFeed) return;
   const keepAtTop = els.playsFeed.scrollTop < 10;
   const card = document.createElement('div');
-  const sideClass = event.isOpponent ? 'event-away' : 'event-home';
+
+  // System events (clock, period changes) don't have a side
+  const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove'].includes(event.type);
+  const sideClass = isSystemEvent ? 'border-slate' : (event.isOpponent ? 'event-away' : 'event-home');
   card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${sideClass} ${isNew ? 'event-slide' : ''}`;
   const opponentLabel = [
     event.opponentPlayerNumber ? `#${escapeHtml(event.opponentPlayerNumber)}` : '',
     event.opponentPlayerName ? escapeHtml(event.opponentPlayerName) : ''
   ].filter(Boolean).join(' ');
-  const sideBadge = event.isOpponent
-    ? '<span class="event-side-tag away-color">AWAY</span>'
-    : '<span class="event-side-tag home-color">HOME</span>';
+
+  // Only show side badge for stat/substitution events, not system events
+  let sideBadge = '';
+  if (!isSystemEvent) {
+    sideBadge = event.isOpponent
+      ? '<span class="event-side-tag away-color">AWAY</span>'
+      : '<span class="event-side-tag home-color">HOME</span>';
+  }
   card.innerHTML = `
     <div class="flex justify-between items-start">
       <div>
@@ -538,14 +546,16 @@ function initReactions() {
       senderId: state.user?.uid || state.anonName
     }).catch(err => console.warn('Reaction failed:', err));
 
-    const emoji = getReactionEmoji(type);
-    postLiveChatMessage(state.teamId, state.gameId, {
-      text: emoji,
-      senderId: state.user?.uid || null,
-      senderName: state.user?.displayName || state.anonName,
-      senderPhotoUrl: state.user?.photoURL || null,
-      isAnonymous: !state.user
-    }).catch(err => console.warn('Reaction chat failed:', err));
+    if (state.chatEnabled) {
+      const emoji = getReactionEmoji(type);
+      postLiveChatMessage(state.teamId, state.gameId, {
+        text: emoji,
+        senderId: state.user?.uid || null,
+        senderName: state.user?.displayName || state.anonName,
+        senderPhotoUrl: state.user?.photoURL || null,
+        isAnonymous: !state.user
+      }).catch(err => console.warn('Reaction chat failed:', err));
+    }
   });
 }
 
@@ -910,7 +920,9 @@ function seekReplay(targetMs) {
   state.chatMessages = [];
 
   if (els.playsFeed) els.playsFeed.innerHTML = '';
-  if (els.chatMessages) els.chatMessages.innerHTML = '';
+  if (els.chatMessages) {
+    els.chatMessages.innerHTML = '';
+  }
 
   while (
     state.replayIndex < state.replayEvents.length &&
@@ -1022,12 +1034,6 @@ function hideAiThinking() {
     els.aiThinking.classList.add('hidden');
     return;
   }
-}
-
-function getEventBorderColor(event) {
-  if (event.isOpponent === true) return 'border-coral';
-  if (event.isOpponent === false) return 'border-teal';
-  return 'border-slate';
 }
 
 function getReactionEmoji(type) {
@@ -1255,10 +1261,6 @@ async function init() {
   if (state.isReplay && game.liveStatus === 'completed') {
     await startReplay();
     return;
-  }
-
-  if (!state.isReplay) {
-    startEngagements();
   }
 
   handleGameUpdate(game);

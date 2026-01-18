@@ -611,6 +611,83 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 
 ---
 
+## Bugs & Issues Found (Code Review)
+
+### Bug 6.6: Reactions post to chat even when chat is disabled ✅ FIXED
+**File:** `js/live-game.js:541-548`
+**Severity:** Medium
+**Issue:** When clicking a reaction button, `postLiveChatMessage()` is called unconditionally, ignoring `state.chatEnabled`. This means reactions try to post to chat even during replay mode or when chat is gated.
+**Fix:** Add `if (state.chatEnabled)` check before the `postLiveChatMessage` call in `initReactions()`.
+
+---
+
+### Bug 6.7: Duplicate `startEngagements()` calls on init ✅ FIXED
+**File:** `js/live-game.js:1260-1264`
+**Severity:** Low
+**Issue:** In `init()`, `startEngagements()` is called at line 1261, then `handleGameUpdate(game)` is called at line 1264 which also calls `startEngagements()`. The guard `if (state.engagementsActive) return;` prevents duplicate subscriptions, but it's wasteful.
+**Fix:** Remove the `startEngagements()` call at line 1261 since `handleGameUpdate()` already handles it.
+
+---
+
+### Bug 6.8: Missing null check in `seekReplay` ✅ FIXED
+**File:** `js/live-game.js:913`
+**Severity:** Low
+**Issue:** `els.chatMessages.innerHTML = ''` could fail if the element doesn't exist. Other places use optional chaining but this one doesn't.
+**Fix:** Change to `if (els.chatMessages) els.chatMessages.innerHTML = '';`
+
+---
+
+### Bug 6.9: Inconsistent default stat columns
+**File:** `js/live-game.js`
+**Severity:** Low
+**Issue:** Default stat columns vary between functions:
+- `init()` line 1206: `['PTS', 'REB', 'AST', 'STL', 'TO']`
+- `renderStats()` line 257-258: `['PTS', 'REB', 'AST', 'FLS']`
+- `renderLineup()` line 302-303: `['PTS', 'REB', 'AST', 'FLS']`
+**Fix:** Use a constant for default columns or ensure `state.statColumns` is always set before rendering.
+
+---
+
+### Bug 6.10: Events without `isOpponent` field show no side badge ✅ FIXED
+**File:** `js/live-game.js:226-228`
+**Severity:** Low
+**Issue:** Events like `clock_pause`, `clock_start`, `period_change` may not have `isOpponent` field. They'll get `event-home` class (falsy check) but the side badge logic shows "HOME" which is misleading.
+**Fix:** Add event type check to skip side badge for non-stat events, or set `isOpponent: false` explicitly in tracker broadcasts.
+
+---
+
+### Bug 6.11: Dead code - `getEventBorderColor` function unused ✅ FIXED
+**File:** `js/live-game.js:1027-1031`
+**Severity:** Trivial
+**Issue:** The `getEventBorderColor()` function is defined but never called. Event borders are now determined by `sideClass` in `renderPlayByPlay()`.
+**Fix:** Remove the unused function.
+
+---
+
+### Bug 6.12: CSS variables for sticky positioning are dead code ✅ FIXED
+**File:** `live-game.html:43-46, 158-164`
+**Severity:** Trivial
+**Issue:** CSS variables `--nav-height` and `--scoreboard-height` are defined, and positioning rules reference them, but the sticky classes were removed from the HTML elements.
+**Fix:** Remove the dead CSS rules and variables.
+
+---
+
+### Bug 6.13: Firestore security rules not deployed
+**File:** `firestore.rules` (Task 1.1)
+**Severity:** High
+**Issue:** Task 1.1 shows "Deploy and test rules with Firebase emulator" as unchecked. The security rules may not be deployed to production.
+**Fix:** Run `firebase deploy --only firestore:rules` and verify rules are active.
+
+---
+
+### Issue 6.14: Clock time not broadcast periodically
+**File:** `js/live-tracker.js`
+**Severity:** Medium
+**Issue:** The design mentions real-time clock updates, but the tracker only broadcasts clock on start/pause events. Viewers joining mid-game or after network reconnect won't see accurate clock time until the next event.
+**Potential Fix:** Either broadcast periodic clock updates (every 30s) or sync clock from game document.
+
+---
+
 ## Task Summary
 
 | Phase | Tasks | Description |
