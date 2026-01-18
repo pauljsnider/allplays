@@ -344,9 +344,9 @@ function renderFairness() {
 
 function renderLog() {
   els.log.innerHTML = state.log.slice(0, 40).map((ev, idx) => `
-    <div class="flex justify-between items-center border border-slate/10 rounded-lg p-2 bg-white">
+    <div class="flex justify-between items-center border rounded-lg p-2 ${ev.undoData?.isOpponent ? 'border-red-200 bg-red-50/40' : 'border-slate/10 bg-white'}">
       <div class="flex-1">
-        <p class="text-xs font-semibold">${ev.text}</p>
+        <p class="text-xs font-semibold ${ev.undoData?.isOpponent ? 'text-red-700' : 'text-slate-800'}">${ev.text}</p>
         <p class="text-[10px] text-slate-500">${ev.period} · ${ev.clock}</p>
       </div>
       <div class="flex items-center gap-2">
@@ -394,6 +394,20 @@ function renderLog() {
 
         // Re-render everything to reflect the changes
         renderAll();
+
+        if (liveState.isLive) {
+          const removeText = logEntry?.text ? `Removed: ${logEntry.text}` : 'Removed event';
+          broadcastEvent(baseLiveEvent({
+            type: 'log_remove',
+            description: removeText
+          }));
+          if (logEntry?.undoData?.type === 'stat') {
+            broadcastEvent(buildStatEvent({
+              ...logEntry.undoData,
+              value: -(logEntry.undoData.value || 0)
+            }, `REMOVE ${logEntry.text || 'stat'}`));
+          }
+        }
       }
     });
   });
@@ -1020,6 +1034,11 @@ async function startStop() {
     els.startStop.classList.remove('bg-red-600', 'border-red-700');
     els.startStop.classList.add('bg-emerald-600', 'border-emerald-700');
     clearInterval(state.tick);
+    addLog('Game paused');
+    broadcastEvent(baseLiveEvent({
+      type: 'clock_pause',
+      description: 'Game paused'
+    }));
   } else {
     // If no local activity yet, check for existing tracked data and offer to clear
     const hasLocalActivity = state.clock > 0 || state.home > 0 || state.away > 0 || (state.log && state.log.length > 0);
@@ -1042,6 +1061,11 @@ async function startStop() {
     els.startStop.textContent = 'Pause';
     els.startStop.classList.remove('bg-emerald-600', 'border-emerald-700');
     els.startStop.classList.add('bg-red-600', 'border-red-700');
+    addLog('Game started');
+    broadcastEvent(baseLiveEvent({
+      type: 'clock_start',
+      description: 'Game started'
+    }));
     state.lastTick = performance.now();
     state.tick = setInterval(tick, 500);
   }

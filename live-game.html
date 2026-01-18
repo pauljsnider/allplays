@@ -133,6 +133,28 @@
       border-color: rgba(91, 192, 190, 0.2);
     }
 
+    .event-side-tag {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .home-color {
+      color: #5bc0be;
+    }
+
+    .away-color {
+      color: #ff6b6b;
+    }
+
+    .event-home {
+      border-color: rgba(91, 192, 190, 0.65);
+    }
+
+    .event-away {
+      border-color: rgba(255, 107, 107, 0.65);
+    }
+
     #scoreboard {
       top: var(--nav-height);
     }
@@ -165,14 +187,14 @@
   <div id="header-container"></div>
 
   <!-- SCOREBOARD HEADER -->
-  <header id="scoreboard" class="sticky z-40 bg-slate/90 backdrop-blur border-b border-teal/20">
+  <header id="scoreboard" class="bg-slate/90 backdrop-blur border-b border-teal/20">
     <div class="max-w-5xl mx-auto px-4 py-3">
       <div class="flex items-center justify-between text-xs text-teal/70 mb-1">
-        <span id="home-team-name">Home Team</span>
-        <span id="away-team-name">Away Team</span>
+        <span id="home-team-name" class="home-color">Home Team</span>
+        <span id="away-team-name" class="away-color">Away Team</span>
       </div>
       <div class="flex items-center justify-between">
-        <span id="home-score" class="text-5xl font-display font-bold">0</span>
+        <span id="home-score" class="text-5xl font-display font-bold home-color">0</span>
         <div class="text-center">
           <div id="period" class="text-teal font-medium">Q1</div>
           <div id="clock" class="text-sand/70 text-sm">0:00</div>
@@ -181,7 +203,7 @@
             <span class="text-red-400 text-xs font-medium">LIVE</span>
           </div>
         </div>
-        <span id="away-score" class="text-5xl font-display font-bold">0</span>
+        <span id="away-score" class="text-5xl font-display font-bold away-color">0</span>
       </div>
       <div class="text-center mt-2">
         <span id="viewer-count" class="text-teal/60 text-xs">0 watching</span>
@@ -194,7 +216,7 @@
   </div>
 
   <!-- MOBILE TABS -->
-  <nav id="mobile-tabs" class="sticky z-30 bg-ink border-b border-teal/20 md:hidden">
+  <nav id="mobile-tabs" class="bg-ink border-b border-teal/20 md:hidden">
     <div class="flex">
       <button data-tab="plays" class="flex-1 py-3 text-sm font-medium text-teal border-b-2 border-teal">Plays</button>
       <button data-tab="stats" class="flex-1 py-3 text-sm font-medium text-sand/50 border-b-2 border-transparent">Stats</button>
@@ -268,10 +290,17 @@
               Chatting as <span id="anon-name">Fan1234</span>
               <button id="anon-change-btn" type="button" class="text-teal/80 hover:text-teal text-xs underline">Change name</button>
             </p>
+            <div id="anon-edit" class="hidden mt-2 flex gap-2">
+              <input type="text" id="anon-input" class="flex-1 bg-ink border border-teal/30 rounded-lg px-3 py-2 text-sand text-xs" placeholder="Enter a display name" maxlength="20">
+              <button id="anon-save" type="button" class="bg-teal text-ink px-3 py-2 rounded-lg text-xs font-medium">Save</button>
+              <button id="anon-cancel" type="button" class="bg-slate text-sand px-3 py-2 rounded-lg text-xs font-medium">Cancel</button>
+            </div>
             <div id="ai-thinking" class="hidden mt-2 text-xs text-teal/80 flex items-center gap-2">
               <div class="animate-spin rounded-full h-3 w-3 border-b-2 border-teal"></div>
               <span>ALL PLAYS is thinking...</span>
             </div>
+            <p class="mt-2 text-sand/40 text-[11px]">Tip: tag <span class="text-teal font-semibold">@ALL PLAYS</span> to ask the live assistant.</p>
+            <p id="chat-locked-notice" class="hidden mt-2 text-xs text-coral">Chat is disabled until game time.</p>
           </form>
         </div>
       </section>
@@ -321,28 +350,35 @@
           <button data-speed="2" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">2x</button>
           <button data-speed="3" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">3x</button>
           <button data-speed="4" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">4x</button>
+          <button data-speed="10" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">10x</button>
+          <button data-speed="20" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">20x</button>
+          <button data-speed="50" class="speed-btn px-3 py-1 rounded bg-slate text-sand text-sm">50x</button>
         </div>
       </div>
     </div>
   </div>
 
   <!-- GAME NOT LIVE STATE -->
-  <div id="not-live-overlay" class="hidden fixed inset-0 bg-ink/95 z-50 flex items-center justify-center">
-    <div class="text-center p-8">
-      <div class="text-6xl mb-4">&#127936;</div>
-      <h2 class="text-2xl font-bold mb-2">Game Not Live Yet</h2>
-      <p class="text-sand/60 mb-4">Check back when the game starts!</p>
-      <p id="game-start-time" class="text-teal">Scheduled: --</p>
+  <div id="not-live-overlay" class="hidden fixed right-4 bottom-24 z-40 max-w-xs w-[90%] bg-slate/95 border border-teal/30 rounded-2xl p-4 shadow-xl">
+    <div class="flex items-start gap-3">
+      <div class="text-3xl">&#127936;</div>
+      <div>
+        <h2 class="text-base font-bold mb-1">Game Not Live Yet</h2>
+        <p class="text-sand/70 text-xs mb-2">Chat is open while you wait.</p>
+        <p id="game-start-time" class="text-teal text-xs">Scheduled: --</p>
+      </div>
     </div>
   </div>
 
   <!-- GAME ENDED STATE -->
-  <div id="ended-overlay" class="hidden fixed inset-0 bg-ink/95 z-50 flex items-center justify-center">
-    <div class="text-center p-8">
-      <div class="text-6xl mb-4">&#127942;</div>
-      <h2 class="text-2xl font-bold mb-2">Game Ended</h2>
-      <p id="final-score" class="text-3xl text-teal font-bold mb-4">0 - 0</p>
-      <button id="watch-replay-btn" class="bg-teal text-ink px-6 py-3 rounded-lg font-medium">Watch Replay</button>
+  <div id="ended-overlay" class="hidden fixed right-4 bottom-24 z-40 max-w-xs w-[90%] bg-slate/95 border border-teal/30 rounded-2xl p-4 shadow-xl">
+    <div class="flex items-start gap-3">
+      <div class="text-3xl">&#127942;</div>
+      <div>
+        <h2 class="text-base font-bold mb-1">Game Ended</h2>
+        <p id="final-score" class="text-xl text-teal font-bold mb-3">0 - 0</p>
+        <button id="watch-replay-btn" class="bg-teal text-ink px-4 py-2 rounded-lg font-medium text-sm">Watch Replay</button>
+      </div>
     </div>
   </div>
 

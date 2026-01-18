@@ -701,6 +701,20 @@ Write the match report now:`;
                             Watch Replay
                         </a>
                     ` : ''}
+                    ${game.liveStatus === 'live' ? `
+                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                           class="inline-flex items-center gap-2 bg-red-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-red-600 transition">
+                            <span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                            Live Now
+                        </a>
+                    ` : ''}
+                    ${game.liveStatus !== 'completed' && game.liveStatus !== 'live' ? `
+                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                           class="inline-flex items-center gap-2 bg-slate-800 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-slate-900 transition">
+                            <span class="text-xs">👁️</span>
+                            View Live
+                        </a>
+                    ` : ''}
                     ${game.location ? `
                         <div class="flex items-center justify-center gap-2 text-gray-600">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

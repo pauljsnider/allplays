@@ -10,7 +10,9 @@ import {
   trackViewerPresence,
   getLiveEvents,
   getLiveChatHistory,
-  getLiveReactions
+  getLiveReactions,
+  getConfigs,
+  subscribeGame
 } from './db.js';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
@@ -32,6 +34,7 @@ const state = {
   opponentStats: {},
   onCourt: [],
   bench: [],
+  statColumns: [],
   homeScore: 0,
   awayScore: 0,
   period: 'Q1',
@@ -43,6 +46,9 @@ const state = {
   lastChatSentAt: 0,
 
   viewerCount: 0,
+  engagementsActive: false,
+  liveEventsActive: false,
+  chatEnabled: false,
 
   replayEvents: [],
   replayChat: [],
@@ -88,6 +94,11 @@ const els = {
   chatAnonNotice: q('#chat-anon-notice'),
   anonName: q('#anon-name'),
   anonChange: q('#anon-change-btn'),
+  anonEdit: q('#anon-edit'),
+  anonInput: q('#anon-input'),
+  anonSave: q('#anon-save'),
+  anonCancel: q('#anon-cancel'),
+  chatLockedNotice: q('#chat-locked-notice'),
   mentionMenu: q('#mention-menu'),
   mentionAllPlays: q('#mention-allplays'),
   aiThinking: q('#ai-thinking'),
@@ -114,6 +125,20 @@ const els = {
 };
 
 const mentionState = { active: false, atPos: null };
+const statKeyMap = {
+  PTS: 'pts',
+  POINTS: 'pts',
+  REB: 'reb',
+  AST: 'ast',
+  STL: 'stl',
+  BLK: 'blk',
+  BLOCK: 'blk',
+  TO: 'to',
+  TOV: 'to',
+  FOUL: 'fouls',
+  FOULS: 'fouls',
+  FLS: 'fouls'
+};
 
 function q(selector) {
   return document.querySelector(selector);
@@ -192,15 +217,22 @@ function renderPlayByPlay(event, isNew = false) {
   if (!els.playsFeed) return;
   const keepAtTop = els.playsFeed.scrollTop < 10;
   const card = document.createElement('div');
-  card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${getEventBorderColor(event)} ${isNew ? 'event-slide' : ''}`;
+  const sideClass = event.isOpponent ? 'event-away' : 'event-home';
+  card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${sideClass} ${isNew ? 'event-slide' : ''}`;
   const opponentLabel = [
     event.opponentPlayerNumber ? `#${escapeHtml(event.opponentPlayerNumber)}` : '',
     event.opponentPlayerName ? escapeHtml(event.opponentPlayerName) : ''
   ].filter(Boolean).join(' ');
+  const sideBadge = event.isOpponent
+    ? '<span class="event-side-tag away-color">AWAY</span>'
+    : '<span class="event-side-tag home-color">HOME</span>';
   card.innerHTML = `
     <div class="flex justify-between items-start">
       <div>
-        <span class="text-teal text-xs">${escapeHtml(event.period || state.period)} · ${formatClock(event.gameClockMs || 0)}</span>
+        <div class="flex items-center gap-2">
+          <span class="text-teal text-xs">${escapeHtml(event.period || state.period)} · ${formatClock(event.gameClockMs || 0)}</span>
+          ${sideBadge}
+        </div>
         <p class="text-sand font-medium">${escapeHtml(event.description || '')}</p>
         ${event.playerName ? `<p class="text-sand/60 text-sm">#${escapeHtml(event.playerNumber || '')} ${escapeHtml(event.playerName)}</p>` : ''}
         ${event.isOpponent && (event.opponentPlayerName || event.opponentPlayerNumber) ? `<p class="text-sand/60 text-sm">${opponentLabel}</p>` : ''}
@@ -221,23 +253,33 @@ function renderPlayByPlay(event, isNew = false) {
 function renderStats() {
   if (!els.opponentStats) return;
   const oppEntries = Object.entries(state.opponentStats || {});
-  els.opponentStats.innerHTML = oppEntries.map(([id, player]) => `
-    <div class="bg-slate/50 rounded-lg p-2 flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <span class="${state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id ? 'text-teal' : 'text-sand'} text-sm">
-          ${[
-            player.number ? `#${escapeHtml(player.number)}` : '',
-            player.name ? escapeHtml(player.name) : ''
-          ].filter(Boolean).join(' ') || 'Opponent'}
-        </span>
+  const columns = (state.statColumns && state.statColumns.length)
+    ? state.statColumns
+    : ['PTS', 'REB', 'AST', 'FLS'];
+  els.opponentStats.innerHTML = oppEntries.map(([id, player]) => {
+    const highlight = state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id;
+    const nameClass = highlight ? 'text-coral' : 'text-sand';
+    const statClass = highlight ? 'text-coral' : 'text-sand';
+    const statItems = columns.map(col => {
+      const key = statKeyMap[col] || col.toLowerCase();
+      const val = player[key] || 0;
+      return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
+    }).join('');
+    return `
+      <div class="bg-slate/50 rounded-lg px-3 py-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="w-6 h-6 rounded-full bg-coral/20 text-coral text-[10px] flex items-center justify-center">
+            ${escapeHtml((player.name || 'O')[0])}
+          </div>
+          <span class="text-coral font-mono text-xs">#${escapeHtml(player.number || '')}</span>
+          <span class="${nameClass} text-xs truncate">${escapeHtml(player.name || 'Opponent')}</span>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
+          ${statItems}
+        </div>
       </div>
-      <div class="flex gap-3 text-xs">
-        <span class="${state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id ? 'text-teal' : 'text-sand'}">${player.pts || 0} PTS</span>
-        <span class="text-sand/60">${player.reb || 0} REB</span>
-        <span class="text-sand/60">${player.ast || 0} AST</span>
-      </div>
-    </div>
-  `).join('') || '<div class="text-sand/40 text-xs">No opponent stats yet</div>';
+    `;
+  }).join('') || '<div class="text-sand/40 text-xs">No opponent stats yet</div>';
 }
 
 function renderLineup() {
@@ -256,8 +298,16 @@ function renderLineup() {
       const highlight = state.lastStatChange?.playerId === id && !state.lastStatChange?.isOpponent;
       const nameClass = highlight ? 'text-teal' : 'text-sand';
       const statClass = highlight ? 'text-teal' : 'text-sand';
+      const columns = (state.statColumns && state.statColumns.length)
+        ? state.statColumns
+        : ['PTS', 'REB', 'AST', 'FLS'];
+      const statItems = columns.map(col => {
+        const key = statKeyMap[col] || col.toLowerCase();
+        const val = stats[key] || 0;
+        return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
+      }).join('');
       return `
-        <div class="bg-slate/50 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+        <div class="bg-slate/50 rounded-lg px-3 py-2">
           <div class="flex items-center gap-2 min-w-0">
             ${player?.photoUrl ? `
               <img src="${player.photoUrl}" class="w-6 h-6 rounded-full object-cover" alt="${escapeHtml(player?.name || 'Player')}">
@@ -269,10 +319,8 @@ function renderLineup() {
             <span class="text-teal font-mono text-xs">#${escapeHtml(player?.num || '')}</span>
             <span class="${nameClass} text-xs truncate">${escapeHtml(player?.name || 'Player')}</span>
           </div>
-          <div class="flex gap-3 text-[11px]">
-            <span class="${statClass}">${stats.pts || 0} PTS</span>
-            <span class="text-sand/60">${stats.reb || 0} REB</span>
-            <span class="text-sand/60">${stats.ast || 0} AST</span>
+          <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
+            ${statItems}
           </div>
         </div>
       `;
@@ -352,6 +400,10 @@ function initChat() {
   els.chatForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (state.isReplay) return;
+    if (!state.chatEnabled) {
+      showFloatingText('Chat is disabled', 'text-sand/70 text-sm');
+      return;
+    }
     const text = els.chatInput.value.trim();
     if (!text) return;
     if (Date.now() - state.lastChatSentAt < 1500) {
@@ -384,11 +436,21 @@ function initChat() {
   });
 }
 
-function promptAnonNameChange() {
-  const current = state.anonName || '';
-  const next = window.prompt('Pick a display name (2-20 characters).', current);
-  if (next === null) return;
-  const cleaned = next.replace(/\s+/g, ' ').trim();
+function openAnonNameEditor() {
+  if (!els.anonEdit || !els.anonInput) return;
+  els.anonEdit.classList.remove('hidden');
+  els.anonInput.value = state.anonName || '';
+  els.anonInput.focus();
+}
+
+function closeAnonNameEditor() {
+  if (!els.anonEdit) return;
+  els.anonEdit.classList.add('hidden');
+}
+
+function saveAnonName() {
+  if (!els.anonInput) return;
+  const cleaned = els.anonInput.value.replace(/\s+/g, ' ').trim();
   if (cleaned.length < 2) {
     showFloatingText('Name is too short', 'text-sand/70 text-sm');
     return;
@@ -396,6 +458,7 @@ function promptAnonNameChange() {
   state.anonName = cleaned.slice(0, 20);
   sessionStorage.setItem('liveChatAnonName', state.anonName);
   if (els.anonName) els.anonName.textContent = state.anonName;
+  closeAnonNameEditor();
   showFloatingText('Name updated', 'text-teal text-sm');
 }
 
@@ -474,6 +537,15 @@ function initReactions() {
       type,
       senderId: state.user?.uid || state.anonName
     }).catch(err => console.warn('Reaction failed:', err));
+
+    const emoji = getReactionEmoji(type);
+    postLiveChatMessage(state.teamId, state.gameId, {
+      text: emoji,
+      senderId: state.user?.uid || null,
+      senderName: state.user?.displayName || state.anonName,
+      senderPhotoUrl: state.user?.photoURL || null,
+      isAnonymous: !state.user
+    }).catch(err => console.warn('Reaction chat failed:', err));
   });
 }
 
@@ -497,6 +569,54 @@ function showScoreCelebration(event) {
 
   if (event.value === 3) {
     showFloatingText('+3!', 'text-gold text-4xl font-bold');
+  }
+}
+
+function showEventCelebration(event) {
+  if (!event) return;
+  if (event.type === 'stat' && event.statKey === 'pts') return;
+
+  const type = event.type;
+  const key = (event.statKey || '').toLowerCase();
+  let text = '';
+  let classes = event.isOpponent ? 'text-coral text-2xl font-semibold' : 'text-teal text-2xl font-semibold';
+
+  if (type === 'stat') {
+    if (key === 'reb') text = 'Board!';
+    else if (key === 'ast') text = 'Dime!';
+    else if (key === 'stl') text = 'Steal!';
+    else if (key === 'blk' || key === 'block') text = 'Swat!';
+    else if (key === 'to' || key === 'turnover') {
+      text = 'Turnover';
+      classes = 'text-coral text-2xl font-semibold';
+    } else if (key === 'fouls' || key === 'foul') {
+      text = 'Foul';
+      classes = 'text-coral text-2xl font-semibold';
+    } else {
+      text = `${key.toUpperCase()}!`;
+    }
+  } else if (type === 'substitution') {
+    text = 'Sub!';
+    classes = 'text-gold text-2xl font-semibold';
+  } else if (type === 'period_change') {
+    text = `New ${event.period || 'Period'}`;
+    classes = 'text-gold text-2xl font-semibold';
+  } else if (type === 'clock_pause') {
+    text = 'Paused';
+    classes = 'text-sand text-xl font-semibold';
+  } else if (type === 'clock_start') {
+    text = 'Game On';
+    classes = 'text-teal text-2xl font-semibold';
+  } else if (type === 'undo') {
+    text = 'Undo';
+    classes = 'text-coral text-2xl font-semibold';
+  } else if (type === 'log_remove') {
+    text = 'Removed';
+    classes = 'text-coral text-2xl font-semibold';
+  }
+
+  if (text) {
+    showFloatingText(text, classes);
   }
 }
 
@@ -570,6 +690,8 @@ function processNewEvents(events) {
     if (event.type === 'stat' && event.statKey === 'pts') {
       showScoreCelebration(event);
       updateMomentum(event);
+    } else {
+      showEventCelebration(event);
     }
   });
 }
@@ -578,14 +700,14 @@ function startLiveMode() {
   state.isLive = true;
   els.liveBadge?.classList.remove('hidden');
 
-  const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
-    setConnectionBanner(false);
-    processNewEvents(events);
-  }, (error) => {
-    console.warn('Live events subscription failed:', error);
-    setConnectionBanner(true, formatFirestoreError(error));
-  });
-  state.unsubscribers.push(unsubEvents);
+  startEngagements();
+  startLiveEvents();
+  setConnectionBanner(false);
+}
+
+function startEngagements() {
+  if (state.engagementsActive) return;
+  state.engagementsActive = true;
 
   const unsubChat = subscribeLiveChat(state.teamId, state.gameId, { limit: 100 }, (messages) => {
     setConnectionBanner(false);
@@ -611,17 +733,31 @@ function startLiveMode() {
     if (els.viewerCount) els.viewerCount.textContent = `${count} watching`;
   });
   state.unsubscribers.push(unsubPresence);
-  setConnectionBanner(false);
+}
+
+function startLiveEvents() {
+  if (state.liveEventsActive) return;
+  state.liveEventsActive = true;
+  const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
+    setConnectionBanner(false);
+    processNewEvents(events);
+  }, (error) => {
+    console.warn('Live events subscription failed:', error);
+    setConnectionBanner(true, formatFirestoreError(error));
+  });
+  state.unsubscribers.push(unsubEvents);
 }
 
 function showNotLiveOverlay() {
   els.notLiveOverlay?.classList.remove('hidden');
   els.endedOverlay?.classList.add('hidden');
+  els.liveBadge?.classList.add('hidden');
 }
 
 function showEndedOverlay() {
   els.notLiveOverlay?.classList.add('hidden');
   els.endedOverlay?.classList.remove('hidden');
+  els.liveBadge?.classList.add('hidden');
   if (els.finalScore) {
     els.finalScore.textContent = `${state.game?.homeScore || state.homeScore} - ${state.game?.awayScore || state.awayScore}`;
   }
@@ -630,6 +766,16 @@ function showEndedOverlay() {
 async function startReplay() {
   state.isReplay = true;
   state.isLive = false;
+  state.unsubscribers.forEach(unsub => {
+    try {
+      unsub();
+    } catch {
+      // ignore
+    }
+  });
+  state.unsubscribers = [];
+  state.engagementsActive = false;
+  state.liveEventsActive = false;
 
   state.replayEvents = await getLiveEvents(state.teamId, state.gameId);
   state.replayChat = await getLiveChatHistory(state.teamId, state.gameId);
@@ -879,12 +1025,8 @@ function hideAiThinking() {
 }
 
 function getEventBorderColor(event) {
-  if (event.type === 'stat' && event.statKey === 'pts') {
-    return event.value === 3 ? 'border-gold' : 'border-teal';
-  }
-  if (event.type === 'substitution') return 'border-sand/30';
-  if (event.type === 'period_change') return 'border-coral';
-  if (event.type === 'undo') return 'border-coral';
+  if (event.isOpponent === true) return 'border-coral';
+  if (event.isOpponent === false) return 'border-teal';
   return 'border-slate';
 }
 
@@ -964,19 +1106,70 @@ function formatFirestoreError(error) {
   return error.message || 'Connection lost. Reconnecting...';
 }
 
-function updateStickyOffsets() {
-  const header = document.getElementById('header-container');
-  const scoreboard = document.getElementById('scoreboard');
-  if (!header || !scoreboard) return;
-  const navHeight = header.offsetHeight || 0;
-  const boardHeight = scoreboard.offsetHeight || 0;
-  document.documentElement.style.setProperty('--nav-height', `${navHeight}px`);
-  document.documentElement.style.setProperty('--scoreboard-height', `${boardHeight}px`);
+function handleGameUpdate(gameDoc) {
+  if (!gameDoc) return;
+  state.game = gameDoc;
+  if (gameDoc.liveLineup) {
+    state.onCourt = Array.isArray(gameDoc.liveLineup.onCourt) ? gameDoc.liveLineup.onCourt : state.onCourt;
+    state.bench = Array.isArray(gameDoc.liveLineup.bench) ? gameDoc.liveLineup.bench : state.bench;
+    renderLineup();
+  }
+  if (!state.events.length) {
+    state.homeScore = gameDoc.homeScore || state.homeScore;
+    state.awayScore = gameDoc.awayScore || state.awayScore;
+    state.period = gameDoc.period || state.period;
+    renderScoreboard();
+  }
+
+  if (!state.isReplay) {
+    startEngagements();
+  }
+
+  if (gameDoc.liveStatus === 'live') {
+    if (!state.isLive && !state.isReplay) {
+      els.notLiveOverlay?.classList.add('hidden');
+      els.endedOverlay?.classList.add('hidden');
+      startLiveMode();
+    }
+  } else if (gameDoc.liveStatus === 'completed') {
+    showEndedOverlay();
+  } else {
+    showNotLiveOverlay();
+  }
+
+  updateChatAvailability();
+}
+
+function updateChatAvailability() {
+  if (state.isReplay) {
+    state.chatEnabled = false;
+  } else {
+    const gameDate = state.game?.date?.toDate ? state.game.date.toDate() : (state.game?.date ? new Date(state.game.date) : null);
+    const today = new Date();
+    const isSameDay = gameDate
+      ? gameDate.getFullYear() === today.getFullYear() &&
+        gameDate.getMonth() === today.getMonth() &&
+        gameDate.getDate() === today.getDate()
+      : false;
+    state.chatEnabled = isSameDay && state.game?.liveStatus === 'live';
+  }
+
+  if (els.chatInput) {
+    if (state.chatEnabled) {
+      els.chatInput.removeAttribute('disabled');
+      els.chatInput.placeholder = 'Send a message...';
+    } else {
+      els.chatInput.setAttribute('disabled', 'disabled');
+      els.chatInput.placeholder = 'Chat disabled';
+    }
+  }
+  if (els.chatLockedNotice) {
+    els.chatLockedNotice.classList.toggle('hidden', state.chatEnabled);
+  }
 }
 
 async function init() {
   renderFooter(document.getElementById('footer-container'));
-  window.addEventListener('resize', updateStickyOffsets);
 
   const params = getUrlParams();
   state.teamId = params.teamId;
@@ -988,10 +1181,11 @@ async function init() {
     return;
   }
 
-  const [team, game, players] = await Promise.all([
+  const [team, game, players, configs] = await Promise.all([
     getTeam(state.teamId),
     getGame(state.teamId, state.gameId),
-    getPlayers(state.teamId)
+    getPlayers(state.teamId),
+    getConfigs(state.teamId)
   ]);
 
   if (!game) {
@@ -1002,6 +1196,18 @@ async function init() {
   state.team = team;
   state.game = game;
   state.players = players || [];
+  if (game?.statTrackerConfigId && Array.isArray(configs)) {
+    const config = configs.find(c => c.id === game.statTrackerConfigId);
+    if (config && Array.isArray(config.columns)) {
+      state.statColumns = config.columns.map(c => String(c).toUpperCase());
+    }
+  }
+  if (!state.statColumns.length) {
+    state.statColumns = ['PTS', 'REB', 'AST', 'STL', 'TO'];
+  }
+  if (!state.statColumns.includes('FLS') && !state.statColumns.includes('FOULS')) {
+    state.statColumns.push('FLS');
+  }
   state.opponentStats = game.opponentStats || {};
   if (game.liveLineup) {
     state.onCourt = Array.isArray(game.liveLineup.onCourt) ? game.liveLineup.onCourt : [];
@@ -1014,7 +1220,6 @@ async function init() {
   renderGameInfo();
   renderScoreboard();
   renderLineup();
-  updateStickyOffsets();
   initTabs();
   initChat();
   initReactions();
@@ -1023,7 +1228,6 @@ async function init() {
   checkAuth((user) => {
     state.user = user;
     renderHeader(document.getElementById('header-container'), user);
-    updateStickyOffsets();
     if (!user) {
       const saved = sessionStorage.getItem('liveChatAnonName');
       state.anonName = saved || `Fan${Math.floor(1000 + Math.random() * 9000)}`;
@@ -1032,10 +1236,19 @@ async function init() {
       if (els.chatAnonNotice) els.chatAnonNotice.classList.remove('hidden');
       if (els.anonChange && !els.anonChange.dataset.bound) {
         els.anonChange.dataset.bound = 'true';
-        els.anonChange.addEventListener('click', promptAnonNameChange);
+        els.anonChange.addEventListener('click', openAnonNameEditor);
+      }
+      if (els.anonSave && !els.anonSave.dataset.bound) {
+        els.anonSave.dataset.bound = 'true';
+        els.anonSave.addEventListener('click', saveAnonName);
+      }
+      if (els.anonCancel && !els.anonCancel.dataset.bound) {
+        els.anonCancel.dataset.bound = 'true';
+        els.anonCancel.addEventListener('click', closeAnonNameEditor);
       }
     } else {
       if (els.chatAnonNotice) els.chatAnonNotice.classList.add('hidden');
+      closeAnonNameEditor();
     }
   }, { skipEmailVerificationCheck: true });
 
@@ -1044,13 +1257,17 @@ async function init() {
     return;
   }
 
-  if (game.liveStatus === 'live') {
-    startLiveMode();
-  } else if (game.liveStatus === 'completed') {
-    showEndedOverlay();
-  } else {
-    showNotLiveOverlay();
+  if (!state.isReplay) {
+    startEngagements();
   }
+
+  handleGameUpdate(game);
+  const unsubGame = subscribeGame(state.teamId, state.gameId, (updated) => {
+    handleGameUpdate(updated);
+  }, (error) => {
+    console.warn('Game subscription failed:', error);
+  });
+  state.unsubscribers.push(unsubGame);
 
   if (els.watchReplayBtn) {
     els.watchReplayBtn.addEventListener('click', () => {

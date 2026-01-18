@@ -334,6 +334,17 @@ export async function getGame(teamId, gameId) {
     }
 }
 
+export function subscribeGame(teamId, gameId, callback, onError) {
+    const docRef = doc(db, `teams/${teamId}/games`, gameId);
+    return onSnapshot(docRef, (snapshot) => {
+        if (!snapshot.exists()) {
+            callback(null);
+            return;
+        }
+        callback({ id: snapshot.id, ...snapshot.data() });
+    }, onError);
+}
+
 export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {
     const q = query(
         collection(db, `teams/${teamId}/games/${gameId}/events`),

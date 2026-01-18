@@ -25,6 +25,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Add `subscribeLiveEvents(teamId, gameId, callback)` - real-time subscription
 - [x] Add `getLiveEvents(teamId, gameId)` - fetch all events for replay
 - [x] Add `setGameLiveStatus(teamId, gameId, status)` - update game liveStatus field
+- [x] Add `subscribeGame(teamId, gameId, callback)` - real-time game status subscription
 
 **Test:** Write a test event and verify it appears in subscription callback
 
@@ -70,6 +71,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Add `getLiveGamesNow()` - currently live games
 - [x] Add `getRecentLiveTrackedGames(limit)` - completed games for replay
 - [x] Include team info (name, photo) with each game
+- [x] Add Firestore composite indexes for live/upcoming/replay queries
 
 **Test:** Create test games with various liveStatus values and verify queries return correct results
 
@@ -135,6 +137,8 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Broadcast substitution events from `makeSwap()`
 - [x] Broadcast period change events from `setPeriod()`
 - [x] Include all required fields: period, gameClockMs, homeScore, awayScore, description
+- [x] Broadcast clock start/pause events into liveEvents
+- [x] Broadcast compensating events when removing a log entry
 
 **Test:** Perform various actions, verify all event types appear in Firestore with correct data
 
@@ -170,10 +174,11 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 **Ref:** Req 2.1-2.2, Design Section 3
 
 - [x] Create `live-game.html` with dark theme (ink/slate/teal/coral/gold colors)
-- [x] Add scoreboard header (sticky) with home/away scores, period, clock
+- [x] Add scoreboard header (home/away scores, period, clock)
 - [x] Add "LIVE" badge with pulsing indicator
 - [x] Add viewer count display
 - [x] Parse teamId and gameId from URL params
+- [x] Keep scoreboard non-sticky on scroll
 
 **Test:** Page loads, displays placeholder scoreboard
 
@@ -198,6 +203,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Style event cards with period, time, description
 - [x] Highlight scoring events with point value display
 - [x] Color-code events by type (score=teal, 3pt=gold, sub=gray, period=coral)
+- [x] Match event styling to team color (home vs opponent) and add side tags
 
 **Test:** Render static test events, verify styling
 
@@ -213,6 +219,9 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Keep opponent stats expanded and show opponent numbers when available
 - [x] Show on-court vs bench lineup in live viewer
 - [x] Sync lineup updates to viewer even if tracker opens after live started
+- [x] Render all configured stat columns inside lineup cards
+- [x] Ensure fouls are always shown in live viewer stats
+- [x] Match opponent card layout to player cards
 
 **Test:** Render static test stats, verify display
 
@@ -225,6 +234,9 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Create chat input form
 - [x] Style messages with sender name, text, timestamp
 - [x] Differentiate AI messages visually
+- [x] Add inline anonymous name edit UI
+- [x] Add note for tagging @ALL PLAYS
+- [x] Disable chat unless game is live on game day
 
 **Test:** Render static test messages, verify styling
 
@@ -247,6 +259,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Create "Game Not Live Yet" overlay
 - [x] Create "Game Ended" overlay with final score and "Watch Replay" button
 - [x] Show appropriate overlay based on game.liveStatus
+- [x] Use non-blocking banners so chat stays available before/after games
 
 **Test:** Set various liveStatus values, verify correct overlay shows
 
@@ -272,6 +285,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Process new events: update scores, period, clock, stats
 - [x] Render new events in play-by-play feed
 - [x] Auto-scroll feed unless user scrolled up
+- [x] Auto-update viewer when game status changes without refresh
 
 **Test:** Broadcast event from tracker, verify it appears in viewer within 3 seconds
 
@@ -305,6 +319,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Show screen flash on score events
 - [x] Show enhanced effect for 3-pointers (floating "+3!")
 - [x] Track scoring runs and show momentum indicator ("5-0 Run!")
+- [x] Add celebratory visuals for non-scoring events (subs, steals, fouls)
 
 **Test:** Score events trigger appropriate celebrations
 
@@ -318,6 +333,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Implement send message (authenticated or anonymous)
 - [x] Generate "Fan1234" name for anonymous users
 - [x] Allow anonymous users to change their display name
+- [x] Post reactions into chat feed
 - [x] Auto-scroll on new messages
 
 **Test:** Send message, verify it appears for all viewers
@@ -390,6 +406,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 **Ref:** Req 5.2.2, Design Section 4
 
 - [x] Add speed buttons (1x, 2x, 3x, 4x)
+- [x] Add speed buttons (10x, 20x, 50x)
 - [x] Multiply clock advancement by speed factor
 - [x] Update active button styling
 
@@ -437,6 +454,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Add "Live Broadcast Tracker" option to tracker selection modal
 - [x] Style with "LIVE" badge and description
 - [x] Navigate to `live-tracker.html` when selected
+- [x] Keep "Copy Live Link" available alongside view/live/replay options
 
 **Test:** Click Track, select Live option, verify navigation
 
@@ -469,6 +487,8 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Add "LIVE NOW" badge for games with liveStatus='live'
 - [x] Add "Watch Live" button linking to live-game.html
 - [x] Style with pulsing red indicator
+- [x] Always show Live View link and surface live score when active
+- [x] Show View Live for upcoming games, Live Now when live, Replay when completed
 
 **Test:** Live game shows indicator and button
 
@@ -488,7 +508,7 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 **Ref:** Req 6.5, Design Section 9
 
 - [x] Check game.liveStatus on page load
-- [x] Show "Watch Replay" button if liveStatus='completed'
+- [x] Show "View Live" if not started, "Live Now" if live, "Watch Replay" if completed
 - [x] Position button prominently near score area
 - [x] Navigate to live-game.html with replay=true param
 
@@ -503,6 +523,8 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [x] Load and display live games (with "LIVE NOW" badge)
 - [x] Load and display upcoming games
 - [x] Link each game to live-game.html
+- [x] Add Firestore composite indexes for live/upcoming queries
+- [x] Deploy Firestore indexes for live/upcoming/replay queries
 
 **Test:** Section displays with live and upcoming games
 
@@ -579,6 +601,11 @@ This document breaks down the Live Game Tracker feature into incremental, testab
 - [ ] Test replay from start to finish
 - [ ] Test multiple concurrent viewers
 - [ ] Test anonymous vs authenticated chat
+- [ ] Verify start/pause events appear in tracker log and live play-by-play
+- [ ] Verify log removal sends compensating live events
+- [ ] Verify chat gating (disabled before game day / not live, enabled when live on game day)
+- [ ] Verify reactions appear both in live chat and as floating emoji
+- [ ] Verify View Live / Live Now / Replay state across team, edit-schedule, and game pages
 
 **Test:** Full user journey testing
 
