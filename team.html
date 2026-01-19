@@ -198,7 +198,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=7';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
         import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
@@ -963,6 +963,7 @@
         function renderDbGame(game) {
             const isPractice = !!game.isPractice;
             const isCompleted = game.status === 'completed' && !isPractice;
+            const isLive = game.liveStatus === 'live';
             const isUpcoming = !isCompleted && game.date > new Date();
             const won = isCompleted && game.homeScore > game.awayScore;
             const lost = isCompleted && game.homeScore < game.awayScore;
@@ -981,6 +982,11 @@
                                           </span>`
                     : `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
                 }
+                                    ${isLive ? `
+                                        <span class="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-semibold">
+                                            <span class="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
+                                            LIVE NOW
+                                        </span>` : ''}
                                 </div>
                                 <div class="text-sm text-gray-500 font-semibold mb-2">${formatDate(game.date)} • ${formatTime(game.date)}</div>
                                 <div class="text-lg md:text-xl font-bold text-gray-900 mb-2">vs. ${escapeHtml(game.opponent)}</div>
@@ -996,6 +1002,24 @@
                                 </div>
                             </div>
                             <div class="flex flex-col items-end gap-2">
+                                ${!isCompleted ? `
+                                  <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}"
+                                     class="inline-flex items-center gap-2 ${isLive ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-900'} text-white px-4 py-2 rounded-lg font-semibold shadow transition">
+                                      ${isLive ? '<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>' : '<span class="text-xs">👁️</span>'}
+                                      ${isLive ? 'Live Now' : 'View Live'}
+                                  </a>
+                                ` : ''}
+                                ${isLive ? `
+                                  <div class="flex items-center gap-2 text-center">
+                                      <div class="bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+                                          <div class="text-2xl md:text-3xl font-bold font-mono text-gray-900">${game.homeScore || 0}</div>
+                                      </div>
+                                      <div class="text-xl text-gray-400 font-bold">-</div>
+                                      <div class="bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+                                          <div class="text-2xl md:text-3xl font-bold font-mono text-gray-700">${game.awayScore || 0}</div>
+                                      </div>
+                                    </div>
+                                ` : ''}
                                 ${isCompleted
                     ? `<div class="flex items-center gap-2 text-center">
                                         <div class="bg-gradient-to-br from-gray-50 to-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
@@ -1012,7 +1036,16 @@
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
-                                      </a>`
+                                      </a>
+                                      ${game.liveStatus === 'completed' ? `
+                                      <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}&replay=true"
+                                         class="inline-flex items-center gap-1 text-sm text-teal-600 hover:text-teal-700 transition font-medium">
+                                        <span>Replay</span>
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                        </svg>
+                                      </a>` : ''}`
                     : ''
                 }
                             </div>

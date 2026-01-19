@@ -147,6 +147,8 @@
         import { checkAuth } from './js/auth.js';
         import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+        import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -180,7 +182,8 @@
                 /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi,
                 (url) => {
                     const href = url.startsWith('www.') ? 'https://' + url : url;
-                    return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:text-primary-800 underline">${url}</a>`;
+                    if (!isSafeUrl(href)) return url;
+                    return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:text-primary-800 underline">${url}</a>`;
                 }
             );
 
@@ -209,6 +212,15 @@
             );
 
             return formatted;
+        }
+
+        function isSafeUrl(href) {
+            try {
+                const url = new URL(href, window.location.origin);
+                return url.protocol === 'http:' || url.protocol === 'https:';
+            } catch {
+                return false;
+            }
         }
 
         // Simple header for parents (no edit options)
@@ -871,8 +883,6 @@
 
         async function getAiModel() {
             if (aiModelCache) return aiModelCache;
-            const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
-            const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
             const firebaseApp = getApp();
             const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
             aiModelCache = getGenerativeModel(ai, { model: "gemini-2.5-flash" });

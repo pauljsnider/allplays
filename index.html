@@ -120,6 +120,34 @@
     </div>
   </section>
 
+  <!-- LIVE & UPCOMING GAMES -->
+  <section class="py-16 bg-gray-50 border-b border-gray-200">
+    <div class="container mx-auto px-4">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-3xl font-bold text-gray-900">
+          <span class="text-red-500">●</span> Live & Upcoming Games
+        </h2>
+        <a href="teams.html" class="text-primary-600 hover:text-primary-700 font-semibold text-sm">View Teams</a>
+      </div>
+      <div id="live-games-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="text-center py-8 text-gray-500 col-span-full">Loading games...</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RECENT REPLAYS -->
+  <section class="py-16 bg-white border-b border-gray-200">
+    <div class="container mx-auto px-4">
+      <div class="flex items-center justify-between mb-8">
+        <h2 class="text-3xl font-bold text-gray-900">Recent Replays</h2>
+        <a href="teams.html" class="text-primary-600 hover:text-primary-700 font-semibold text-sm">Browse Teams</a>
+      </div>
+      <div id="past-games-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div class="text-center py-8 text-gray-500 col-span-full">Loading replays...</div>
+      </div>
+    </div>
+  </section>
+
   <!-- General Features Section -->
   <section class="py-20 md:py-28 bg-white">
     <div class="container mx-auto px-4">
@@ -620,7 +648,8 @@
 
   <script type="module">
     import { checkAuth, logout } from './js/auth.js';
-    import { renderHeader } from './js/utils.js?v=7';
+    import { renderHeader, formatDate, formatTime } from './js/utils.js?v=8';
+    import { getUpcomingLiveGames, getLiveGamesNow, getRecentLiveTrackedGames } from './js/db.js';
 
     const heroCta = document.getElementById('hero-cta');
 
@@ -635,6 +664,95 @@
         heroCta.href = 'login.html#signup';
       }
     });
+
+    async function loadLiveGames() {
+      const container = document.getElementById('live-games-list');
+      if (!container) return;
+
+      try {
+        const liveGames = await getLiveGamesNow();
+        const upcomingGames = await getUpcomingLiveGames(6);
+        const combined = [
+          ...liveGames.map(game => ({ ...game, isLive: true })),
+          ...upcomingGames.filter(g => !liveGames.find(lg => lg.id === g.id))
+        ].slice(0, 6);
+
+        if (combined.length === 0) {
+          container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">No upcoming live games scheduled</div>';
+          return;
+        }
+
+        container.innerHTML = combined.map(game => `
+          <a href="live-game.html?teamId=${game.teamId || game.team?.id}&gameId=${game.id}"
+             class="block bg-white rounded-xl shadow hover:shadow-lg transition border border-gray-200 p-5 ${game.isLive ? 'ring-2 ring-red-500' : ''}">
+            ${game.isLive ? `
+              <div class="flex items-center gap-2 mb-2">
+                <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                <span class="text-red-600 text-xs font-semibold uppercase">Live Now</span>
+                ${game.liveViewerCount ? `<span class="text-gray-400 text-xs">${game.liveViewerCount} watching</span>` : ''}
+              </div>
+            ` : ''}
+            <div class="flex items-center gap-3 mb-2">
+              ${game.team?.photoUrl
+                ? `<img src="${game.team.photoUrl}" class="w-10 h-10 rounded-full object-cover" alt="${game.team?.name || 'Team'}">`
+                : `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${game.team?.name?.[0] || '?'}</div>`
+              }
+              <div>
+                <div class="font-semibold text-gray-900">${game.team?.name || 'Team'}</div>
+                <div class="text-sm text-gray-500">vs ${game.opponent || 'Opponent'}</div>
+              </div>
+            </div>
+            ${game.isLive ? `
+              <div class="text-2xl font-bold text-center py-2">${game.homeScore || 0} - ${game.awayScore || 0}</div>
+            ` : `
+              <div class="text-sm text-gray-500">${formatDate(game.date)} • ${formatTime(game.date)}</div>
+            `}
+            <div class="mt-2 text-center text-primary-600 text-sm font-semibold">${game.isLive ? 'Watch Now →' : 'View Details →'}</div>
+          </a>
+        `).join('');
+      } catch (error) {
+        console.error('Failed to load live games:', error);
+        container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">Unable to load games</div>';
+      }
+    }
+
+    async function loadPastGames() {
+      const container = document.getElementById('past-games-list');
+      if (!container) return;
+
+      try {
+        const pastGames = await getRecentLiveTrackedGames(6);
+        if (pastGames.length === 0) {
+          container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">No recent replays available</div>';
+          return;
+        }
+
+        container.innerHTML = pastGames.map(game => `
+          <a href="live-game.html?teamId=${game.teamId || game.team?.id}&gameId=${game.id}&replay=true"
+             class="block bg-white rounded-xl shadow hover:shadow-lg transition border border-gray-200 p-5">
+            <div class="flex items-center gap-3 mb-3">
+              ${game.team?.photoUrl
+                ? `<img src="${game.team.photoUrl}" class="w-10 h-10 rounded-full object-cover" alt="${game.team?.name || 'Team'}">`
+                : `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${game.team?.name?.[0] || '?'}</div>`
+              }
+              <div>
+                <div class="font-semibold text-gray-900">${game.team?.name || 'Team'}</div>
+                <div class="text-sm text-gray-500">vs ${game.opponent || 'Opponent'}</div>
+              </div>
+            </div>
+            <div class="text-2xl font-bold text-center py-2 text-gray-900">${game.homeScore || 0} - ${game.awayScore || 0}</div>
+            <div class="text-xs text-gray-400 text-center mb-2">${formatDate(game.date)}</div>
+            <div class="text-center text-teal-600 text-sm font-semibold">Watch Replay →</div>
+          </a>
+        `).join('');
+      } catch (error) {
+        console.error('Failed to load past games:', error);
+        container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">Unable to load replays</div>';
+      }
+    }
+
+    loadLiveGames();
+    loadPastGames();
   </script>
 </body>
 

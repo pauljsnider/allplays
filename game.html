@@ -82,6 +82,35 @@
                 class="bg-white shadow-lg rounded-2xl p-6 md:p-8 text-gray-700 leading-relaxed border border-gray-200 overflow-hidden transition-all duration-300">
                 <p class="text-gray-500 italic">No summary available.</p>
             </div>
+            <!-- Summary Admin Controls -->
+            <div id="summary-admin" class="hidden mt-4 bg-white shadow-sm rounded-xl p-4 border border-gray-200">
+                <div class="flex flex-wrap items-center gap-3">
+                    <button id="summary-edit-btn"
+                        class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700">
+                        Edit Summary
+                    </button>
+                    <span id="summary-edit-status" class="text-sm text-gray-500"></span>
+                </div>
+
+                <div id="summary-editor" class="hidden mt-4 space-y-3">
+                    <textarea id="summary-textarea" class="w-full px-4 py-3 rounded-lg border border-gray-300 text-sm"
+                        rows="6" placeholder="Write a game summary, key moments, standout performances..."></textarea>
+                    <div class="flex flex-wrap gap-2">
+                        <button id="summary-save-btn"
+                            class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+                            Save Summary
+                        </button>
+                        <button id="summary-cancel-btn"
+                            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold text-sm">
+                            Cancel
+                        </button>
+                        <button id="summary-generate-btn"
+                            class="px-4 py-2 border border-primary-200 text-primary-700 rounded-lg hover:bg-primary-50 font-semibold text-sm">
+                            Generate AI Summary
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Score Sheet Photo -->
@@ -223,7 +252,7 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, escapeHtml } from './js/utils.js?v=7';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
         import { collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
         import { db } from './js/firebase.js';
@@ -231,6 +260,7 @@
 
         let currentUser = null;
         let canManageStatSheet = false;
+        let canEditSummary = false;
         let authResolved = false;
         let gameLoaded = false;
 
@@ -417,6 +447,144 @@
             });
         }
 
+        async function setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels) {
+            const admin = document.getElementById('summary-admin');
+            const editBtn = document.getElementById('summary-edit-btn');
+            const status = document.getElementById('summary-edit-status');
+            const editor = document.getElementById('summary-editor');
+            const textarea = document.getElementById('summary-textarea');
+            const saveBtn = document.getElementById('summary-save-btn');
+            const cancelBtn = document.getElementById('summary-cancel-btn');
+            const generateBtn = document.getElementById('summary-generate-btn');
+            const summaryDiv = document.getElementById('game-summary');
+
+            if (!admin || !editBtn || !status || !editor || !textarea || !saveBtn || !cancelBtn || !generateBtn || !summaryDiv) {
+                return;
+            }
+
+            if (!canEditSummary) {
+                admin.classList.add('hidden');
+                return;
+            }
+
+            admin.classList.remove('hidden');
+
+            let generatedSummary = '';
+
+            const openEditor = (auto = false) => {
+                editor.classList.remove('hidden');
+                editBtn.classList.add('hidden');
+                summaryDiv.classList.add('hidden');
+                if (auto && !game.summary) {
+                    textarea.value = '';
+                }
+            };
+
+            const closeEditor = () => {
+                editor.classList.add('hidden');
+                editBtn.classList.remove('hidden');
+                summaryDiv.classList.remove('hidden');
+                textarea.value = game.summary || '';
+                status.textContent = '';
+            };
+
+            editBtn.addEventListener('click', () => {
+                textarea.value = game.summary || '';
+                openEditor(false);
+            });
+
+            if (!game.summary) {
+                openEditor(true);
+            }
+
+            generateBtn.addEventListener('click', async () => {
+                generateBtn.disabled = true;
+                status.textContent = 'Generating AI summary…';
+
+                try {
+                    const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
+                    const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
+
+                    const pointsKey = statKeys.find(key => ['pts', 'points', 'point'].includes(key)) || 'points';
+                    let context = `Game: ${team.name} vs ${game.opponent}\n`;
+                    context += `Final Score: ${game.homeScore || 0} - ${game.awayScore || 0}\n`;
+                    context += `Date: ${game.date ? new Date(game.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString()}\n`;
+                    context += `Sport: ${team.sport || 'Basketball'}\n\n`;
+
+                    context += `${team.name.toUpperCase()} PLAYERS:\n`;
+                    players.forEach(player => {
+                        const pStats = statsMap[player.id] || {};
+                        const points = pStats[pointsKey] || 0;
+                        const fouls = pStats.fouls || 0;
+                        context += `#${player.number || '-'} ${player.name}: ${pointsKey.toUpperCase()}:${points}, FOULS:${fouls}\n`;
+                    });
+
+                    if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
+                        context += `\n${(game.opponent || 'OPPONENT').toUpperCase()} PLAYERS:\n`;
+                        Object.values(game.opponentStats).forEach(opp => {
+                            const { name, number, notes, ...statValues } = opp;
+                            const points = statValues[pointsKey] || statValues.pts || statValues.points || 0;
+                            const fouls = statValues.fouls || 0;
+                            if (name || points > 0 || fouls > 0) {
+                                context += `#${number || '-'} ${name || 'Player'}: ${pointsKey.toUpperCase()}:${points}, FOULS:${fouls}\n`;
+                            }
+                        });
+                    }
+
+                    const prompt = `You are a sports reporter writing a match report for a youth sports game.
+Write a comprehensive but concise game summary in paragraph form (2-5 paragraphs).
+Make it engaging and professional, as if it would appear in a sports publication. Focus on the narrative, not just listing stats.
+
+NOTE: This summary is based on final stats from a score sheet, without play-by-play details.
+
+GAME DATA:
+${context}
+
+Write the match report now:`;
+
+                    const firebaseApp = getApp();
+                    const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+                    const model = getGenerativeModel(ai, { model: "gemini-2.5-flash" });
+                    const result = await model.generateContent(prompt);
+                    generatedSummary = result.response.text();
+                    textarea.value = generatedSummary;
+                    status.textContent = 'Summary added to text area. You can edit it before saving.';
+                } catch (error) {
+                    console.error('AI summary error:', error);
+                    status.textContent = `Error: ${error.message}`;
+                } finally {
+                    generateBtn.disabled = false;
+                }
+            });
+
+            saveBtn.addEventListener('click', async () => {
+                const summaryText = textarea.value.trim();
+                if (!summaryText && !generatedSummary) {
+                    status.textContent = 'Add a summary or generate one first.';
+                    return;
+                }
+
+                saveBtn.disabled = true;
+                status.textContent = 'Saving summary…';
+                try {
+                    const finalSummary = summaryText || generatedSummary;
+                    await updateGame(teamId, gameId, { summary: finalSummary });
+                    game.summary = finalSummary;
+                    summaryDiv.innerHTML = `<div class="prose prose-gray max-w-none">${escapeHtml(finalSummary).replace(/\n/g, '<br>')}</div>`;
+                    setTimeout(() => {
+                        summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
+                    }, 100);
+                    closeEditor();
+                } catch (error) {
+                    console.error('Error saving summary:', error);
+                    status.textContent = `Error: ${error.message}`;
+                    saveBtn.disabled = false;
+                }
+            });
+
+            cancelBtn.addEventListener('click', closeEditor);
+        }
+
         async function loadGame() {
             if (gameLoaded) return;
             gameLoaded = true;
@@ -457,6 +625,7 @@
                     const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
                     if (accessInfo.hasAccess) {
                         canManageStatSheet = accessInfo.accessLevel === 'full';
+                        canEditSummary = accessInfo.accessLevel === 'full';
                         // Fetch unread count for chat badge
                         let unreadCount = 0;
                         try {
@@ -522,6 +691,30 @@
                     }">${game.awayScore || 0}</div>
                         </div>
                     </div>
+                    ${game.liveStatus === 'completed' ? `
+                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}&replay=true"
+                           class="inline-flex items-center gap-2 bg-teal-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-teal-600 transition">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Watch Replay
+                        </a>
+                    ` : ''}
+                    ${game.liveStatus === 'live' ? `
+                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                           class="inline-flex items-center gap-2 bg-red-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-red-600 transition">
+                            <span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                            Live Now
+                        </a>
+                    ` : ''}
+                    ${game.liveStatus !== 'completed' && game.liveStatus !== 'live' ? `
+                        <a href="live-game.html?teamId=${teamId}&gameId=${gameId}"
+                           class="inline-flex items-center gap-2 bg-slate-800 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-slate-900 transition">
+                            <span class="text-xs">👁️</span>
+                            View Live
+                        </a>
+                    ` : ''}
                     ${game.location ? `
                         <div class="flex items-center justify-center gap-2 text-gray-600">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -642,6 +835,9 @@
                         statLabels['fouls'] = 'FOULS';
                     }
                 }
+
+                // Setup summary controls
+                setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels);
 
                 // Check if we have any playing time data
                 const hasPlayingTime = Object.values(timeMap).some(t => t > 0);

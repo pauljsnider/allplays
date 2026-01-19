@@ -1,9 +1,9 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query } from './db.js';
+import { getTeam, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js';
 import { db } from './firebase.js';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
-import { writeBatch, doc, setDoc, addDoc } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
 import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 
@@ -45,6 +45,21 @@ let state = {
   subQueue: [],
   queueMode: false,
   history: []
+};
+
+let liveState = {
+  isLive: false,
+  viewerCount: 0,
+  chatExpanded: false,
+  unreadChatCount: 0,
+  lastChatSeenAt: Date.now(),
+  chatInitialized: false,
+  eventQueue: [],
+  retryAttempt: 0,
+  retryTimeout: null,
+  unsubscribeChat: null,
+  unsubscribeViewers: null,
+  lastChatSentAt: 0
 };
 
 const els = {
@@ -113,7 +128,16 @@ const els = {
   finishSubs: q('#finish-subs'),
   log: q('#log-mobile'),
   clearLog: q('#clear-log-mobile'),
-  clearLineup: q('#clear-lineup-mobile')
+  clearLineup: q('#clear-lineup-mobile'),
+  chatToggle: q('#chat-toggle'),
+  chatContent: q('#chat-content'),
+  chatMessages: q('#chat-messages'),
+  chatForm: q('#chat-form'),
+  chatInput: q('#chat-input'),
+  chatUnreadBadge: q('#chat-unread-badge'),
+  chatViewerCount: q('#chat-viewer-count'),
+  chatChevron: q('#chat-chevron'),
+  viewerCount: q('#viewer-count')
 };
 
 function q(sel) { return document.querySelector(sel); }
@@ -322,9 +346,9 @@ function renderFairness() {
 
 function renderLog() {
   els.log.innerHTML = state.log.slice(0, 40).map((ev, idx) => `
-    <div class="flex justify-between items-center border border-slate/10 rounded-lg p-2 bg-white">
+    <div class="flex justify-between items-center border rounded-lg p-2 ${ev.undoData?.isOpponent ? 'border-red-200 bg-red-50/40' : 'border-slate/10 bg-white'}">
       <div class="flex-1">
-        <p class="text-xs font-semibold">${ev.text}</p>
+        <p class="text-xs font-semibold ${ev.undoData?.isOpponent ? 'text-red-700' : 'text-slate-800'}">${ev.text}</p>
         <p class="text-[10px] text-slate-500">${ev.period} · ${ev.clock}</p>
       </div>
       <div class="flex items-center gap-2">
@@ -372,6 +396,20 @@ function renderLog() {
 
         // Re-render everything to reflect the changes
         renderAll();
+
+        if (liveState.isLive) {
+          const removeText = logEntry?.text ? `Removed: ${logEntry.text}` : 'Removed event';
+          broadcastEvent(baseLiveEvent({
+            type: 'log_remove',
+            description: removeText
+          }));
+          if (logEntry?.undoData?.type === 'stat') {
+            broadcastEvent(buildStatEvent({
+              ...logEntry.undoData,
+              value: -(logEntry.undoData.value || 0)
+            }, `REMOVE ${logEntry.text || 'stat'}`));
+          }
+        }
       }
     });
   });
@@ -401,6 +439,7 @@ function undo() {
     addLog('Nothing to undo');
     return;
   }
+  const lastLog = state.log[0];
   const prev = state.history.pop();
   state.period = prev.period;
   state.clock = prev.clock;
@@ -413,6 +452,21 @@ function undo() {
   state.opp = prev.opp;
   renderAll();
   addLog(`Undid: ${prev.action}`);
+
+  if (liveState.isLive) {
+    const undoText = lastLog?.text ? `Undo: ${lastLog.text}` : `Undo: ${prev.action}`;
+    broadcastEvent(baseLiveEvent({
+      type: 'undo',
+      description: undoText
+    }));
+
+    if (lastLog?.undoData?.type === 'stat') {
+      broadcastEvent(buildStatEvent({
+        ...lastLog.undoData,
+        value: -(lastLog.undoData.value || 0)
+      }, `UNDO ${lastLog.text}`));
+    }
+  }
 }
 
 function renderAll() {
@@ -433,6 +487,237 @@ function safeDecrement(currentValue, delta) {
 function addLog(text, undoData = null) {
   state.log.unshift({ text, ts: Date.now(), period: state.period, clock: formatClock(state.clock), undoData });
   renderLog();
+}
+
+async function broadcastEvent(eventData) {
+  try {
+    await broadcastLiveEvent(currentTeamId, currentGameId, eventData);
+  } catch (error) {
+    console.error('Broadcast failed (will retry):', error);
+    liveState.eventQueue.push(eventData);
+    scheduleRetry();
+  }
+}
+
+function scheduleRetry() {
+  if (liveState.retryTimeout) return;
+  const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
+  liveState.retryTimeout = setTimeout(async () => {
+    liveState.retryTimeout = null;
+    const queue = [...liveState.eventQueue];
+    liveState.eventQueue = [];
+
+    for (const event of queue) {
+      try {
+        await broadcastLiveEvent(currentTeamId, currentGameId, event);
+        liveState.retryAttempt = 0;
+      } catch {
+        liveState.eventQueue.push(event);
+      }
+    }
+
+    if (liveState.eventQueue.length > 0) {
+      liveState.retryAttempt += 1;
+      scheduleRetry();
+    }
+  }, delay);
+}
+
+function baseLiveEvent(extra = {}) {
+  return {
+    period: state.period,
+    gameClockMs: state.clock,
+    homeScore: state.home,
+    awayScore: state.away,
+    createdBy: currentUser?.uid || null,
+    ...extra
+  };
+}
+
+function lineupSnapshot() {
+  return {
+    onCourt: [...state.onCourt],
+    bench: [...state.bench]
+  };
+}
+
+function broadcastLineupUpdate(description = 'Lineup updated') {
+  if (liveState.isLive) {
+    broadcastEvent(baseLiveEvent({
+      type: 'lineup',
+      description,
+      ...lineupSnapshot()
+    }));
+  }
+  updateGame(currentTeamId, currentGameId, { liveLineup: lineupSnapshot() })
+    .catch(err => console.warn('Failed to sync live lineup:', err));
+}
+
+function buildStatEvent(undoData, description) {
+  const playerId = undoData?.playerId || null;
+  const isOpponent = !!undoData?.isOpponent;
+  const player = !isOpponent ? roster.find(r => r.id === playerId) : null;
+  const opponent = isOpponent ? state.opp.find(o => o.id === playerId) : null;
+
+  return baseLiveEvent({
+    type: 'stat',
+    playerId,
+    playerName: player?.name || null,
+    playerNumber: player?.num || '',
+    statKey: undoData?.statKey || null,
+    value: undoData?.value || 0,
+    isOpponent,
+    opponentPlayerName: opponent?.name || null,
+    opponentPlayerNumber: opponent?.number || '',
+    description
+  });
+}
+
+function initChat() {
+  if (!els.chatMessages || !els.chatForm) return;
+  if (liveState.unsubscribeChat) liveState.unsubscribeChat();
+
+  liveState.unsubscribeChat = subscribeLiveChat(currentTeamId, currentGameId, { limit: 100 }, (messages) => {
+    renderChatMessages(messages);
+  }, (error) => {
+    console.warn('Live chat subscription failed:', error);
+  });
+}
+
+function renderChatMessages(messages) {
+  liveState.chatMessages = messages;
+  const container = els.chatMessages;
+  if (!container) return;
+
+  container.innerHTML = messages.slice().reverse().map(msg => `
+    <div class="${msg.senderId === currentUser?.uid ? 'text-right' : ''}">
+      <div class="text-[11px] text-teal/80">${escapeHtml(msg.senderName || 'Fan')}</div>
+      <div class="text-sm text-sand">${escapeHtml(msg.text || '')}</div>
+    </div>
+  `).join('');
+
+  container.scrollTop = container.scrollHeight;
+  updateUnread(messages);
+}
+
+function updateUnread(messages) {
+  if (!messages || !messages.length) return;
+  if (!liveState.chatInitialized) {
+    liveState.chatInitialized = true;
+    liveState.lastChatSeenAt = Date.now();
+    liveState.unreadChatCount = 0;
+    updateUnreadBadge();
+    return;
+  }
+
+  if (liveState.chatExpanded) {
+    liveState.lastChatSeenAt = Date.now();
+    liveState.unreadChatCount = 0;
+    updateUnreadBadge();
+    return;
+  }
+
+  let newlyUnread = 0;
+  messages.forEach(msg => {
+    const ts = msg.createdAt?.toMillis ? msg.createdAt.toMillis() : null;
+    if (!ts || ts > liveState.lastChatSeenAt) newlyUnread += 1;
+  });
+
+  if (newlyUnread > 0) {
+    liveState.unreadChatCount += newlyUnread;
+    updateUnreadBadge();
+  }
+}
+
+async function sendChatMessage(text) {
+  if (!text.trim()) return;
+  if (Date.now() - liveState.lastChatSentAt < 1500) {
+    if (els.chatInput) {
+      const original = els.chatInput.placeholder;
+      els.chatInput.placeholder = 'Slow down...';
+      setTimeout(() => { els.chatInput.placeholder = original; }, 1200);
+    }
+    return;
+  }
+  liveState.lastChatSentAt = Date.now();
+  try {
+    await postLiveChatMessage(currentTeamId, currentGameId, {
+      text: text.trim(),
+      senderId: currentUser?.uid || null,
+      senderName: currentUser?.displayName || currentUser?.email || 'Stat Keeper',
+      senderPhotoUrl: currentUser?.photoURL || null,
+      isAnonymous: false
+    });
+  } catch (error) {
+    console.warn('Chat send failed:', error);
+  }
+}
+
+function toggleChat() {
+  liveState.chatExpanded = !liveState.chatExpanded;
+  if (els.chatContent) {
+    els.chatContent.classList.toggle('hidden', !liveState.chatExpanded);
+  }
+  if (els.chatChevron) {
+    els.chatChevron.classList.toggle('rotate-180', liveState.chatExpanded);
+  }
+  if (liveState.chatExpanded) {
+    liveState.lastChatSeenAt = Date.now();
+    liveState.unreadChatCount = 0;
+    updateUnreadBadge();
+  }
+}
+
+function updateUnreadBadge() {
+  if (!els.chatUnreadBadge) return;
+  if (liveState.unreadChatCount > 0 && !liveState.chatExpanded) {
+    els.chatUnreadBadge.textContent = liveState.unreadChatCount > 99 ? '99+' : `${liveState.unreadChatCount}`;
+    els.chatUnreadBadge.classList.remove('hidden');
+  } else {
+    els.chatUnreadBadge.classList.add('hidden');
+  }
+}
+
+function initViewerCount() {
+  if (liveState.unsubscribeViewers) liveState.unsubscribeViewers();
+  const gameRef = doc(db, 'teams', currentTeamId, 'games', currentGameId);
+
+  liveState.unsubscribeViewers = onSnapshot(gameRef, (snapshot) => {
+    const data = snapshot.data();
+    const count = data?.liveViewerCount ?? liveState.viewerCount ?? 0;
+    liveState.viewerCount = count;
+    if (els.viewerCount) els.viewerCount.textContent = `${count} watching`;
+    if (els.chatViewerCount) els.chatViewerCount.textContent = `${count} watching`;
+  }, (error) => {
+    console.warn('Viewer count subscription failed:', error);
+  });
+}
+
+async function startLiveBroadcast() {
+  if (liveState.isLive) return;
+  liveState.isLive = true;
+  try {
+    await setGameLiveStatus(currentTeamId, currentGameId, 'live');
+  } catch (error) {
+    console.warn('Failed to set live status:', error);
+  }
+  initChat();
+  initViewerCount();
+  broadcastLineupUpdate('Lineup set');
+}
+
+async function endLiveBroadcast() {
+  try {
+    await setGameLiveStatus(currentTeamId, currentGameId, 'completed');
+  } catch (error) {
+    console.warn('Failed to set completed status:', error);
+  }
+
+  if (liveState.isLive) {
+    liveState.isLive = false;
+    if (liveState.unsubscribeChat) liveState.unsubscribeChat();
+    if (liveState.unsubscribeViewers) liveState.unsubscribeViewers();
+  }
 }
 
 function renderFinish() {
@@ -697,6 +982,7 @@ async function saveAndComplete() {
     });
 
     await batch.commit();
+    await endLiveBroadcast();
     isFinishing = true;
 
     if (sendEmail) {
@@ -747,6 +1033,11 @@ async function startStop() {
     els.startStop.classList.remove('bg-red-600', 'border-red-700');
     els.startStop.classList.add('bg-emerald-600', 'border-emerald-700');
     clearInterval(state.tick);
+    addLog('Game paused');
+    broadcastEvent(baseLiveEvent({
+      type: 'clock_pause',
+      description: 'Game paused'
+    }));
   } else {
     // If no local activity yet, check for existing tracked data and offer to clear
     const hasLocalActivity = state.clock > 0 || state.home > 0 || state.away > 0 || (state.log && state.log.length > 0);
@@ -765,9 +1056,15 @@ async function startStop() {
     }
 
     state.running = true;
+    await startLiveBroadcast();
     els.startStop.textContent = 'Pause';
     els.startStop.classList.remove('bg-emerald-600', 'border-emerald-700');
     els.startStop.classList.add('bg-red-600', 'border-red-700');
+    addLog('Game started');
+    broadcastEvent(baseLiveEvent({
+      type: 'clock_start',
+      description: 'Game started'
+    }));
     state.lastTick = performance.now();
     state.tick = setInterval(tick, 500);
   }
@@ -803,6 +1100,12 @@ function setPeriod(p) {
   // Log period changes during live game
   if (state.running && previousPeriod !== p) {
     addLog(`Period changed: ${previousPeriod} → ${p}`);
+    if (liveState.isLive) {
+      broadcastEvent(baseLiveEvent({
+        type: 'period_change',
+        description: `Period changed: ${previousPeriod} → ${p}`
+      }));
+    }
   }
 
   renderHeader();
@@ -814,16 +1117,25 @@ function addStat(id, key, delta) {
     alert('Please start the game timer before recording stats.');
     return;
   }
-  saveHistory(`#${getNum(id)} ${key.toUpperCase()} +${delta}`);
+  const logText = `#${getNum(id)} ${key.toUpperCase()} +${delta}`;
+  saveHistory(logText);
   state.stats[id][key] += delta;
   if (isPointsColumn(key)) state.home += delta;
-  addLog(`#${getNum(id)} ${key.toUpperCase()} +${delta}`, {
+  addLog(logText, {
     type: 'stat',
     playerId: id,
     statKey: key,
     value: delta,
     isOpponent: false
   });
+  if (liveState.isLive) {
+    broadcastEvent(buildStatEvent({
+      playerId: id,
+      statKey: key,
+      value: delta,
+      isOpponent: false
+    }, logText));
+  }
   renderHeader();
   renderLive();
 }
@@ -835,16 +1147,25 @@ function addOppStat(id, key, delta) {
     alert('Please start the game timer before recording stats.');
     return;
   }
-  saveHistory(`Opp ${opp.name} ${key.toUpperCase()} +${delta}`);
+  const logText = `Opp ${opp.name} ${key.toUpperCase()} +${delta}`;
+  saveHistory(logText);
   opp.stats[key] += delta;
   if (isPointsColumn(key)) state.away += delta;
-  addLog(`Opp ${opp.name} ${key.toUpperCase()} +${delta}`, {
+  addLog(logText, {
     type: 'stat',
     playerId: id,
     statKey: key,
     value: delta,
     isOpponent: true
   });
+  if (liveState.isLive) {
+    broadcastEvent(buildStatEvent({
+      playerId: id,
+      statKey: key,
+      value: delta,
+      isOpponent: true
+    }, logText));
+  }
   renderHeader();
   renderOpponents();
 }
@@ -867,6 +1188,7 @@ function attachEvents() {
     state.bench = roster.map(r => r.id);
     renderLineup();
     renderLive();
+    broadcastLineupUpdate('Lineup cleared');
   });
   document.querySelectorAll('.period-btn').forEach(b => b.addEventListener('click', () => setPeriod(b.dataset.period)));
   els.livePlayers.addEventListener('click', (e) => {
@@ -983,6 +1305,13 @@ function attachEvents() {
     state.onCourt = newOn;
     state.bench = [...starters, ...remainder];
     addLog('Full line swap');
+    if (liveState.isLive) {
+      broadcastEvent(baseLiveEvent({
+        type: 'substitution',
+        description: 'Full line swap',
+        ...lineupSnapshot()
+      }));
+    }
     renderLineup();
     renderLive();
   });
@@ -1001,6 +1330,18 @@ function attachEvents() {
   els.closeEmail.addEventListener('click', () => els.emailOutput.classList.add('hidden'));
   els.copyEmail.addEventListener('click', copyEmailToClipboard);
   els.clearLog.addEventListener('click', () => { state.log = []; renderLog(); });
+  if (els.chatToggle) {
+    els.chatToggle.addEventListener('click', toggleChat);
+  }
+  if (els.chatForm) {
+    els.chatForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = els.chatInput?.value || '';
+      if (!text.trim()) return;
+      els.chatInput.value = '';
+      await sendChatMessage(text);
+    });
+  }
   updateSubsButton();
   if (els.autoFill) {
     els.autoFill.addEventListener('click', autoFillStarters);
@@ -1067,6 +1408,7 @@ function handleLineupClick(e) {
   renderLineup();
   renderLive();
   updateSubsButton();
+  broadcastLineupUpdate();
 }
 
 function setSubMode(mode) {
@@ -1185,7 +1527,15 @@ function applySub(outId, inId) {
   state.bench = state.bench.filter(id => id !== inId);
   state.bench.push(outId);
   state.subs.push({ out: outId, in: inId, period: state.period, clock: formatClock(state.clock) });
-  addLog(`Sub: #${getNum(outId)} ${playerName(outId)} → #${getNum(inId)} ${playerName(inId)}`);
+  const logText = `Sub: #${getNum(outId)} ${playerName(outId)} → #${getNum(inId)} ${playerName(inId)}`;
+  addLog(logText);
+  if (liveState.isLive) {
+    broadcastEvent(baseLiveEvent({
+      type: 'substitution',
+      description: logText,
+      ...lineupSnapshot()
+    }));
+  }
   renderLineup();
   renderLive();
 }
@@ -1205,7 +1555,15 @@ function applyQueue(closeModal = true) {
       state.bench.push(pair.out);
       state.subs.push({ out: pair.out, in: pair.in, period: state.period, clock: formatClock(state.clock) });
       // Log each swap individually
-      addLog(`Sub: #${getNum(pair.out)} ${playerName(pair.out)} → #${getNum(pair.in)} ${playerName(pair.in)}`);
+      const logText = `Sub: #${getNum(pair.out)} ${playerName(pair.out)} → #${getNum(pair.in)} ${playerName(pair.in)}`;
+      addLog(logText);
+      if (liveState.isLive) {
+        broadcastEvent(baseLiveEvent({
+          type: 'substitution',
+          description: logText,
+          ...lineupSnapshot()
+        }));
+      }
     }
   });
 
@@ -1226,6 +1584,7 @@ function subIn(id) {
   renderLineup();
   renderLive();
   updateSubsButton();
+  broadcastLineupUpdate();
 }
 
 function renderQueue() {
@@ -1400,6 +1759,12 @@ async function init() {
     renderQueue();
     attachEvents();
     updateSubsButton();
+    initChat();
+    updateGame(currentTeamId, currentGameId, { liveLineup: lineupSnapshot() })
+      .catch(err => console.warn('Failed to sync initial lineup:', err));
+    if (currentGame.liveStatus === 'live') {
+      await startLiveBroadcast();
+    }
     setupNavigationWarning();
   } catch (error) {
     console.error(error);
