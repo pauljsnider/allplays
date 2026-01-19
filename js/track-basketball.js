@@ -4,6 +4,8 @@ import { db } from './firebase.js';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
 import { writeBatch, doc, setDoc, addDoc } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
+import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -478,9 +480,6 @@ async function generateAISummary() {
   els.aiSummaryOutput.classList.remove('hidden');
 
   try {
-    const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
-    const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
-
     const finalHome = parseInt(els.homeFinal.value) || state.home;
     const finalAway = parseInt(els.awayFinal.value) || state.away;
 

@@ -16,6 +16,8 @@ import {
 } from './db.js';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
+import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
 
 const state = {
   teamId: null,
@@ -372,16 +374,14 @@ function updateChatUnread() {
     return;
   }
 
-  let newlyUnread = 0;
-  state.chatMessages.forEach(msg => {
+  const newlyUnread = state.chatMessages.reduce((count, msg) => {
     const ts = msg.createdAt?.toMillis ? msg.createdAt.toMillis() : null;
-    if (!ts || ts > state.lastChatSeenAt) newlyUnread += 1;
-  });
+    if (!ts || ts > state.lastChatSeenAt) return count + 1;
+    return count;
+  }, 0);
 
-  if (newlyUnread > 0) {
-    state.unreadChatCount += newlyUnread;
-    updateChatBadge();
-  }
+  state.unreadChatCount = newlyUnread;
+  updateChatBadge();
 }
 
 function updateChatBadge() {
@@ -912,6 +912,12 @@ function advanceReplayStreams(elapsed) {
 }
 
 function seekReplay(targetMs) {
+  if (!Array.isArray(state.replayEvents) || state.replayEvents.length === 0) {
+    state.gameClockMs = targetMs;
+    renderScoreboard();
+    if (els.replayCurrent) els.replayCurrent.textContent = formatClock(targetMs);
+    return;
+  }
   state.events = [];
   state.eventIds = new Set();
   state.stats = {};
@@ -982,8 +988,6 @@ function initReplayControls() {
 async function generateAiResponse(question) {
   showAiThinking();
   try {
-    const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
-    const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
     const app = getApp();
     const ai = getAI(app, { backend: new GoogleAIBackend() });
     const model = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
@@ -1077,7 +1081,8 @@ function formatChatMessage(text) {
     /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi,
     (url) => {
       const href = url.startsWith('www.') ? `https://${url}` : url;
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-teal underline">${url}</a>`;
+      if (!isSafeUrl(href)) return url;
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-teal underline">${url}</a>`;
     }
   );
 
@@ -1102,6 +1107,15 @@ function formatChatMessage(text) {
   );
 
   return formatted;
+}
+
+function isSafeUrl(href) {
+  try {
+    const url = new URL(href, window.location.origin);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function setConnectionBanner(show, message = 'Connection lost. Reconnecting...') {
