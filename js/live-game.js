@@ -111,6 +111,7 @@ const els = {
   replayCurrent: q('#replay-current'),
   replayDuration: q('#replay-duration'),
   replayPlay: q('#replay-play'),
+  replayGameLink: q('#replay-game-link'),
 
   notLiveOverlay: q('#not-live-overlay'),
   endedOverlay: q('#ended-overlay'),
@@ -215,6 +216,8 @@ function renderScoreboard(animate = false) {
 
 function renderPlayByPlay(event, isNew = false) {
   if (!els.playsFeed) return;
+  const placeholder = els.playsFeed.querySelector('[data-placeholder="plays"]');
+  if (placeholder) placeholder.remove();
   const keepAtTop = els.playsFeed.scrollTop < 10;
   const card = document.createElement('div');
 
@@ -811,6 +814,9 @@ async function startReplay() {
   els.reactionsBar?.classList.add('hidden');
   els.endedOverlay?.classList.add('hidden');
   els.chatInput?.setAttribute('disabled', 'disabled');
+  if (els.replayGameLink) {
+    els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
+  }
 
   renderScoreboard();
   if (els.playsFeed) els.playsFeed.innerHTML = '';
@@ -1157,7 +1163,7 @@ function updateChatAvailability() {
         gameDate.getMonth() === today.getMonth() &&
         gameDate.getDate() === today.getDate()
       : false;
-    state.chatEnabled = isSameDay && state.game?.liveStatus === 'live';
+    state.chatEnabled = isSameDay;
   }
 
   if (els.chatInput) {
@@ -1275,6 +1281,10 @@ async function init() {
     els.watchReplayBtn.addEventListener('click', () => {
       window.location.href = `live-game.html?teamId=${state.teamId}&gameId=${state.gameId}&replay=true`;
     });
+  }
+
+  if (els.replayGameLink) {
+    els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
   }
 }
 

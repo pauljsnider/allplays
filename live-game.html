@@ -224,7 +224,7 @@
           Play-by-Play
         </h2>
         <div id="plays-feed" class="space-y-2 max-h-[60vh] overflow-y-auto">
-          <div class="text-center text-sand/40 py-8">Waiting for game to start...</div>
+          <div data-placeholder="plays" class="text-center text-sand/40 py-8">Waiting for game to start...</div>
         </div>
       </section>
 
@@ -321,6 +321,9 @@
   <!-- REPLAY CONTROLS -->
   <div id="replay-controls" class="hidden fixed bottom-16 left-0 right-0 bg-ink/95 border-t border-teal/20 p-3">
     <div class="max-w-lg mx-auto">
+      <div class="mb-2 text-center">
+        <a id="replay-game-link" href="#" class="text-teal text-xs font-semibold hover:text-sand">View Game Details →</a>
+      </div>
       <div class="mb-3">
         <input type="range" id="replay-progress" min="0" max="100" value="0" class="w-full h-2 bg-slate rounded-lg appearance-none cursor-pointer">
         <div class="flex justify-between text-xs text-sand/50 mt-1">
