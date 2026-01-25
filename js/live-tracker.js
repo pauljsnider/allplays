@@ -1,11 +1,11 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
 import { getTeam, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js';
-import { db } from './firebase.js';
+import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
-import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
+import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
+import { getApp } from './vendor/firebase-app.js';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -59,8 +59,29 @@ let liveState = {
   retryTimeout: null,
   unsubscribeChat: null,
   unsubscribeViewers: null,
-  lastChatSentAt: 0
+  lastChatSentAt: 0,
+  scoreSyncTimeout: null,
+  lastSyncedHome: null,
+  lastSyncedAway: null
 };
+
+function scheduleScoreSync() {
+  if (!liveState.isLive || !currentTeamId || !currentGameId) return;
+  if (liveState.scoreSyncTimeout) return;
+  liveState.scoreSyncTimeout = setTimeout(async () => {
+    liveState.scoreSyncTimeout = null;
+    const homeScore = state.home;
+    const awayScore = state.away;
+    if (homeScore === liveState.lastSyncedHome && awayScore === liveState.lastSyncedAway) return;
+    try {
+      await updateGame(currentTeamId, currentGameId, { homeScore, awayScore });
+      liveState.lastSyncedHome = homeScore;
+      liveState.lastSyncedAway = awayScore;
+    } catch (error) {
+      console.warn('Failed to sync live scores:', error);
+    }
+  }, 500);
+}
 
 const els = {
   scoreLine: q('#score-line'),
@@ -366,6 +387,7 @@ function renderLog() {
         const logEntry = state.log[index];
 
         // Reverse the stat change if undoData exists
+        let scoreChanged = false;
         if (logEntry && logEntry.undoData) {
           const { type, playerId, statKey, value, isOpponent } = logEntry.undoData;
 
@@ -377,6 +399,7 @@ function renderLog() {
                 opp.stats[statKey] = safeDecrement(opp.stats[statKey], value);
                 if (isPointsColumn(statKey)) {
                   state.away = safeDecrement(state.away, value);
+                  scoreChanged = true;
                 }
               }
             } else {
@@ -385,6 +408,7 @@ function renderLog() {
                 state.stats[playerId][statKey] = safeDecrement(state.stats[playerId][statKey], value);
                 if (isPointsColumn(statKey)) {
                   state.home = safeDecrement(state.home, value);
+                  scoreChanged = true;
                 }
               }
             }
@@ -396,6 +420,7 @@ function renderLog() {
 
         // Re-render everything to reflect the changes
         renderAll();
+        if (scoreChanged) scheduleScoreSync();
 
         if (liveState.isLive) {
           const removeText = logEntry?.text ? `Removed: ${logEntry.text}` : 'Removed event';
@@ -452,6 +477,9 @@ function undo() {
   state.opp = prev.opp;
   renderAll();
   addLog(`Undid: ${prev.action}`);
+  if (lastLog?.undoData?.type === 'stat' && isPointsColumn(lastLog.undoData.statKey)) {
+    scheduleScoreSync();
+  }
 
   if (liveState.isLive) {
     const undoText = lastLog?.text ? `Undo: ${lastLog.text}` : `Undo: ${prev.action}`;
@@ -701,6 +729,7 @@ async function startLiveBroadcast() {
   } catch (error) {
     console.warn('Failed to set live status:', error);
   }
+  scheduleScoreSync();
   initChat();
   initViewerCount();
   broadcastLineupUpdate('Lineup set');
@@ -1120,7 +1149,10 @@ function addStat(id, key, delta) {
   const logText = `#${getNum(id)} ${key.toUpperCase()} +${delta}`;
   saveHistory(logText);
   state.stats[id][key] += delta;
-  if (isPointsColumn(key)) state.home += delta;
+  if (isPointsColumn(key)) {
+    state.home += delta;
+    scheduleScoreSync();
+  }
   addLog(logText, {
     type: 'stat',
     playerId: id,
@@ -1150,7 +1182,10 @@ function addOppStat(id, key, delta) {
   const logText = `Opp ${opp.name} ${key.toUpperCase()} +${delta}`;
   saveHistory(logText);
   opp.stats[key] += delta;
-  if (isPointsColumn(key)) state.away += delta;
+  if (isPointsColumn(key)) {
+    state.away += delta;
+    scheduleScoreSync();
+  }
   addLog(logText, {
     type: 'stat',
     playerId: id,

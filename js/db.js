@@ -1,10 +1,39 @@
-import { db, auth, storage } from './firebase.js';
+import {
+    db,
+    auth,
+    storage,
+    collection,
+    getDocs,
+    getDoc,
+    doc,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    setDoc,
+    query,
+    where,
+    orderBy,
+    Timestamp,
+    increment,
+    arrayUnion,
+    arrayRemove,
+    deleteField,
+    limit,
+    startAfter,
+    getCountFromServer,
+    onSnapshot,
+    serverTimestamp,
+    collectionGroup,
+    ref,
+    uploadBytes,
+    getDownloadURL
+} from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
-import { collection, getDocs, getDoc, doc, addDoc, updateDoc, deleteDoc, setDoc, query, where, orderBy, Timestamp, increment, arrayUnion, arrayRemove, deleteField, limit as limitQuery, startAfter as startAfterQuery, getCountFromServer, onSnapshot, serverTimestamp, collectionGroup } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
-import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
-import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-storage.js";
+const limitQuery = limit;
+const startAfterQuery = startAfter;
 
 export async function uploadTeamPhoto(file) {
     console.log('Starting photo upload...', {

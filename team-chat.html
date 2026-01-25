@@ -147,8 +147,8 @@
         import { checkAuth } from './js/auth.js';
         import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
-        import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+        import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
+        import { getApp } from './js/vendor/firebase-app.js';
 
         renderFooter(document.getElementById('footer-container'));
 

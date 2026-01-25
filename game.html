@@ -254,8 +254,8 @@
         import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
-        import { collection, getDocs, query, orderBy } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
-        import { db } from './js/firebase.js';
+        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=9";
+        import { db } from './js/firebase.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         let currentUser = null;
@@ -502,8 +502,8 @@
                 status.textContent = 'Generating AI summary…';
 
                 try {
-                    const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
-                    const { getApp } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js');
+                    const { getAI, getGenerativeModel, GoogleAIBackend } = await import('./js/vendor/firebase-ai.js');
+                    const { getApp } = await import('./js/vendor/firebase-app.js');
 
                     const pointsKey = statKeys.find(key => ['pts', 'points', 'point'].includes(key)) || 'points';
                     let context = `Game: ${team.name} vs ${game.opponent}\n`;

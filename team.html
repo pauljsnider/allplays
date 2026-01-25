@@ -200,8 +200,8 @@
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
-        import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
-        import { db } from './js/firebase.js';
+        import { collection, getDocs } from "./js/firebase.js?v=9";
+        import { db } from './js/firebase.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -844,6 +844,10 @@
                         calendarEvents.forEach(event => {
                             if (trackedUids.includes(event.uid)) return;
 
+                            // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
+                            const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
+                                event.summary?.includes('[CANCELED]');
+
                             const hasConflict = dbGames.some(dbGame => {
                                 const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
                                 const eventDate = event.dtstart;
@@ -853,7 +857,9 @@
                             if (hasConflict) return;
 
                             const isPractice = isPracticeEvent(event.summary);
-                            const opponent = extractOpponent(event.summary, team.name);
+                            // Clean [CANCELED] prefix from summary before extracting opponent
+                            const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+                            const opponent = extractOpponent(cleanSummary, team.name);
 
                             allEvents.push({
                                 type: 'calendar',
@@ -861,6 +867,7 @@
                                 opponent: opponent,
                                 location: event.location || 'TBD',
                                 isPractice: isPractice,
+                                isCancelled: isCancelled,
                                 calendarEvent: event
                             });
                         });
@@ -927,20 +934,25 @@
 
         function renderCalendarEvent(event) {
             const isPractice = event.isPractice;
-            const isUpcoming = event.date > new Date();
+            const isCancelled = event.isCancelled;
+            const isUpcoming = !isCancelled && event.date > new Date();
+
+            // Determine border color: cancelled = gray, practice = yellow, upcoming = primary, past = gray
+            const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-400' : (isUpcoming ? 'border-primary-500' : 'border-gray-300'));
 
             return `
-                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${isPractice ? 'border-yellow-400' : (isUpcoming ? 'border-primary-500' : 'border-gray-300')} overflow-hidden border border-gray-200">
+                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${borderColor} overflow-hidden border border-gray-200 ${isCancelled ? 'opacity-60' : ''}">
                     <div class="p-5">
                         <div class="flex flex-col sm:flex-row justify-between items-start gap-4">
                             <div class="flex-grow">
                                 <div class="flex flex-wrap items-center gap-2 mb-2">
                                     <span class="text-xs bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded-full font-semibold">📅 Calendar</span>
+                                    ${isCancelled ? '<span class="text-xs bg-red-100 text-red-800 px-2.5 py-0.5 rounded-full font-semibold">Cancelled</span>' : ''}
                                     ${isPractice ? '<span class="text-xs bg-yellow-100 text-yellow-800 px-2.5 py-0.5 rounded-full font-semibold">Practice</span>' : ''}
                                     ${isUpcoming ? '<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>' : ''}
                                 </div>
-                                <div class="text-sm text-gray-500 font-semibold mb-2">${formatDate(event.date)} • ${formatTime(event.date)}</div>
-                                <div class="text-lg md:text-xl font-bold text-gray-900 mb-2">
+                                <div class="text-sm text-gray-500 font-semibold mb-2 ${isCancelled ? 'line-through' : ''}">${formatDate(event.date)} • ${formatTime(event.date)}</div>
+                                <div class="text-lg md:text-xl font-bold text-gray-900 mb-2 ${isCancelled ? 'line-through' : ''}">
                                     ${isPractice ? escapeHtml(event.opponent) : `vs. ${escapeHtml(event.opponent)}`}
                                 </div>
                                 <div class="flex items-center text-sm text-gray-600">
@@ -964,7 +976,8 @@
             const isPractice = !!game.isPractice;
             const isCompleted = game.status === 'completed' && !isPractice;
             const isLive = game.liveStatus === 'live';
-            const isUpcoming = !isCompleted && game.date > new Date();
+            const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+            const isUpcoming = !isCompleted && gameDate > new Date();
             const won = isCompleted && game.homeScore > game.awayScore;
             const lost = isCompleted && game.homeScore < game.awayScore;
             const tied = isCompleted && game.homeScore === game.awayScore;
@@ -980,7 +993,9 @@
                     ? `<span class="text-xs ${won ? 'bg-green-100 text-green-800' : (lost ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800')} px-2.5 py-0.5 rounded-full font-semibold">
                                             ${won ? 'W' : (lost ? 'L' : 'T')}
                                           </span>`
-                    : `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
+                    : (isUpcoming
+                        ? `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
+                        : `<span class="text-xs bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full font-semibold">Not Tracked</span>`)
                 }
                                     ${isLive ? `
                                         <span class="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-semibold">
@@ -1002,7 +1017,7 @@
                                 </div>
                             </div>
                             <div class="flex flex-col items-end gap-2">
-                                ${!isCompleted ? `
+                                ${(isLive || isUpcoming) ? `
                                   <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}"
                                      class="inline-flex items-center gap-2 ${isLive ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-900'} text-white px-4 py-2 rounded-lg font-semibold shadow transition">
                                       ${isLive ? '<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>' : '<span class="text-xs">👁️</span>'}

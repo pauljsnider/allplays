@@ -273,11 +273,11 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query } from './js/db.js';
-        import { db } from './js/firebase.js';
-        import { writeBatch, doc, setDoc, addDoc } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js';
+        import { db } from './js/firebase.js?v=9';
+        import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=9';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
-        import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+        import { getApp } from './js/vendor/firebase-app.js';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -1057,7 +1057,7 @@
                 generateBtn.classList.add('opacity-50');
 
                 // Lazy-load Firebase AI module
-                const { getAI, getGenerativeModel, GoogleAIBackend } = await import('https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js');
+                const { getAI, getGenerativeModel, GoogleAIBackend } = await import('./js/vendor/firebase-ai.js');
 
                 // Collect game data
                 const finalHomeScore = parseInt(document.getElementById('finalHomeScore').value) || homeScore;

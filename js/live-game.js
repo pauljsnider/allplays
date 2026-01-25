@@ -16,8 +16,8 @@ import {
 } from './db.js';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
-import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
+import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
+import { getApp } from './vendor/firebase-app.js';
 
 const state = {
   teamId: null,

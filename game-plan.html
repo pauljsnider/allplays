@@ -366,6 +366,11 @@
                             const calendarEvents = await fetchAndParseCalendar(calendarUrl);
                             calendarEvents.forEach(event => {
                                 if (trackedUids && trackedUids.includes(event.uid)) return;
+                                // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
+                                const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
+                                    event.summary?.includes('[CANCELED]');
+                                // Skip cancelled events for game plan (can't plan for cancelled games)
+                                if (isCancelled) return;
                                 const isPractice = isPracticeEvent(event.summary);
                                 if (isPractice) return;
                                 const opponent = extractOpponent(event.summary, team.name);

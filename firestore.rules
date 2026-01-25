@@ -78,6 +78,11 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
     }
 
+    // Collection group rule for games - allows cross-team queries (e.g., live games, recent games)
+    match /{path=**}/games/{gameId} {
+      allow read: if true;  // Public read for collection group queries
+    }
+
     // Teams - only owner or admins can modify
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing

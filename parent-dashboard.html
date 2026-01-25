@@ -235,6 +235,10 @@
                             calendarEvents.forEach(event => {
                                 if (trackedUids.includes(event.uid)) return;
 
+                                // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
+                                const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
+                                    event.summary?.includes('[CANCELED]');
+
                                 const eventDate = event.dtstart;
                                 if (!eventDate || eventDate < today) return;
 
@@ -246,7 +250,9 @@
                                 if (hasConflict) return;
 
                                 const isPractice = isPracticeEvent(event.summary);
-                                const opponent = extractOpponent(event.summary, team.name);
+                                // Clean [CANCELED] prefix from summary before extracting opponent
+                                const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+                                const opponent = extractOpponent(cleanSummary, team.name);
                                 const location = event.location || 'TBD';
                                 const type = isPractice ? 'practice' : 'game';
 
@@ -259,7 +265,8 @@
                                         teamId,
                                         id: event.uid || null,
                                         childId: child.playerId,
-                                        childName: child.playerName
+                                        childName: child.playerName,
+                                        isCancelled
                                     });
                                 }
                             });
@@ -407,23 +414,25 @@
                 const timeStr = gameDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                 const typeLabel = game.type === 'practice' ? 'Practice' : 'Game';
                 const typeColor = game.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800';
-                
+                const isCancelled = game.isCancelled;
+
                 return `
-                <div class="p-6 hover:bg-gray-50 transition flex flex-col sm:flex-row gap-4 sm:items-center">
+                <div class="p-6 hover:bg-gray-50 transition flex flex-col sm:flex-row gap-4 sm:items-center ${isCancelled ? 'opacity-60' : ''}">
                     <div class="flex-shrink-0 w-24 text-center sm:text-left">
-                        <div class="text-sm font-bold text-gray-900 uppercase">${dateStr}</div>
-                        <div class="text-xs text-gray-500">${timeStr}</div>
+                        <div class="text-sm font-bold text-gray-900 uppercase ${isCancelled ? 'line-through' : ''}">${dateStr}</div>
+                        <div class="text-xs text-gray-500 ${isCancelled ? 'line-through' : ''}">${timeStr}</div>
                     </div>
                     <div class="flex-grow">
                         <div class="flex items-center gap-2 mb-1">
                             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide ${typeColor}">
                                 ${typeLabel}
                             </span>
+                            ${isCancelled ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wide bg-red-100 text-red-800">Cancelled</span>' : ''}
                             <span class="text-xs text-gray-400 font-medium">For ${escapeHtml(game.childName || 'Player')}</span>
                         </div>
-                        <div class="font-bold text-gray-900 text-lg">
-                            ${game.type === 'practice' 
-                                ? escapeHtml(game.title || 'Practice') 
+                        <div class="font-bold text-gray-900 text-lg ${isCancelled ? 'line-through' : ''}">
+                            ${game.type === 'practice'
+                                ? escapeHtml(game.title || 'Practice')
                                 : `vs. ${escapeHtml(game.opponent || 'TBD')}`}
                         </div>
                         <div class="text-sm text-gray-500 flex items-center gap-1 mt-1">
@@ -434,8 +443,9 @@
                             ${escapeHtml(game.location || 'TBD')}
                         </div>
                     </div>
+                    ${!isCancelled ? `
                     <div class="flex-shrink-0 text-right">
-                         <a href="game.html?teamId=${game.teamId}&gameId=${game.id}" 
+                         <a href="game.html?teamId=${game.teamId}&gameId=${game.id}"
                             class="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700">
                              View Details
                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -443,6 +453,7 @@
                             </svg>
                          </a>
                     </div>
+                    ` : ''}
                 </div>
             `}).join('');
         }

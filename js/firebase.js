@@ -1,7 +1,51 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-import { getAuth } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
-import { getFirestore } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
-import { getStorage } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-storage.js";
+import { initializeApp } from "./vendor/firebase-app.js";
+import {
+    getAuth,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    signOut,
+    GoogleAuthProvider,
+    signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
+    sendPasswordResetEmail,
+    sendEmailVerification,
+    sendSignInLinkToEmail,
+    isSignInWithEmailLink,
+    signInWithEmailLink,
+    updatePassword,
+    verifyPasswordResetCode,
+    confirmPasswordReset,
+    applyActionCode
+} from "./vendor/firebase-auth.js";
+import {
+    getFirestore,
+    collection,
+    getDocs,
+    getDoc,
+    doc,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    setDoc,
+    query,
+    where,
+    orderBy,
+    Timestamp,
+    increment,
+    arrayUnion,
+    arrayRemove,
+    deleteField,
+    limit,
+    startAfter,
+    getCountFromServer,
+    onSnapshot,
+    serverTimestamp,
+    collectionGroup,
+    writeBatch
+} from "./vendor/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "./vendor/firebase-storage.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc",
@@ -24,3 +68,51 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+export {
+    collection,
+    getDocs,
+    getDoc,
+    doc,
+    addDoc,
+    updateDoc,
+    deleteDoc,
+    setDoc,
+    query,
+    where,
+    orderBy,
+    Timestamp,
+    increment,
+    arrayUnion,
+    arrayRemove,
+    deleteField,
+    limit,
+    startAfter,
+    getCountFromServer,
+    onSnapshot,
+    serverTimestamp,
+    collectionGroup,
+    writeBatch
+};
+
+export {
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    signOut,
+    GoogleAuthProvider,
+    signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
+    sendPasswordResetEmail,
+    sendEmailVerification,
+    sendSignInLinkToEmail,
+    isSignInWithEmailLink,
+    signInWithEmailLink,
+    updatePassword,
+    verifyPasswordResetCode,
+    confirmPasswordReset,
+    applyActionCode
+};
+
+export { ref, uploadBytes, getDownloadURL };

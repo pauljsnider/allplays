@@ -1,6 +1,6 @@
-import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
-import { getStorage } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-storage.js";
-import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+import { initializeApp, getApps } from "./vendor/firebase-app.js";
+import { getStorage } from "./vendor/firebase-storage.js";
+import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "./vendor/firebase-auth.js";
 
 const imgConfig = {
     apiKey: "AIzaSyCxeLIe1ZcbX_GH5TEg1MBo8vmxGs6cttE",

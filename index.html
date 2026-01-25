@@ -670,8 +670,22 @@
       if (!container) return;
 
       try {
-        const liveGames = await getLiveGamesNow();
-        const upcomingGames = await getUpcomingLiveGames(6);
+        // Fetch live and upcoming games separately to handle partial failures
+        let liveGames = [];
+        let upcomingGames = [];
+
+        try {
+          liveGames = await getLiveGamesNow();
+        } catch (e) {
+          console.warn('Could not load live games:', e.message);
+        }
+
+        try {
+          upcomingGames = await getUpcomingLiveGames(6);
+        } catch (e) {
+          console.warn('Could not load upcoming games:', e.message);
+        }
+
         const combined = [
           ...liveGames.map(game => ({ ...game, isLive: true })),
           ...upcomingGames.filter(g => !liveGames.find(lg => lg.id === g.id))

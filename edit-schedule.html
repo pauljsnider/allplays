@@ -501,9 +501,9 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { Timestamp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-firestore.js";
-        import { getApp } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js';
-        import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-ai.js';
+        import { Timestamp } from "./js/firebase.js?v=9";
+        import { getApp } from './js/vendor/firebase-app.js';
+        import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -654,6 +654,10 @@
                             // Skip if already tracked
                             if (trackedUids.includes(event.uid)) return;
 
+                            // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
+                            const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
+                                event.summary?.includes('[CANCELED]');
+
                             // Skip if conflicts with DB event
                             const hasConflict = dbEvents.some(dbEvent => {
                                 const dbDate = dbEvent.date?.toDate ? dbEvent.date.toDate() : new Date(dbEvent.date);
@@ -663,7 +667,9 @@
                             if (hasConflict) return;
 
                             const isPractice = isPracticeEvent(event.summary);
-                            const opponent = extractOpponent(event.summary, currentTeam.name);
+                            // Clean [CANCELED] prefix from summary before extracting opponent
+                            const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+                            const opponent = extractOpponent(cleanSummary, currentTeam.name);
 
                             allEvents.push({
                                 source: 'calendar',
@@ -672,6 +678,7 @@
                                 opponent: opponent,
                                 location: event.location || 'TBD',
                                 isPractice: isPractice,
+                                isCancelled: isCancelled,
                                 calendarEvent: event
                             });
                         });
@@ -851,20 +858,23 @@
 
         function renderCalendarEvent(event) {
             const isPractice = event.isPractice;
+            const isCancelled = event.isCancelled;
+            const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-500' : 'border-blue-500');
             return `
-                <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-l-4 ${isPractice ? 'border-yellow-500' : 'border-blue-500'}">
+                <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-l-4 ${borderColor} ${isCancelled ? 'opacity-60' : ''}">
                     <div>
                         <div class="flex items-center gap-2 mb-1">
                             <span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-semibold">📅 Calendar</span>
+                            ${isCancelled ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded font-semibold">Cancelled</span>' : ''}
                             ${isPractice ? '<span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-semibold">Practice</span>' : ''}
                         </div>
-                        <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1">${formatDate(event.date)} • ${formatTime(event.date)}</div>
-                        <div class="text-lg font-bold text-gray-900">${isPractice ? event.opponent : `vs. ${event.opponent}`}</div>
+                        <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1 ${isCancelled ? 'line-through' : ''}">${formatDate(event.date)} • ${formatTime(event.date)}</div>
+                        <div class="text-lg font-bold text-gray-900 ${isCancelled ? 'line-through' : ''}">${isPractice ? event.opponent : `vs. ${event.opponent}`}</div>
                         <div class="text-sm text-gray-600">
                             ${mapLink(event.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(event.location)}">${event.location || 'TBD'}</a>` : (event.location || 'TBD')}
                         </div>
                     </div>
-                    ${!isPractice ? `
+                    ${!isPractice && !isCancelled ? `
                         <button onclick="window.trackCalendarEvent(${JSON.stringify(event.calendarEvent).replace(/"/g, '&quot;')})" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
                             Track
                         </button>
