@@ -74,6 +74,13 @@ This separation provides defense-in-depth for image handling.
 /accessCodes/{codeId}        # Signup activation codes
 ```
 
+Linked opponent fields on `games/{gameId}` (Phase 1):
+- `opponentTeamId`
+- `opponentTeamName`
+- `opponentTeamPhoto`
+- `opponentStats.*.playerId`
+- `opponentStats.*.photoUrl`
+
 ### Key Patterns
 - ES6 modules with import/export
 - Singleton Firebase instances shared across pages
@@ -103,6 +110,8 @@ This project follows spec-driven development. Feature specs live in `/spec/{feat
 - `requirements.md` - User stories and EARS requirements
 - `design.md` - Architecture, components, data models
 - `tasks.md` - Implementation checklist
+
+Recent spec: `/spec/linked-opponent-teams/` (Phase 1 complete).
 
 Use custom commands: `/spec-init`, `/spec-execute-task`, `/spec-update`
 

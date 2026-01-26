@@ -9,6 +9,7 @@ A static HTML + JavaScript sports team management and stat tracking application,
 - **Schedule**: Manage upcoming games and past results.
 - **Live Stat Tracking**: Track stats live during games with a mobile-friendly interface.
 - **Match Reports**: View detailed summaries and aggregated stats for completed games.
+- **Linked Opponents**: Link opponent teams to preload their roster in the live tracker and show logos/photos in reports.
 - **Parent Workflow**: Invite parents to players, view parent-only dashboards, and allow limited profile edits.
 - **Admin Dashboard**: Comprehensive admin section for user and data management (restricted access).
 - **Public/Private Teams**: Control team visibility in the public directory.
