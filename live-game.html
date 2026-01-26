@@ -177,8 +177,14 @@
   <header id="scoreboard" class="bg-slate/90 backdrop-blur border-b border-teal/20">
     <div class="max-w-5xl mx-auto px-4 py-3">
       <div class="flex items-center justify-between text-xs text-teal/70 mb-1">
-        <span id="home-team-name" class="home-color">Home Team</span>
-        <span id="away-team-name" class="away-color">Away Team</span>
+        <span class="home-color flex items-center gap-2">
+          <img id="home-team-photo" class="w-6 h-6 rounded-full object-cover hidden" alt="">
+          <span id="home-team-name">Home Team</span>
+        </span>
+        <span class="away-color flex items-center gap-2">
+          <span id="away-team-name">Away Team</span>
+          <img id="away-team-photo" class="w-6 h-6 rounded-full object-cover hidden" alt="">
+        </span>
       </div>
       <div class="flex items-center justify-between">
         <span id="home-score" class="text-5xl font-display font-bold home-color">0</span>

@@ -676,7 +676,15 @@ Write the match report now:`;
                         <div class="text-gray-500 font-medium text-sm">${formatDate(game.date)}</div>
                     </div>
                     <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 md:mb-8 text-gray-900">
-                        ${escapeHtml(team.name)} <span class="text-gray-400 mx-2 md:mx-3">vs</span> ${escapeHtml(game.opponent)}
+                        <span class="inline-flex items-center gap-2">
+                            ${team.photoUrl ? `<img src="${escapeHtml(team.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${escapeHtml(team.name)}
+                        </span>
+                        <span class="text-gray-400 mx-2 md:mx-3">vs</span>
+                        <span class="inline-flex items-center gap-2">
+                            ${game.opponentTeamPhoto ? `<img src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${escapeHtml(game.opponent)}
+                        </span>
                     </h1>
                     <div class="flex justify-center items-center gap-6 md:gap-8 mb-6">
                         <div class="text-center">
@@ -686,7 +694,10 @@ Write the match report now:`;
                         </div>
                         <div class="text-3xl md:text-4xl text-gray-300 font-light">-</div>
                         <div class="text-center">
-                            <div class="text-sm text-gray-500 mb-2 font-medium">${escapeHtml(game.opponent)}</div>
+                            <div class="text-sm text-gray-500 mb-2 font-medium flex items-center justify-center gap-2">
+                                ${game.opponentTeamPhoto ? `<img src="${escapeHtml(game.opponentTeamPhoto)}" alt="" class="w-6 h-6 rounded-full object-cover border border-gray-200">` : ''}
+                                <span>${escapeHtml(game.opponent)}</span>
+                            </div>
                             <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isLoss ? 'text-red-600' : 'text-gray-600'
                     }">${game.awayScore || 0}</div>
                         </div>
@@ -1037,11 +1048,12 @@ Write the match report now:`;
 
                     // Render rows
                     const opponentPlayers = Object.entries(game.opponentStats).map(([id, stats]) => {
-                        const { name, number, notes, ...statValues } = stats;
+                        const { name, number, notes, photoUrl, ...statValues } = stats;
                         return {
                             id,
                             number: number || '-',
                             name: name || 'Opponent Player',
+                            photoUrl: photoUrl || '',
                             stats: statValues
                         };
                     });
@@ -1053,7 +1065,12 @@ Write the match report now:`;
                         return `
                             <tr class="bg-white hover:bg-gray-50 transition">
                                 <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number)}</td>
-                                <td class="px-4 py-4 font-medium text-gray-900">${escapeHtml(p.name)}</td>
+                                <td class="px-4 py-4 font-medium text-gray-900">
+                                    <div class="flex items-center gap-2">
+                                        ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-gray-100 text-gray-600 text-xs flex items-center justify-center font-semibold">${escapeHtml((p.name || 'O')[0])}</div>`}
+                                        <span>${escapeHtml(p.name)}</span>
+                                    </div>
+                                </td>
                                 ${statCells}
                             </tr>
                         `;

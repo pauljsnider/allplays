@@ -1,5 +1,5 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js';
+import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js';
 import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js';
@@ -15,6 +15,10 @@ let currentUser = null;
 let currentConfig = null;
 
 let roster = [];
+let opponentTeam = null;
+let opponentRoster = [];
+let opponentRosterSelected = new Set();
+let allTeamsCache = null;
 let isFinishing = false;
 let allowNavigation = false;
 
@@ -65,6 +69,12 @@ let liveState = {
   lastSyncedAway: null
 };
 
+let liveSync = {
+  playerTimeouts: new Map(),
+  opponentTimeout: null,
+  liveFlagTimeout: null
+};
+
 function scheduleScoreSync() {
   if (!liveState.isLive || !currentTeamId || !currentGameId) return;
   if (liveState.scoreSyncTimeout) return;
@@ -79,6 +89,81 @@ function scheduleScoreSync() {
       liveState.lastSyncedAway = awayScore;
     } catch (error) {
       console.warn('Failed to sync live scores:', error);
+    }
+  }, 500);
+}
+
+function scheduleLiveHasData() {
+  if (!currentTeamId || !currentGameId) return;
+  if (currentGame?.liveHasData) return;
+  if (liveSync.liveFlagTimeout) return;
+  liveSync.liveFlagTimeout = setTimeout(async () => {
+    liveSync.liveFlagTimeout = null;
+    try {
+      await updateGame(currentTeamId, currentGameId, { liveHasData: true });
+      if (currentGame) currentGame.liveHasData = true;
+    } catch (error) {
+      console.warn('Failed to mark live data flag:', error);
+    }
+  }, 500);
+}
+
+function schedulePlayerStatsSync(playerId) {
+  if (!currentTeamId || !currentGameId) return;
+  if (!playerId) return;
+  if (liveSync.playerTimeouts.has(playerId)) return;
+  const timeout = setTimeout(async () => {
+    liveSync.playerTimeouts.delete(playerId);
+    try {
+      const player = roster.find(r => r.id === playerId);
+      const statsObj = {};
+      (currentConfig?.columns || []).forEach(col => {
+        const key = col.toLowerCase();
+        statsObj[key] = state.stats[playerId]?.[key] || 0;
+      });
+      statsObj.fouls = state.stats[playerId]?.fouls || 0;
+      const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+      await setDoc(statsRef, {
+        playerName: player?.name || '',
+        playerNumber: player?.num || '',
+        stats: statsObj,
+        timeMs: state.stats[playerId]?.time || 0
+      }, { merge: true });
+    } catch (error) {
+      console.warn('Failed to sync player stats:', error);
+    }
+  }, 500);
+  liveSync.playerTimeouts.set(playerId, timeout);
+}
+
+function buildOpponentStatsSnapshot() {
+  const opponentStats = {};
+  state.opp.forEach(opp => {
+    opponentStats[opp.id] = {
+      name: opp.name || '',
+      number: opp.number || '',
+      playerId: opp.playerId || null,
+      photoUrl: opp.photoUrl || ''
+    };
+    (currentConfig?.columns || []).forEach(col => {
+      const key = col.toLowerCase();
+      opponentStats[opp.id][key] = opp.stats?.[key] || 0;
+    });
+    opponentStats[opp.id].fouls = opp.stats?.fouls || 0;
+  });
+  return opponentStats;
+}
+
+function scheduleOpponentStatsSync() {
+  if (!currentTeamId || !currentGameId) return;
+  if (liveSync.opponentTimeout) return;
+  liveSync.opponentTimeout = setTimeout(async () => {
+    liveSync.opponentTimeout = null;
+    try {
+      const opponentStats = buildOpponentStatsSnapshot();
+      await updateGame(currentTeamId, currentGameId, { opponentStats });
+    } catch (error) {
+      console.warn('Failed to sync opponent stats:', error);
     }
   }, 500);
 }
@@ -125,6 +210,16 @@ const els = {
   modeQuick: q('#mode-quick'),
   modeQueue: q('#mode-queue'),
   subModeTitle: q('#sub-mode-title'),
+  oppTeamSection: q('#opp-team-section'),
+  oppTeamSearch: q('#opp-team-search'),
+  oppTeamResults: q('#opp-team-results'),
+  oppTeamLinked: q('#opp-team-linked'),
+  oppTeamName: q('#opp-team-name'),
+  oppTeamPhoto: q('#opp-team-photo'),
+  oppTeamClear: q('#opp-team-clear'),
+  oppRosterSection: q('#opp-roster-section'),
+  oppRosterList: q('#opp-roster-list'),
+  oppRosterAddSelected: q('#opp-roster-add-selected'),
   oppInput: q('#opp-input-mobile'),
   oppAdd: q('#opp-add-mobile'),
   oppCards: q('#opp-cards-mobile'),
@@ -163,6 +258,19 @@ const els = {
 
 function q(sel) { return document.querySelector(sel); }
 
+async function safeGetDocs(ref, label = 'collection') {
+  try {
+    return await getDocs(ref);
+  } catch (error) {
+    console.warn(`Failed to read ${label}:`, error);
+    return {
+      docs: [],
+      size: 0,
+      forEach() {}
+    };
+  }
+}
+
 function setTab(tab) {
   els.panelLineup.classList.toggle('hidden', tab !== 'lineup');
   els.panelLive.classList.toggle('hidden', tab !== 'live');
@@ -176,6 +284,10 @@ function setTab(tab) {
 
 function renderHeader() {
   els.scoreLine.textContent = `${state.home} — ${state.away}`;
+  updateClockUI();
+}
+
+function updateClockUI() {
   els.periodChip.textContent = `${state.period} · ${formatClock(state.clock)}`;
   els.clock.textContent = formatClock(state.clock);
 }
@@ -254,7 +366,7 @@ function liveCard(id) {
           ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
           <div class="text-xs font-semibold truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</div>
         </div>
-        <div class="text-[10px] text-slate-500">${formatClock(s.time)}</div>
+        <div class="text-[10px] text-slate-500" data-player-time="${id}">${formatClock(s.time)}</div>
       </div>
       <div class="grid grid-cols-3 gap-1 text-[10px] text-center">
         ${row1Pills}
@@ -317,7 +429,11 @@ function renderOpponents() {
 
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
-        <input data-opp-edit="${o.id}" value="${o.name}" class="w-full text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
+        <div class="flex items-center gap-2">
+          ${avatarHtml({ name: o.name, photoUrl: o.photoUrl }, 'h-6 w-6', 'text-[10px]')}
+          <span class="text-[10px] font-bold text-slate-500">${o.number ? `#${escapeHtml(o.number)}` : '#--'}</span>
+          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
+        </div>
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
           ${oppBtns} ${oppBtn(o.id, 'fouls', 1, 'FLS')} <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>
@@ -330,6 +446,8 @@ function renderOpponents() {
     inp.addEventListener('change', () => {
       const target = state.opp.find(o => o.id === inp.dataset.oppEdit);
       if (target) target.name = inp.value.trim() || target.name;
+      scheduleOpponentStatsSync();
+      scheduleLiveHasData();
     });
   });
   els.oppCards.querySelectorAll('[data-opp-del]').forEach(btn => {
@@ -344,6 +462,206 @@ function renderOpponents() {
       addOppStat(opp, stat, Number(delta));
     });
   });
+  updateOpponentLinkVisibility();
+}
+
+function updateSubtitle() {
+  const subtitle = document.getElementById('game-subtitle');
+  if (subtitle) {
+    subtitle.textContent = `${currentTeam?.name || 'Team'} vs. ${currentGame?.opponent || 'Opponent'}`;
+  }
+}
+
+function updateOpponentLinkVisibility() {
+  if (!els.oppTeamSection) return;
+  const hasOppPlayers = state.opp.some(o => {
+    const hasName = (o.name || '').trim().length > 0;
+    const hasNumber = (o.number || '').trim().length > 0;
+    const hasStats = o.stats && Object.values(o.stats).some(val => val > 0);
+    return hasName || hasNumber || hasStats;
+  });
+  const isLinked = !!currentGame?.opponentTeamId;
+  const shouldHide = isLinked && hasOppPlayers;
+  els.oppTeamSection.classList.toggle('hidden', shouldHide);
+}
+
+async function ensureTeamsCache() {
+  if (allTeamsCache) return;
+  const teams = await getTeams();
+  allTeamsCache = (teams || []).filter(team => team.id !== currentTeamId);
+}
+
+function renderOpponentTeamResults(matches) {
+  if (!els.oppTeamResults) return;
+  if (!matches.length) {
+    els.oppTeamResults.innerHTML = `<div class="px-3 py-2 text-slate-500">No teams found. Keep typing.</div>`;
+  } else {
+    els.oppTeamResults.innerHTML = matches.map(team => `
+      <button class="w-full text-left px-3 py-2 hover:bg-sand/60 flex items-center gap-2" data-opp-team="${team.id}">
+        ${team.photoUrl ? `<img src="${escapeHtml(team.photoUrl)}" class="w-6 h-6 rounded-full object-cover" alt="">`
+          : `<div class="w-6 h-6 rounded-full bg-slate/10 text-slate-600 text-[10px] flex items-center justify-center font-semibold">${escapeHtml((team.name || '?')[0])}</div>`}
+        <div>
+          <div class="font-semibold text-slate-700">${escapeHtml(team.name || 'Unnamed Team')}</div>
+          <div class="text-[10px] text-slate-500">${escapeHtml(team.sport || 'Sport not set')}</div>
+        </div>
+      </button>
+    `).join('');
+  }
+  els.oppTeamResults.classList.remove('hidden');
+  els.oppTeamResults.querySelectorAll('[data-opp-team]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const team = matches.find(t => t.id === btn.dataset.oppTeam);
+      if (team) {
+        await setLinkedOpponentTeam(team);
+        els.oppTeamResults.classList.add('hidden');
+      }
+    });
+  });
+}
+
+async function setLinkedOpponentTeam(team) {
+  opponentTeam = team || null;
+  if (!currentGame) return;
+  if (opponentTeam) {
+    currentGame.opponent = opponentTeam.name || currentGame.opponent;
+    currentGame.opponentTeamId = opponentTeam.id;
+    currentGame.opponentTeamName = opponentTeam.name || currentGame.opponent;
+    currentGame.opponentTeamPhoto = opponentTeam.photoUrl || null;
+    updateSubtitle();
+    if (els.oppTeamName) els.oppTeamName.textContent = opponentTeam.name || 'Opponent';
+    if (els.oppTeamPhoto) {
+      if (opponentTeam.photoUrl) {
+        els.oppTeamPhoto.src = opponentTeam.photoUrl;
+        els.oppTeamPhoto.classList.remove('hidden');
+      } else {
+        els.oppTeamPhoto.classList.add('hidden');
+      }
+    }
+    if (els.oppTeamLinked) els.oppTeamLinked.classList.remove('hidden');
+    await updateGame(currentTeamId, currentGameId, {
+      opponent: currentGame.opponent || 'Opponent',
+      opponentTeamId: opponentTeam.id,
+      opponentTeamName: opponentTeam.name || currentGame.opponent,
+      opponentTeamPhoto: opponentTeam.photoUrl || null
+    });
+    await loadOpponentRoster(opponentTeam.id);
+  } else {
+    if (els.oppTeamLinked) els.oppTeamLinked.classList.add('hidden');
+    if (els.oppTeamPhoto) els.oppTeamPhoto.classList.add('hidden');
+    opponentRoster = [];
+    opponentRosterSelected = new Set();
+    renderOpponentRoster();
+    await updateGame(currentTeamId, currentGameId, {
+      opponentTeamId: null,
+      opponentTeamName: null,
+      opponentTeamPhoto: null
+    });
+  }
+}
+
+function clearLinkedOpponentTeam() {
+  opponentTeam = null;
+  if (els.oppTeamName) els.oppTeamName.textContent = '';
+  if (els.oppTeamPhoto) els.oppTeamPhoto.classList.add('hidden');
+  if (els.oppTeamLinked) els.oppTeamLinked.classList.add('hidden');
+}
+
+async function loadOpponentRoster(teamId) {
+  try {
+    const oppPlayers = await getPlayers(teamId);
+    opponentRoster = oppPlayers.map(p => ({
+      id: p.id,
+      name: p.name || '',
+      number: p.number || p.num || '',
+      photoUrl: p.photoUrl || p.photo || ''
+    }));
+    opponentRosterSelected = new Set(opponentRoster.map(p => p.id));
+    const canAutoPopulate = state.opp.every(o => {
+      const hasName = (o.name || '').trim().length > 0;
+      const hasNumber = (o.number || '').trim().length > 0;
+      const hasStats = o.stats && Object.values(o.stats).some(val => val > 0);
+      return !hasName && !hasNumber && !hasStats;
+    });
+    if (canAutoPopulate) {
+      state.opp = opponentRoster.map(player => ({
+        id: player.id,
+        playerId: player.id,
+        name: player.name || '',
+        number: player.number || '',
+        photoUrl: player.photoUrl || '',
+        stats: statDefaults(currentConfig.columns)
+      }));
+      renderOpponents();
+    }
+    renderOpponentRoster();
+  } catch (e) {
+    console.warn('Failed to load opponent roster:', e);
+    opponentRoster = [];
+    opponentRosterSelected = new Set();
+    renderOpponentRoster();
+  }
+}
+
+function renderOpponentRoster() {
+  if (!els.oppRosterSection || !els.oppRosterList) return;
+  const hasOppPlayers = state.opp.some(o => {
+    const hasName = (o.name || '').trim().length > 0;
+    const hasNumber = (o.number || '').trim().length > 0;
+    const hasStats = o.stats && Object.values(o.stats).some(val => val > 0);
+    return hasName || hasNumber || hasStats;
+  });
+  if (!opponentTeam || opponentRoster.length === 0 || hasOppPlayers) {
+    els.oppRosterSection.classList.add('hidden');
+    els.oppRosterList.innerHTML = '';
+    return;
+  }
+  els.oppRosterSection.classList.remove('hidden');
+  els.oppRosterList.innerHTML = opponentRoster.map(player => `
+    <label class="flex items-center gap-2 border border-slate/10 rounded-lg px-2 py-1 bg-sand/40">
+      <input type="checkbox" class="rounded text-red-600" data-opp-roster="${player.id}" ${opponentRosterSelected.has(player.id) ? 'checked' : ''}>
+      ${avatarHtml(player, 'h-5 w-5', 'text-[9px]')}
+      <span class="text-[10px] font-semibold text-slate-500">${player.number ? `#${escapeHtml(player.number)}` : '#--'}</span>
+      <span class="text-[10px] text-slate-700 truncate">${escapeHtml(player.name || 'Player')}</span>
+    </label>
+  `).join('');
+
+  els.oppRosterList.querySelectorAll('[data-opp-roster]').forEach(input => {
+    input.addEventListener('change', () => {
+      const id = input.dataset.oppRoster;
+      if (input.checked) {
+        opponentRosterSelected.add(id);
+      } else {
+        opponentRosterSelected.delete(id);
+      }
+    });
+  });
+}
+
+function addSelectedOpponentRoster() {
+  if (!opponentRoster.length) return;
+  const selectedIds = Array.from(opponentRosterSelected);
+  if (!selectedIds.length) return;
+  selectedIds.forEach(id => {
+    const player = opponentRoster.find(p => p.id === id);
+    if (!player) return;
+    const existing = state.opp.find(o => o.id === player.id);
+    if (existing) {
+      existing.name = existing.name || player.name;
+      existing.number = existing.number || player.number;
+      existing.photoUrl = existing.photoUrl || player.photoUrl;
+      existing.playerId = existing.playerId || player.id;
+      return;
+    }
+    state.opp.push({
+      id: player.id,
+      playerId: player.id,
+      name: player.name || '',
+      number: player.number || '',
+      photoUrl: player.photoUrl || '',
+      stats: statDefaults(currentConfig.columns)
+    });
+  });
+  renderOpponents();
 }
 
 function oppBtn(id, key, delta, label) {
@@ -421,6 +739,14 @@ function renderLog() {
         // Re-render everything to reflect the changes
         renderAll();
         if (scoreChanged) scheduleScoreSync();
+        if (logEntry?.undoData?.type === 'stat') {
+          if (logEntry.undoData.isOpponent) {
+            scheduleOpponentStatsSync();
+          } else {
+            schedulePlayerStatsSync(logEntry.undoData.playerId);
+          }
+          scheduleLiveHasData();
+        }
 
         if (liveState.isLive) {
           const removeText = logEntry?.text ? `Removed: ${logEntry.text}` : 'Removed event';
@@ -597,6 +923,7 @@ function buildStatEvent(undoData, description) {
     isOpponent,
     opponentPlayerName: opponent?.name || null,
     opponentPlayerNumber: opponent?.number || '',
+    opponentPlayerPhoto: opponent?.photoUrl || '',
     description
   });
 }
@@ -986,19 +1313,7 @@ async function saveAndComplete() {
     });
 
     // 3. Build opponentStats in same shape as track.html
-    const opponentStats = {};
-    state.opp.forEach(opp => {
-      opponentStats[opp.id] = {
-        name: opp.name || '',
-        number: opp.number || ''
-      };
-      (currentConfig?.columns || []).forEach(col => {
-        const key = col.toLowerCase();
-        opponentStats[opp.id][key] = opp.stats?.[key] || 0;
-      });
-      // Always include fouls
-      opponentStats[opp.id].fouls = opp.stats?.fouls || 0;
-    });
+    const opponentStats = buildOpponentStatsSnapshot();
 
     // 4. Update game doc
     const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
@@ -1106,9 +1421,19 @@ function tick() {
   state.lastTick = now;
   state.clock += delta;
   state.onCourt.forEach(id => state.stats[id].time += delta);
-  renderHeader();
-  renderLive();
+  updateClockUI();
+  updatePlayerTimes();
   renderFairness();
+}
+
+function updatePlayerTimes() {
+  if (!els.livePlayers) return;
+  state.onCourt.forEach(id => {
+    const timeEl = els.livePlayers.querySelector(`[data-player-time="${id}"]`);
+    if (timeEl) {
+      timeEl.textContent = formatClock(state.stats[id].time);
+    }
+  });
 }
 
 function setPeriod(p) {
@@ -1160,6 +1485,8 @@ function addStat(id, key, delta) {
     value: delta,
     isOpponent: false
   });
+  schedulePlayerStatsSync(id);
+  scheduleLiveHasData();
   if (liveState.isLive) {
     broadcastEvent(buildStatEvent({
       playerId: id,
@@ -1193,6 +1520,8 @@ function addOppStat(id, key, delta) {
     value: delta,
     isOpponent: true
   });
+  scheduleOpponentStatsSync();
+  scheduleLiveHasData();
   if (liveState.isLive) {
     broadcastEvent(buildStatEvent({
       playerId: id,
@@ -1350,11 +1679,59 @@ function attachEvents() {
     renderLineup();
     renderLive();
   });
+
+  if (els.oppTeamSearch) {
+    els.oppTeamSearch.addEventListener('input', async () => {
+      const term = els.oppTeamSearch.value.trim();
+      if (!term) {
+        els.oppTeamResults?.classList.add('hidden');
+        return;
+      }
+      await ensureTeamsCache();
+      const matches = allTeamsCache
+        .filter(team => (team.name || '').toLowerCase().includes(term.toLowerCase()))
+        .slice(0, 6);
+      renderOpponentTeamResults(matches);
+    });
+    els.oppTeamSearch.addEventListener('focus', () => {
+      if (els.oppTeamResults?.innerHTML.trim()) {
+        els.oppTeamResults.classList.remove('hidden');
+      }
+    });
+    els.oppTeamSearch.addEventListener('blur', () => {
+      setTimeout(() => els.oppTeamResults?.classList.add('hidden'), 150);
+    });
+  }
+
+  els.oppTeamClear?.addEventListener('click', async () => {
+    clearLinkedOpponentTeam();
+    await setLinkedOpponentTeam(null);
+  });
+
+  els.oppRosterAddSelected?.addEventListener('click', () => {
+    addSelectedOpponentRoster();
+  });
+
   els.oppAdd.addEventListener('click', () => {
     const val = els.oppInput.value.trim();
     if (!val) return;
+    let number = '';
+    let name = val;
+    const match = val.match(/^#?(\d+)\s*(.*)$/);
+    if (match) {
+      number = match[1] || '';
+      name = match[2] ? match[2].trim() : '';
+      if (!name) name = val;
+    }
     const stats = statDefaults(currentConfig?.columns || []);
-    state.opp.push({ id: `o-${Date.now()}`, name: val, stats });
+    state.opp.push({
+      id: `o-${Date.now()}`,
+      playerId: null,
+      name,
+      number,
+      photoUrl: '',
+      stats
+    });
     els.oppInput.value = '';
     renderOpponents();
   });
@@ -1703,6 +2080,36 @@ async function init() {
 
     currentTeam = team;
     currentGame = game;
+    updateSubtitle();
+    opponentTeam = null;
+    if (els.oppTeamName) els.oppTeamName.textContent = '';
+    if (els.oppTeamPhoto) els.oppTeamPhoto.classList.add('hidden');
+    if (els.oppTeamLinked) els.oppTeamLinked.classList.add('hidden');
+    updateOpponentLinkVisibility();
+
+    if (game.opponentTeamId) {
+      try {
+        const linkedTeam = await getTeam(game.opponentTeamId);
+        opponentTeam = linkedTeam || {
+          id: game.opponentTeamId,
+          name: game.opponentTeamName || game.opponent || 'Opponent',
+          photoUrl: game.opponentTeamPhoto || ''
+        };
+        if (els.oppTeamName) els.oppTeamName.textContent = opponentTeam.name || 'Opponent';
+        if (els.oppTeamPhoto) {
+          if (opponentTeam.photoUrl) {
+            els.oppTeamPhoto.src = opponentTeam.photoUrl;
+            els.oppTeamPhoto.classList.remove('hidden');
+          } else {
+            els.oppTeamPhoto.classList.add('hidden');
+          }
+        }
+        if (els.oppTeamLinked) els.oppTeamLinked.classList.remove('hidden');
+        updateOpponentLinkVisibility();
+      } catch (e) {
+        console.warn('Failed to load linked opponent team:', e);
+      }
+    }
 
     roster = (playersList || []).map(p => ({
       id: p.id,
@@ -1744,49 +2151,166 @@ async function init() {
     state.subQueue = [];
     state.queueMode = false;
 
-    // Load existing aggregated stats
-    const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
-    statsSnapshot.forEach(d => {
-      if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
-      const existing = d.data().stats || {};
-      Object.assign(state.stats[d.id], existing);
-      if (typeof d.data().timeMs === 'number') {
-        state.stats[d.id].time = d.data().timeMs;
-      }
-    });
+    let shouldResume = true;
+    const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
 
-    // Recalculate home score if needed based on points column
-    const pointsCol = (currentConfig.columns || []).find(isPointsColumn);
-    if (pointsCol) {
-      const pointsKey = pointsCol.toLowerCase();
-      const totalPoints = roster.reduce((sum, r) => sum + (state.stats[r.id]?.[pointsKey] || 0), 0);
-      if (totalPoints > 0 && state.home === 0) {
-        state.home = totalPoints;
+    try {
+      const hasScores = (game.homeScore || 0) > 0 || (game.awayScore || 0) > 0;
+      const hasLiveFlag = !!game.liveHasData || game.liveStatus === 'live';
+      const shouldPromptResume = hasLiveFlag || hasScores || hasOpponentStats;
+
+      if (shouldPromptResume) {
+        shouldResume = confirm('This game already has tracked data. Continue where you left off?\n\nClick Cancel to start over and clear previous stats.');
       }
+
+      if (!shouldResume) {
+        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
+        ]);
+        const deletions = [
+          ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
+          ...statsSnapshot.docs.map(d => deleteDoc(d.ref)),
+          ...liveEventsSnapshot.docs.map(d => deleteDoc(d.ref))
+        ];
+        const results = await Promise.allSettled(deletions);
+        const failedDeletes = results.filter(r => r.status === 'rejected');
+        if (failedDeletes.length) {
+          console.warn('Some live data could not be deleted:', failedDeletes);
+        }
+        try {
+          await updateGame(teamId, gameId, {
+            homeScore: 0,
+            awayScore: 0,
+            opponentStats: {},
+            liveStatus: 'scheduled',
+            liveHasData: false,
+            liveLineup: { onCourt: [], bench: roster.map(r => r.id) }
+          });
+          currentGame.liveStatus = 'scheduled';
+          currentGame.liveHasData = false;
+        } catch (error) {
+          console.warn('Failed to reset game metadata:', error);
+        }
+        state.home = 0;
+        state.away = 0;
+      }
+
+      if (shouldResume) {
+        const statsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats');
+        const hasAggregatedStats = statsSnapshot.size > 0;
+        let liveEvents = [];
+
+        if (!hasAggregatedStats || !hasOpponentStats) {
+          const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
+          liveEvents = liveEventsSnapshot.docs.map(d => d.data());
+        }
+
+        // Load existing aggregated stats
+        statsSnapshot.forEach(d => {
+          if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
+          const existing = d.data().stats || {};
+          Object.assign(state.stats[d.id], existing);
+          if (typeof d.data().timeMs === 'number') {
+            state.stats[d.id].time = d.data().timeMs;
+          }
+        });
+
+        // Recalculate home score if needed based on points column
+        const pointsCol = (currentConfig.columns || []).find(isPointsColumn);
+        if (pointsCol) {
+          const pointsKey = pointsCol.toLowerCase();
+          const totalPoints = roster.reduce((sum, r) => sum + (state.stats[r.id]?.[pointsKey] || 0), 0);
+          if (totalPoints > 0 && state.home === 0) {
+            state.home = totalPoints;
+          }
+        }
+
+        if (!hasAggregatedStats && liveEvents.length) {
+          liveEvents.forEach(ev => {
+            if (ev.type !== 'stat' || ev.isOpponent) return;
+            const playerId = ev.playerId;
+            const key = (ev.statKey || '').toLowerCase();
+            const value = Number(ev.value || 0);
+            if (!playerId || !key) return;
+            if (!state.stats[playerId]) state.stats[playerId] = statDefaults(currentConfig.columns);
+            state.stats[playerId][key] = (state.stats[playerId][key] || 0) + value;
+          });
+          if (pointsCol) {
+            const pointsKey = pointsCol.toLowerCase();
+            state.home = roster.reduce((sum, r) => sum + (state.stats[r.id]?.[pointsKey] || 0), 0);
+          }
+        }
+
+        if (!hasOpponentStats && liveEvents.length) {
+          const oppMap = new Map();
+          liveEvents.forEach(ev => {
+            if (ev.type !== 'stat' || !ev.isOpponent) return;
+            const playerId = ev.playerId || `opp-${oppMap.size + 1}`;
+            if (!oppMap.has(playerId)) {
+              oppMap.set(playerId, {
+                id: playerId,
+                playerId,
+                name: ev.opponentPlayerName || '',
+                number: ev.opponentPlayerNumber || '',
+                photoUrl: ev.opponentPlayerPhoto || '',
+                stats: statDefaults(currentConfig.columns)
+              });
+            }
+            const opp = oppMap.get(playerId);
+            const key = (ev.statKey || '').toLowerCase();
+            const value = Number(ev.value || 0);
+            if (key) opp.stats[key] = (opp.stats[key] || 0) + value;
+          });
+          if (oppMap.size) {
+            state.opp = Array.from(oppMap.values());
+            if (pointsCol) {
+              const pointsKey = pointsCol.toLowerCase();
+              state.away = state.opp.reduce((sum, o) => sum + (o.stats?.[pointsKey] || 0), 0);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Resume/reset flow failed:', error);
     }
 
     // Initialize opponents from game or fresh
-    if (game.opponentStats && Object.keys(game.opponentStats).length > 0) {
+    if (shouldResume && hasOpponentStats) {
       state.opp = Object.entries(game.opponentStats).map(([id, data]) => {
         const stats = statDefaults(currentConfig.columns);
         (currentConfig.columns || []).forEach(col => {
           const key = col.toLowerCase();
           if (data[key] !== undefined) stats[key] = data[key];
         });
-        return { id, name: data.name || '', number: data.number || '', stats };
+        return {
+          id,
+          playerId: data.playerId || null,
+          name: data.name || '',
+          number: data.number || '',
+          photoUrl: data.photoUrl || '',
+          stats
+        };
       });
-    } else {
+    }
+
+    if (!state.opp.length) {
       state.opp = [1, 2, 3].map(i => ({
         id: `opp${i}`,
         name: '',
+        number: '',
+        photoUrl: '',
+        playerId: null,
         stats: statDefaults(currentConfig.columns)
       }));
     }
 
-    const subtitle = document.getElementById('game-subtitle');
-    if (subtitle) {
-      subtitle.textContent = `${currentTeam.name} vs. ${currentGame.opponent || 'Opponent'}`;
+    if (opponentTeam?.id) {
+      await loadOpponentRoster(opponentTeam.id);
     }
+
+    updateSubtitle();
 
     setTab('live');
     setPeriod('Q1');

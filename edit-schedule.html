@@ -97,8 +97,20 @@
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Opponent</label>
-                            <input type="text" id="opponent" required
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <div class="relative">
+                                <input type="text" id="opponent" required
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                    placeholder="Search or type opponent name">
+                                <div id="opponent-search-results"
+                                    class="hidden absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto text-sm">
+                                </div>
+                            </div>
+                            <div id="linked-opponent-chip"
+                                class="hidden mt-2 inline-flex items-center gap-2 text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-3 py-1">
+                                <span>Linked:</span>
+                                <span id="linked-opponent-name" class="font-semibold"></span>
+                                <button type="button" id="clear-linked-opponent" class="text-indigo-600 hover:text-indigo-800">Remove</button>
+                            </div>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Location</label>
@@ -497,7 +509,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount } from './js/db.js';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -516,10 +528,72 @@
         let editingSeriesId = null; // For editing existing recurring series
         let editingOccurrence = null; // { masterId, isoDate, master } for recurring practice editing
         let seriesMasters = {}; // Cache of series master docs by id
+        let allTeamsCache = null;
+        let selectedOpponentTeam = null;
+
+        const opponentInput = document.getElementById('opponent');
+        const opponentResults = document.getElementById('opponent-search-results');
+        const linkedOpponentChip = document.getElementById('linked-opponent-chip');
+        const linkedOpponentName = document.getElementById('linked-opponent-name');
+        const clearLinkedOpponentBtn = document.getElementById('clear-linked-opponent');
 
         function mapLink(locationText) {
             if (!locationText) return null;
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
+        }
+
+        async function ensureTeamsCache() {
+            if (allTeamsCache) return;
+            const teams = await getTeams();
+            allTeamsCache = (teams || []).filter(team => team.id !== currentTeamId);
+        }
+
+        function setLinkedOpponent(team) {
+            selectedOpponentTeam = team || null;
+            if (selectedOpponentTeam) {
+                linkedOpponentName.textContent = selectedOpponentTeam.name || '';
+                linkedOpponentChip.classList.remove('hidden');
+                if (selectedOpponentTeam.name) {
+                    opponentInput.value = selectedOpponentTeam.name;
+                }
+            } else {
+                linkedOpponentName.textContent = '';
+                linkedOpponentChip.classList.add('hidden');
+            }
+        }
+
+        function clearLinkedOpponent() {
+            selectedOpponentTeam = null;
+            linkedOpponentName.textContent = '';
+            linkedOpponentChip.classList.add('hidden');
+        }
+
+        function renderOpponentResults(matches, term) {
+            if (!matches.length) {
+                opponentResults.innerHTML = `
+                    <div class="px-3 py-2 text-gray-500">No teams found. Keep typing to add manually.</div>
+                `;
+            } else {
+                opponentResults.innerHTML = matches.map(team => `
+                    <button type="button" class="w-full text-left px-3 py-2 hover:bg-indigo-50 flex items-center gap-2" data-team-id="${team.id}">
+                        ${team.photoUrl ? `<img src="${team.photoUrl}" alt="" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 text-xs flex items-center justify-center font-semibold">${(team.name || '?')[0]}</div>`}
+                        <div>
+                            <div class="font-medium text-gray-900">${team.name || 'Unnamed Team'}</div>
+                            <div class="text-xs text-gray-500">${team.sport || 'Sport not set'}</div>
+                        </div>
+                    </button>
+                `).join('');
+            }
+            opponentResults.classList.remove('hidden');
+            opponentResults.querySelectorAll('[data-team-id]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const team = (matches || []).find(t => t.id === btn.dataset.teamId);
+                    if (team) {
+                        setLinkedOpponent(team);
+                        opponentResults.classList.add('hidden');
+                    }
+                });
+            });
         }
 
         checkAuth((user) => {
@@ -558,6 +632,7 @@
             }
 
             currentTeam = team;
+            setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
 
             // Fetch unread count and render banner
@@ -576,6 +651,43 @@
             loadConfigs();
             renderCalendarManagement();
             loadSchedule();
+        }
+
+        function setupOpponentSearch() {
+            if (!opponentInput || !opponentResults) return;
+
+            opponentInput.addEventListener('input', async () => {
+                const term = opponentInput.value.trim();
+                if (selectedOpponentTeam && term.toLowerCase() !== (selectedOpponentTeam.name || '').toLowerCase()) {
+                    clearLinkedOpponent();
+                }
+                if (!term) {
+                    opponentResults.classList.add('hidden');
+                    return;
+                }
+                await ensureTeamsCache();
+                const matches = allTeamsCache
+                    .filter(team => (team.name || '').toLowerCase().includes(term.toLowerCase()))
+                    .slice(0, 6);
+                renderOpponentResults(matches, term);
+            });
+
+            opponentInput.addEventListener('focus', () => {
+                if (opponentResults.innerHTML.trim()) {
+                    opponentResults.classList.remove('hidden');
+                }
+            });
+
+            opponentInput.addEventListener('blur', () => {
+                setTimeout(() => opponentResults.classList.add('hidden'), 150);
+            });
+
+            if (clearLinkedOpponentBtn) {
+                clearLinkedOpponentBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    clearLinkedOpponent();
+                });
+            }
         }
 
         async function loadConfigs() {
@@ -730,6 +842,9 @@
                         date: eventDate,
                         end: event.end,
                         opponent: event.opponent,
+                        opponentTeamId: event.opponentTeamId || null,
+                        opponentTeamName: event.opponentTeamName || null,
+                        opponentTeamPhoto: event.opponentTeamPhoto || null,
                         title: event.title,
                         location: event.location || 'TBD',
                         notes: event.notes,
@@ -967,6 +1082,16 @@
             document.getElementById('opponent').value = game.opponent || '';
             document.getElementById('location').value = game.location || '';
             document.getElementById('statConfig').value = game.statTrackerConfigId || '';
+            if (game.opponentTeamId) {
+                setLinkedOpponent({
+                    id: game.opponentTeamId,
+                    name: game.opponentTeamName || game.opponent || 'Opponent',
+                    photoUrl: game.opponentTeamPhoto || '',
+                    sport: game.opponentTeamSport || ''
+                });
+            } else {
+                clearLinkedOpponent();
+            }
 
             // Update UI
             document.getElementById('submit-game-btn').textContent = 'Update Game';
@@ -981,6 +1106,7 @@
             document.getElementById('add-game-form').reset();
             document.getElementById('submit-game-btn').textContent = 'Add Game';
             document.getElementById('cancel-edit-game-btn').classList.add('hidden');
+            clearLinkedOpponent();
         }
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
@@ -999,7 +1125,10 @@
                     date: Timestamp.fromDate(new Date(dateVal)),
                     opponent,
                     location,
-                    statTrackerConfigId: configId || null
+                    statTrackerConfigId: configId || null,
+                    opponentTeamId: selectedOpponentTeam ? selectedOpponentTeam.id : null,
+                    opponentTeamName: selectedOpponentTeam ? selectedOpponentTeam.name || opponent : null,
+                    opponentTeamPhoto: selectedOpponentTeam ? selectedOpponentTeam.photoUrl || null : null
                 };
 
                 if (editingGameId) {

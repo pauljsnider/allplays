@@ -74,6 +74,8 @@ const state = {
 const els = {
   homeTeamName: q('#home-team-name'),
   awayTeamName: q('#away-team-name'),
+  homeTeamPhoto: q('#home-team-photo'),
+  awayTeamPhoto: q('#away-team-photo'),
   homeScore: q('#home-score'),
   awayScore: q('#away-score'),
   period: q('#period'),
@@ -194,6 +196,22 @@ function updateTabs() {
 function renderGameInfo() {
   els.homeTeamName.textContent = state.team?.name || 'Home Team';
   els.awayTeamName.textContent = state.game?.opponent || 'Away Team';
+  if (els.homeTeamPhoto) {
+    if (state.team?.photoUrl) {
+      els.homeTeamPhoto.src = state.team.photoUrl;
+      els.homeTeamPhoto.classList.remove('hidden');
+    } else {
+      els.homeTeamPhoto.classList.add('hidden');
+    }
+  }
+  if (els.awayTeamPhoto) {
+    if (state.game?.opponentTeamPhoto) {
+      els.awayTeamPhoto.src = state.game.opponentTeamPhoto;
+      els.awayTeamPhoto.classList.remove('hidden');
+    } else {
+      els.awayTeamPhoto.classList.add('hidden');
+    }
+  }
   if (state.game?.date) {
     const date = state.game.date.toDate ? state.game.date.toDate() : new Date(state.game.date);
     els.gameStartTime.textContent = `Scheduled: ${date.toLocaleString()}`;
@@ -278,12 +296,14 @@ function renderStats() {
       const val = player[key] || 0;
       return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
     }).join('');
+    const initial = escapeHtml((player.name || 'O')[0]);
+    const avatar = player.photoUrl
+      ? `<img src="${escapeHtml(player.photoUrl)}" class="w-6 h-6 rounded-full object-cover" alt="">`
+      : `<div class="w-6 h-6 rounded-full bg-coral/20 text-coral text-[10px] flex items-center justify-center">${initial}</div>`;
     return `
       <div class="bg-slate/50 rounded-lg px-3 py-2">
         <div class="flex items-center gap-2 min-w-0">
-          <div class="w-6 h-6 rounded-full bg-coral/20 text-coral text-[10px] flex items-center justify-center">
-            ${escapeHtml((player.name || 'O')[0])}
-          </div>
+          ${avatar}
           <span class="text-coral font-mono text-xs">#${escapeHtml(player.number || '')}</span>
           <span class="${nameClass} text-xs truncate">${escapeHtml(player.name || 'Opponent')}</span>
         </div>
@@ -683,7 +703,8 @@ function processNewEvents(events) {
         state.opponentStats[event.playerId] = {
           ...existing,
           name: event.opponentPlayerName || existing.name || '',
-          number: event.opponentPlayerNumber || existing.number || ''
+          number: event.opponentPlayerNumber || existing.number || '',
+          photoUrl: event.opponentPlayerPhoto || existing.photoUrl || ''
         };
         state.opponentStats[event.playerId][event.statKey] =
           (state.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);

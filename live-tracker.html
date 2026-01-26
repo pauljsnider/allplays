@@ -137,6 +137,27 @@
 
     <!-- Opponents -->
     <section id="panel-opponents" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-2 hidden">
+      <div id="opp-team-section" class="rounded-xl border border-slate/10 bg-sand/70 p-2 space-y-2">
+        <p class="text-[11px] uppercase tracking-[0.18em] text-slate/60 font-semibold">Link Opponent Team</p>
+        <div class="relative">
+          <input id="opp-team-search" class="w-full px-3 py-2 rounded-lg border border-slate/10 text-sm" placeholder="Search teams by name">
+          <div id="opp-team-results" class="hidden absolute z-10 mt-1 w-full bg-white border border-slate/10 rounded-lg shadow-lg max-h-48 overflow-auto text-xs"></div>
+        </div>
+        <div id="opp-team-linked" class="hidden flex items-center justify-between text-xs bg-white border border-slate/10 rounded-lg px-3 py-2">
+          <div class="flex items-center gap-2">
+            <img id="opp-team-photo" class="w-6 h-6 rounded-full object-cover hidden" alt="">
+            <span class="font-semibold text-slate-700" id="opp-team-name"></span>
+          </div>
+          <button id="opp-team-clear" class="text-slate-500 hover:text-slate-700 text-[11px]">Clear</button>
+        </div>
+      </div>
+      <div id="opp-roster-section" class="hidden rounded-xl border border-slate/10 bg-white p-2 space-y-2">
+        <div class="flex items-center justify-between">
+          <p class="text-[11px] uppercase tracking-[0.18em] text-slate/60 font-semibold">Opponent Roster</p>
+          <button id="opp-roster-add-selected" class="pill px-2 py-1 bg-red-600 text-white text-[10px] font-semibold">Add selected</button>
+        </div>
+        <div id="opp-roster-list" class="grid grid-cols-2 gap-2 text-xs"></div>
+      </div>
       <div class="flex gap-2">
         <input id="opp-input-mobile" class="flex-1 px-3 py-2 rounded-lg border border-slate/10 text-sm" placeholder="# / name">
         <button id="opp-add-mobile" class="px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold">Add</button>
