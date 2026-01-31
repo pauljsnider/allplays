@@ -156,7 +156,7 @@ export function renderHeader(container, user) {
 
     // Add logout handler
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js');
+      const { logout } = await import('./auth.js?v=9');
       await logout();
       window.location.href = 'index.html';
     });
@@ -219,49 +219,65 @@ export function renderFooter(container) {
  * @returns {Promise<Array>} Array of parsed calendar events
  */
 export async function fetchAndParseCalendar(url) {
+  const timeoutMs = 5000;
+
+  function normalizeIcsText(text) {
+    const marker = 'BEGIN:VCALENDAR';
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex === -1) {
+      return text;
+    }
+    return text.slice(markerIndex);
+  }
+
+  async function fetchWithTimeout(fetchUrl) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(fetchUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  }
+
+  function buildProxyUrls(targetUrl) {
+    const cleanedUrl = targetUrl.trim();
+    const httpsUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+    return [
+      `https://corsproxy.io/?${encodeURIComponent(httpsUrl)}`,
+      `https://r.jina.ai/https://${httpsUrl.replace(/^https:\/\//i, '')}`,
+      `https://r.jina.ai/http://${httpsUrl.replace(/^https?:\/\//i, '')}`
+    ];
+  }
+
   try {
     // Try direct fetch first
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-    let response = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    // If CORS error, use proxy
-    if (!response.ok && (response.status === 0 || response.type === 'opaque')) {
-      console.log('CORS issue detected, using proxy...');
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-      response = await fetch(proxyUrl);
-    }
-
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       throw new Error(`Failed to fetch calendar: ${response.statusText}`);
     }
     const icsText = await response.text();
-    return parseICS(icsText);
+    return parseICS(normalizeIcsText(icsText));
   } catch (error) {
-    // If direct fetch fails, try with CORS proxy
-    // Check for common fetch failure types: CORS errors (TypeError), timeouts (AbortError), or messages containing 'fetch'/'CORS'
+    // If direct fetch fails, try with proxy fallbacks
     const shouldTryProxy = error.name === 'TypeError' ||
                            error.name === 'AbortError' ||
                            error.message.includes('fetch') ||
                            error.message.includes('CORS');
     if (shouldTryProxy) {
-      try {
-        console.log('Direct fetch failed, trying CORS proxy...');
-        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-        const proxyController = new AbortController();
-        const proxyTimeoutId = setTimeout(() => proxyController.abort(), 5000);
-        const response = await fetch(proxyUrl, { signal: proxyController.signal });
-        clearTimeout(proxyTimeoutId);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch calendar via proxy: ${response.statusText}`);
+      const proxyUrls = buildProxyUrls(url);
+      for (const proxyUrl of proxyUrls) {
+        try {
+          console.log('Calendar fetch failed, trying proxy:', proxyUrl);
+          const response = await fetchWithTimeout(proxyUrl);
+          if (!response.ok) {
+            throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
+          }
+          const icsText = await response.text();
+          return parseICS(normalizeIcsText(icsText));
+        } catch (proxyError) {
+          console.warn('Proxy fetch attempt failed:', proxyError);
         }
-        const icsText = await response.text();
-        return parseICS(icsText);
-      } catch (proxyError) {
-        console.error('Proxy fetch also failed:', proxyError);
-        throw new Error(`Cannot fetch calendar. CORS blocked and proxy failed: ${proxyError.message}`);
       }
+      throw new Error('Cannot fetch calendar. All proxy attempts failed.');
     }
     console.error('Error fetching calendar:', error);
     throw error;
