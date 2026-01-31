@@ -119,6 +119,18 @@
                             class="w-full px-3 py-2 border border-gray-300 rounded mb-2 text-sm">
                         <p class="text-xs text-gray-500 mb-2">We'll send them an email invite with a link to join.</p>
                         <div id="admin-invite-status" class="hidden mb-2 text-sm p-2 rounded"></div>
+                        <div id="admin-invite-code" class="hidden mb-2 bg-gray-50 rounded border border-gray-200 p-3">
+                            <div class="flex items-center justify-between bg-white border border-gray-300 rounded px-2 py-1 mb-2">
+                                <code id="admin-code-text" class="text-lg font-bold text-gray-700 tracking-widest"></code>
+                                <button id="copy-admin-code-btn" type="button" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
+                            </div>
+                            <button id="copy-admin-link-btn" type="button" class="w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                                </svg>
+                                Copy Signup Link
+                            </button>
+                        </div>
                         <div class="flex gap-2">
                             <button id="save-admin-btn" type="button"
                                 class="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700">Send Invite</button>
@@ -318,15 +330,19 @@
             btn.disabled = true;
             btn.textContent = 'Sending...';
             statusDiv.classList.add('hidden');
+            document.getElementById('admin-invite-code').classList.add('hidden');
 
             try {
                 // If we have a team ID (editing existing team), send invite email
+                let showCode = false;
                 if (currentTeamId) {
                     const result = await inviteAdmin(currentTeamId, email);
 
                     if (result.existingUser) {
                         // User exists - show code for them
-                        showAdminStatus(`${email} already has an account. Share this code with them: ${result.code}`, 'info');
+                        showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
+                        showAdminCode(result.code);
+                        showCode = true;
                     } else {
                         // New user - send email
                         try {
@@ -336,7 +352,9 @@
                             showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
                         } catch (emailError) {
                             console.error('Failed to send admin invite email:', emailError);
-                            showAdminStatus(`Could not send email. Share this code with them: ${result.code}`, 'warning');
+                            showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
+                            showAdminCode(result.code);
+                            showCode = true;
                         }
                     }
                 }
@@ -346,11 +364,13 @@
                 renderAdminList();
                 input.value = '';
 
-                // Auto-hide form after success (after a delay so user sees message)
-                setTimeout(() => {
-                    document.getElementById('add-admin-form').classList.add('hidden');
-                    statusDiv.classList.add('hidden');
-                }, 3000);
+                // Only auto-hide if no code is displayed (user needs time to copy)
+                if (!showCode) {
+                    setTimeout(() => {
+                        document.getElementById('add-admin-form').classList.add('hidden');
+                        statusDiv.classList.add('hidden');
+                    }, 3000);
+                }
 
             } catch (e) {
                 console.error('Error inviting admin:', e);
@@ -376,6 +396,35 @@
                 statusDiv.classList.add('bg-yellow-100', 'text-yellow-800');
             }
         }
+
+        function showAdminCode(code) {
+            document.getElementById('admin-code-text').textContent = code;
+            document.getElementById('admin-invite-code').classList.remove('hidden');
+        }
+
+        // Copy admin code button
+        document.getElementById('copy-admin-code-btn').addEventListener('click', () => {
+            const code = document.getElementById('admin-code-text').textContent;
+            navigator.clipboard.writeText(code);
+            const btn = document.getElementById('copy-admin-code-btn');
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+        });
+
+        // Copy admin signup link button
+        document.getElementById('copy-admin-link-btn').addEventListener('click', async () => {
+            const code = document.getElementById('admin-code-text').textContent;
+            const signupUrl = `${window.location.origin}/login.html?code=${code}`;
+            try {
+                await navigator.clipboard.writeText(signupUrl);
+                const btn = document.getElementById('copy-admin-link-btn');
+                const originalHTML = btn.innerHTML;
+                btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg> Copied Link!';
+                setTimeout(() => { btn.innerHTML = originalHTML; }, 2000);
+            } catch (e) {
+                console.error('Failed to copy signup link:', e);
+            }
+        });
 
         document.getElementById('team-form').addEventListener('submit', async (e) => {
             e.preventDefault();

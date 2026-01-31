@@ -211,7 +211,18 @@ function renderTeams(teams) {
 
 function renderUsers(users) {
     const tbody = document.getElementById('users-table-body');
-    tbody.innerHTML = users.map(u => `
+    tbody.innerHTML = users.map(u => {
+        // Determine verification status:
+        // - emailVerificationRequired=true + not verified → unverified (red)
+        // - emailVerificationRequired not set → signed up via Google/OAuth (inherently verified)
+        // - verified → green check
+        const needsVerification = u.emailVerificationRequired === true;
+        const isVerified = !needsVerification || u.emailVerified;
+        const verifiedHtml = isVerified
+            ? '<span class="inline-flex items-center gap-1 text-green-600"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg></span>'
+            : '<span class="inline-flex items-center gap-1 text-red-400"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg></span>';
+
+        return `
         <tr>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                 ${escapeHtml(u.email || '-')}
@@ -225,8 +236,12 @@ function renderUsers(users) {
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ${u.updatedAt?.toDate ? u.updatedAt.toDate().toLocaleDateString() : '-'}
             </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                ${verifiedHtml}
+            </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 }
 
 window.deleteTeamAdmin = async function (teamId, teamName) {

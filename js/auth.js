@@ -311,19 +311,20 @@ export function checkAuth(callback, options = {}) {
                     if (profile.roles) user.roles = profile.roles;
                 }
 
-                // Check if user needs email verification (new email/password signups only)
-                // Skip this check on verification-related pages
-                if (!skipEmailVerificationCheck &&
-                    profile &&
-                    profile.emailVerificationRequired &&
-                    !user.emailVerified) {
-                    // Redirect to verification pending page
-                    if (!window.location.pathname.includes('verify-pending.html') &&
-                        !window.location.pathname.includes('reset-password.html')) {
-                        window.location.href = 'verify-pending.html';
-                        return;
-                    }
-                }
+                // Email verification: tracked but not enforced.
+                // Users can enter the app unverified. Verification status is
+                // shown on the profile page and admin dashboard.
+                // To re-enable the gate, uncomment the redirect below.
+                // if (!skipEmailVerificationCheck &&
+                //     profile &&
+                //     profile.emailVerificationRequired &&
+                //     !user.emailVerified) {
+                //     if (!window.location.pathname.includes('verify-pending.html') &&
+                //         !window.location.pathname.includes('reset-password.html')) {
+                //         window.location.href = 'verify-pending.html';
+                //         return;
+                //     }
+                // }
             } catch (e) {
                 console.error('Error fetching user profile for auth check:', e);
             }

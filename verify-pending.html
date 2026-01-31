@@ -54,19 +54,20 @@
             <h1 class="text-2xl font-bold mb-4">Verify Your Email</h1>
             <p class="text-gray-600 mb-2">We've sent a verification email to:</p>
             <p id="user-email" class="font-semibold text-gray-800 mb-4">loading...</p>
-            <p class="text-gray-600 mb-6">Please check your inbox and click the verification link to activate your account.</p>
+            <p class="text-gray-600 mb-6">Please check your inbox and click the verification link. You can verify now or later from your profile.</p>
 
             <div class="space-y-3">
+                <a id="continue-btn" href="dashboard.html"
+                    class="block w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition text-center font-medium">
+                    Continue to Dashboard
+                </a>
+                <p id="auto-redirect-msg" class="text-xs text-gray-400 text-center">Redirecting in <span id="countdown">5</span> seconds...</p>
                 <button id="resend-btn"
-                    class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                    class="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300 transition">
                     Resend Verification Email
                 </button>
-                <button id="check-btn"
-                    class="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300 transition">
-                    I've Verified My Email
-                </button>
                 <button id="logout-btn"
-                    class="w-full text-gray-500 py-2 px-4 rounded-md hover:text-gray-700 transition">
+                    class="w-full text-gray-500 py-2 px-4 rounded-md hover:text-gray-700 transition text-sm">
                     Sign Out
                 </button>
             </div>
@@ -87,7 +88,6 @@
 
         const userEmailEl = document.getElementById('user-email');
         const resendBtn = document.getElementById('resend-btn');
-        const checkBtn = document.getElementById('check-btn');
         const logoutBtn = document.getElementById('logout-btn');
         const messageEl = document.getElementById('message');
 
@@ -97,7 +97,7 @@
             messageEl.classList.remove('hidden');
         }
 
-        // Check auth state - skip email verification check to avoid redirect loop
+        // Check auth state
         checkAuth((user) => {
             if (!user) {
                 window.location.href = 'login.html';
@@ -106,10 +106,23 @@
 
             userEmailEl.textContent = user.email;
 
-            // If user is already verified, redirect to home
+            // If already verified, go straight to dashboard
             if (user.emailVerified) {
-                window.location.href = 'index.html';
+                window.location.href = 'dashboard.html';
+                return;
             }
+
+            // Auto-redirect countdown (non-blocking — user can verify later)
+            let seconds = 5;
+            const countdownEl = document.getElementById('countdown');
+            const interval = setInterval(() => {
+                seconds--;
+                countdownEl.textContent = seconds;
+                if (seconds <= 0) {
+                    clearInterval(interval);
+                    window.location.href = 'dashboard.html';
+                }
+            }, 1000);
         }, { skipEmailVerificationCheck: true });
 
         // Resend verification email
@@ -130,32 +143,6 @@
             } finally {
                 resendBtn.disabled = false;
                 resendBtn.textContent = 'Resend Verification Email';
-            }
-        });
-
-        // Check verification status
-        checkBtn.addEventListener('click', async () => {
-            checkBtn.disabled = true;
-            checkBtn.textContent = 'Checking...';
-
-            try {
-                // Reload user to get latest emailVerified status
-                await auth.currentUser.reload();
-
-                if (auth.currentUser.emailVerified) {
-                    showMessage('Email verified! Redirecting...');
-                    setTimeout(() => {
-                        window.location.href = 'index.html';
-                    }, 1000);
-                } else {
-                    showMessage('Email not yet verified. Please check your inbox and click the verification link.', true);
-                }
-            } catch (error) {
-                console.error('Error checking verification:', error);
-                showMessage('Error checking verification status.', true);
-            } finally {
-                checkBtn.disabled = false;
-                checkBtn.textContent = "I've Verified My Email";
             }
         });
 

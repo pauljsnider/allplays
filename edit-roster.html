@@ -251,11 +251,17 @@
 
                     <!-- Fallback Code Section -->
                     <div class="bg-gray-50 rounded border border-gray-200 p-3 mt-4">
-                        <p class="text-xs text-gray-600 mb-2">If they don't receive the email, share this code:</p>
-                        <div class="flex items-center justify-between bg-white border border-gray-300 rounded px-2 py-1">
+                        <p class="text-xs text-gray-600 mb-2">If they don't receive the email, share this code or link:</p>
+                        <div class="flex items-center justify-between bg-white border border-gray-300 rounded px-2 py-1 mb-2">
                             <code id="fallback-code" class="text-lg font-bold text-gray-700 tracking-widest"></code>
                             <button id="copy-fallback-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
                         </div>
+                        <button id="copy-fallback-link-btn" class="w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                            </svg>
+                            Copy Signup Link
+                        </button>
                     </div>
 
                     <div class="items-center pt-4">
@@ -282,12 +288,17 @@
 
                     <!-- Code Section for Existing User -->
                     <div class="bg-blue-50 rounded border border-blue-200 p-3 mt-4">
-                        <p class="text-xs text-blue-700 mb-2">Share this code with them to add your player:</p>
-                        <div class="flex items-center justify-between bg-white border border-blue-300 rounded px-2 py-1">
+                        <p class="text-xs text-blue-700 mb-2">Share this code or link with them to add your player:</p>
+                        <div class="flex items-center justify-between bg-white border border-blue-300 rounded px-2 py-1 mb-2">
                             <code id="existing-user-code" class="text-lg font-bold text-blue-700 tracking-widest"></code>
                             <button id="copy-existing-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
                         </div>
-                        <p class="text-xs text-gray-500 mt-2">They can enter this code at allplays.ai/accept-invite.html</p>
+                        <button id="copy-existing-link-btn" class="w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                            </svg>
+                            Copy Signup Link
+                        </button>
                     </div>
 
                     <div class="items-center pt-4">
@@ -304,11 +315,17 @@
                     </p>
                     <div class="bg-green-50 rounded border border-green-200 p-3">
                         <p class="text-xs text-green-800 mb-2">Invite Code:</p>
-                        <div class="flex items-center justify-between bg-white border border-green-300 rounded px-2 py-1">
+                        <div class="flex items-center justify-between bg-white border border-green-300 rounded px-2 py-1 mb-2">
                             <code id="generated-code" class="text-lg font-bold text-green-600 tracking-widest"></code>
                             <button id="copy-code-btn" class="text-xs text-gray-500 hover:text-indigo-600">Copy</button>
                         </div>
-                        <p class="text-xs text-gray-500 mt-2">They can use this code to sign up at allplays.ai</p>
+                        <p class="text-xs text-gray-500 mb-2">Or share a direct signup link:</p>
+                        <button id="copy-manual-link-btn" class="w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path>
+                            </svg>
+                            Copy Signup Link
+                        </button>
                     </div>
                     <div class="items-center pt-4">
                         <button id="done-manual-btn" class="px-4 py-2 bg-indigo-600 text-white text-base font-medium rounded-md w-full shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -617,6 +634,27 @@
         setupCopyButton('copy-code-btn', 'generated-code');
         setupCopyButton('copy-fallback-code-btn', 'fallback-code');
         setupCopyButton('copy-existing-code-btn', 'existing-user-code');
+
+        // Copy Signup Link button handlers
+        function setupCopyLinkButton(buttonId, codeId) {
+            document.getElementById(buttonId).addEventListener('click', async () => {
+                const code = document.getElementById(codeId).textContent;
+                const signupUrl = `${window.location.origin}/login.html?code=${code}`;
+                try {
+                    await navigator.clipboard.writeText(signupUrl);
+                    const btn = document.getElementById(buttonId);
+                    const originalHTML = btn.innerHTML;
+                    btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg> Copied Link!';
+                    setTimeout(() => { btn.innerHTML = originalHTML; }, 2000);
+                } catch (e) {
+                    console.error('Failed to copy signup link:', e);
+                }
+            });
+        }
+
+        setupCopyLinkButton('copy-manual-link-btn', 'generated-code');
+        setupCopyLinkButton('copy-fallback-link-btn', 'fallback-code');
+        setupCopyLinkButton('copy-existing-link-btn', 'existing-user-code');
 
         function resetForm() {
             editingPlayerId = null;
