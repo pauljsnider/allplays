@@ -2,7 +2,7 @@
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js';
 import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js';
+import { checkAuth } from './auth.js?v=9';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -1395,7 +1395,16 @@ async function startStop() {
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
-        await updateGame(currentTeamId, currentGameId, { homeScore: 0, awayScore: 0, opponentStats: {} });
+        await updateGame(currentTeamId, currentGameId, { 
+          homeScore: 0, 
+          awayScore: 0, 
+          opponentStats: {},
+          // Preserve opponent fields
+          opponent: currentGame.opponent,
+          opponentTeamId: currentGame.opponentTeamId,
+          opponentTeamName: currentGame.opponentTeamName,
+          opponentTeamPhoto: currentGame.opponentTeamPhoto
+        });
       }
     }
 
@@ -2186,7 +2195,12 @@ async function init() {
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
-            liveLineup: { onCourt: [], bench: roster.map(r => r.id) }
+            liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
+            // Preserve opponent fields
+            opponent: game.opponent,
+            opponentTeamId: game.opponentTeamId,
+            opponentTeamName: game.opponentTeamName,
+            opponentTeamPhoto: game.opponentTeamPhoto
           });
           currentGame.liveStatus = 'scheduled';
           currentGame.liveHasData = false;
