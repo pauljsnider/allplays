@@ -800,12 +800,24 @@ function startEngagements() {
 function startLiveEvents() {
   if (state.liveEventsActive) return;
   state.liveEventsActive = true;
+  let firstLoad = true;
   const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
     setConnectionBanner(false);
+    if (firstLoad && events.length === 0) {
+      // Show a message while waiting for first events
+      const placeholder = els.playsFeed?.querySelector('[data-placeholder="plays"]');
+      if (placeholder) placeholder.textContent = 'Connected. Waiting for plays...';
+    }
+    firstLoad = false;
     processNewEvents(events);
   }, (error) => {
     console.warn('Live events subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));
+    // Also show error in plays feed if no events have loaded yet
+    if (state.events.length === 0 && els.playsFeed) {
+      const placeholder = els.playsFeed.querySelector('[data-placeholder="plays"]');
+      if (placeholder) placeholder.textContent = 'Unable to connect to live data. Try refreshing.';
+    }
   });
   state.unsubscribers.push(unsubEvents);
 }
@@ -820,8 +832,14 @@ function showEndedOverlay() {
   els.notLiveOverlay?.classList.add('hidden');
   els.endedOverlay?.classList.remove('hidden');
   els.liveBadge?.classList.add('hidden');
+  // Use game doc scores as authoritative for completed games
+  const homeScore = state.game?.homeScore ?? state.homeScore;
+  const awayScore = state.game?.awayScore ?? state.awayScore;
+  state.homeScore = homeScore;
+  state.awayScore = awayScore;
+  renderScoreboard();
   if (els.finalScore) {
-    els.finalScore.textContent = `${state.game?.homeScore || state.homeScore} - ${state.game?.awayScore || state.awayScore}`;
+    els.finalScore.textContent = `${homeScore} - ${awayScore}`;
   }
 }
 
@@ -839,9 +857,46 @@ async function startReplay() {
   state.engagementsActive = false;
   state.liveEventsActive = false;
 
-  state.replayEvents = await getLiveEvents(state.teamId, state.gameId);
-  state.replayChat = await getLiveChatHistory(state.teamId, state.gameId);
-  state.replayReactions = await getLiveReactions(state.teamId, state.gameId);
+  // Show REPLAY badge instead of LIVE
+  if (els.liveBadge) {
+    els.liveBadge.classList.remove('hidden');
+    const dot = document.getElementById('live-badge-dot');
+    const text = document.getElementById('live-badge-text');
+    if (dot) { dot.classList.remove('bg-red-500', 'animate-pulse'); dot.classList.add('bg-teal'); }
+    if (text) { text.textContent = 'REPLAY'; text.classList.remove('text-red-400'); text.classList.add('text-teal'); }
+  }
+
+  if (els.playsFeed) els.playsFeed.innerHTML = '<div data-placeholder="plays" class="text-center text-sand/40 py-8">Loading replay data...</div>';
+
+  let replayEvents, replayChat, replayReactions;
+  try {
+    [replayEvents, replayChat, replayReactions] = await Promise.all([
+      getLiveEvents(state.teamId, state.gameId),
+      getLiveChatHistory(state.teamId, state.gameId),
+      getLiveReactions(state.teamId, state.gameId)
+    ]);
+  } catch (error) {
+    console.warn('Failed to load replay data:', error);
+    if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-center text-sand/60 py-8">Failed to load replay data. Try refreshing the page.</div>';
+    return;
+  }
+
+  if (!replayEvents || replayEvents.length === 0) {
+    if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-center text-sand/60 py-8">No play-by-play data available for this game.</div>';
+    els.replayControls?.classList.remove('hidden');
+    els.reactionsBar?.classList.add('hidden');
+    els.endedOverlay?.classList.add('hidden');
+    if (els.replayGameLink) {
+      els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
+    }
+    // Show final score from game doc even if no replay events
+    renderScoreboard();
+    return;
+  }
+
+  state.replayEvents = replayEvents;
+  state.replayChat = replayChat || [];
+  state.replayReactions = replayReactions || [];
 
   state.replayEvents.sort((a, b) => (a.gameClockMs || 0) - (b.gameClockMs || 0));
   state.replayChat.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
@@ -1256,12 +1311,19 @@ async function init() {
     return;
   }
 
-  const [team, game, players, configs] = await Promise.all([
-    getTeam(state.teamId),
-    getGame(state.teamId, state.gameId),
-    getPlayers(state.teamId),
-    getConfigs(state.teamId)
-  ]);
+  let team, game, players, configs;
+  try {
+    [team, game, players, configs] = await Promise.all([
+      getTeam(state.teamId),
+      getGame(state.teamId, state.gameId),
+      getPlayers(state.teamId),
+      getConfigs(state.teamId)
+    ]);
+  } catch (error) {
+    console.warn('Failed to load game data:', error);
+    if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-sand/60 text-center py-6">Failed to load game data. Check your connection and try refreshing.</div>';
+    return;
+  }
 
   if (!game) {
     if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-sand/60 text-center py-6">Game not found.</div>';
@@ -1345,7 +1407,7 @@ async function init() {
     }
   }, { skipEmailVerificationCheck: true });
 
-  if (state.isReplay && game.liveStatus === 'completed') {
+  if (state.isReplay) {
     await startReplay();
     return;
   }
@@ -1355,6 +1417,7 @@ async function init() {
     handleGameUpdate(updated);
   }, (error) => {
     console.warn('Game subscription failed:', error);
+    setConnectionBanner(true, formatFirestoreError(error));
   });
   state.unsubscribers.push(unsubGame);
 
@@ -1369,4 +1432,8 @@ async function init() {
   }
 }
 
-init();
+init().catch(error => {
+  console.error('Live game init failed:', error);
+  const feed = document.querySelector('#plays-feed');
+  if (feed) feed.innerHTML = '<div class="text-sand/60 text-center py-6">Something went wrong loading the game. Try refreshing the page.</div>';
+});
