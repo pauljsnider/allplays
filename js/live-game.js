@@ -800,22 +800,22 @@ function startEngagements() {
 function startLiveEvents() {
   if (state.liveEventsActive) return;
   state.liveEventsActive = true;
-  let firstLoad = true;
+  state.liveEventsFirstLoad = true;
   const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
     setConnectionBanner(false);
-    if (firstLoad && events.length === 0) {
+    if (state.liveEventsFirstLoad && events.length === 0) {
       // Show a message while waiting for first events
-      const placeholder = els.playsFeed?.querySelector('[data-placeholder="plays"]');
+      const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
       if (placeholder) placeholder.textContent = 'Connected. Waiting for plays...';
     }
-    firstLoad = false;
+    state.liveEventsFirstLoad = false;
     processNewEvents(events);
   }, (error) => {
     console.warn('Live events subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));
     // Also show error in plays feed if no events have loaded yet
     if (state.events.length === 0 && els.playsFeed) {
-      const placeholder = els.playsFeed.querySelector('[data-placeholder="plays"]');
+      const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
       if (placeholder) placeholder.textContent = 'Unable to connect to live data. Try refreshing.';
     }
   });
