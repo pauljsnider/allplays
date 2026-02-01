@@ -252,7 +252,7 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, escapeHtml } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -280,6 +280,14 @@
         });
 
         renderFooter(document.getElementById('footer-container'));
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
 
         // Summary toggle functionality
         let summaryExpanded = true;
@@ -702,6 +710,7 @@ Write the match report now:`;
                     }">${game.awayScore || 0}</div>
                         </div>
                     </div>
+                    <div class="flex flex-wrap justify-center gap-3 mb-4">
                     ${game.liveStatus === 'completed' ? `
                         <a href="live-game.html?teamId=${teamId}&gameId=${gameId}&replay=true"
                            class="inline-flex items-center gap-2 bg-teal-500 text-white px-5 py-2 rounded-full font-semibold shadow hover:bg-teal-600 transition">
@@ -726,6 +735,12 @@ Write the match report now:`;
                             View Live
                         </a>
                     ` : ''}
+                        <button id="share-report-btn"
+                            class="inline-flex items-center gap-2 bg-white text-slate-700 px-5 py-2 rounded-full font-semibold shadow border border-gray-200 hover:bg-gray-50 transition">
+                            <span class="text-xs">🔗</span>
+                            Share Report
+                        </button>
+                    </div>
                     ${game.location ? `
                         <div class="flex items-center justify-center gap-2 text-gray-600">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -736,6 +751,26 @@ Write the match report now:`;
                         </div>
                     ` : ''}
                 `;
+
+                const shareBtn = document.getElementById('share-report-btn');
+                if (shareBtn) {
+                    shareBtn.addEventListener('click', async () => {
+                        const teamName = team?.name || 'Team';
+                        const opponent = game?.opponent || 'Opponent';
+                        const dateLabel = formatShortDate(game?.date);
+                        const url = `${window.location.origin}/game.html#teamId=${teamId}&gameId=${gameId}`;
+                        const shareText = `Game report: ${teamName} vs ${opponent}${dateLabel ? ` — ${dateLabel}` : ''}\n${url}`;
+                        const result = await shareOrCopy({
+                            title: 'Game report',
+                            text: shareText.split('\n')[0],
+                            url,
+                            clipboardText: shareText
+                        });
+                        if (result.status === 'shared') showToast('Share sheet opened!');
+                        if (result.status === 'copied') showToast('Share text copied!');
+                        if (result.status === 'failed') showToast('Failed to share.');
+                    });
+                }
 
                 // Render Summary
                 const summaryDiv = document.getElementById('game-summary');

@@ -198,7 +198,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=9';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -230,6 +230,7 @@
         let latestGameId = null;
         let nextGameCountdown = null;
         let teamGames = [];
+        let gamesById = {};
 
         function mapLink(locationText) {
             if (!locationText) return null;
@@ -465,7 +466,12 @@
                 ]);
 
                 teamGames = dbGames;
-                teamGames = dbGames;
+                gamesById = {};
+                dbGames.forEach((game) => {
+                    const id = game.id || game.gameId;
+                    if (id) gamesById[id] = game;
+                    if (game.gameId) gamesById[game.gameId] = game;
+                });
                 const sortedGames = [...dbGames].sort((a, b) => {
                     const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
                     const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
@@ -1023,6 +1029,11 @@
                                       ${isLive ? '<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>' : '<span class="text-xs">👁️</span>'}
                                       ${isLive ? 'Live Now' : 'View Live'}
                                   </a>
+                                  <button data-share-game-id="${game.gameId || game.id}" data-share-mode="live"
+                                     class="inline-flex items-center gap-2 bg-white text-slate-700 px-4 py-2 rounded-lg font-semibold shadow border border-gray-200 hover:bg-gray-50 transition">
+                                      <span class="text-xs">🔗</span>
+                                      Share
+                                  </button>
                                 ` : ''}
                                 ${isLive ? `
                                   <div class="flex items-center gap-2 text-center">
@@ -1052,6 +1063,13 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
                                       </a>
+                                      <button data-share-game-id="${game.gameId || game.id}" data-share-mode="report"
+                                         class="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-800 transition font-medium">
+                                        <span>Share Report</span>
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12H5m0 0l4-4m-4 4l4 4" transform="rotate(180 10 12)"></path>
+                                        </svg>
+                                      </button>
                                       ${game.liveStatus === 'completed' ? `
                                       <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}&replay=true"
                                          class="inline-flex items-center gap-1 text-sm text-teal-600 hover:text-teal-700 transition font-medium">
@@ -1126,6 +1144,49 @@
         document.getElementById('show-practices').addEventListener('change', (e) => {
             showPractices = e.target.checked;
             loadTeam();
+        });
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+
+        function buildShareText(game, mode, url) {
+            const teamName = currentTeam?.name || 'Team';
+            const opponent = game?.opponent || 'Opponent';
+            const dateLabel = formatShortDate(game?.date);
+            const timeLabel = formatTime(game?.date);
+            if (mode === 'report') {
+                return `Game report: ${teamName} vs ${opponent}${dateLabel ? ` — ${dateLabel}` : ''}\n${url}`;
+            }
+            const when = dateLabel ? `${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '';
+            return `Watch ${teamName} vs ${opponent}${when ? ` — ${when}` : ''}\n${url}`;
+        }
+
+        document.addEventListener('click', (event) => {
+            const btn = event.target.closest('[data-share-game-id]');
+            if (!btn) return;
+            const gameId = btn.dataset.shareGameId;
+            const mode = btn.dataset.shareMode || 'live';
+            const game = gamesById[gameId];
+            if (!game) return showToast('Unable to find game details.');
+            const url = mode === 'report'
+                ? `${window.location.origin}/game.html#teamId=${currentTeamId}&gameId=${gameId}`
+                : `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${gameId}`;
+            const shareText = buildShareText(game, mode, url);
+            shareOrCopy({
+                title: mode === 'report' ? 'Game report' : 'Watch game',
+                text: shareText.split('\n')[0],
+                url,
+                clipboardText: shareText
+            }).then((result) => {
+                if (result.status === 'shared') showToast('Share sheet opened!');
+                if (result.status === 'copied') showToast('Share text copied!');
+                if (result.status === 'failed') showToast('Failed to share.');
+            });
         });
     </script>
 </body>

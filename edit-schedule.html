@@ -510,7 +510,7 @@
 
     <script type="module">
         import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount } from './js/db.js';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { Timestamp } from "./js/firebase.js?v=9";
@@ -1055,7 +1055,7 @@
                         <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
                         ${!isCompleted ? `<button data-game-id="${game.id}" class="track-game-btn px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</button>` : ''}
                         ${!isCompleted ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 ${game.liveStatus === 'live' ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'} rounded text-sm">${game.liveStatus === 'live' ? 'Live Now' : 'View Live'}</a>` : ''}
-                        ${!isCompleted ? `<button data-live-link="${game.id}" class="copy-live-link-btn px-3 py-1 bg-rose-100 text-rose-700 rounded text-sm hover:bg-rose-200">Copy Live Link</button>` : ''}
+                        ${!isCompleted ? `<button data-live-link="${game.id}" class="copy-live-link-btn px-3 py-1 bg-rose-100 text-rose-700 rounded text-sm hover:bg-rose-200">Share</button>` : ''}
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
                         ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
@@ -2027,15 +2027,32 @@ PARSING RULES:
             setTimeout(() => toast.remove(), 2000);
         }
 
+        function buildLiveShareText(game, url) {
+            const teamName = currentTeam?.name || 'Team';
+            const opponent = game?.opponent || 'Opponent';
+            const dateLabel = formatShortDate(game?.date);
+            const timeLabel = formatTime(game?.date);
+            const when = dateLabel ? `${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '';
+            const line = `Watch ${teamName} vs ${opponent}${when ? ` — ${when}` : ''}`;
+            return `${line}\n${url}`;
+        }
+
         document.addEventListener('click', (event) => {
             const btn = event.target.closest('[data-live-link]');
             if (!btn) return;
             const gameId = btn.dataset.liveLink;
             const url = `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${gameId}`;
-            navigator.clipboard.writeText(url).then(() => {
-                showToast('Live game link copied!');
-            }).catch(() => {
-                showToast('Failed to copy link.');
+            const game = gamesCache[gameId];
+            const shareText = buildLiveShareText(game, url);
+            shareOrCopy({
+                title: `Watch ${currentTeam?.name || 'Team'}`,
+                text: shareText.split('\n')[0],
+                url,
+                clipboardText: shareText
+            }).then((result) => {
+                if (result.status === 'shared') showToast('Share sheet opened!');
+                if (result.status === 'copied') showToast('Share text copied!');
+                if (result.status === 'failed') showToast('Failed to share.');
             });
         });
     </script>

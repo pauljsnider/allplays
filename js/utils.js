@@ -31,10 +31,37 @@ export function formatDate(timestamp) {
   return date.toLocaleDateString();
 }
 
+export function formatShortDate(timestamp) {
+  if (!timestamp) return '';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 export function formatTime(timestamp) {
   if (!timestamp) return '';
   const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export async function shareOrCopy({ title = '', text = '', url = '', clipboardText = '' }) {
+  const shareText = clipboardText || `${text}\n${url}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text, url });
+      return { status: 'shared' };
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { status: 'aborted' };
+    }
+  }
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(shareText);
+      return { status: 'copied' };
+    } catch (err) {
+      return { status: 'failed' };
+    }
+  }
+  return { status: 'failed' };
 }
 
 export function renderHeader(container, user) {

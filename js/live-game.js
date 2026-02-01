@@ -14,7 +14,7 @@ import {
   getConfigs,
   subscribeGame
 } from './db.js';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter } from './utils.js?v=8';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -116,6 +116,7 @@ const els = {
   replayDuration: q('#replay-duration'),
   replayPlay: q('#replay-play'),
   replayGameLink: q('#replay-game-link'),
+  shareGameBtn: q('#share-game-btn'),
 
   notLiveOverlay: q('#not-live-overlay'),
   endedOverlay: q('#ended-overlay'),
@@ -147,6 +148,32 @@ const statKeyMap = {
 
 function q(selector) {
   return document.querySelector(selector);
+}
+
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.className = 'fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2000);
+}
+
+function buildShareText(mode, url) {
+  const teamName = state.team?.name || 'Team';
+  const opponent = state.game?.opponent || 'Opponent';
+  const dateLabel = formatShortDate(state.game?.date);
+  const timeLabel = formatTime(state.game?.date);
+  if (mode === 'report') {
+    return `Game report: ${teamName} vs ${opponent}${dateLabel ? ` — ${dateLabel}` : ''}\n${url}`;
+  }
+  const when = dateLabel ? `${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '';
+  return `Watch ${teamName} vs ${opponent}${when ? ` — ${when}` : ''}\n${url}`;
+}
+
+function updateShareButton() {
+  if (!els.shareGameBtn) return;
+  const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+  els.shareGameBtn.textContent = isReport ? 'Share Report' : 'Share';
 }
 
 function initTabs() {
@@ -216,6 +243,7 @@ function renderGameInfo() {
     const date = state.game.date.toDate ? state.game.date.toDate() : new Date(state.game.date);
     els.gameStartTime.textContent = `Scheduled: ${date.toLocaleString()}`;
   }
+  updateShareButton();
 }
 
 function renderScoreboard(animate = false) {
@@ -1271,6 +1299,24 @@ async function init() {
   initChat();
   initReactions();
   initReplayControls();
+  if (els.shareGameBtn) {
+    els.shareGameBtn.addEventListener('click', async () => {
+      const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
+      const url = isReport
+        ? `${window.location.origin}/game.html#teamId=${state.teamId}&gameId=${state.gameId}`
+        : `${window.location.origin}/live-game.html?teamId=${state.teamId}&gameId=${state.gameId}`;
+      const shareText = buildShareText(isReport ? 'report' : 'live', url);
+      const result = await shareOrCopy({
+        title: isReport ? 'Game report' : 'Watch game',
+        text: shareText.split('\n')[0],
+        url,
+        clipboardText: shareText
+      });
+      if (result.status === 'shared') showToast('Share sheet opened!');
+      if (result.status === 'copied') showToast('Share text copied!');
+      if (result.status === 'failed') showToast('Failed to share.');
+    });
+  }
 
   checkAuth((user) => {
     state.user = user;
