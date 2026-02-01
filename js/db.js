@@ -319,9 +319,16 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
 
 // Games
 export async function getGames(teamId) {
-    const q = query(collection(db, `teams/${teamId}/games`), orderBy("date"));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const gamesRef = collection(db, `teams/${teamId}/games`);
+    try {
+        const q = query(gamesRef, orderBy("date"));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+        // Fallback when indexes are still building or unavailable.
+        const snapshot = await getDocs(gamesRef);
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    }
 }
 
 export async function getAggregatedStatsForGames(teamId, gameIds) {
@@ -1388,23 +1395,43 @@ export function trackViewerPresence(teamId, gameId, onCountChange) {
  */
 export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     const gamesRef = collectionGroup(db, 'games');
     const q = query(
         gamesRef,
         where('type', '==', 'game'),
-        where('date', '>=', Timestamp.fromDate(now)),
+        where('date', '>=', Timestamp.fromDate(startOfToday)),
         where('date', '<=', Timestamp.fromDate(oneWeekFromNow)),
         orderBy('date', 'asc'),
         limitQuery(limitCount)
     );
 
-    const snapshot = await getDocs(q);
+    let snapshot;
     const games = [];
+
+    try {
+        snapshot = await getDocs(q);
+    } catch (error) {
+        // Fallback when the collection group date index isn't ready yet.
+        // Pull a limited sample and filter client-side.
+        const fallbackQuery = query(gamesRef, limitQuery(200));
+        snapshot = await getDocs(fallbackQuery);
+    }
 
     for (const docSnap of snapshot.docs) {
         const gameData = { id: docSnap.id, ...docSnap.data() };
+        if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.liveStatus === 'completed') {
+            continue;
+        }
+        if (!gameData.type) {
+            gameData.type = 'game';
+        }
+        const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
+        if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
+            continue;
+        }
         // Get team info (parent document)
         const teamRef = docSnap.ref.parent.parent;
         const teamSnap = await getDoc(teamRef);
@@ -1414,6 +1441,12 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         }
         games.push(gameData);
     }
+
+    games.sort((a, b) => {
+        const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
+        const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
+        return aDate - bDate;
+    });
 
     return games;
 }

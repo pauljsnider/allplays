@@ -15,7 +15,7 @@ import {
   subscribeGame
 } from './db.js';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter } from './utils.js?v=8';
-import { checkAuth } from './auth.js';
+import { checkAuth } from './auth.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 

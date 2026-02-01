@@ -204,7 +204,7 @@
     <script type="module">
         import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js';
+        import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -526,10 +526,10 @@
                                         <div>
                                             <div class="flex justify-between items-center mb-2">
                                                 <span class="text-sm font-semibold text-gray-700 uppercase">${stat}</span>
-                                                <span class="text-sm font-bold text-primary-600">${averages[stat]}</span>
+                                                <span class="text-sm font-bold text-primary-800">${averages[stat]}</span>
                                             </div>
                                             <div class="relative w-full bg-gray-200 rounded-full h-6 overflow-hidden">
-                                                <div class="absolute inset-0 bg-gradient-to-r from-primary-400 to-primary-600 rounded-full transition-all duration-700"
+                                                <div class="absolute inset-0 bg-gradient-to-r from-primary-600 to-primary-800 rounded-full transition-all duration-700"
                                                      style="width: ${percentage}%"></div>
                                                 <div class="absolute inset-0 flex items-center justify-center">
                                                     <span class="text-xs font-bold text-white drop-shadow">${percentage.toFixed(0)}%</span>
@@ -544,7 +544,7 @@
                             <!-- Game-by-Game Performance Chart (Last 5 Games) -->
                             <div class="lg:col-span-2 bg-white rounded-xl p-6 shadow-md border border-gray-200">
                                 <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-5 h-5 text-primary-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"></path>
                                     </svg>
                                     Recent Performance (Last 5 Games)
@@ -560,8 +560,8 @@
                                 const height = maxInRecent > 0 ? (value / maxInRecent) * 100 : 0;
                                 return `
                                                     <div class="flex-1 flex flex-col items-center gap-2">
-                                                        <div class="text-xs font-bold text-primary-600">${value}</div>
-                                                        <div class="w-full bg-gradient-to-t from-primary-600 to-primary-400 rounded-t-lg transition-all duration-700 hover:from-primary-700 hover:to-primary-500"
+                                                        <div class="text-xs font-bold text-primary-800">${value}</div>
+                                                        <div class="w-full bg-gradient-to-t from-primary-700 to-primary-900 rounded-t-lg transition-all duration-700 hover:from-primary-800 hover:to-primary-900"
                                                              style="height: ${height}%"></div>
                                                         <div class="text-xs text-gray-500 text-center mt-1">
                                                             <div class="font-semibold">${g.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
@@ -572,7 +572,7 @@
                             }).join('')}
                                         </div>
                                         <div class="text-center mt-2 text-sm text-gray-600">
-                                            <span class="font-semibold text-primary-600">${primaryStat}</span> per game
+                                            <span class="font-semibold text-primary-800">${primaryStat}</span> per game
                                         </div>
                                     `;
                         })()}
@@ -592,7 +592,7 @@
                                 <button class="w-full text-left p-6 pb-4 group playing-time-trend-toggle">
                                     <div class="flex items-center justify-between gap-3">
                                         <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
-                                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <svg class="w-5 h-5 text-primary-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                             </svg>
                                             Playing Time Trend
@@ -612,7 +612,7 @@
                                                 return `
                                                     <div class="flex-1 flex flex-col items-center gap-2">
                                                         <div class="text-[11px] font-mono text-gray-600">${formatMMSS(g.timeMs)}</div>
-                                                        <div class="w-full rounded-t-lg bg-gradient-to-t from-primary-600 to-primary-400" style="height:${h}%"></div>
+                                                        <div class="w-full rounded-t-lg bg-gradient-to-t from-primary-700 to-primary-900" style="height:${h}%"></div>
                                                         <div class="text-[10px] text-gray-500 font-semibold">${label}</div>
                                                     </div>
                                                 `;

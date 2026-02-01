@@ -270,7 +270,7 @@ export function getRedirectUrl(user) {
 }
 
 export function checkAuth(callback, options = {}) {
-    const { skipEmailVerificationCheck = false } = options;
+    const { skipEmailVerificationCheck = true } = options;
 
     return onAuthStateChanged(auth, async (user) => {
         if (user) {
