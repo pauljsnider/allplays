@@ -116,6 +116,7 @@ const els = {
   replayDuration: q('#replay-duration'),
   replayPlay: q('#replay-play'),
   replayGameLink: q('#replay-game-link'),
+  replayReportLink: q('#replay-report-link'),
   shareGameBtn: q('#share-game-btn'),
 
   notLiveOverlay: q('#not-live-overlay'),
@@ -174,6 +175,11 @@ function updateShareButton() {
   if (!els.shareGameBtn) return;
   const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
   els.shareGameBtn.textContent = isReport ? 'Share Report' : 'Share';
+  if (els.replayReportLink) {
+    const reportUrl = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
+    els.replayReportLink.href = reportUrl;
+    els.replayReportLink.classList.toggle('hidden', !state.isReplay);
+  }
 }
 
 function initTabs() {

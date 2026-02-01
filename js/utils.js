@@ -427,9 +427,10 @@ export function extractOpponent(summary, teamName = '') {
   const vsMatch = summary.match(/vs\.?\s+(.+)/i);
   if (vsMatch) {
     const opponent = vsMatch[1].trim();
-    // If team name is provided, exclude it from opponent
-    if (teamName && opponent.toLowerCase().includes(teamName.toLowerCase())) {
-      return opponent.replace(new RegExp(teamName, 'gi'), '').trim();
+    if (teamName) {
+      const escaped = teamName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const cleaned = opponent.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), '').trim();
+      if (cleaned) return cleaned;
     }
     return opponent;
   }
