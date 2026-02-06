@@ -429,10 +429,10 @@ function renderOpponents() {
 
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 min-w-0">
           ${avatarHtml({ name: o.name, photoUrl: o.photoUrl }, 'h-6 w-6', 'text-[10px]')}
-          <span class="text-[10px] font-bold text-slate-500">${o.number ? `#${escapeHtml(o.number)}` : '#--'}</span>
-          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
+          <span class="text-[10px] font-bold text-slate-500 shrink-0">${o.number ? `#${escapeHtml(o.number)}` : '#--'}</span>
+          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
         </div>
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
