@@ -83,6 +83,12 @@ service cloud.firestore {
       allow read: if true;  // Public read for collection group queries
     }
 
+    // Collection group rule for players - allows cross-team player search.
+    // Note: Team-scoped player reads are already allowed below; this enables collectionGroup('players') queries.
+    match /{path=**}/players/{playerId} {
+      allow read: if true;
+    }
+
     // Teams - only owner or admins can modify
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing
