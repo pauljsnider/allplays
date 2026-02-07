@@ -256,9 +256,32 @@ export async function deleteTeam(teamId) {
 
 // Players
 export async function getPlayers(teamId) {
-    const q = query(collection(db, `teams/${teamId}/players`), orderBy("number"));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    // Prefer server-side ordering by jersey number, but fall back to an
+    // unordered read + client sort if indexes are still building.
+    try {
+        const q = query(collection(db, `teams/${teamId}/players`), orderBy("number"));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (e) {
+        const code = e?.code || '';
+        if (code !== 'failed-precondition') throw e;
+
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/players`));
+        const players = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Keep ordering stable and human-friendly.
+        return players.sort((a, b) => {
+            const an = (a.number ?? '').toString().trim();
+            const bn = (b.number ?? '').toString().trim();
+            const ai = an === '' ? NaN : Number.parseInt(an, 10);
+            const bi = bn === '' ? NaN : Number.parseInt(bn, 10);
+            const aIsNum = Number.isFinite(ai);
+            const bIsNum = Number.isFinite(bi);
+            if (aIsNum && bIsNum) return ai - bi;
+            if (aIsNum && !bIsNum) return -1;
+            if (!aIsNum && bIsNum) return 1;
+            return an.localeCompare(bn);
+        });
+    }
 }
 
 export async function addPlayer(teamId, playerData) {

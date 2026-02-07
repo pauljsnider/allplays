@@ -9,6 +9,7 @@
       "firebase.json",
       "**/.*",
       "**/node_modules/**",
+      "_temp/**",
       "**/*.md",
       "cleanup.md",
       "PROJECT_DOCUMENTATION.md",
