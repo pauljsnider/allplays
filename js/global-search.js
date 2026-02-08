@@ -1,5 +1,5 @@
 import { escapeHtml } from './utils.js?v=8';
-import { getTeams } from './db.js?v=13';
+import { getTeams } from './db.js?v=14';
 import {
     db,
     collectionGroup,

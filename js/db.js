@@ -1046,20 +1046,37 @@ export async function getParentDashboardData(userId) {
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
-    // Restricted update for parents
-    const allowedKeys = ['photoUrl', 'emergencyContact', 'medicalInfo'];
-    const updateData = {};
+    // Restricted update for parents.
+    // SECURITY: sensitive fields must never live on the public player doc.
+    const now = Timestamp.now();
 
-    Object.keys(data).forEach(key => {
-        if (allowedKeys.includes(key)) {
-            updateData[key] = data[key];
-        }
-    });
+    // Public player doc: allow photoUrl only.
+    if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
+        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+            photoUrl: data.photoUrl || null,
+            updatedAt: now
+        });
+    }
 
-    if (Object.keys(updateData).length === 0) return;
+    // Private profile doc: emergencyContact / medicalInfo only.
+    const privateUpdate = {};
+    if (Object.prototype.hasOwnProperty.call(data, 'emergencyContact')) {
+        privateUpdate.emergencyContact = data.emergencyContact || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
+        privateUpdate.medicalInfo = data.medicalInfo || '';
+    }
+    if (Object.keys(privateUpdate).length > 0) {
+        privateUpdate.updatedAt = now;
+        const ref = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
+        await setDoc(ref, privateUpdate, { merge: true });
+    }
+}
 
-    updateData.updatedAt = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), updateData);
+export async function getPlayerPrivateProfile(teamId, playerId) {
+    const ref = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
+    const snap = await getDoc(ref);
+    return snap.exists() ? (snap.data() || {}) : null;
 }
 
 // ============================================

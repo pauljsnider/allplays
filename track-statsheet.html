@@ -199,7 +199,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, deleteDoc, uploadStatSheetPhoto } from './js/db.js?v=13';
+    import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, deleteDoc, uploadStatSheetPhoto } from './js/db.js?v=14';
     import { db } from './js/firebase.js?v=9';
     import { writeBatch, doc, setDoc } from './js/firebase.js?v=9';
     import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=8';
@@ -955,7 +955,7 @@ Write the match report now:`;
       try {
         if (summaryText) {
           status.textContent = 'Saving summary…';
-          const { updateGame } = await import('./js/db.js?v=13');
+          const { updateGame } = await import('./js/db.js?v=14');
           await updateGame(currentTeamId, currentGameId, { summary: summaryText });
           status.textContent = 'Summary saved!';
         }

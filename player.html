@@ -202,7 +202,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=13';
+        import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=9";
@@ -211,6 +211,7 @@
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
+        let currentPrivateProfile = null; // Sensitive fields live in a private doc
         let currentTeamId = null;
 
         checkAuth((user) => {
@@ -862,12 +863,22 @@
             }
         }
 
-        function openEditModal() {
+        async function openEditModal() {
              if (!currentPlayer) return;
              document.getElementById('edit-player-modal').classList.remove('hidden');
-             document.getElementById('edit-ec-name').value = currentPlayer.emergencyContact?.name || '';
-             document.getElementById('edit-ec-phone').value = currentPlayer.emergencyContact?.phone || '';
-             document.getElementById('edit-medical-info').value = currentPlayer.medicalInfo || '';
+
+             // Load sensitive fields from the private profile doc.
+             // If denied or missing, treat as empty.
+             try {
+                 currentPrivateProfile = await getPlayerPrivateProfile(currentTeamId, currentPlayer.id);
+             } catch (e) {
+                 console.warn('Failed to load private player profile:', e);
+                 currentPrivateProfile = null;
+             }
+
+             document.getElementById('edit-ec-name').value = currentPrivateProfile?.emergencyContact?.name || '';
+             document.getElementById('edit-ec-phone').value = currentPrivateProfile?.emergencyContact?.phone || '';
+             document.getElementById('edit-medical-info').value = currentPrivateProfile?.medicalInfo || '';
              
              const preview = document.getElementById('edit-photo-preview');
              if (currentPlayer.photoUrl) {
