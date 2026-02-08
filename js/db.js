@@ -255,6 +255,15 @@ export async function deleteTeam(teamId) {
 }
 
 // Players
+function assertNoSensitivePlayerFields(playerData) {
+    if (!playerData || typeof playerData !== 'object') return;
+    const forbidden = ['medicalInfo', 'emergencyContact'];
+    const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
+    if (present.length) {
+        throw new Error(`Do not write sensitive fields to public player doc: ${present.join(', ')}`);
+    }
+}
+
 export async function getPlayers(teamId) {
     // Prefer server-side ordering by jersey number, but fall back to an
     // unordered read + client sort if indexes are still building.
@@ -285,12 +294,14 @@ export async function getPlayers(teamId) {
 }
 
 export async function addPlayer(teamId, playerData) {
+    assertNoSensitivePlayerFields(playerData);
     playerData.createdAt = Timestamp.now();
     const docRef = await addDoc(collection(db, `teams/${teamId}/players`), playerData);
     return docRef.id;
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
+    assertNoSensitivePlayerFields(playerData);
     playerData.updatedAt = Timestamp.now();
     await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
 }

@@ -98,21 +98,26 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update, delete: if isTeamOwnerOrAdmin(teamId);
 
-      // Players subcollection
-      match /players/{playerId} {
-        // Public player doc is only safe if it contains no sensitive fields.
-        // Team owner/admin/parent-of-player may still read legacy docs that contain sensitive fields.
-        allow read: if isTeamOwnerOrAdmin(teamId) ||
-                      isParentForPlayer(teamId, playerId) ||
-                      !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	      // Players subcollection
+	      match /players/{playerId} {
+	        // Public player doc is only safe if it contains no sensitive fields.
+	        // Team owner/admin/parent-of-player may still read legacy docs that contain sensitive fields.
+	        allow read: if isTeamOwnerOrAdmin(teamId) ||
+	                      isParentForPlayer(teamId, playerId) ||
+	                      !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
 
-        // Full write access for team owners/admins
-        allow write: if isTeamOwnerOrAdmin(teamId);
+	        // Writes: never allow sensitive fields on the public player doc.
+	        // Coaches/admins can create/update/delete, but must keep the doc "public-safe".
+	        allow create: if isTeamOwnerOrAdmin(teamId) &&
+	                        !request.resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	        allow update: if isTeamOwnerOrAdmin(teamId) &&
+	                        !request.resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
-        // Limited write access for parents (only their linked player):
-        // - Public player doc: photo only
-        allow update: if isParentForPlayer(teamId, playerId) &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
+	        // Limited write access for parents (only their linked player):
+	        // - Public player doc: photo only
+	        allow update: if isParentForPlayer(teamId, playerId) &&
+	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
 
         // Private player profile (sensitive fields)
         match /private/profile {
