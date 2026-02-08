@@ -456,7 +456,7 @@ function openModal({ initialQuery = '' } = {}) {
                 modalState.players = [];
                 modalState.loadingPlayers = false;
                 modalState.playersError = anyPermDenied
-                    ? 'Player search unavailable (permission denied). Update Firestore rules to allow collection-group reads for players.'
+                    ? 'Player search unavailable (permission denied). If security rules were tightened, migrate player docs to remove sensitive fields (see spec/player-data-security.md).'
                     : (anyIndexBuilding
                         ? 'Player search index is building. Try again in a few minutes.'
                         : 'Player search unavailable (index required).');
@@ -497,7 +497,7 @@ function openModal({ initialQuery = '' } = {}) {
             modalState.players = [];
             modalState.loadingPlayers = false;
             modalState.playersError = e?.code === 'permission-denied'
-                ? 'Player search unavailable (permission denied).'
+                ? 'Player search unavailable (permission denied). If security rules were tightened, migrate player docs to remove sensitive fields.'
                 : 'Player search unavailable.';
             renderResults();
         }
