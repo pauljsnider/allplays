@@ -204,8 +204,7 @@ function openModal({ initialQuery = '' } = {}) {
         flatResults: [],
         teams: [],
         loadingTeams: true,
-        teamsError: ''
-        ,
+        teamsError: '',
         players: [],
         loadingPlayers: false,
         playersError: '',
