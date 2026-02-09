@@ -255,19 +255,53 @@ export async function deleteTeam(teamId) {
 }
 
 // Players
+function assertNoSensitivePlayerFields(playerData) {
+    if (!playerData || typeof playerData !== 'object') return;
+    const forbidden = ['medicalInfo', 'emergencyContact'];
+    const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
+    if (present.length) {
+        throw new Error(`Do not write sensitive fields to public player doc: ${present.join(', ')}`);
+    }
+}
+
 export async function getPlayers(teamId) {
-    const q = query(collection(db, `teams/${teamId}/players`), orderBy("number"));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    // Prefer server-side ordering by jersey number, but fall back to an
+    // unordered read + client sort if indexes are still building.
+    try {
+        const q = query(collection(db, `teams/${teamId}/players`), orderBy("number"));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (e) {
+        const code = e?.code || '';
+        if (code !== 'failed-precondition') throw e;
+
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/players`));
+        const players = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Keep ordering stable and human-friendly.
+        return players.sort((a, b) => {
+            const an = (a.number ?? '').toString().trim();
+            const bn = (b.number ?? '').toString().trim();
+            const ai = an === '' ? NaN : Number.parseInt(an, 10);
+            const bi = bn === '' ? NaN : Number.parseInt(bn, 10);
+            const aIsNum = Number.isFinite(ai);
+            const bIsNum = Number.isFinite(bi);
+            if (aIsNum && bIsNum) return ai - bi;
+            if (aIsNum && !bIsNum) return -1;
+            if (!aIsNum && bIsNum) return 1;
+            return an.localeCompare(bn);
+        });
+    }
 }
 
 export async function addPlayer(teamId, playerData) {
+    assertNoSensitivePlayerFields(playerData);
     playerData.createdAt = Timestamp.now();
     const docRef = await addDoc(collection(db, `teams/${teamId}/players`), playerData);
     return docRef.id;
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
+    assertNoSensitivePlayerFields(playerData);
     playerData.updatedAt = Timestamp.now();
     await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
 }
@@ -1023,20 +1057,37 @@ export async function getParentDashboardData(userId) {
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
-    // Restricted update for parents
-    const allowedKeys = ['photoUrl', 'emergencyContact', 'medicalInfo'];
-    const updateData = {};
+    // Restricted update for parents.
+    // SECURITY: sensitive fields must never live on the public player doc.
+    const now = Timestamp.now();
 
-    Object.keys(data).forEach(key => {
-        if (allowedKeys.includes(key)) {
-            updateData[key] = data[key];
-        }
-    });
+    // Public player doc: allow photoUrl only.
+    if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
+        await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+            photoUrl: data.photoUrl || null,
+            updatedAt: now
+        });
+    }
 
-    if (Object.keys(updateData).length === 0) return;
+    // Private profile doc: emergencyContact / medicalInfo only.
+    const privateUpdate = {};
+    if (Object.prototype.hasOwnProperty.call(data, 'emergencyContact')) {
+        privateUpdate.emergencyContact = data.emergencyContact || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
+        privateUpdate.medicalInfo = data.medicalInfo || '';
+    }
+    if (Object.keys(privateUpdate).length > 0) {
+        privateUpdate.updatedAt = now;
+        const ref = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
+        await setDoc(ref, privateUpdate, { merge: true });
+    }
+}
 
-    updateData.updatedAt = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), updateData);
+export async function getPlayerPrivateProfile(teamId, playerId) {
+    const ref = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
+    const snap = await getDoc(ref);
+    return snap.exists() ? (snap.data() || {}) : null;
 }
 
 // ============================================

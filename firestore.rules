@@ -28,12 +28,15 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
-    // Check if user is a parent for a specific player (uses parentTeamIds for reliability)
+    // Check if user is a parent for a specific player.
+    // IMPORTANT: must validate both teamId AND playerId (least privilege).
     function isParentForPlayer(teamId, playerId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       return isSignedIn() &&
              exists(userPath) &&
-             teamId in get(userPath).data.get('parentTeamIds', []);
+             get(userPath).data.get('parentOf', [])
+                .where(p, p.teamId == teamId && p.playerId == playerId)
+                .size() > 0;
     }
 
     // Check if user is a parent for any player on a team (uses parentTeamIds)
@@ -83,24 +86,54 @@ service cloud.firestore {
       allow read: if true;  // Public read for collection group queries
     }
 
+    // Collection group rule for players - enables collectionGroup('players') queries.
+    // SECURITY: deny reads of any player doc that still contains sensitive fields.
+    match /{path=**}/players/{playerId} {
+      allow read: if !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+    }
+
     // Teams - only owner or admins can modify
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update, delete: if isTeamOwnerOrAdmin(teamId);
 
-      // Players subcollection
-      match /players/{playerId} {
-        allow read: if true;  // Public player stats
+	      // Players subcollection
+	      match /players/{playerId} {
+	        // Public player doc is only safe if it contains no sensitive fields.
+	        // Team owner/admin/parent-of-player may still read legacy docs that contain sensitive fields.
+	        allow read: if isTeamOwnerOrAdmin(teamId) ||
+	                      isParentForPlayer(teamId, playerId) ||
+	                      !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
 
-        // Full write access for team owners/admins
-        allow write: if isTeamOwnerOrAdmin(teamId);
+	        // Writes: never allow sensitive fields on the public player doc.
+	        // Coaches/admins can create/update/delete, but must keep the doc "public-safe".
+	        allow create: if isTeamOwnerOrAdmin(teamId) &&
+	                        !request.resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	        allow update: if isTeamOwnerOrAdmin(teamId) &&
+	                        !request.resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
-        // Limited write access for parents (only their linked players, no parents array mutation)
-        allow update: if isParentForPlayer(teamId, playerId) &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-                           ['photoUrl', 'emergencyContact', 'medicalInfo', 'updatedAt']
-                         );
+	        // Limited write access for parents (only their linked player):
+	        // - Public player doc: photo only
+	        allow update: if isParentForPlayer(teamId, playerId) &&
+	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
+
+        // Private player profile (sensitive fields)
+        match /private/profile {
+          allow read: if isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId);
+
+          // Coaches/admins can write freely.
+          allow create, update: if isTeamOwnerOrAdmin(teamId);
+
+          // Parents can only write specific sensitive fields for their linked player.
+          allow create: if isParentForPlayer(teamId, playerId) &&
+                           request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt']);
+          allow update: if isParentForPlayer(teamId, playerId) &&
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt']);
+
+          allow delete: if isTeamOwnerOrAdmin(teamId);
+        }
       }
 
       // Games subcollection

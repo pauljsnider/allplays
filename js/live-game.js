@@ -13,7 +13,7 @@ import {
   getLiveReactions,
   getConfigs,
   subscribeGame
-} from './db.js';
+} from './db.js?v=14';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
