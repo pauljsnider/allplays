@@ -152,8 +152,9 @@
                     </div>
                     <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4 scroll-thin">
                         <div class="chat-bubble-ai px-4 py-3 max-w-[90%]">
-                            <p class="text-sm text-gray-700">Welcome! I can help plan your practice session. Try:</p>
+                            <p class="text-sm text-gray-700">Welcome! Use Ask mode for direct questions and Plan mode when you want drills.</p>
                             <ul class="text-sm text-gray-500 mt-2 space-y-1 list-disc pl-4">
+                                <li>"Who has missed the most games?"</li>
                                 <li>"Plan for 8 kids, focus on finishing"</li>
                                 <li>"Add a rondo drill after warm-up"</li>
                                 <li>"Shorten the session to 45 minutes"</li>
@@ -161,6 +162,11 @@
                         </div>
                     </div>
                     <div class="p-4 border-t border-gray-100">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-[11px] text-gray-500 font-semibold uppercase tracking-wide">Chat Mode</span>
+                            <button id="chat-intent-ask" onclick="setChatIntentMode('ask')" class="px-2.5 py-1 text-[11px] font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">Ask</button>
+                            <button id="chat-intent-plan" onclick="setChatIntentMode('plan')" class="px-2.5 py-1 text-[11px] font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Plan</button>
+                        </div>
                         <div class="flex items-center gap-2">
                             <input type="text" id="chat-input" placeholder="Ask ALL PLAYS..." class="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" onkeydown="if(event.key==='Enter')sendChat()">
                             <button id="chat-send-btn" onclick="sendChat()" class="p-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700 disabled:opacity-60 disabled:cursor-not-allowed">
@@ -523,6 +529,7 @@
             chatAvatarHydrating: false,
             formAiHistory: [],
             currentMode: 'planning',
+            chatIntentMode: 'ask',
             libTab: 'community',
             libLastDoc: null,
             currentDetailDrill: null,
@@ -588,6 +595,7 @@
         window.toggleNotesPanel = toggleNotesPanel;
         window.addFreeTextNote = addFreeTextNote;
         window.completePractice = completePractice;
+        window.setChatIntentMode = setChatIntentMode;
 
         function parseHashParams() {
             const raw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
@@ -682,6 +690,7 @@
                 // First paint: show tile layout immediately, then hydrate each tile asynchronously.
                 renderCanvas();
                 renderChatHistory();
+                setChatIntentMode('ask');
                 updateTimelineAllocation();
                 document.getElementById('loading-state').classList.add('hidden');
                 document.getElementById('main-content').classList.remove('hidden');
@@ -2145,8 +2154,9 @@ ${text}
             if (history.length === 0) {
                 container.innerHTML = `
                     <div class="chat-bubble-ai px-4 py-3 max-w-[90%]">
-                        <p class="text-sm text-gray-700">Welcome! I can help plan your practice session. Try:</p>
+                        <p class="text-sm text-gray-700">Welcome! Use Ask mode for direct questions and Plan mode when you want drills.</p>
                         <ul class="text-sm text-gray-500 mt-2 space-y-1 list-disc pl-4">
+                            <li>"Who has missed the most games?"</li>
                             <li>"Plan for 8 kids, focus on finishing"</li>
                             <li>"Add a rondo drill after warm-up"</li>
                             <li>"Shorten the session to 45 minutes"</li>
@@ -2270,6 +2280,23 @@ ${text}
                     ${proposalActions}
                 </div>
             `;
+        }
+
+        function setChatIntentMode(mode = 'ask') {
+            state.chatIntentMode = mode === 'plan' ? 'plan' : 'ask';
+            const askBtn = document.getElementById('chat-intent-ask');
+            const planBtn = document.getElementById('chat-intent-plan');
+            const input = document.getElementById('chat-input');
+            const askActive = state.chatIntentMode === 'ask';
+            if (askBtn && planBtn) {
+                askBtn.className = `px-2.5 py-1 text-[11px] font-semibold rounded-full border ${askActive ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`;
+                planBtn.className = `px-2.5 py-1 text-[11px] font-semibold rounded-full border ${!askActive ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`;
+            }
+            if (input) {
+                input.placeholder = askActive
+                    ? 'Ask ALL PLAYS about your team, stats, and attendance...'
+                    : 'Ask ALL PLAYS to build a drill plan...';
+            }
         }
 
         function normalizeProposalBlocks(blocks) {
@@ -2408,24 +2435,46 @@ ${text}
             const hasExistingTimeline = state.canvasBlocks.length > 0;
             const planScope = hasExistingTimeline && timelineSummary.gap > 0 ? 'gap-fill' : 'full-session';
             const targetMinutes = planScope === 'gap-fill' ? timelineSummary.remaining : timelineSummary.sessionDuration;
-            let suggestedBlocks = [];
-            let proposalStatus = 'pending';
+            const requestedIntent = inferRequestedIntent(text);
+            const effectiveIntent = requestedIntent === 'plan' ? 'plan' : state.chatIntentMode;
+            let aiProposal = null;
 
             try {
-                const aiResult = await generateAiPlan(text, attendanceSummary, targetMinutes, planScope);
-                suggestedBlocks = normalizeProposalBlocks(aiResult.blocks);
-                aiText = aiResult.assistantText;
+                if (effectiveIntent === 'plan') {
+                    const aiResult = await generateAiPlan(text, attendanceSummary, targetMinutes, planScope);
+                    const suggestedBlocks = normalizeProposalBlocks(aiResult.blocks);
+                    aiText = `${aiResult.assistantText} Target planning time: ${targetMinutes} min (${planScope === 'gap-fill' ? 'fill timeline gap' : 'full session'}). Review the suggested drills below, choose drills or use all, then move them to the timeline.`;
+                    aiProposal = {
+                        status: 'pending',
+                        blocks: suggestedBlocks,
+                        targetMinutes,
+                        planScope
+                    };
+                } else {
+                    aiText = await generateAiAnswer(text, attendanceSummary);
+                }
             } catch (err) {
-                console.warn('Gemini planning failed, using fallback:', err);
-                suggestedBlocks = normalizeProposalBlocks(buildAttendanceAwarePlan(attendanceSummary, text, targetMinutes, planScope));
-                aiText = `ALL PLAYS AI is temporarily unavailable (${err?.message || 'unknown error'}). I prepared an attendance-aware fallback suggestion for ${attendanceSummary.checkedIn} checked-in players (${attendanceSummary.late} late, ${attendanceSummary.absent} absent).`;
-                showToast(`AI unavailable (${err?.message || 'unknown error'}). Used fallback plan.`, 'error');
+                if (effectiveIntent === 'plan') {
+                    console.warn('Gemini planning failed, using fallback:', err);
+                    const suggestedBlocks = normalizeProposalBlocks(buildAttendanceAwarePlan(attendanceSummary, text, targetMinutes, planScope));
+                    aiText = `ALL PLAYS AI is temporarily unavailable (${err?.message || 'unknown error'}). I prepared an attendance-aware fallback suggestion for ${attendanceSummary.checkedIn} checked-in players (${attendanceSummary.late} late, ${attendanceSummary.absent} absent). Target planning time: ${targetMinutes} min (${planScope === 'gap-fill' ? 'fill timeline gap' : 'full session'}). Review the suggested drills below, choose drills or use all, then move them to the timeline.`;
+                    aiProposal = {
+                        status: 'pending',
+                        blocks: suggestedBlocks,
+                        targetMinutes,
+                        planScope
+                    };
+                    showToast(`AI unavailable (${err?.message || 'unknown error'}). Used fallback plan.`, 'error');
+                } else {
+                    console.warn('Gemini Q&A failed:', err);
+                    aiText = `ALL PLAYS AI is temporarily unavailable (${err?.message || 'unknown error'}). Try again in a moment.`;
+                    showToast(`AI unavailable (${err?.message || 'unknown error'})`, 'error');
+                }
             } finally {
                 input.disabled = false;
                 sendBtn.disabled = false;
                 input.focus();
             }
-            aiText = `${aiText} Target planning time: ${targetMinutes} min (${planScope === 'gap-fill' ? 'fill timeline gap' : 'full session'}). Review the suggested drills below, choose drills or use all, then move them to the timeline.`;
 
             const lastBubble = container.querySelector('.chat-bubble-ai:last-child');
             if (lastBubble) {
@@ -2441,17 +2490,24 @@ ${text}
             scrollChatToBottom();
 
             try {
-                await persistAiTurn(text, aiText, attendanceSummary, {
-                    status: proposalStatus,
-                    blocks: suggestedBlocks,
-                    targetMinutes,
-                    planScope
-                });
+                await persistAiTurn(text, aiText, attendanceSummary, aiProposal);
                 renderChatHistory();
             } catch (err) {
                 console.warn('Failed to persist AI turn:', err);
-                showToast('Plan updated but chat history did not save', 'error');
+                showToast('Chat updated but history did not save', 'error');
             }
+        }
+
+        function inferRequestedIntent(userPrompt = '') {
+            const text = (userPrompt || '').trim().toLowerCase();
+            if (!text) return state.chatIntentMode;
+            const planningHints = [
+                'plan ', 'build ', 'timeline', 'drill', 'session',
+                'practice plan', 'suggest drills', 'add drills', 'move to timeline'
+            ];
+            if (planningHints.some(h => text.includes(h))) return 'plan';
+            if (text.endsWith('?')) return 'ask';
+            return state.chatIntentMode;
         }
 
         function getAttendanceSummary() {
@@ -2526,6 +2582,42 @@ ${userPrompt}
             const blocks = buildPlanFromCoreBlocks(parsed.coreBlocks || [], attendanceSummary, targetMinutes, { includeBuffers: planScope === 'full-session' });
             const assistantText = parsed.assistantMessage || `Plan updated for ${attendanceSummary.checkedIn} checked-in players and ${targetMinutes} minutes.`;
             return { blocks, assistantText };
+        }
+
+        async function generateAiAnswer(userPrompt, attendanceSummary) {
+            const timelineSummary = getTimelineDurationSummary();
+            const context = await buildAiPromptContext(
+                attendanceSummary,
+                userPrompt,
+                timelineSummary.sessionDuration,
+                'qa'
+            );
+            const app = getApp();
+            const ai = getAI(app, { backend: new GoogleAIBackend() });
+            const model = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
+            const prompt = `
+You are ALL PLAYS COACH answering a coach question using the provided team context.
+
+Rules:
+- Answer the coach's question directly.
+- Do NOT propose drills unless the coach explicitly asks for a plan.
+- If the answer is uncertain or missing in context, say what is missing.
+- Keep answers concise and practical.
+
+Return ONLY valid JSON:
+{
+  "assistantMessage": "direct answer for the coach"
+}
+
+Context JSON:
+${JSON.stringify(context)}
+
+Coach question:
+${userPrompt}
+            `.trim();
+            const result = await model.generateContent(prompt);
+            const parsed = parseLooseJson(result.response.text()) || {};
+            return parsed.assistantMessage || 'I could not find enough context to answer that clearly yet.';
         }
 
         async function buildAiPromptContext(attendanceSummary, userPrompt = '', targetMinutes = null, planScope = 'full-session') {
