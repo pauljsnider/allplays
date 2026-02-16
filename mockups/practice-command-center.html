@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Practice Command Center - UI Mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .drag-handle { cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+        .type-warmup { background: #dcfce7; color: #166534; }
+        .type-tactical { background: #dbeafe; color: #1e40af; }
+        .type-technical { background: #f3e8ff; color: #6b21a8; }
+        .type-physical { background: #ffedd5; color: #9a3412; }
+        .type-game { background: #fee2e2; color: #991b1b; }
+        .mode-toggle { transition: all 0.3s ease; }
+        .chat-bubble-user { background: #e0e7ff; border-radius: 16px 16px 4px 16px; }
+        .chat-bubble-ai { background: #f1f5f9; border-radius: 16px 16px 16px 4px; }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
+        .card-hover { transition: all 0.2s ease; }
+        .pulse-ring { animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite; }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+        }
+        .scroll-thin::-webkit-scrollbar { width: 4px; }
+        .scroll-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+        .editable-field { cursor: pointer; border-bottom: 1px dashed transparent; transition: all 0.2s; }
+        .editable-field:hover { border-bottom-color: #6366f1; color: #4f46e5; }
+        .note-area { display: none; }
+        .note-area.open { display: block; }
+        .expand-content { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .expand-content.open { max-height: 600px; }
+        .game-card-interactive { cursor: pointer; }
+        .game-card-interactive:hover { border-color: #a5b4fc; }
+        .player-card-interactive { cursor: pointer; }
+        .player-card-interactive:hover { border-color: #a5b4fc; }
+        .timeline-card-clickable { cursor: pointer; }
+        .timeline-card-clickable:hover { border-color: #818cf8; }
+        .dur-input { width: 36px; text-align: center; font-weight: 700; border: none; background: transparent; font-size: 14px; color: #6b7280; }
+        .dur-input:focus { outline: none; background: #eef2ff; border-radius: 4px; color: #4f46e5; }
+        .attendance-btn { border: 1px solid #4b5563; color: #9ca3af; transition: all 0.15s ease; }
+        .attendance-btn.active-present { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
+        .attendance-btn.active-late { background: #78350f; border-color: #f59e0b; color: #fde68a; }
+        .attendance-btn.active-absent { background: #7f1d1d; border-color: #ef4444; color: #fecaca; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+    <!-- MODE INDICATOR -->
+    <div id="mode-indicator" class="fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+        <div class="max-w-screen-2xl mx-auto px-4 py-2 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="text-xs font-bold uppercase tracking-wider text-gray-400">MOCKUP</span>
+                <span class="text-sm text-gray-500">|</span>
+                <span class="text-sm font-medium text-gray-700" id="current-view-label">Planning Mode</span>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="showView('planning')" id="btn-planning" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-500 text-white">Planning Mode</button>
+                <button onclick="showView('practice')" id="btn-practice" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Practice Mode</button>
+                <button onclick="showView('library')" id="btn-library" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Drill Library</button>
+                <button onclick="showView('detail')" id="btn-detail" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Drill Detail</button>
+                <button onclick="showView('mobile')" id="btn-mobile" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Mobile</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- TEAM ADMIN BANNER (shared across views)    -->
+    <!-- ========================================== -->
+    <div class="pt-12">
+        <div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white">
+            <div class="max-w-screen-2xl mx-auto px-4 py-3">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/></svg>
+                        </div>
+                        <div>
+                            <h1 class="font-bold text-lg">Shawnee FC U12</h1>
+                            <p class="text-primary-200 text-xs">Soccer &middot; Spring 2026</p>
+                        </div>
+                    </div>
+                </div>
+                <!-- Nav Icons -->
+                <div class="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        View
+                    </a>
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                        Edit
+                    </a>
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        Roster
+                    </a>
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        Schedule
+                    </a>
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                        Game Plan
+                    </a>
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                        Stats
+                    </a>
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs text-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                        Chat
+                    </a>
+                    <!-- DRILLS - Active -->
+                    <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/30 ring-2 ring-white/50 text-xs text-center font-semibold">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+                        Drills
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW: PLANNING MODE                        -->
+    <!-- ========================================== -->
+    <div id="view-planning" class="max-w-screen-2xl mx-auto">
+        <!-- Top Bar - Session Metadata (Editable) -->
+        <div class="bg-white border-b border-gray-200 px-4 py-3">
+            <div class="flex flex-wrap items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <input type="date" value="2026-02-11" class="text-sm font-medium border-none bg-transparent focus:outline-none focus:ring-1 focus:ring-primary-300 rounded px-1 py-0.5 cursor-pointer hover:bg-primary-50" style="width: 150px;">
+                </div>
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <input type="number" value="60" min="15" max="180" step="5" class="dur-input w-10" onfocus="this.select()"> <span class="text-sm text-gray-500">min</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <input type="text" value="Shawnee North Fields" class="text-sm font-medium border-none bg-transparent focus:outline-none focus:ring-1 focus:ring-primary-300 rounded px-1 py-0.5 hover:bg-primary-50" style="width: 170px;">
+                </div>
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    <input type="number" value="2" min="1" max="10" class="dur-input w-8" onfocus="this.select()"> <span class="text-sm text-gray-500">Coaches</span>
+                    <span class="text-gray-300">&middot;</span>
+                    <input type="number" value="14" min="1" max="30" class="dur-input w-8" onfocus="this.select()"> <span class="text-sm text-gray-500">Players</span>
+                </div>
+                <div class="ml-auto flex gap-2">
+                    <button class="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-50 text-primary-700 border border-primary-200 hover:bg-primary-100">
+                        Save Draft
+                    </button>
+                    <button onclick="showView('practice')" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Start Practice
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Four-Quadrant Layout -->
+        <div class="grid grid-cols-12 gap-0 min-h-[calc(100vh-220px)]">
+
+            <!-- LEFT: Context Rail -->
+            <div class="col-span-3 bg-gray-50 border-r border-gray-200 p-4 overflow-y-auto scroll-thin">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Game Intelligence</h3>
+
+                <!-- Last 3 Games -->
+                <div class="space-y-3 mb-6">
+                    <div class="bg-white rounded-lg p-3 border border-gray-100 shadow-sm game-card-interactive" onclick="toggleNote(this)">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-semibold text-gray-700">vs KC Thunder</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-green-600">W 3-1</span>
+                                <svg class="w-3 h-3 text-gray-300 expand-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500">Feb 8 &middot; Strong passing in first half. Finishing broke down after 50'.</p>
+                        <div class="note-area mt-2" onclick="event.stopPropagation()">
+                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 focus:border-primary-300 resize-none" rows="2" placeholder="Add coach notes for this game...">Need to work on stamina - finishing dropped in final 10 min</textarea>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg p-3 border border-gray-100 shadow-sm game-card-interactive" onclick="toggleNote(this)">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-semibold text-gray-700">vs Blue Valley FC</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-red-600">L 0-2</span>
+                                <svg class="w-3 h-3 text-gray-300 expand-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500">Feb 1 &middot; Struggled with 1v1 defending. Poor first touch under pressure.</p>
+                        <div class="note-area mt-2" onclick="event.stopPropagation()">
+                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 focus:border-primary-300 resize-none" rows="2" placeholder="Add coach notes for this game..."></textarea>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg p-3 border border-gray-100 shadow-sm game-card-interactive" onclick="toggleNote(this)">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-semibold text-gray-700">vs Olathe Stars</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-green-600">W 2-1</span>
+                                <svg class="w-3 h-3 text-gray-300 expand-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500">Jan 25 &middot; Good shape defensively. Need more movement off the ball in attack.</p>
+                        <div class="note-area mt-2" onclick="event.stopPropagation()">
+                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 focus:border-primary-300 resize-none" rows="2" placeholder="Add coach notes for this game..."></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trends -->
+                <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Stat Trends</h3>
+                <div class="space-y-2 mb-6">
+                    <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                        <span class="text-xs text-gray-600">First-touch errors</span>
+                        <span class="text-xs font-bold text-red-500">+20% 2nd half</span>
+                    </div>
+                    <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                        <span class="text-xs text-gray-600">Shot accuracy</span>
+                        <span class="text-xs font-bold text-red-500">32% (down)</span>
+                    </div>
+                    <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                        <span class="text-xs text-gray-600">Pass completion</span>
+                        <span class="text-xs font-bold text-green-500">78% (up)</span>
+                    </div>
+                    <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                        <span class="text-xs text-gray-600">1v1 success rate</span>
+                        <span class="text-xs font-bold text-yellow-600">45% (flat)</span>
+                    </div>
+                </div>
+
+                <!-- Player Highlights -->
+                <h3 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Player Highlights</h3>
+                <div class="space-y-2">
+                    <div class="bg-white rounded-lg p-2.5 border border-gray-100 player-card-interactive" onclick="toggleNote(this)">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-gray-700">#7 Maya R.</span>
+                            <svg class="w-3 h-3 text-gray-300 expand-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </div>
+                        <p class="text-xs text-gray-500">3 goals in 3 games. Strong left foot.</p>
+                        <div class="note-area mt-2" onclick="event.stopPropagation()">
+                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 focus:border-primary-300 resize-none" rows="2" placeholder="Add notes about this player...">Focus on weak foot finishing drills today</textarea>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-lg p-2.5 border border-gray-100 player-card-interactive" onclick="toggleNote(this)">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-gray-700">#12 Jayden K.</span>
+                            <svg class="w-3 h-3 text-gray-300 expand-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                        </div>
+                        <p class="text-xs text-gray-500">Needs work on aerial control. Improving.</p>
+                        <div class="note-area mt-2" onclick="event.stopPropagation()">
+                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 focus:border-primary-300 resize-none" rows="2" placeholder="Add notes about this player..."></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CENTER: AI Coach Chat -->
+            <div class="col-span-4 bg-white border-r border-gray-200 flex flex-col">
+                <div class="p-4 border-b border-gray-100">
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 bg-gradient-to-br from-primary-400 to-primary-600 rounded-full flex items-center justify-center">
+                            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800">AI Coach</h3>
+                            <p class="text-xs text-gray-400">Powered by Gemini 2.5 Flash</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Messages -->
+                <div class="flex-1 overflow-y-auto p-4 space-y-4 scroll-thin">
+                    <div class="chat-bubble-ai px-4 py-3 max-w-[90%]">
+                        <p class="text-sm text-gray-700">I've analyzed your last 3 games. Key areas to address:</p>
+                        <ul class="text-sm text-gray-600 mt-2 space-y-1">
+                            <li class="flex items-start gap-1.5">
+                                <span class="text-red-400 mt-0.5">&#9679;</span>
+                                <span><strong>First touch</strong> - errors up 20% in second halves</span>
+                            </li>
+                            <li class="flex items-start gap-1.5">
+                                <span class="text-red-400 mt-0.5">&#9679;</span>
+                                <span><strong>Finishing</strong> - shot accuracy dropped to 32%</span>
+                            </li>
+                            <li class="flex items-start gap-1.5">
+                                <span class="text-green-400 mt-0.5">&#9679;</span>
+                                <span><strong>Passing</strong> is trending well at 78%</span>
+                            </li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mt-2">Want me to build a session focused on first touch and finishing?</p>
+                    </div>
+
+                    <div class="chat-bubble-user px-4 py-3 max-w-[90%] ml-auto">
+                        <p class="text-sm text-gray-700">Yes, plan for 14 kids. Focus on finishing but start with first touch warm-up. 60 minutes total.</p>
+                    </div>
+
+                    <div class="chat-bubble-ai px-4 py-3 max-w-[90%]">
+                        <p class="text-sm text-gray-700">Here's a 60-minute session plan. I've loaded it to your canvas:</p>
+                        <div class="mt-3 space-y-2">
+                            <div class="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                                <span class="w-2 h-2 rounded-full bg-green-400"></span>
+                                <span class="text-xs font-medium text-gray-700">10 min</span>
+                                <span class="text-xs text-gray-500">First Touch Relay</span>
+                            </div>
+                            <div class="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                                <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+                                <span class="text-xs font-medium text-gray-700">15 min</span>
+                                <span class="text-xs text-gray-500">Shooting Gates</span>
+                            </div>
+                            <div class="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                                <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+                                <span class="text-xs font-medium text-gray-700">15 min</span>
+                                <span class="text-xs text-gray-500">1v1 Finishing to Goal</span>
+                            </div>
+                            <div class="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                                <span class="w-2 h-2 rounded-full bg-red-400"></span>
+                                <span class="text-xs font-medium text-gray-700">15 min</span>
+                                <span class="text-xs text-gray-500">5v5 Small-Sided Game</span>
+                            </div>
+                            <div class="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                                <span class="w-2 h-2 rounded-full bg-green-400"></span>
+                                <span class="text-xs font-medium text-gray-700">5 min</span>
+                                <span class="text-xs text-gray-500">Cool-down Stretch</span>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-2">Drag cards on the canvas to reorder. Tap any card for details.</p>
+                    </div>
+                </div>
+
+                <!-- Chat Input -->
+                <div class="p-4 border-t border-gray-100">
+                    <div class="flex items-center gap-2">
+                        <input type="text" placeholder="Ask the AI Coach..." class="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" value="Add a rondo drill after warm-up">
+                        <button class="p-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT: Practice Canvas -->
+            <div class="col-span-5 bg-gray-50 p-4 overflow-y-auto scroll-thin">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-bold text-gray-700">Practice Timeline</h3>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-400">Total: 60 min</span>
+                        <button class="px-2.5 py-1 text-xs font-medium rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                            Home Packet
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Timeline Cards -->
+                <div class="space-y-3">
+                    <!-- Card 1: Warm-up -->
+                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden timeline-card-clickable" onclick="toggleCardExpand(this)">
+                        <div class="flex items-stretch">
+                            <div class="w-1.5 bg-green-400 flex-shrink-0"></div>
+                            <div class="flex-1 p-3">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="drag-handle text-gray-300 hover:text-gray-500" onclick="event.stopPropagation()">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                        </span>
+                                        <span class="text-sm font-semibold text-gray-800">First Touch Relay</span>
+                                        <span class="type-warmup text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Warm-up</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" value="10" min="1" max="60" class="dur-input" onclick="event.stopPropagation()" onfocus="this.select()"> <span class="text-xs text-gray-400">min</span>
+                                        <svg class="w-4 h-4 text-gray-300 expand-icon transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 ml-6">Ground control under light pressure. Two teams, relay race format.</p>
+                                <div class="flex items-center gap-3 mt-2 ml-6">
+                                    <span class="text-[10px] text-gray-400">6 cones &middot; 4 balls &middot; 14 players</span>
+                                </div>
+                                <!-- Expandable Detail -->
+                                <div class="expand-content ml-6 mt-3" onclick="event.stopPropagation()">
+                                    <div class="border-t border-gray-100 pt-3 space-y-3">
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Setup</h5>
+                                            <p class="text-xs text-gray-600">Set up two parallel lanes with cones. Split team into two equal groups at starting cones.</p>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Instructions</h5>
+                                            <p class="text-xs text-gray-600">Player receives pass, takes a clean first touch through cones, passes to next teammate. Relay race format - first team to complete all reps wins.</p>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coaching Points</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>Soft first touch - cushion the ball</li>
+                                                <li>Body open to receive</li>
+                                                <li>Touch into space, not under feet</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coach Note</h5>
+                                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 resize-none" rows="2" placeholder="Add notes for this drill..."></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 2: Technical -->
+                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden timeline-card-clickable" onclick="toggleCardExpand(this)">
+                        <div class="flex items-stretch">
+                            <div class="w-1.5 bg-purple-400 flex-shrink-0"></div>
+                            <div class="flex-1 p-3">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="drag-handle text-gray-300 hover:text-gray-500" onclick="event.stopPropagation()">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                        </span>
+                                        <span class="text-sm font-semibold text-gray-800">Shooting Gates</span>
+                                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" value="15" min="1" max="60" class="dur-input" onclick="event.stopPropagation()" onfocus="this.select()"> <span class="text-xs text-gray-400">min</span>
+                                        <svg class="w-4 h-4 text-gray-300 expand-icon transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 ml-6">Shoot through cone gates from various angles. Focus on placement over power.</p>
+                                <div class="flex items-center gap-3 mt-2 ml-6">
+                                    <span class="text-[10px] text-gray-400">8 cones &middot; 6 balls &middot; 1 goal &middot; 14 players</span>
+                                </div>
+                                <!-- Expandable Detail -->
+                                <div class="expand-content ml-6 mt-3" onclick="event.stopPropagation()">
+                                    <div class="border-t border-gray-100 pt-3 space-y-3">
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Setup</h5>
+                                            <p class="text-xs text-gray-600">Place 4 pairs of cones (gates) at varying distances and angles from the goal. Gates 2 yards wide, 10-20 yards from goal.</p>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Instructions</h5>
+                                            <ol class="text-xs text-gray-600 list-decimal pl-3 space-y-0.5">
+                                                <li>Players line up 25 yards from goal</li>
+                                                <li>Dribble toward any open gate</li>
+                                                <li>Shoot through gate and on target</li>
+                                                <li>Retrieve ball, rejoin line</li>
+                                            </ol>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Progressions</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>Start stationary, progress to dribble-and-shoot</li>
+                                                <li>Add passive defender</li>
+                                                <li>Weak foot only round</li>
+                                                <li>3-second shot clock after reaching gate</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coaching Points</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>Head up to pick gate before arriving</li>
+                                                <li>Plant foot pointing at target</li>
+                                                <li>Placement over power</li>
+                                                <li>Follow through toward target</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coach Note</h5>
+                                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 resize-none" rows="2" placeholder="Add notes for this drill..."></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 3: Technical (AI Recommended) -->
+                    <div class="bg-white rounded-xl border border-primary-200 shadow-sm card-hover overflow-hidden ring-2 ring-primary-100 timeline-card-clickable" onclick="toggleCardExpand(this)">
+                        <div class="flex items-stretch">
+                            <div class="w-1.5 bg-purple-400 flex-shrink-0"></div>
+                            <div class="flex-1 p-3">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="drag-handle text-gray-300 hover:text-gray-500" onclick="event.stopPropagation()">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                        </span>
+                                        <span class="text-sm font-semibold text-gray-800">1v1 Finishing to Goal</span>
+                                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" value="15" min="1" max="60" class="dur-input" onclick="event.stopPropagation()" onfocus="this.select()"> <span class="text-xs text-gray-400">min</span>
+                                        <svg class="w-4 h-4 text-gray-300 expand-icon transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 ml-6">Attacker receives, takes on defender, finishes. Rotate roles.</p>
+                                <div class="flex items-center gap-3 mt-2 ml-6">
+                                    <span class="text-[10px] text-gray-400">4 cones &middot; 4 balls &middot; 1 goal &middot; 14 players</span>
+                                    <span class="text-[10px] text-primary-500 font-medium">&#9733; AI recommended</span>
+                                </div>
+                                <div class="mt-2 ml-6 bg-primary-50 rounded-lg px-3 py-2">
+                                    <p class="text-[10px] text-primary-700">Coach note: "Focus on weak foot. Maya R. and Jayden K. need extra reps."</p>
+                                </div>
+                                <!-- Expandable Detail -->
+                                <div class="expand-content ml-6 mt-3" onclick="event.stopPropagation()">
+                                    <div class="border-t border-gray-100 pt-3 space-y-3">
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Setup</h5>
+                                            <p class="text-xs text-gray-600">Place cone 20 yards from goal. Defender starts on the edge of the box. Server with balls on the side.</p>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Instructions</h5>
+                                            <ol class="text-xs text-gray-600 list-decimal pl-3 space-y-0.5">
+                                                <li>Server plays ball to attacker at cone</li>
+                                                <li>Attacker takes first touch and attacks goal</li>
+                                                <li>Defender closes down - live 1v1</li>
+                                                <li>Rotate: attacker becomes defender, new attacker</li>
+                                            </ol>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Progressions</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>Start with passive defender, progress to full press</li>
+                                                <li>Limit to 2 touches before shooting</li>
+                                                <li>Weak foot only finishing</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coaching Points</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>First touch away from defender</li>
+                                                <li>Change of pace to beat the press</li>
+                                                <li>Composure in front of goal</li>
+                                                <li>Pick your spot early</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coach Note</h5>
+                                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 resize-none" rows="2" placeholder="Add notes for this drill...">Focus on weak foot. Maya R. and Jayden K. need extra reps.</textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 4: Game -->
+                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden timeline-card-clickable" onclick="toggleCardExpand(this)">
+                        <div class="flex items-stretch">
+                            <div class="w-1.5 bg-red-400 flex-shrink-0"></div>
+                            <div class="flex-1 p-3">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="drag-handle text-gray-300 hover:text-gray-500" onclick="event.stopPropagation()">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                        </span>
+                                        <span class="text-sm font-semibold text-gray-800">5v5 Small-Sided Game</span>
+                                        <span class="type-game text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Game</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" value="15" min="1" max="60" class="dur-input" onclick="event.stopPropagation()" onfocus="this.select()"> <span class="text-xs text-gray-400">min</span>
+                                        <svg class="w-4 h-4 text-gray-300 expand-icon transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 ml-6">Apply finishing skills in game context. Bonus point for first-time shots.</p>
+                                <div class="flex items-center gap-3 mt-2 ml-6">
+                                    <span class="text-[10px] text-gray-400">8 cones &middot; 1 ball &middot; 2 goals &middot; 14 players</span>
+                                </div>
+                                <!-- Expandable Detail -->
+                                <div class="expand-content ml-6 mt-3" onclick="event.stopPropagation()">
+                                    <div class="border-t border-gray-100 pt-3 space-y-3">
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Setup</h5>
+                                            <p class="text-xs text-gray-600">Mark a 30x20 yard field with cones. Two small goals on each end. Split into two teams of 5 (+ subs rotate).</p>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Rules</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>Normal rules, no offsides</li>
+                                                <li>Bonus point for first-time shots on goal</li>
+                                                <li>Max 3 touches in attacking half</li>
+                                                <li>Subs rotate every 3 minutes</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coaching Points</h5>
+                                            <ul class="text-xs text-gray-600 list-disc pl-3 space-y-0.5">
+                                                <li>Apply finishing technique from drills in game context</li>
+                                                <li>Quick decision making around the goal</li>
+                                                <li>Movement off the ball to create angles</li>
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coach Note</h5>
+                                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 resize-none" rows="2" placeholder="Add notes for this drill..."></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 5: Cool-down -->
+                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden timeline-card-clickable" onclick="toggleCardExpand(this)">
+                        <div class="flex items-stretch">
+                            <div class="w-1.5 bg-green-400 flex-shrink-0"></div>
+                            <div class="flex-1 p-3">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="flex items-center gap-2">
+                                        <span class="drag-handle text-gray-300 hover:text-gray-500" onclick="event.stopPropagation()">
+                                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                        </span>
+                                        <span class="text-sm font-semibold text-gray-800">Cool-down Stretch</span>
+                                        <span class="type-warmup text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Cool-down</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <input type="number" value="5" min="1" max="60" class="dur-input" onclick="event.stopPropagation()" onfocus="this.select()"> <span class="text-xs text-gray-400">min</span>
+                                        <svg class="w-4 h-4 text-gray-300 expand-icon transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 ml-6">Static stretching, team huddle, quick recap.</p>
+                                <!-- Expandable Detail -->
+                                <div class="expand-content ml-6 mt-3" onclick="event.stopPropagation()">
+                                    <div class="border-t border-gray-100 pt-3 space-y-3">
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Instructions</h5>
+                                            <ol class="text-xs text-gray-600 list-decimal pl-3 space-y-0.5">
+                                                <li>Gather team in a circle</li>
+                                                <li>Lead static stretches: quads, hamstrings, calves, hip flexors (30s each)</li>
+                                                <li>Team huddle - recap key takeaways</li>
+                                                <li>Highlight positives and areas to work on at home</li>
+                                            </ol>
+                                        </div>
+                                        <div>
+                                            <h5 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Coach Note</h5>
+                                            <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 resize-none" rows="2" placeholder="Add notes for this drill..."></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Add Drill Button -->
+                    <button class="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-400 hover:border-primary-300 hover:text-primary-500 hover:bg-primary-50 transition-all flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                        Add Drill from Library
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW: PRACTICE MODE                        -->
+    <!-- ========================================== -->
+    <div id="view-practice" class="hidden">
+        <div class="min-h-[calc(100vh-120px)] bg-gray-900 text-white flex flex-col">
+            <!-- Practice Mode Header -->
+            <div class="flex items-center justify-between px-6 py-3 bg-gray-800">
+                <div class="flex items-center gap-3">
+                    <div class="w-2 h-2 rounded-full bg-green-400 pulse-ring"></div>
+                    <span class="text-sm font-medium text-gray-300">Practice Active</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="text-xs text-gray-400">Drill 2 of 5</span>
+                    <span id="attendance-pill" class="text-[10px] font-medium px-2 py-1 rounded-full bg-gray-700 text-gray-200">Checked in: 3/4</span>
+                    <button onclick="showView('planning')" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600">
+                        Exit to Planning
+                    </button>
+                </div>
+            </div>
+
+            <!-- Big Timer -->
+            <div class="flex-1 flex flex-col items-center justify-center px-6">
+                <div class="text-center mb-8">
+                    <span class="type-technical text-xs font-bold px-3 py-1 rounded-full uppercase">Technical</span>
+                    <h2 class="text-3xl font-bold mt-3">Shooting Gates</h2>
+                    <p class="text-gray-400 text-sm mt-1">Shoot through cone gates from various angles</p>
+                </div>
+
+                <!-- Timer Display -->
+                <div class="relative mb-8">
+                    <div class="w-64 h-64 rounded-full border-4 border-primary-500 flex items-center justify-center bg-gray-800/50">
+                        <div class="text-center">
+                            <div class="text-7xl font-mono font-bold tracking-tight">8:34</div>
+                            <div class="text-sm text-gray-400 mt-1">remaining</div>
+                        </div>
+                    </div>
+                    <!-- Progress ring (visual only) -->
+                    <svg class="absolute inset-0 w-64 h-64 -rotate-90" viewBox="0 0 256 256">
+                        <circle cx="128" cy="128" r="120" fill="none" stroke="#374151" stroke-width="4"/>
+                        <circle cx="128" cy="128" r="120" fill="none" stroke="#6366f1" stroke-width="4" stroke-dasharray="754" stroke-dashoffset="320" stroke-linecap="round"/>
+                    </svg>
+                </div>
+
+                <!-- Timer Controls -->
+                <div class="flex items-center gap-4 mb-10">
+                    <button class="w-14 h-14 rounded-full bg-gray-700 hover:bg-gray-600 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"/></svg>
+                    </button>
+                    <button class="w-16 h-16 rounded-full bg-primary-600 hover:bg-primary-700 flex items-center justify-center shadow-lg shadow-primary-500/30">
+                        <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24"><path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/></svg>
+                    </button>
+                    <button class="w-14 h-14 rounded-full bg-gray-700 hover:bg-gray-600 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z"/></svg>
+                    </button>
+                </div>
+
+                <!-- Coach Note -->
+                <div class="bg-gray-800 rounded-xl px-5 py-3 max-w-md w-full mb-6">
+                    <p class="text-xs text-gray-400 mb-1">Coach Note</p>
+                    <p class="text-sm text-gray-200">Focus on placement over power. Weak foot emphasis.</p>
+                </div>
+
+                <!-- Next Drill Button -->
+                <button class="w-full max-w-md bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-500 hover:to-primary-600 text-white rounded-2xl px-6 py-5 flex items-center justify-between shadow-lg shadow-primary-500/20 transition-all">
+                    <div class="text-left">
+                        <p class="text-xs text-primary-200 uppercase tracking-wider font-medium">Next Up</p>
+                        <p class="text-lg font-bold">1v1 Finishing to Goal</p>
+                        <p class="text-sm text-primary-200">15 min &middot; Technical</p>
+                    </div>
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+                </button>
+
+                <!-- Progress Bar -->
+                <div class="w-full max-w-md mt-6">
+                    <div class="flex justify-between text-xs text-gray-500 mb-1">
+                        <span>Session Progress</span>
+                        <span>25 of 60 min</span>
+                    </div>
+                    <div class="w-full bg-gray-700 rounded-full h-2">
+                        <div class="bg-primary-500 h-2 rounded-full" style="width: 42%"></div>
+                    </div>
+                    <div class="flex justify-between mt-2">
+                        <div class="flex gap-1">
+                            <div class="w-6 h-1.5 rounded-full bg-green-500" title="Warm-up"></div>
+                            <div class="w-9 h-1.5 rounded-full bg-purple-500 opacity-60" title="Shooting Gates (current)"></div>
+                            <div class="w-9 h-1.5 rounded-full bg-gray-600" title="1v1 Finishing"></div>
+                            <div class="w-9 h-1.5 rounded-full bg-gray-600" title="5v5 SSG"></div>
+                            <div class="w-4 h-1.5 rounded-full bg-gray-600" title="Cool-down"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Voice Note -->
+                <button class="mt-6 flex items-center gap-2 text-sm text-gray-400 hover:text-white">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                    Tap to add voice note
+                </button>
+
+                <!-- Attendance Tracker -->
+                <div class="w-full max-w-md mt-6 bg-gray-800 border border-gray-700 rounded-2xl p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <p class="text-xs uppercase tracking-wider text-gray-400">Attendance</p>
+                            <p class="text-sm font-semibold text-white">Live Check-in</p>
+                        </div>
+                        <span id="attendance-count" class="text-xs font-medium px-2 py-1 rounded-lg bg-gray-700 text-gray-200">3 / 4 checked in</span>
+                    </div>
+
+                    <div class="space-y-2 text-sm">
+                        <div class="flex items-center justify-between" data-player-id="p1">
+                            <span class="text-gray-200">A. Smith</span>
+                            <div class="flex gap-1">
+                                <button onclick="setAttendanceStatus('p1','present', this)" class="attendance-btn active-present text-[10px] px-2 py-1 rounded-md">Present</button>
+                                <button onclick="setAttendanceStatus('p1','late', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Late</button>
+                                <button onclick="setAttendanceStatus('p1','absent', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Absent</button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between" data-player-id="p2">
+                            <span class="text-gray-200">B. Jones</span>
+                            <div class="flex gap-1">
+                                <button onclick="setAttendanceStatus('p2','present', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Present</button>
+                                <button onclick="setAttendanceStatus('p2','late', this)" class="attendance-btn active-late text-[10px] px-2 py-1 rounded-md">Late</button>
+                                <button onclick="setAttendanceStatus('p2','absent', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Absent</button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between" data-player-id="p3">
+                            <span class="text-gray-200">C. Lee</span>
+                            <div class="flex gap-1">
+                                <button onclick="setAttendanceStatus('p3','present', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Present</button>
+                                <button onclick="setAttendanceStatus('p3','late', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Late</button>
+                                <button onclick="setAttendanceStatus('p3','absent', this)" class="attendance-btn active-absent text-[10px] px-2 py-1 rounded-md">Absent</button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between" data-player-id="p4">
+                            <span class="text-gray-200">D. Patel</span>
+                            <div class="flex gap-1">
+                                <button onclick="setAttendanceStatus('p4','present', this)" class="attendance-btn active-present text-[10px] px-2 py-1 rounded-md">Present</button>
+                                <button onclick="setAttendanceStatus('p4','late', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Late</button>
+                                <button onclick="setAttendanceStatus('p4','absent', this)" class="attendance-btn text-[10px] px-2 py-1 rounded-md">Absent</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW: DRILL LIBRARY                        -->
+    <!-- ========================================== -->
+    <div id="view-library" class="hidden max-w-screen-2xl mx-auto px-4 py-6">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h2 class="text-xl font-bold text-gray-800">Drill Library</h2>
+                <p class="text-sm text-gray-500">Browse, filter, and save drills for your team</p>
+            </div>
+            <button onclick="openDrillForm('new')" class="px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                New Drill
+            </button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex gap-1 mb-4 border-b border-gray-200">
+            <button class="px-4 py-2.5 text-sm font-medium text-primary-600 border-b-2 border-primary-600">Community</button>
+            <button class="px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700">My Drills</button>
+            <button class="px-4 py-2.5 text-sm font-medium text-gray-500 hover:text-gray-700 flex items-center gap-1">
+                Favorites
+                <span class="bg-primary-100 text-primary-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">5</span>
+            </button>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="flex flex-wrap items-center gap-3 mb-6 bg-white rounded-xl p-3 border border-gray-200">
+            <select class="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 focus:ring-2 focus:ring-primary-500 bg-white">
+                <option>All Types</option>
+                <option>Warm-up</option>
+                <option>Tactical</option>
+                <option selected>Technical</option>
+                <option>Physical</option>
+                <option>Game</option>
+            </select>
+            <select class="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 focus:ring-2 focus:ring-primary-500 bg-white">
+                <option selected>All Levels</option>
+                <option>Initial (U6-U8)</option>
+                <option>Basic (U9-U12)</option>
+                <option>Intermediate (U13-U14)</option>
+                <option>Advanced (U15-U18)</option>
+            </select>
+            <select class="px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 focus:ring-2 focus:ring-primary-500 bg-white">
+                <option>All Skills</option>
+                <option>Passing</option>
+                <option selected>Shooting</option>
+                <option>Dribbling</option>
+                <option>First Touch</option>
+                <option>Defending</option>
+                <option>Fitness</option>
+            </select>
+            <div class="flex-1 min-w-[200px]">
+                <div class="relative">
+                    <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    <input type="text" placeholder="Search drills..." class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                </div>
+            </div>
+            <span class="text-xs text-gray-400">12 results</span>
+        </div>
+
+        <!-- Drill Cards Grid -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <!-- Card 1 -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer" onclick="showView('detail')">
+                <div class="p-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                        <button class="text-red-400 hover:text-red-500" onclick="event.stopPropagation()">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"/></svg>
+                        </button>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 text-sm mb-1">Shooting Gates</h4>
+                    <p class="text-xs text-gray-500 mb-3 line-clamp-2">Shoot through cone gates from various angles. Focus on placement over power.</p>
+                    <div class="flex flex-wrap gap-1 mb-3">
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">shooting</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">finishing</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">accuracy</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
+                        <span>15 min &middot; 8-16 players</span>
+                        <span>All levels</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2 -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer">
+                <div class="p-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                        <button class="text-gray-300 hover:text-red-400" onclick="event.stopPropagation()">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                        </button>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 text-sm mb-1">1v1 Finishing to Goal</h4>
+                    <p class="text-xs text-gray-500 mb-3 line-clamp-2">Attacker receives pass, takes on defender, and finishes. Quick rotation.</p>
+                    <div class="flex flex-wrap gap-1 mb-3">
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">finishing</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">1v1</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">dribbling</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
+                        <span>15 min &middot; 6-14 players</span>
+                        <span>Intermediate</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 3 -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer">
+                <div class="p-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                        <button class="text-red-400 hover:text-red-500" onclick="event.stopPropagation()">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"/></svg>
+                        </button>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 text-sm mb-1">Volley Circuit</h4>
+                    <p class="text-xs text-gray-500 mb-3 line-clamp-2">Three stations: side volley, lob volley, half-volley. Timed rotation every 3 minutes.</p>
+                    <div class="flex flex-wrap gap-1 mb-3">
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">volleys</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">shooting</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">aerial</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
+                        <span>12 min &middot; 6-12 players</span>
+                        <span>Advanced</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 4 -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer">
+                <div class="p-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                        <button class="text-gray-300 hover:text-red-400" onclick="event.stopPropagation()">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                        </button>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 text-sm mb-1">Driven Shot Technique</h4>
+                    <p class="text-xs text-gray-500 mb-3 line-clamp-2">Focus on low, hard driven shots. Approach angle, plant foot, and follow-through.</p>
+                    <div class="flex flex-wrap gap-1 mb-3">
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">driven shots</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">power</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
+                        <span>10 min &middot; 4-8 players</span>
+                        <span>Basic</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 5 -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer">
+                <div class="p-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="type-technical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Technical</span>
+                        <button class="text-gray-300 hover:text-red-400" onclick="event.stopPropagation()">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                        </button>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 text-sm mb-1">Long Shot Power Drill</h4>
+                    <p class="text-xs text-gray-500 mb-3 line-clamp-2">Shoot from 20+ yards. Work on striking through the ball. Partner serves.</p>
+                    <div class="flex flex-wrap gap-1 mb-3">
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">long shots</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">power</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">ball striking</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
+                        <span>10 min &middot; 4-10 players</span>
+                        <span>Intermediate</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 6 -->
+            <div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer">
+                <div class="p-4">
+                    <div class="flex items-start justify-between mb-2">
+                        <span class="type-tactical text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Tactical</span>
+                        <button class="text-gray-300 hover:text-red-400" onclick="event.stopPropagation()">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                        </button>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 text-sm mb-1">Third-Man Run Finishing</h4>
+                    <p class="text-xs text-gray-500 mb-3 line-clamp-2">Combination play ending with a third-man run and shot. Emphasize timing.</p>
+                    <div class="flex flex-wrap gap-1 mb-3">
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">finishing</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">passing</span>
+                        <span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">movement</span>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
+                        <span>15 min &middot; 9-15 players</span>
+                        <span>Advanced</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Load More -->
+        <div class="text-center mt-6">
+            <button class="px-6 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
+                Load More Drills
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW: DRILL DETAIL MODAL                   -->
+    <!-- ========================================== -->
+    <div id="view-detail" class="hidden">
+        <div class="fixed inset-0 bg-black/50 z-40" onclick="showView('library')"></div>
+        <div class="fixed inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl z-50 overflow-y-auto">
+            <!-- Header -->
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <span class="type-technical text-xs font-bold px-2.5 py-1 rounded-full uppercase">Technical</span>
+                    <span class="text-xs text-gray-400">Community Drill</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button class="text-red-400 hover:text-red-500 p-1">
+                        <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z"/></svg>
+                    </button>
+                    <button class="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700">
+                        Add to Canvas
+                    </button>
+                    <button onclick="openDrillForm('edit')" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">
+                        Edit Drill
+                    </button>
+                    <button onclick="showView('library')" class="text-gray-400 hover:text-gray-600 p-1">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div class="px-6 py-6">
+                <h1 class="text-2xl font-bold text-gray-900 mb-2">Shooting Gates</h1>
+                <p class="text-gray-600 mb-6">Shoot through cone gates from various angles. Focus on placement over power. Great for developing finishing accuracy.</p>
+
+                <!-- Badges -->
+                <div class="flex flex-wrap gap-2 mb-6">
+                    <span class="bg-gray-100 text-gray-700 text-xs font-medium px-3 py-1 rounded-full">All Levels</span>
+                    <span class="bg-gray-100 text-gray-700 text-xs font-medium px-3 py-1 rounded-full">Ages: U8+</span>
+                    <span class="bg-purple-50 text-purple-700 text-xs font-medium px-3 py-1 rounded-full">shooting</span>
+                    <span class="bg-purple-50 text-purple-700 text-xs font-medium px-3 py-1 rounded-full">finishing</span>
+                    <span class="bg-purple-50 text-purple-700 text-xs font-medium px-3 py-1 rounded-full">accuracy</span>
+                </div>
+
+                <!-- Setup Requirements -->
+                <div class="bg-gray-50 rounded-xl p-4 mb-6">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Setup Requirements</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        <div>
+                            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-0.5">Duration</p>
+                            <p class="text-sm font-medium text-gray-700">15 minutes</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-0.5">Players</p>
+                            <p class="text-sm font-medium text-gray-700">8 - 16</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-0.5">Cones</p>
+                            <p class="text-sm font-medium text-gray-700">8</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-0.5">Balls</p>
+                            <p class="text-sm font-medium text-gray-700">6 - 8</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-0.5">Goals</p>
+                            <p class="text-sm font-medium text-gray-700">1</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] uppercase tracking-wider text-gray-400 mb-0.5">Area</p>
+                            <p class="text-sm font-medium text-gray-700">20 x 20 yards</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Instructions -->
+                <div class="mb-6">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Instructions</h3>
+                    <div class="prose prose-sm text-gray-600 space-y-3">
+                        <h4 class="text-sm font-semibold text-gray-700">Setup</h4>
+                        <p>Place 4 pairs of cones (gates) at varying distances and angles from the goal. Gates should be 2 yards wide, positioned between 10-20 yards from goal.</p>
+
+                        <h4 class="text-sm font-semibold text-gray-700">Exercise</h4>
+                        <ol class="list-decimal pl-4 space-y-1.5">
+                            <li>Players line up behind a starting cone 25 yards from goal</li>
+                            <li>Player dribbles toward any open gate</li>
+                            <li>Must shoot through the gate and on target</li>
+                            <li>Ball must pass through the gate AND hit the target (goal)</li>
+                            <li>After shooting, player retrieves ball and joins back of line</li>
+                        </ol>
+
+                        <h4 class="text-sm font-semibold text-gray-700">Progressions</h4>
+                        <ul class="list-disc pl-4 space-y-1.5">
+                            <li>Start with stationary ball at each gate</li>
+                            <li>Progress to dribble-and-shoot</li>
+                            <li>Add a passive defender</li>
+                            <li>Weak foot only round</li>
+                            <li>Add time pressure (3 seconds to shoot after reaching gate)</li>
+                        </ul>
+
+                        <h4 class="text-sm font-semibold text-gray-700">Coaching Points</h4>
+                        <ul class="list-disc pl-4 space-y-1.5">
+                            <li>Head up to pick the gate before arriving</li>
+                            <li>Plant foot pointing at target</li>
+                            <li>Placement > power at this stage</li>
+                            <li>Follow through toward target</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Home Variant -->
+                <div class="bg-blue-50 rounded-xl p-4 mb-6 border border-blue-100">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                        <h3 class="text-sm font-semibold text-blue-800">At-Home Variant</h3>
+                    </div>
+                    <p class="text-sm text-blue-700">Use shoes or water bottles as gates. Shoot against a wall or fence. Focus on hitting the target through each "gate" 5 times with each foot.</p>
+                </div>
+
+                <!-- Attribution -->
+                <div class="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                    <div class="flex items-center gap-2 mb-1">
+                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        <span class="text-xs font-medium text-gray-500">Attribution</span>
+                    </div>
+                    <p class="text-xs text-gray-500">By <strong>Mark Caron</strong> &middot; Licensed under <strong>CC BY-SA 4.0</strong></p>
+                    <p class="text-xs text-gray-400 mt-0.5">Source: markcaron/soccer-drills</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL: NEW / EDIT DRILL                    -->
+    <!-- ========================================== -->
+    <div id="drill-form-modal" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="closeDrillForm()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-2xl bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+                <div>
+                    <p class="text-xs uppercase tracking-wider text-gray-400">My Drills</p>
+                    <h3 id="drill-form-title" class="text-lg font-bold text-gray-900">New Drill</h3>
+                </div>
+                <button onclick="closeDrillForm()" class="text-gray-400 hover:text-gray-600 p-1">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+
+            <div class="px-6 py-6 space-y-5">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Title</label>
+                        <input id="drill-form-name" type="text" value="Transition Finishing Wave" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Type</label>
+                        <select class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500">
+                            <option>Warm-up</option>
+                            <option>Tactical</option>
+                            <option selected>Technical</option>
+                            <option>Physical</option>
+                            <option>Game</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Level</label>
+                        <select class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500">
+                            <option>All</option>
+                            <option>Basic</option>
+                            <option selected>Intermediate</option>
+                            <option>Advanced</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Duration (min)</label>
+                        <input type="number" value="14" min="1" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Skills</label>
+                    <input type="text" value="finishing, first touch, transition" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Description</label>
+                    <textarea rows="2" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none">Players attack goal after a quick transition pass and must finish inside 8 seconds.</textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">Instructions</label>
+                    <textarea rows="6" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-y">1. Split group into two lines at midfield.
+2. Coach serves to first attacker.
+3. Attacker combines with support player and finishes.
+4. Rotate roles every rep.</textarea>
+                </div>
+            </div>
+
+            <div class="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-end gap-2">
+                <button onclick="closeDrillForm()" class="px-4 py-2 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Cancel</button>
+                <button id="drill-form-submit" onclick="closeDrillForm()" class="px-4 py-2 text-sm font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700">Save Drill</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- VIEW: MOBILE PREVIEW                       -->
+    <!-- ========================================== -->
+    <div id="view-mobile" class="hidden flex justify-center py-6">
+        <div class="w-[390px] bg-white rounded-3xl shadow-2xl border border-gray-200 overflow-hidden">
+            <!-- Mobile Planning Mode -->
+            <div class="bg-white">
+                <!-- Mobile Header -->
+                <div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white px-4 py-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <h2 class="font-bold text-sm">Shawnee FC U12</h2>
+                        <span class="text-xs text-primary-200">Drills</span>
+                    </div>
+                    <div class="flex gap-1 overflow-x-auto pb-1">
+                        <span class="flex-shrink-0 text-[10px] px-2 py-1 rounded-full bg-white/10">View</span>
+                        <span class="flex-shrink-0 text-[10px] px-2 py-1 rounded-full bg-white/10">Edit</span>
+                        <span class="flex-shrink-0 text-[10px] px-2 py-1 rounded-full bg-white/10">Roster</span>
+                        <span class="flex-shrink-0 text-[10px] px-2 py-1 rounded-full bg-white/10">Schedule</span>
+                        <span class="flex-shrink-0 text-[10px] px-2 py-1 rounded-full bg-white/10">Chat</span>
+                        <span class="flex-shrink-0 text-[10px] px-2 py-1 rounded-full bg-white/30 ring-1 ring-white/50 font-semibold">Drills</span>
+                    </div>
+                </div>
+
+                <!-- Mobile Tabs -->
+                <div class="flex border-b border-gray-200">
+                    <button class="flex-1 py-2 text-xs font-medium text-primary-600 border-b-2 border-primary-600">Plan</button>
+                    <button class="flex-1 py-2 text-xs font-medium text-gray-500">Library</button>
+                    <button class="flex-1 py-2 text-xs font-medium text-gray-500">Favorites</button>
+                </div>
+
+                <!-- Mobile Session Info -->
+                <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                    <div class="flex items-center justify-between">
+                        <div class="text-xs text-gray-600">
+                            <span class="font-medium">Tue Feb 11</span> &middot; 60 min &middot; 14 players
+                        </div>
+                        <button class="px-3 py-1.5 bg-primary-600 text-white text-[10px] font-medium rounded-lg flex items-center gap-1">
+                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"/></svg>
+                            Start
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Mobile Timeline -->
+                <div class="px-4 py-3 space-y-2" style="max-height: 360px; overflow-y: auto;">
+                    <div class="bg-white rounded-lg border border-gray-200 p-3 flex items-center gap-3">
+                        <div class="w-1 h-10 bg-green-400 rounded-full flex-shrink-0"></div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-semibold text-gray-800 truncate">First Touch Relay</p>
+                            <p class="text-[10px] text-gray-400">Warm-up &middot; 6 cones</p>
+                        </div>
+                        <span class="text-xs font-bold text-gray-500 flex-shrink-0">10m</span>
+                    </div>
+                    <div class="bg-white rounded-lg border border-gray-200 p-3 flex items-center gap-3">
+                        <div class="w-1 h-10 bg-purple-400 rounded-full flex-shrink-0"></div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-semibold text-gray-800 truncate">Shooting Gates</p>
+                            <p class="text-[10px] text-gray-400">Technical &middot; 8 cones, 1 goal</p>
+                        </div>
+                        <span class="text-xs font-bold text-gray-500 flex-shrink-0">15m</span>
+                    </div>
+                    <div class="bg-white rounded-lg border border-primary-200 p-3 flex items-center gap-3 ring-1 ring-primary-100">
+                        <div class="w-1 h-10 bg-purple-400 rounded-full flex-shrink-0"></div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-semibold text-gray-800 truncate">1v1 Finishing to Goal</p>
+                            <p class="text-[10px] text-primary-500">AI recommended &middot; Technical</p>
+                        </div>
+                        <span class="text-xs font-bold text-gray-500 flex-shrink-0">15m</span>
+                    </div>
+                    <div class="bg-white rounded-lg border border-gray-200 p-3 flex items-center gap-3">
+                        <div class="w-1 h-10 bg-red-400 rounded-full flex-shrink-0"></div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-semibold text-gray-800 truncate">5v5 Small-Sided Game</p>
+                            <p class="text-[10px] text-gray-400">Game &middot; 2 goals</p>
+                        </div>
+                        <span class="text-xs font-bold text-gray-500 flex-shrink-0">15m</span>
+                    </div>
+                    <div class="bg-white rounded-lg border border-gray-200 p-3 flex items-center gap-3">
+                        <div class="w-1 h-10 bg-green-400 rounded-full flex-shrink-0"></div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-xs font-semibold text-gray-800 truncate">Cool-down Stretch</p>
+                            <p class="text-[10px] text-gray-400">Team huddle</p>
+                        </div>
+                        <span class="text-xs font-bold text-gray-500 flex-shrink-0">5m</span>
+                    </div>
+                </div>
+
+                <!-- Mobile AI Chat Input -->
+                <div class="px-4 py-3 border-t border-gray-200">
+                    <div class="flex items-center gap-2">
+                        <div class="flex-1 flex items-center bg-gray-100 rounded-full px-4 py-2">
+                            <svg class="w-4 h-4 text-primary-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                            <input type="text" placeholder="Ask AI Coach..." class="bg-transparent text-xs w-full outline-none">
+                        </div>
+                        <button class="w-9 h-9 rounded-full bg-primary-600 text-white flex items-center justify-center flex-shrink-0">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Switching + Interactive Scripts -->
+    <script>
+        const views = ['planning', 'practice', 'library', 'detail', 'mobile'];
+        const labels = {
+            planning: 'Planning Mode',
+            practice: 'Practice Mode',
+            library: 'Drill Library',
+            detail: 'Drill Detail',
+            mobile: 'Mobile Preview'
+        };
+
+        function showView(viewName) {
+            views.forEach(v => {
+                document.getElementById(`view-${v}`).classList.toggle('hidden', v !== viewName);
+                document.getElementById(`btn-${v}`).classList.toggle('bg-primary-500', v === viewName);
+                document.getElementById(`btn-${v}`).classList.toggle('text-white', v === viewName);
+                document.getElementById(`btn-${v}`).classList.toggle('bg-gray-100', v !== viewName);
+                document.getElementById(`btn-${v}`).classList.toggle('text-gray-600', v !== viewName);
+            });
+            document.getElementById('current-view-label').textContent = labels[viewName];
+        }
+
+        function openDrillForm(mode) {
+            const title = document.getElementById('drill-form-title');
+            const submit = document.getElementById('drill-form-submit');
+            const name = document.getElementById('drill-form-name');
+            if (mode === 'edit') {
+                title.textContent = 'Edit Drill';
+                submit.textContent = 'Save Changes';
+                name.value = 'Shooting Gates';
+            } else {
+                title.textContent = 'New Drill';
+                submit.textContent = 'Create Drill';
+                name.value = 'Transition Finishing Wave';
+            }
+            document.getElementById('drill-form-modal').classList.remove('hidden');
+        }
+
+        function closeDrillForm() {
+            document.getElementById('drill-form-modal').classList.add('hidden');
+        }
+
+        function setAttendanceStatus(playerId, status, buttonEl) {
+            const row = document.querySelector(`[data-player-id="${playerId}"]`);
+            if (!row) return;
+            row.querySelectorAll('.attendance-btn').forEach(btn => {
+                btn.classList.remove('active-present', 'active-late', 'active-absent');
+            });
+            buttonEl.classList.add(status === 'present' ? 'active-present' : status === 'late' ? 'active-late' : 'active-absent');
+            updateAttendanceCount();
+        }
+
+        function updateAttendanceCount() {
+            const rows = document.querySelectorAll('[data-player-id]');
+            let checkedIn = 0;
+            rows.forEach(row => {
+                const present = row.querySelector('.active-present');
+                const late = row.querySelector('.active-late');
+                if (present || late) checkedIn += 1;
+            });
+            const total = rows.length;
+            const label = `${checkedIn} / ${total} checked in`;
+            const count = document.getElementById('attendance-count');
+            const pill = document.getElementById('attendance-pill');
+            if (count) count.textContent = label;
+            if (pill) pill.textContent = `Checked in: ${checkedIn}/${total}`;
+        }
+
+        // Toggle note area on game/player cards
+        function toggleNote(el) {
+            const noteArea = el.querySelector('.note-area');
+            const icon = el.querySelector('.expand-icon');
+            if (noteArea) {
+                noteArea.classList.toggle('open');
+                if (icon) icon.style.transform = noteArea.classList.contains('open') ? 'rotate(180deg)' : '';
+            }
+        }
+
+        // Toggle expandable detail on timeline cards
+        function toggleCardExpand(el) {
+            const content = el.querySelector('.expand-content');
+            const icon = el.querySelector('.expand-icon');
+            if (content) {
+                content.classList.toggle('open');
+                if (icon) icon.style.transform = content.classList.contains('open') ? 'rotate(180deg)' : '';
+            }
+        }
+
+        // Auto-recalculate total duration when individual drill times change
+        document.addEventListener('input', function(e) {
+            if (e.target.classList.contains('dur-input') && e.target.closest('.timeline-card-clickable')) {
+                const cards = document.querySelectorAll('.timeline-card-clickable .dur-input');
+                let total = 0;
+                cards.forEach(input => { total += parseInt(input.value) || 0; });
+                const totalLabel = document.querySelector('.col-span-5 .text-xs.text-gray-400');
+                if (totalLabel) totalLabel.textContent = 'Total: ' + total + ' min';
+            }
+        });
+    </script>
+</body>
+</html>

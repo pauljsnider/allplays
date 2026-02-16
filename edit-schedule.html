@@ -353,6 +353,14 @@
                             <span id="team-name-display" class="text-gray-500"></span>
                         </div>
                     </div>
+                    <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button data-schedule-filter="upcoming-all" class="schedule-filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700">All Upcoming</button>
+                            <button data-schedule-filter="upcoming-games" class="schedule-filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Games</button>
+                            <button data-schedule-filter="upcoming-practices" class="schedule-filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Practices</button>
+                            <button data-schedule-filter="past-all" class="schedule-filter-btn px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
+                        </div>
+                    </div>
                     <div id="schedule-list" class="divide-y divide-gray-200">
                         <!-- Games -->
                     </div>
@@ -509,7 +517,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount } from './js/db.js?v=14';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions } from './js/db.js?v=18';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -522,8 +530,10 @@
         let currentTeamId = null;
         let currentUser = null;
         let showPractices = false;
+        let scheduleViewFilter = 'upcoming-all';
         let selectedCalendarEvent = null;
         let allConfigs = [];
+        let practicePlansByEventId = {};
         let editingPracticeId = null; // For editing existing practice
         let editingSeriesId = null; // For editing existing recurring series
         let editingOccurrence = null; // { masterId, isoDate, master } for recurring practice editing
@@ -748,6 +758,11 @@
         async function loadSchedule() {
             // Get all events (games and practices) from DB
             const dbEvents = await getEvents(currentTeamId);
+            const practiceSessions = await getPracticeSessions(currentTeamId);
+            practicePlansByEventId = {};
+            (practiceSessions || []).forEach(session => {
+                if (session.eventId) practicePlansByEventId[session.eventId] = session;
+            });
             const container = document.getElementById('schedule-list');
             let allEvents = [];
             // Reset series master cache for this load
@@ -851,10 +866,11 @@
                         status: event.status,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
-                        id: event.id,
-                        isPractice: eventType === 'practice',
-                        isRecurring: false
-                    });
+                            id: event.id,
+                            eventId: event.id,
+                            isPractice: eventType === 'practice',
+                            isRecurring: false
+                        });
                 }
             });
 
@@ -864,13 +880,29 @@
             const hiddenPracticeCount = allEvents.filter(event => event.isPractice).length;
             console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
 
-            // Filter by practice checkbox
-            const filteredEvents = allEvents.filter(event => {
-                if (event.isPractice && !showPractices) return false;
+            const now = new Date();
+
+            // Filter by practice checkbox + schedule view
+            const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
+            let filteredEvents = allEvents.filter(event => {
+                if (event.isPractice && !showPractices && !forcePracticeVisibility) return false;
                 return true;
             });
+            if (scheduleViewFilter === 'upcoming-all') {
+                filteredEvents = filteredEvents.filter(event => event.date >= now);
+                filteredEvents.sort((a, b) => a.date - b.date);
+            } else if (scheduleViewFilter === 'upcoming-games') {
+                filteredEvents = filteredEvents.filter(event => !event.isPractice && event.date >= now);
+                filteredEvents.sort((a, b) => a.date - b.date);
+            } else if (scheduleViewFilter === 'upcoming-practices') {
+                filteredEvents = filteredEvents.filter(event => event.isPractice && event.date >= now);
+                filteredEvents.sort((a, b) => a.date - b.date);
+            } else if (scheduleViewFilter === 'past-all') {
+                filteredEvents = filteredEvents.filter(event => event.date < now);
+                filteredEvents.sort((a, b) => b.date - a.date);
+            }
 
-            const practiceNotice = (!showPractices && hiddenPracticeCount > 0)
+            const practiceNotice = (!showPractices && !forcePracticeVisibility && hiddenPracticeCount > 0)
                 ? `<div class="p-4 bg-yellow-50 text-yellow-800 text-sm border-b border-yellow-200">
                         ${hiddenPracticeCount} practice event${hiddenPracticeCount === 1 ? ' is' : 's are'} hidden. Toggle "Show Practices" to view them.
                    </div>`
@@ -881,7 +913,9 @@
                 return;
             }
 
-            container.innerHTML = practiceNotice + filteredEvents.map(event => {
+            const nextUpcomingIndex = filteredEvents.findIndex(event => event.date >= now);
+            container.innerHTML = practiceNotice + filteredEvents.map((event, index) => {
+                const cardHtml = (() => {
                 if (event.source === 'calendar') {
                     return renderCalendarEvent(event);
                 } else if (event.eventType === 'practice') {
@@ -889,7 +923,22 @@
                 } else {
                     return renderDbGame(event);
                 }
+                })();
+                const nextMarker = index === nextUpcomingIndex
+                    ? '<div class="px-6 py-2 bg-indigo-50 border-y border-indigo-100 text-xs font-semibold text-indigo-700 uppercase tracking-wide">Next Up</div>'
+                    : '';
+                return `${nextMarker}<div data-schedule-row="${index}" ${index === nextUpcomingIndex ? 'data-next-up="true"' : ''}>${cardHtml}</div>`;
             }).join('');
+
+            // Auto-scroll to the next upcoming event when in upcoming-focused filters.
+            if (scheduleViewFilter.startsWith('upcoming')) {
+                const nextEl = container.querySelector('[data-next-up="true"]');
+                if (nextEl) {
+                    requestAnimationFrame(() => {
+                        nextEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                }
+            }
 
             // Attach delete button handlers for games
             document.querySelectorAll('.delete-btn').forEach(btn => {
@@ -935,15 +984,30 @@
 
             // Build action buttons
             let actions = '';
+            const practicePlanEventId = practice.isInstance
+                ? `${practice.masterId}__${practice.instanceDate}`
+                : (practice.eventId || practice.id);
+            const planSummary = renderPracticePlanSummary(practicePlanEventId);
+            const planHref = buildPracticePlanHref({
+                eventId: practicePlanEventId,
+                date: practice.date,
+                end: practice.end,
+                location: practice.location,
+                title: practice.title || 'Practice'
+            });
             if (practice.isInstance) {
                 // Recurring occurrence - edit opens occurrence choice modal
                 actions = `
+                    <a href="${planHref}"
+                        class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Plan Practice</a>
                     <button onclick="editOccurrence('${practice.masterId}', '${practice.instanceDate}')"
                         class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Manage</button>
                 `;
             } else {
                 // Single practice
                 actions = `
+                    <a href="${planHref}"
+                        class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Plan Practice</a>
                     <button onclick="editPractice('${practice.eventId}')"
                         class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
                     <button onclick="deletePractice('${practice.eventId}')"
@@ -963,6 +1027,7 @@
                             ${mapLink(practice.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(practice.location)}">${practice.location || 'TBD'}</a>` : (practice.location || 'TBD')}
                         </div>
                         ${practice.notes ? `<div class="text-sm text-gray-500 mt-1">${practice.notes}</div>` : ''}
+                        ${planSummary}
                     </div>
                     <div class="flex space-x-2">
                         ${actions}
@@ -975,6 +1040,15 @@
             const isPractice = event.isPractice;
             const isCancelled = event.isCancelled;
             const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-500' : 'border-blue-500');
+            const calendarPracticeEventId = event.calendarEvent?.id || event.calendarEvent?.uid || `calendar_${event.date?.toISOString?.() || Date.now()}`;
+            const planSummary = isPractice ? renderPracticePlanSummary(calendarPracticeEventId) : '';
+            const calendarPlanHref = buildPracticePlanHref({
+                eventId: calendarPracticeEventId,
+                date: event.date,
+                end: event.end,
+                location: event.location,
+                title: event.opponent || 'Practice'
+            });
             return `
                 <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-l-4 ${borderColor} ${isCancelled ? 'opacity-60' : ''}">
                     <div>
@@ -988,12 +1062,71 @@
                         <div class="text-sm text-gray-600">
                             ${mapLink(event.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(event.location)}">${event.location || 'TBD'}</a>` : (event.location || 'TBD')}
                         </div>
+                        ${planSummary}
                     </div>
-                    ${!isPractice && !isCancelled ? `
-                        <button onclick="window.trackCalendarEvent(${JSON.stringify(event.calendarEvent).replace(/"/g, '&quot;')})" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
-                            Track
-                        </button>
+                    ${!isCancelled ? `
+                        <div class="flex space-x-2">
+                            ${isPractice ? `
+                                <a href="${calendarPlanHref}"
+                                   class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
+                                   Plan Practice
+                                </a>
+                            ` : `
+                                <button onclick="window.trackCalendarEvent(${JSON.stringify(event.calendarEvent).replace(/"/g, '&quot;')})" class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">
+                                    Track
+                                </button>
+                            `}
+                        </div>
                     ` : ''}
+                </div>
+            `;
+        }
+
+        function buildPracticePlanHref({ eventId, date, end, location, title }) {
+            const normalizeDate = (value) => {
+                if (!value) return null;
+                if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+                if (typeof value?.toDate === 'function') {
+                    const d = value.toDate();
+                    return Number.isNaN(d?.getTime?.()) ? null : d;
+                }
+                const parsed = new Date(value);
+                return Number.isNaN(parsed.getTime()) ? null : parsed;
+            };
+
+            const startDate = normalizeDate(date);
+            const endDate = normalizeDate(end);
+            const params = new URLSearchParams();
+            params.set('teamId', currentTeamId);
+            params.set('eventId', eventId || '');
+            params.set('source', 'edit-schedule');
+            if (startDate) {
+                params.set('eventDate', startDate.toISOString().split('T')[0]);
+            }
+            if (startDate && endDate) {
+                const durationMinutes = Math.max(15, Math.round((endDate.getTime() - startDate.getTime()) / 60000));
+                params.set('eventDuration', String(durationMinutes));
+            }
+            if (location) params.set('eventLocation', location);
+            if (title) params.set('eventTitle', title);
+            return `drills.html#${params.toString()}`;
+        }
+
+        function renderPracticePlanSummary(eventId) {
+            const session = practicePlansByEventId[eventId];
+            if (!session) return '<div class="mt-2 text-xs text-gray-400">No linked practice plan yet</div>';
+            const status = session.status || 'draft';
+            const blocks = Array.isArray(session.blocks) ? session.blocks.length : 0;
+            const duration = session.duration || 0;
+            const statusClass = status === 'completed'
+                ? 'bg-green-100 text-green-800'
+                : status === 'active'
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-gray-100 text-gray-700';
+            return `
+                <div class="mt-2 flex flex-wrap items-center gap-2">
+                    <span class="text-xs ${statusClass} px-2 py-0.5 rounded font-semibold uppercase">${status}</span>
+                    <span class="text-xs bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-semibold">Plan: ${blocks} block${blocks === 1 ? '' : 's'} • ${duration} min</span>
                 </div>
             `;
         }
@@ -1520,6 +1653,24 @@
         document.getElementById('show-practices').addEventListener('change', (e) => {
             showPractices = e.target.checked;
             loadSchedule();
+        });
+
+        function setScheduleFilter(nextFilter) {
+            scheduleViewFilter = nextFilter || 'upcoming-all';
+            document.querySelectorAll('.schedule-filter-btn').forEach(btn => {
+                const active = btn.dataset.scheduleFilter === scheduleViewFilter;
+                btn.classList.toggle('bg-indigo-50', active);
+                btn.classList.toggle('text-indigo-700', active);
+                btn.classList.toggle('border-indigo-200', active);
+                btn.classList.toggle('bg-white', !active);
+                btn.classList.toggle('text-gray-600', !active);
+                btn.classList.toggle('border-gray-200', !active);
+            });
+            loadSchedule();
+        }
+
+        document.querySelectorAll('.schedule-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => setScheduleFilter(btn.dataset.scheduleFilter));
         });
 
         // Track calendar event - create game and redirect to tracker
