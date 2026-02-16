@@ -30,13 +30,13 @@ service cloud.firestore {
 
     // Check if user is a parent for a specific player.
     // IMPORTANT: must validate both teamId AND playerId (least privilege).
+    // Uses denormalized key `${teamId}::${playerId}` in users.parentPlayerKeys.
     function isParentForPlayer(teamId, playerId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let parentKey = teamId + "::" + playerId;
       return isSignedIn() &&
              exists(userPath) &&
-             get(userPath).data.get('parentOf', [])
-                .where(p, p.teamId == teamId && p.playerId == playerId)
-                .size() > 0;
+             parentKey in get(userPath).data.get('parentPlayerKeys', []);
     }
 
     // Check if user is a parent for any player on a team (uses parentTeamIds)
@@ -90,6 +90,46 @@ service cloud.firestore {
     // SECURITY: deny reads of any player doc that still contains sensitive fields.
     match /{path=**}/players/{playerId} {
       allow read: if !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+    }
+
+    // Drill Library (top-level collection)
+    match /drillLibrary/{drillId} {
+      // Community drills readable by any signed-in user; custom drills by their team's owner/admin
+      allow read: if isSignedIn() &&
+                    (resource.data.source == 'community' ||
+                     resource.data.publishedToCommunity == true ||
+                     isTeamOwnerOrAdmin(resource.data.teamId));
+      // Create: global admin for community, team owner/admin for custom
+      allow create: if isSignedIn() &&
+                      (
+                        (request.resource.data.source == 'community' && isGlobalAdmin()) ||
+                        (
+                          request.resource.data.source == 'custom' &&
+                          request.resource.data.teamId != null &&
+                          isTeamOwnerOrAdmin(request.resource.data.teamId) &&
+                          request.resource.data.createdBy == request.auth.uid &&
+                          (
+                            request.resource.data.publishedToCommunity != true ||
+                            request.resource.data.authorId == request.auth.uid
+                          )
+                        )
+                      );
+      // Update/delete: global admin for community, team owner/admin for custom
+      allow update, delete: if isSignedIn() &&
+                              (
+                                (resource.data.source == 'community' && isGlobalAdmin()) ||
+                                (
+                                  resource.data.source == 'custom' &&
+                                  request.resource.data.source == 'custom' &&
+                                  request.resource.data.teamId == resource.data.teamId &&
+                                  isTeamOwnerOrAdmin(resource.data.teamId) &&
+                                  (
+                                    // If publishing now, stamp current editor as author.
+                                    !(resource.data.publishedToCommunity != true && request.resource.data.publishedToCommunity == true) ||
+                                    request.resource.data.authorId == request.auth.uid
+                                  )
+                                )
+                              );
     }
 
     // Teams - only owner or admins can modify
@@ -188,6 +228,42 @@ service cloud.firestore {
       match /statTrackerConfigs/{configId} {
         allow read: if true;
         allow write: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Drill Favorites subcollection
+      match /drillFavorites/{favoriteId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId);
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+        allow update: if false; // Immutable — add/remove only
+      }
+
+      // Practice Sessions subcollection
+      match /practiceSessions/{sessionId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        // Parent packet completion check-ins
+        match /packetCompletions/{completionId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId) ||
+                           (isParentForTeam(teamId) &&
+                            request.resource.data.parentUserId == request.auth.uid &&
+                            completionId == request.auth.uid + "__" + request.resource.data.childId &&
+                            isParentForPlayer(teamId, request.resource.data.childId));
+          allow update: if isTeamOwnerOrAdmin(teamId) ||
+                           (isParentForTeam(teamId) &&
+                            resource.data.parentUserId == request.auth.uid &&
+                            request.resource.data.parentUserId == request.auth.uid &&
+                            resource.data.childId == request.resource.data.childId &&
+                            completionId == request.auth.uid + "__" + request.resource.data.childId &&
+                            isParentForPlayer(teamId, request.resource.data.childId));
+          allow delete: if isTeamOwnerOrAdmin(teamId) ||
+                           (isParentForTeam(teamId) &&
+                            resource.data.parentUserId == request.auth.uid &&
+                            completionId == request.auth.uid + "__" + resource.data.childId &&
+                            isParentForPlayer(teamId, resource.data.childId));
+        }
       }
 
       // Chat messages subcollection

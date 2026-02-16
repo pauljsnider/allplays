@@ -280,16 +280,26 @@ export function checkAuth(callback, options = {}) {
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;
 
-                    // Auto-migrate: ensure parentTeamIds is in sync with parentOf
+                    // Auto-migrate: ensure parentTeamIds and parentPlayerKeys are in sync with parentOf
                     if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) {
                         const expectedTeamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))].sort();
+                        const expectedParentPlayerKeys = [...new Set(
+                            profile.parentOf
+                                .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
+                                .filter(Boolean)
+                        )].sort();
                         const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
-                        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds)) {
+                        const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
+                        if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds) ||
+                            JSON.stringify(expectedParentPlayerKeys) !== JSON.stringify(currentParentPlayerKeys)) {
                             try {
-                                await updateUserProfile(user.uid, { parentTeamIds: expectedTeamIds });
-                                console.log('[auth] Auto-migrated parentTeamIds for user');
+                                await updateUserProfile(user.uid, {
+                                    parentTeamIds: expectedTeamIds,
+                                    parentPlayerKeys: expectedParentPlayerKeys
+                                });
+                                console.log('[auth] Auto-migrated parentTeamIds/parentPlayerKeys for user');
                             } catch (err) {
-                                console.warn('[auth] Failed to auto-migrate parentTeamIds:', err);
+                                console.warn('[auth] Failed to auto-migrate parent parent scope fields:', err);
                             }
                         }
                     }

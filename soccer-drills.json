@@ -1,0 +1,534 @@
+{
+  "drills": [
+    {
+      "title": "Passing Squares",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["passing", "short passing", "communication"],
+      "description": "A basic soccer passing drill used mainly with younger and beginner players. The square is contained and helps players visualize where they should pass and move to.",
+      "url": "https://soccertrainingpro.com/passing-squares/",
+      "instructions": "SETUP: Create a square (20x20 yards) using cones. If working with younger players, reduce to 15x15 yards. Position one player on each corner of the square with two players on the cone where the ball starts.\n\nHOW TO PLAY:\n1. Players start by passing the ball around the square in a clockwise or counterclockwise direction.\n2. After passing, players must immediately move to the next cone in a counterclockwise direction.\n3. The next player on the receiving end must check their shoulder, receive the ball with the inside of their foot, and pass it to the next player.\n4. As players become comfortable, add a second ball to increase the difficulty and tempo.\n5. To further challenge players, introduce a defender in the middle of the square who tries to intercept passes.\n\nCOACHING POINTS:\n- Pass with Purpose: Focus on weight and accuracy of passes, aiming for teammate's preferred foot.\n- Quick Transitions: After making a pass, immediately move to the next cone.\n- Body Positioning: Receive the ball with body open to the field.\n- Head Up: Keep heads up before receiving to scan the field.\n\nEQUIPMENT: 4 cones, 2 balls, training bibs"
+    },
+    {
+      "title": "Triangle Passing Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U6-U10",
+      "skills": ["passing", "short passing", "communication"],
+      "description": "Simple passing drill perfect for U6, U8 and U10 players.",
+      "url": "https://www.soccerdrillbook.com/simple-triangle-passing-drill/",
+      "instructions": "SETUP: Create a triangle using 3 cones. Players stand at each corner.\n\nHOW TO PLAY:\n1. Player A passes to player B\n2. Player B passes to player C\n3. Player C passes back to player A\n4. After passing, each player moves to the next position in the triangle\n5. Continue pattern for set time\n\nCOACHING POINTS:\n- Use inside of foot for passing\n- Non-passing foot should point toward target\n- Passes should be on the ground\n- Communicate with teammates"
+    },
+    {
+      "title": "Jackpot Passing Drill",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U12",
+      "skills": ["passing", "short passing"],
+      "description": "Fun passing drill where players race to knock a ball off a cone.",
+      "url": "https://quickstartsoccer.com/jackpot/",
+      "instructions": "SET UP: Set up a 16x16 yard diamond with tall cones. In the center, place a small cone on the ground with a ball on top. Place 1 ball behind each of the tall cones on the outside of the diamond.\n\nINSTRUCTIONS:\n1. Split players into 4 teams and have them line up behind each tall cone.\n2. On coach's call, the first player from each line runs anti-clockwise around the diamond.\n3. When they return, they take a setup touch and make a pass to knock the central ball off its cone.\n4. If anyone succeeds, they shout 'Jackpot' and win a point.\n5. Repeat with next players.\n\nPROGRESSION: Play is continuous - as soon as player returns and passes, next player runs.\n\nCOACHING POINTS:\n- A (Approach): Approach ball at an angle\n- B (Balance): Standing foot next to ball, balance forward\n- C (Contact): Hit center of ball with inside of foot"
+    },
+    {
+      "title": "T-Cone Dribbling Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U7-U12",
+      "skills": ["dribbling", "close control", "ball mastery"],
+      "description": "Great drill to focus on dribbling with speed, controlled touches, turns, and fitness.",
+      "url": "https://soccerxpert.com/drills/details/t-cone-dribbling-drill",
+      "instructions": "SETUP:\n1. Set up four cones approximately 5 yards apart in the shape of the letter T.\n2. Two players at the T-cones with one ball at the base of the T.\n3. Create multiple T-cone setups for entire team.\n\nINSTRUCTIONS:\n1. Player starts at T's base and dribbles around the middle-top cone, cuts to the right-top cone.\n2. Dribbles around right-top cone and cuts towards top-left cone.\n3. Dribbles around middle-top cone and returns to starting cone.\n4. Dribbles around bottom cone and continues same pattern.\n5. Repeat for 1 minute, then rotate players.\n\nVARIATIONS:\n- Limit to right foot only\n- Limit to left foot only\n- Use bottom of foot only\n- No ball - sprint only\n\nCOACHING POINTS:\n- Close touches\n- Dribble with speed\n- Tight turns around cones"
+    },
+    {
+      "title": "Cone Maze Dribbling",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["dribbling", "close control", "ball mastery"],
+      "description": "Technical cone maze for kids to improve dribbling skills.",
+      "url": "https://mypersonalfootballcoach.com/kids-soccer-dribbling-drill-technical-cone-maze-for-u8-u12/",
+      "instructions": "SETUP: Set up cones in a maze pattern with gates for players to dribble through.\n\nINSTRUCTIONS:\n1. Players line up at start of maze\n2. First player dribbles through cones following the path\n3. Player must navigate around cones without hitting them\n4. At the end, player turns and returns via different route\n5. Next player goes when previous player reaches middle\n\nCOACHING POINTS:\n- Keep ball close to feet\n- Use both feet\n- Head up to see path\n- Change of direction should be smooth"
+    },
+    {
+      "title": "Dribbling at the Cone",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["dribbling", "close control", "ball mastery"],
+      "description": "Youth soccer dribbling drill for ball control.",
+      "url": "https://soccerxpert.com/drills/print/id1269",
+      "instructions": "SETUP: Place a single cone in center of area with players lined up with balls.\n\nINSTRUCTIONS:\n1. First player dribbles toward cone\n2. At cone, player performs a turn or move\n3. Player dribbles back to starting position\n4. Next player goes\n\nCOACHING POINTS:\n- Ball close to cone\n- Sharp turns\n- Keep head up\n- Use different turns/moves"
+    },
+    {
+      "title": "Zig-Zag Dribbling Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["dribbling", "close control", "speed dribbling"],
+      "description": "The Zig-Zag soccer dribbling drill for improving ball control.",
+      "url": "https://www.soccercones.com/zig-zag-soccer-practice-dribbling-drill/",
+      "instructions": "SETUP: Set up 5-6 cones in a zig-zag pattern about 3-4 yards apart.\n\nINSTRUCTIONS:\n1. Player starts at first cone\n2. Dribbles to second cone, weaves around it\n3. Continues to each cone in pattern\n4. At end, player turns and dribbles back through cones\n5. Repeat for specified time\n\nCOACHING POINTS:\n- Keep touches light\n- Close control around cones\n- Accelerate out of turns\n- Use both feet"
+    },
+    {
+      "title": "4 Gate Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["dribbling", "close control", "agility"],
+      "description": "The 4 Gate Drill for Developing Agility and Dribbling Skills.",
+      "url": "https://www.soccerdrillsdaily.com/2014/10/06/4-gate-drill-developing-agility-dribbling-skills/",
+      "instructions": "SETUP: Set up 4 cones to create 2 gates (about 3 yards apart).\n\nINSTRUCTIONS:\n1. Player starts behind first gate\n2. Dribbles through gate, accelerates to second gate\n3. Dribbles through second gate\n4. Player turns and dribbles back through gates\n5. Time each run, try to beat best time\n\nVARIATIONS:\n- Use only right foot\n- Use only left foot\n- Add defender\n\nCOACHING POINTS:\n- Head up\n- Close control in gates\n- Quick acceleration between gates"
+    },
+    {
+      "title": "Lightning Shooting Drill",
+      "type": "Game",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["finishing", "shooting"],
+      "description": "Fast-paced shooting game where players compete to be last one standing.",
+      "url": "https://quickstartsoccer.com/drills/lightning-shooting-drill/",
+      "instructions": "SETUP: One player is goalkeeper. Others line up 12-18 yards from goal. Coach stands next to goal with balls.\n\nHOW TO PLAY:\n1. Coach passes ball to first player in line\n2. Player must attempt goal with first touch\n\nIF PLAYER SCORES:\n- They return to back of line\n- Goalkeeper is eliminated\n- Next player becomes new goalkeeper\n\nIF PLAYER DOESN'T SCORE:\n- Goalkeeper moves to end of line\n- Missed shooter becomes new goalkeeper\n\nOnce eliminated, players stand behind goal to collect balls. If they catch a missed shot before it hits ground, they rejoin. Last player remaining wins!\n\nCOACHING POINTS:\n- First touch to goal\n- Shot placement over power\n- Quick transitions"
+    },
+    {
+      "title": "Numbers Shooting",
+      "type": "Game",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["finishing", "shooting", "communication"],
+      "description": "Fun finishing game with 2v2 matches.",
+      "url": "https://quickstartsoccer.com/drills/numbers-shooting/",
+      "instructions": "SETUP: 24x20 yard grid with two regular-sized goals. Players divided into two teams with numbers.\n\nHOW TO PLAY:\n1. Coach throws ball into play and calls two numbers\n2. Called players from each team dash onto field through their assigned goal\n3. Play 2v2 until ball leaves or goal scored\n4. Coach immediately calls two new numbers\n5. Continue for predetermined time\n\nCOACHING POINTS:\n- Quick decision making\n- Communication between teammates\n- Composure in front of goal"
+    },
+    {
+      "title": "2v1 To Goal",
+      "type": "Game",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["finishing", "shooting", "attacking"],
+      "description": "Simple finishing game with attacker vs defender scenarios.",
+      "url": "https://quickstartsoccer.com/drills/2v1-to-goal/",
+      "instructions": "SETUP: 30x25 yard grid with large goal at one end, small goal at other.\n\nHOW TO PLAY:\n1. Red player passes to blue player at front of line\n2. Two blue players attack large goal\n3. Red player who made pass defends the goal\n4. If red retrieves ball, they attack small goal\n5. Next players repeat after ball goes out or goal scored\n\nCOACHING POINTS:\n- Quick shots\n- Good angle of approach\n- Defending: force to outside"
+    },
+    {
+      "title": "Multi-ball Shooting",
+      "type": "Game",
+      "level": "Intermediate",
+      "ageGroup": "U10-U18",
+      "skills": ["finishing", "shooting", "ball control"],
+      "description": "Exciting small-sided game with many balls in play.",
+      "url": "https://quickstartsoccer.com/drills/multi-ball-shooting/",
+      "instructions": "SETUP: 35x25 yard grid with two goals. Distribute 12-16 balls around perimeter.\n\nHOW TO PLAY:\n1. Standard soccer rules apply\n2. When goal scored or ball leaves, non-offending team restarts with any ball on perimeter\n3. Only ONE ball on field at a time\n4. If second ball introduced, opposing team gets free kick\n5. Game ends when all balls used\n\nCOACHING POINTS:\n- First touch\n- Vision and awareness\n- Quick shots"
+    },
+    {
+      "title": "Goalkeeper Side-to-Side",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U10-U14",
+      "skills": ["goalkeeping", "basics", "reflexes"],
+      "description": "Goalkeeper drill for footwork and positioning.",
+      "url": "https://soccerxpert.com/drills/details/goalkeeper-side-to-side",
+      "instructions": "SETUP: Goalkeeper stands in goal with coach or server 15-20 yards away with ball.\n\nINSTRUCTIONS:\n1. Coach rolls ball to goalkeeper's right\n2. Goalkeeper shuffles side-to-side to catch/collect ball\n3. Coach rolls ball to goalkeeper's left\n4. Goalkeeper shuffles to other side\n5. Continue alternating sides\n\nVARIATIONS:\n- Add throws from different angles\n- Add catching at different heights\n\nCOACHING POINTS:\n- Stay low\n- Quick footwork\n- Watch the ball all the way"
+    },
+    {
+      "title": "Goalkeeper Shooting Angle",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["goalkeeping", "positioning", "reflexes"],
+      "description": "Goalkeeper drill for understanding angles.",
+      "url": "https://soccerxpert.com/drills/details/goalkeeper-shooting-angle",
+      "instructions": "SETUP: Goalkeeper in goal. Server 25-30 yards away with balls.\n\nINSTRUCTIONS:\n1. Server shoots from various positions\n2. Goalkeeper learns to cut down angle\n3. Server starts shooting faster\n4. Goalkeeper practices coming out to meet shots\n\nCOACHING POINTS:\n- Take correct starting position\n- Read the shooter's body\n- Make yourself big"
+    },
+    {
+      "title": "Goalkeeper Down Up Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["goalkeeping", "basics", "reflexes"],
+      "description": "Basic goalkeeper footwork drill.",
+      "url": "https://soccerxpert.com/drills/details/goalkeeper-down-up",
+      "instructions": "SETUP: Goalkeeper stands in front of goal. Coach with ball 10 yards away.\n\nINSTRUCTIONS:\n1. Coach rolls ball along ground toward goalkeeper\n2. Goalkeeper drops to knee and collects ball\n3. Coach rolls ball to other side\n4. Goalkeeper rolls to other knee and collects\n5. Continue alternating\n\nCOACHING POINTS:\n- Control the ball\n- Protect body\n- Quick recovery"
+    },
+    {
+      "title": "1v1 Defending",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["defending", "1v1 moves"],
+      "description": "Practice 1v1 defending skills.",
+      "url": "https://www.soccercoachweekly.net/drills-and-games/drills/practice-1-defending-1v1",
+      "instructions": "SETUP: 20x20 yard area with goal at one end. Defender and attacker at start line.\n\nINSTRUCTIONS:\n1. Attacker tries to dribble past defender to goal\n2. Defender tries to stop attacker\n3. If defender wins ball, they become attacker\n4. Rotate roles after each attempt\n\nCOACHING POINTS:\n- Stay low\n- Don't commit too early\n- Force attacker to weak foot\n- Watch the ball"
+    },
+    {
+      "title": "1v1 Attacking and Reaction",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U16",
+      "skills": ["attacking", "1v1 moves", "dribbling"],
+      "description": "1v1 drill focusing on attacking skills.",
+      "url": "https://soccerxpert.com/drills/details/1v1-attacking-and-reaction",
+      "instructions": "SETUP: 30x40 yard area with goals at each end. Players in pairs.\n\nINSTRUCTIONS:\n1. Player A dribbles toward player B\n2. Player B defends\n3. After initial contact, coach shouts 'freeze' randomly\n4. Players must react to stop immediately\n5. Resume and play to goal\n\nCOACHING POINTS:\n- Attack with pace\n- Sell dummy/move\n- Protect the ball"
+    },
+    {
+      "title": "1v1 Progression",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U8-U16",
+      "skills": ["attacking", "defending", "1v1 moves"],
+      "description": "1 on 1 soccer progression drill.",
+      "url": "https://soccerxpert.com/drills/details/id1264",
+      "instructions": "SETUP: 15x25 yard area with cones marking start/finish lines.\n\nINSTRUCTIONS:\n1. Attacker starts with ball at feet\n2. Defender stands 5 yards ahead\n3. On signal, attacker tries to get past defender\n4. Defender tries to stop attacker\n5. If attacker gets past, they shoot on goal\n\nPROGRESSION:\n- Start from different angles\n- Add second defender after success\n\nCOACHING POINTS:\n- Attack with speed\n- Change of direction\n- Defend with patience"
+    },
+    {
+      "title": "1v1 Challenge Circle",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["attacking", "defending", "1v1 moves"],
+      "description": "Circle-based 1v1 drill.",
+      "url": "https://www.soccerdrive.com/soccer-drills/1v1-challenge-circle",
+      "instructions": "SETUP: Circle with 10-15 yard diameter. Two players inside with ball.\n\nINSTRUCTIONS:\n1. Attacker tries to dribble across circle\n2. Defender tries to win ball\n3. If defender wins, roles switch\n4. Stay within circle\n\nCOACHING POINTS:\n- Keep ball close\n- Change direction quickly\n- Be patient defending"
+    },
+    {
+      "title": "Fun Soccer Dribbling Warm-up",
+      "type": "Warm-up",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["dribbling", "close control"],
+      "description": "Fun soccer dribbling warm-up drill.",
+      "url": "https://soccerxpert.com/drills/details/id1261",
+      "instructions": "SETUP: 20x20 yard area with all players having balls.\n\nINSTRUCTIONS:\n1. Players dribble freely in area\n2. On coach's command, perform different moves:\n   - Stop ball with sole\n   - Change direction\n   - Use weaker foot\n3. Continue for set time\n\nCOACHING POINTS:\n- Keep ball close\n- Head up\n- Use both feet"
+    },
+    {
+      "title": "Bumper Balls",
+      "type": "Game",
+      "level": "Basic",
+      "ageGroup": "U6-U10",
+      "skills": ["dribbling", "ball control"],
+      "description": "Fun soccer game where athletes keep ball in play.",
+      "url": "https://www.esoccerdrills.com/soccer-drills/fun.html",
+      "instructions": "SETUP: Small area with all players and one ball.\n\nINSTRUCTIONS:\n1. Players try to keep their ball in area\n2. If ball goes out, player does 5 jumping jacks\n3. Player returns to game\n4. Last player with ball in area wins\n\nVARIATIONS:\n- Dribble only, no kicking\n- Use hands for younger kids\n\nCOACHING POINTS:\n- Keep ball close\n- Stay aware of boundaries"
+    },
+    {
+      "title": "Agility Ladder Drills",
+      "type": "Physical",
+      "level": "Intermediate",
+      "ageGroup": "U12-U18",
+      "skills": ["speed", "agility", "conditioning"],
+      "description": "Speed Training for Soccer: Agility Ladder Drills.",
+      "url": "https://nextlevelathleticsusa.com/speed-training/speed-training-for-soccer-agility-ladder-drills/",
+      "instructions": "SETUP: Agility ladder laid flat on ground.\n\nDRILL 1 - In and Out:\n1. Stand at end of ladder\n2. Step both feet in, then out\n3. Move forward, repeat down ladder\n\nDRILL 2 - Lateral Shuffle:\n1. Face ladder sideways\n2. Shuffle right foot in, left foot in\n3. Shuffle right foot out, left foot out\n4. Continue down ladder\n\nDRILL 3 - Ickey Shuffle:\n1. Face forward\n2. Right foot in, left foot in\n3. Right foot to side\n4. Left foot to side\n5. Repeat pattern\n\nCOACHING POINTS:\n- Quick feet\n- Stay on toes\n- Low center of gravity"
+    },
+    {
+      "title": "Speed and Agility Cone Drills",
+      "type": "Physical",
+      "level": "Intermediate",
+      "ageGroup": "U12-U18",
+      "skills": ["speed", "agility"],
+      "description": "Best Agility Cone Drills for Soccer.",
+      "url": "https://nextlevelathleticsusa.com/speed-training/soccer-speed-training-cone-drills/",
+      "instructions": "SETUP: 5 cones in a line, 5 yards apart.\n\nDRILL 1 - 5-10-5:\n1. Start at middle cone\n2. Sprint to right cone\n3. Change direction, sprint to left cone\n4. Change direction, sprint through middle\n\nDRILL 2 - Pro Shuttle:\n1. Start at first cone\n2. Sprint to second cone, touch it\n3. Sprint to third cone, touch it\n4. Backpedal to start\n\nDRILL 3 - W Drill:\n1. Start at bottom\n2. Sprint to right cone\n3. Cut to middle cone\n4. Sprint to left cone\n5. Sprint back through start\n\nCOACHING POINTS:\n- Quick change of direction\n- Stay low\n- Full effort each rep"
+    },
+    {
+      "title": "Short Passing Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["passing", "short passing"],
+      "description": "Youth soccer pass and move drills involving quick passing.",
+      "url": "https://www.sportsmomsurvivalguide.com/short-passing-1/",
+      "instructions": "SETUP: Pairs of players 10-15 yards apart.\n\nINSTRUCTIONS:\n1. Player A passes to player B\n2. Player B passes back to player A\n3. Players move forward after each pass\n4. Continue to end of area\n5. Return walking\n\nCOACHING POINTS:\n- Pass with inside of foot\n- Non-passing foot points to target\n- Passes on ground\n- Communicate"
+    },
+    {
+      "title": "Partner Passing",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U11",
+      "skills": ["passing", "short passing", "receiving"],
+      "description": "Basic soccer partner passing training drill.",
+      "url": "https://www.sportsmomsurvivalguide.com/partner-passing/",
+      "instructions": "SETUP: Partners facing each other 10-15 feet apart.\n\nINSTRUCTIONS:\n1. Player 1 passes to partner\n2. Partner receives and passes back\n3. Continue for 1 minute\n4. Switch to other foot\n\nCOACHING POINTS:\n- Lock ankle on passing foot\n- Receive with surface of foot\n- Passes should be firm but controllable"
+    },
+    {
+      "title": "Passing and Movement",
+      "type": "Tactical",
+      "level": "Intermediate",
+      "ageGroup": "U13-U18",
+      "skills": ["passing", "providing support", "communication"],
+      "description": "FIFA drill for passing and movement.",
+      "url": "https://www.fifatrainingcentre.com/en/practice/grassroots/12-to-15/passing-and-movement.php",
+      "instructions": "SETUP: 30x20 yard area with 3 lines of players.\n\nINSTRUCTIONS:\n1. Passer plays ball to cone\n2. Runner makes run around cone\n3. Passer plays through ball to runner\n4. Runner receives and plays back\n5. Rotate positions\n\nCOACHING POINTS:\n- Timing of run\n- Weight of pass\n- First touch"
+    },
+    {
+      "title": "Perfect the Pass",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U6-U10",
+      "skills": ["passing", "short passing"],
+      "description": "FIFA training for ages 4-8.",
+      "url": "https://www.fifatrainingcentre.com/en/practice/grassroots/4-to-8/perfect-the-pass.php",
+      "instructions": "SETUP: Pairs of players with one ball between them.\n\nINSTRUCTIONS:\n1. Players pass to each other\n2. Focus on technique\n3. Use inside of foot\n4. Keep passes on ground\n\nCOACHING POINTS:\n- Ankle locked\n- Non-kicking foot beside ball\n- Follow through toward target"
+    },
+    {
+      "title": "Receiving Between the Lines",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U13-U18",
+      "skills": ["receiving", "first touch", "passing"],
+      "description": "FIFA drill for receiving between defensive lines.",
+      "url": "https://www.fifatrainingcentre.com/en/practice/talent-coach-programme/build-and-progress/passing-circuit-receiving-between-the-lines.php",
+      "instructions": "SETUP: Two lines of defenders facing two lines of attackers.\n\nINSTRUCTIONS:\n1. Server plays ball into space between lines\n2. Attacker makes run to receive\n3. Defender attempts to intercept\n4. If received, attacker plays back to server\n\nCOACHING POINTS:\n- Check shoulder before receiving\n- Angle of run\n- First touch to set up next action"
+    },
+    {
+      "title": "Unopposed Lofted and Driven Passing",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U10-U14",
+      "skills": ["passing", "long passing"],
+      "description": "Practice lofted and driven passing techniques.",
+      "url": "https://quickstartsoccer.com/unopposed-lofted-and-driven-passing/",
+      "instructions": "SETUP: Pairs of players 20-30 yards apart.\n\nINSTRUCTIONS:\n1. Player A plays driven pass to player B\n2. Player B controls and plays driven pass back\n3. Repeat for 1 minute\n4. Switch to lofted passes\n\nCOACHING POINTS:\n- Driven: Strike center of ball with laces\n- Lofted: Chip ball with instep\n- Passes should reach teammate"
+    },
+    {
+      "title": "Dribbling Through Cones",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["dribbling", "close control"],
+      "description": "Dribbling skill through cone mazes.",
+      "url": "https://soor.org/dribbling-through-cones/",
+      "instructions": "SETUP: Create cone mazes or paths with cones.\n\nINSTRUCTIONS:\n1. Player dribbles through maze\n2. Navigate around cones without hitting them\n3. Can add turns at cone intersections\n4. Race against other players\n\nCOACHING POINTS:\n- Ball close to feet\n- Use both feet\n- Keep head up"
+    },
+    {
+      "title": "Two Finishes",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["finishing", "shooting", "volleys"],
+      "description": "Drill for developing shooting accuracy.",
+      "url": "https://www.soccerdrive.com/soccer-drills/two-finishes",
+      "instructions": "SETUP: Server with balls at edge of penalty area. Goal with goalkeeper.\n\nINSTRUCTIONS:\n1. Server plays ball to first attacker\n2. First attacker takes first touch and shoots\n3. Server plays second ball to second attacker\n4. Second attacker must volley first time\n5. Rotate roles\n\nCOACHING POINTS:\n- First shot: placement\n- Volley: contact ball in air\n- Follow through"
+    },
+    {
+      "title": "Spin and Finish",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["shooting", "finishing", "turning"],
+      "description": "Soccer shooting drill with turn.",
+      "url": "https://mypersonalfootballcoach.com/soccer-shooting-drill-spin-finish/",
+      "instructions": "SETUP: Cone 10 yards from goal with server and balls.\n\nINSTRUCTIONS:\n1. Server passes to cone\n2. Attacker runs around cone\n3. Receives ball and spins away from defender\n4. Takes shot on goal\n\nCOACHING POINTS:\n- Timing of run\n- Clean first touch\n- Shot placement"
+    },
+    {
+      "title": "Developing Shooting Skills",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["shooting", "finishing", "ball striking"],
+      "description": "FIFA guide for developing shooting skills ages 4-8.",
+      "url": "https://www.fifatrainingcentre.com/en/practice/grassroots/grassroots-and-youth-football-essentials/grassroots-coaching-essentials/developing-shooting-skills.php",
+      "instructions": "SETUP: Players in pairs 15 yards from goal with goalkeeper.\n\nINSTRUCTIONS:\n1. First player dribbles and shoots\n2. Goalkeeper tries to save\n3. After shot, player becomes goalkeeper\n4. Next player shoots\n\nCOACHING POINTS:\n- Approach ball at angle\n- Non-kicking foot beside ball\n- Laces for power\n- Follow through"
+    },
+    {
+      "title": "Basic Goalkeeper Training",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["goalkeeping", "basics", "positioning", "footwork"],
+      "description": "Basic goalkeeper training footwork and positioning.",
+      "url": "https://www.footy4kids.co.uk/soccer-drills/goalkeeping/basic-goalkeeper-training-footwork-and-positioning/",
+      "instructions": "SETUP: Goalkeeper in goal area with coach.\n\nFOOTWORK DRILL:\n1. Coach calls numbers\n2. Goalkeeper shuffles to position\n3. Start low, go higher on command\n\nPOSITIONING DRILL:\n1. Coach shoots from different angles\n2. Goalkeeper learns to cut angles\n3. Practice coming off line\n\nCOACHING POINTS:\n- Stay on toes\n- Read the shooter\n- Take good angle"
+    },
+    {
+      "title": "U7 Goalkeeping Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U6-U8",
+      "skills": ["goalkeeping", "basics"],
+      "description": "U7 goalkeeping soccer drill for beginners.",
+      "url": "https://www.soccercoachweekly.net/drills-and-games/drills/u7-goalkeeping-soccer-drill",
+      "instructions": "SETUP: Small goal or cones. One player is goalkeeper.\n\nINSTRUCTIONS:\n1. Coach rolls ball toward goal\n2. Goalkeeper tries to collect\n3. Coach then throws in air\n4. Goalkeeper catches\n5. Switch roles frequently\n\nCOACHING POINTS:\n- Hands ready\n- Watch ball all way\n- Fun atmosphere"
+    },
+    {
+      "title": "Goalkeeper Reaction Drills",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["goalkeeping", "reflexes"],
+      "description": "Soccer goalie reaction drills for beginners.",
+      "url": "https://athletesuntapped.com/blog/soccer-goalie-reaction-drills-beginners/",
+      "instructions": "SETUP: Goalkeeper in goal. Coach 15 yards away with ball.\n\nINSTRUCTIONS:\n1. Coach throws ball at random spots\n2. Goalkeeper reacts and catches\n3. Start slow, increase speed\n4. Change height of throws\n\nCOACHING POINTS:\n- React quickly\n- Track ball into hands\n- Stay focused"
+    },
+    {
+      "title": "Fun Warm Up Soccer Drills",
+      "type": "Warm-up",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["conditioning"],
+      "description": "5 Fun Warm Up Soccer Drills for Youth Soccer Practice.",
+      "url": "https://www.soccerdrive.com/blog/1/5-fun-warm-soccer-drills-youth-soccer-practice",
+      "instructions": "WARM UP 1 - Shark and Minnows:\n1. One player is shark\n2. Others are minnows with balls\n3. Minnows dribble, shark tries to tag\n4. If tagged, become shark\n\nWARM UP 2 - Red Light Green Light:\n1. Dribble forward on green light\n2. Stop on red light\n3. Loser does exercise\n\nWARM UP 3 - Keep Away:\n1. 3-4 players in middle\n2. Others outside with balls\n3. Outside players try to pass to middle\n4. Middle tries to intercept\n\nCOACHING POINTS:\n- Keep moving\n- Stay warm\n- Have fun"
+    },
+    {
+      "title": "Fun Soccer Warm Up Games",
+      "type": "Warm-up",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["conditioning", "dribbling"],
+      "description": "7 Super Fun Soccer Warm Up Games For Kids.",
+      "url": "https://quickstartsoccer.com/fun-soccer-warm-up-games-for-kids/",
+      "instructions": "GAME 1 - Octopus:\n1. One player is 'it' (octopus)\n2. Others dribble across field\n3. Tagged players become seaweed (static)\n4. Last one free wins\n\nGAME 2 - Freeze Tag:\n1. One tagger\n2. Tagged players freeze\n3. Others can unfreeze by passing\n\nGAME 3 - Pac Man:\n1. One player is Pac Man\n2. Others are ghosts\n3. Pac Man eats ghosts by touching\n\nCOACHING POINTS:\n- Keep it fun\n- All get equal activity\n- Safety first"
+    },
+    {
+      "title": "Agility Training for Better Ball Control",
+      "type": "Physical",
+      "level": "Basic",
+      "ageGroup": "U6-U12",
+      "skills": ["agility", "ball control", "dribbling"],
+      "description": "FIFA agility training for ages 4-8.",
+      "url": "https://www.fifatrainingcentre.com/en/practice/grassroots/4-to-8/agility-training-for-better-ball-control.php",
+      "instructions": "SETUP: Cones in various patterns.\n\nINSTRUCTIONS:\n1. Players dribble through cones\n2. Add changes of direction\n3. Increase speed gradually\n4. Use both feet\n\nCOACHING POINTS:\n- Quick feet\n- Ball close to cones\n- Head up"
+    },
+    {
+      "title": "Soccer Agility Circuit",
+      "type": "Physical",
+      "level": "Intermediate",
+      "ageGroup": "U12-U18",
+      "skills": ["agility", "speed", "conditioning"],
+      "description": "Agility circuit training for soccer.",
+      "url": "https://www.sportplan.net/drills/Soccer/Agility/Agility-Circuit-FA000011.jsp",
+      "instructions": "SETUP: 4-5 stations set up around field.\n\nSTATIONS:\n1. Ladder runs\n2. Cone slalom\n3. Hurdle jumps\n4. Shuttle runs\n5. Ball dribbling\n\nINSTRUCTIONS:\n1. Players rotate every 60 seconds\n2. Rest 30 seconds between stations\n3. Complete 3 rounds\n\nCOACHING POINTS:\n- Full effort\n- Proper technique\n- Stay focused"
+    },
+    {
+      "title": "Soccer Agility Drills",
+      "type": "Physical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U18",
+      "skills": ["agility", "speed"],
+      "description": "9 Soccer Agility Drills for improving quickness.",
+      "url": "https://www.soccercoachingpro.com/soccer-agility-drills/",
+      "instructions": "DRILL 1 - Lateral Bounds:\n1. Stand sideways to cones\n2. Bound laterally over each cone\n3. Land on both feet\n\nDRILL 2 - T-Drill:\n1. Start at base\n2. Sprint to top, touch\n3. Shuffle to right, touch\n4. Shuffle to left, touch\n5. Backpedal to start\n\nDRILL 3 - Box Drill:\n1. Sprint to corner\n2. Shuffle to next\n3. Backpedal to next\n4. Shuffle to start\n\nCOACHING POINTS:\n- Low center of gravity\n- Quick changes\n- Land softly"
+    },
+    {
+      "title": "Youth Soccer Defense Drills",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U18",
+      "skills": ["defending"],
+      "description": "Top 17 Youth Soccer Defense Drills.",
+      "url": "https://www.risefcsoccer.com/youth-soccer-defense-drills/",
+      "instructions": "DRILL 1 - Shadow Defending:\n1. Attacker dribbles\n2. Defender shadows without tackling\n3. Learn movements\n\nDRILL 2 - Rondo Defense:\n1. 4v1 keep away\n2. Defender learns to pressure\n3. Rotate defenders\n\nDRILL 3 - Team Defensive Shape:\n1. Team in defensive formation\n2. Coach points to threats\n3. Team adjusts shape\n\nCOACHING POINTS:\n- Stay goal side\n- Communicate\n- Delay attacker"
+    },
+    {
+      "title": "Soccer Finishing Drills",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U18",
+      "skills": ["finishing", "shooting"],
+      "description": "10 Effective Soccer Finishing Drills For Kids.",
+      "url": "https://quickstartsoccer.com/soccer-finishing-drills/",
+      "instructions": "DRILL 1 - Lightning:\n1. One goalkeeper, rest in line\n2. Coach serves ball\n3. Player shoots first touch\n4. If score, goalkeeper out\n\nDRILL 2 - Team Lightning:\n1. Teams on each side of goal\n2. Pass A-B-C triangle\n3. C takes shot\n4. Points for goals\n\nDRILL 3 - 4v2 to Goal:\n1. Attackers in box with server\n2. 4 attackers vs 2 defenders\n3. 4 passes required before shot\n\nCOACHING POINTS:\n- First touch to goal\n- Shot placement\n- Composure"
+    },
+    {
+      "title": "Small-Sided Shooting and Finishing Game",
+      "type": "Game",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["finishing", "shooting"],
+      "description": "Small-sided shooting and finishing game.",
+      "url": "https://soccerxpert.com/drills/details/small-sided-shooting-finishing",
+      "instructions": "SETUP: 30x20 yard grid with goal at one end.\n\nINSTRUCTIONS:\n1. 3v3 game in grid\n2. Teams score by shooting on goal\n3. Defenders try to block shots\n4. Ball restarts from coach after goal/out\n\nCOACHING POINTS:\n- Shoot on sight\n- Create space\n- Support shooter"
+    },
+    {
+      "title": "1v1 Defending the Dribble",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U16",
+      "skills": ["defending", "1v1 moves"],
+      "description": "1v1 defending the dribble drill.",
+      "url": "https://soccerxpert.com/drills/details/1v1-defending-the-dribble",
+      "instructions": "SETUP: 20x20 yard area with goal. Two lines of players.\n\nINSTRUCTIONS:\n1. Attacker dribbles at defender\n2. Defender forces to weak side\n3. If defender wins, they become attacker\n4. Switch sides\n\nCOACHING POINTS:\n- Don't overcommit\n- Force wide\n- Stay low"
+    },
+    {
+      "title": "1v1 Ladder",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["attacking", "defending", "1v1 moves"],
+      "description": "1v1 ladder drill.",
+      "url": "https://www.soccerdrive.com/soccer-drills/1v1-ladder-0",
+      "instructions": "SETUP: Cones in ladder pattern. Two players at start.\n\nINSTRUCTIONS:\n1. First pair sprints to first cone\n2. At cone, they play 1v1\n3. Winner advances to next cone\n4. Continue to goal\n\nCOACHING POINTS:\n- Sprint to cone\n- Play quickly\n- Win your duel"
+    },
+    {
+      "title": "1v1 to Single Goal",
+      "type": "Game",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["attacking", "defending", "finishing"],
+      "description": "1v1 to single goal drill.",
+      "url": "https://www.soccerdrive.com/soccer-drills/1v1-single-goal",
+      "instructions": "SETUP: 25x25 yard area with one goal.\n\nINSTRUCTIONS:\n1. Player A serves to player B\n2. Player B attacks goal\n3. Player A defends\n4. After shot or goal, next pair goes\n\nCOACHING POINTS:\n- Attack with purpose\n- Take shot early\n- Defend the goal"
+    },
+    {
+      "title": "Soccer Warm Up Drills",
+      "type": "Warm-up",
+      "level": "Basic",
+      "ageGroup": "U8-U14",
+      "skills": ["conditioning"],
+      "description": "Fun and effective soccer warm up drills.",
+      "url": "https://quickstartsoccer.com/soccer-drills/warm-up-drills/",
+      "instructions": "WARM UP 1 - Gates:\n1. Players dribble through gates\n2. Count successful gates\n3. Try to beat score\n\nWARM UP 2 - Pinnie Chase:\n1. Half players wear pinnies\n2. Tag those without\n3. Switch roles\n\nWARM UP 3 - Gate Keepers:\n1. Two players at each gate\n2. Players dribble through gates\n3. Gate keepers try to tag\n\nCOACHING POINTS:\n- Stay moving\n- Include everyone\n- Fun first"
+    },
+    {
+      "title": "Goalkeeper Arc Drill",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["goalkeeping", "positioning", "footwork"],
+      "description": "Goalkeeper arc drill.",
+      "url": "https://soccerxpert.com/drills/details/goalkeeper-arc-drill-1",
+      "instructions": "SETUP: Cones in arc in front of goal. Server with ball.\n\nINSTRUCTIONS:\n1. Goalkeeper starts on line\n2. Coach serves ball along arc\n3. Goalkeeper moves to each position\n4. Collects ball at each spot\n\nCOACHING POINTS:\n- Read the flight\n- Move efficiently\n- Secure the ball"
+    },
+    {
+      "title": "Goalkeeper Footwork: Scooping Ground Balls",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["goalkeeping", "basics", "footwork"],
+      "description": "Goalkeeper footwork exercise for scooping.",
+      "url": "https://soccerxpert.com/drills/details/goalkeeper-footwork-exercise-scooping-ground-balls",
+      "instructions": "SETUP: Goalkeeper in ready position. Coach rolls balls.\n\nINSTRUCTIONS:\n1. Coach rolls ball to goalkeeper's right\n2. Goalkeeper bends, scoops with both hands\n3. Coach rolls to left\n4. Goalkeeper scoops from other side\n\nCOACHING POINTS:\n- Get body behind ball\n- Eyes on ball\n- Secure catch"
+    },
+    {
+      "title": "Attack the Cone Dribbling",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["dribbling", "1v1 moves", "close control"],
+      "description": "Attack the cone dribbling skills.",
+      "url": "https://www.soccerdrive.com/soccer-drills/attack-cone-dribbling-skills",
+      "instructions": "SETUP: Tall cone in center of area with attacker and defender.\n\nINSTRUCTIONS:\n1. Attacker dribbles around cone\n2. Defender tries to win ball\n3. If attacker gets past, they score\n4. Roles switch\n\nCOACHING POINTS:\n- Sell the move\n- Use body to protect\n- Quick feet"
+    },
+    {
+      "title": "1v1 Soccer Drill for Kids",
+      "type": "Technical",
+      "level": "Basic",
+      "ageGroup": "U8-U12",
+      "skills": ["attacking", "defending", "1v1 moves"],
+      "description": "1v1 soccer drill for kids.",
+      "url": "https://www.soccercoachweekly.net/drills-and-games/drills/1v1-soccer-drill-for-kids",
+      "instructions": "SETUP: 20x20 yard area with goal. Two lines.\n\nINSTRUCTIONS:\n1. First player in each line\n2. Player with ball attacks\n3. Other player defends\n4. After goal or ball out, next pair\n\nCOACHING POINTS:\n- Attack at pace\n- Don't give up\n- Good sportsmanship"
+    },
+    {
+      "title": "Cone Sole Roll Dribbling",
+      "type": "Technical",
+      "level": "Intermediate",
+      "ageGroup": "U10-U14",
+      "skills": ["dribbling", "ball mastery", "close control"],
+      "description": "Cone sole roll dribbling exercise.",
+      "url": "https://www.sportplan.net/drills/Soccer/Dribbling/Cone-Sole-Roll-MF0019.jsp",
+      "instructions": "SETUP: Cones in line. Player with ball.\n\nINSTRUCTIONS:\n1. Player dribbles to first cone\n2. Uses sole to roll ball around cone\n3. Continues down line\n4. Return with other foot\n\nCOACHING POINTS:\n- Ball under control\n- Smooth sole rolls\n- Both feet"
+    }
+  ]
+}

@@ -342,10 +342,16 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
 
         // Rebuild parentTeamIds from remaining parentOf entries
         const updatedParentTeamIds = [...new Set(updatedParentOf.map(p => p.teamId).filter(Boolean))];
+        const updatedParentPlayerKeys = [...new Set(
+            updatedParentOf
+                .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
+                .filter(Boolean)
+        )];
 
         await updateDoc(userRef, {
             parentOf: updatedParentOf,
             parentTeamIds: updatedParentTeamIds,
+            parentPlayerKeys: updatedParentPlayerKeys,
             updatedAt: Timestamp.now()
         });
     }
@@ -932,6 +938,7 @@ export async function redeemParentInvite(userId, code) {
             }),
             // Denormalized array for fast Firestore rules lookup
             parentTeamIds: arrayUnion(codeData.teamId),
+            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
             roles: arrayUnion('parent')
         }, { merge: true });
         console.log('[redeemParentInvite] user profile updated');
@@ -1500,6 +1507,342 @@ export async function getUpcomingLiveGames(limitCount = 10) {
     });
 
     return games;
+}
+
+// ============================================
+// Drill Library CRUD (Practice Command Center)
+// ============================================
+
+/**
+ * Get community drills with optional filters
+ * @param {Object} options - { sport, type, level, skill, searchText, limitCount, startAfterDoc }
+ * @returns {Promise<{ drills: Array, lastDoc: Object|null }>}
+ */
+export async function getDrills(options = {}) {
+    const constraints = [];
+    // Keep Firestore query index-safe: only orderBy title at query time, then filter client-side.
+    constraints.push(orderBy('title'));
+    const pageSize = options.limitCount || 24;
+    const fetchLimit = Math.max(pageSize * 2, 24);
+    const term = options.searchText ? options.searchText.toLowerCase() : null;
+    const drills = [];
+    let cursor = options.startAfterDoc || null;
+    let lastReturnedDoc = null;
+    let safety = 0;
+    let hasMore = true;
+
+    while (drills.length < pageSize && hasMore && safety < 8) {
+        const pageConstraints = [...constraints, limitQuery(fetchLimit)];
+        if (cursor) pageConstraints.push(startAfterQuery(cursor));
+        const q = query(collection(db, 'drillLibrary'), ...pageConstraints);
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+            hasMore = false;
+            break;
+        }
+
+        const page = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+        let filtered = page;
+        if (options.sport) {
+            filtered = filtered.filter(d => d.sport === options.sport);
+        }
+        if (!options.includeCustom) {
+            filtered = filtered.filter(d => d.source === 'community' || d.publishedToCommunity === true);
+        }
+        if (options.type) filtered = filtered.filter(d => d.type === options.type);
+        if (options.level) filtered = filtered.filter(d => d.level === options.level);
+        if (options.skill) filtered = filtered.filter(d => Array.isArray(d.skills) && d.skills.includes(options.skill));
+        if (term) {
+            filtered = filtered.filter(d =>
+                (d.title || '').toLowerCase().includes(term) ||
+                (d.description || '').toLowerCase().includes(term) ||
+                (d.skills || []).some(s => s.toLowerCase().includes(term))
+            );
+        }
+
+        for (const d of filtered) {
+            if (drills.length >= pageSize) break;
+            drills.push(d);
+            lastReturnedDoc = d._doc;
+        }
+
+        const lastFetchedDoc = snapshot.docs[snapshot.docs.length - 1];
+        cursor = lastFetchedDoc || null;
+        hasMore = snapshot.docs.length >= fetchLimit;
+        safety += 1;
+    }
+
+    const lastDoc = drills.length >= pageSize ? lastReturnedDoc : null;
+    return { drills, lastDoc };
+}
+
+/**
+ * Get custom drills for a specific team
+ */
+export async function getTeamDrills(teamId) {
+    const q = query(
+        collection(db, 'drillLibrary'),
+        where('source', '==', 'custom'),
+        where('teamId', '==', teamId),
+        orderBy('title')
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+}
+
+/**
+ * Get a single drill by ID
+ */
+export async function getDrill(drillId) {
+    const docRef = doc(db, 'drillLibrary', drillId);
+    const docSnap = await getDoc(docRef);
+    return docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null;
+}
+
+/**
+ * Create a custom drill for a team
+ */
+export async function createDrill(teamId, data) {
+    const user = auth.currentUser;
+    const isPublished = !!data.publishedToCommunity;
+    const authorName = user?.displayName || user?.email || 'Team Coach';
+    const drillData = {
+        ...data,
+        source: 'custom',
+        teamId,
+        createdBy: user ? user.uid : null,
+        author: isPublished ? authorName : (data.author || null),
+        authorId: isPublished ? (user?.uid || null) : (data.authorId || null),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, 'drillLibrary'), drillData);
+    return docRef.id;
+}
+
+/**
+ * Update a custom drill
+ */
+export async function updateDrill(drillId, data) {
+    const user = auth.currentUser;
+    if (data.publishedToCommunity === true) {
+        data.author = user?.displayName || user?.email || data.author || 'Team Coach';
+        data.authorId = user?.uid || data.authorId || null;
+    }
+    data.updatedAt = Timestamp.now();
+    await updateDoc(doc(db, 'drillLibrary', drillId), data);
+}
+
+/**
+ * Delete a custom drill
+ */
+export async function deleteDrill(drillId) {
+    await deleteDoc(doc(db, 'drillLibrary', drillId));
+}
+
+// ============================================
+// Drill Favorites
+// ============================================
+
+/**
+ * Get all favorite drill IDs for a team
+ * @returns {Promise<string[]>} Array of drill IDs
+ */
+export async function getDrillFavorites(teamId) {
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/drillFavorites`));
+    return snapshot.docs.map(d => d.id);
+}
+
+/**
+ * Add a drill to team favorites
+ */
+export async function addDrillFavorite(teamId, drillId) {
+    const user = auth.currentUser;
+    await setDoc(doc(db, `teams/${teamId}/drillFavorites`, drillId), {
+        addedBy: user ? user.uid : null,
+        addedAt: Timestamp.now()
+    });
+}
+
+/**
+ * Remove a drill from team favorites
+ */
+export async function removeDrillFavorite(teamId, drillId) {
+    await deleteDoc(doc(db, `teams/${teamId}/drillFavorites`, drillId));
+}
+
+// ============================================
+// Practice Sessions
+// ============================================
+
+/**
+ * Get all practice sessions for a team
+ */
+export async function getPracticeSessions(teamId) {
+    const q = query(
+        collection(db, `teams/${teamId}/practiceSessions`),
+        orderBy('date', 'desc')
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Get a single practice session
+ */
+export async function getPracticeSession(teamId, sessionId) {
+    const docRef = doc(db, `teams/${teamId}/practiceSessions`, sessionId);
+    const snap = await getDoc(docRef);
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+/**
+ * Get a practice session linked to a specific schedule event
+ */
+export async function getPracticeSessionByEvent(teamId, eventId) {
+    if (!teamId || !eventId) return null;
+    const q = query(
+        collection(db, `teams/${teamId}/practiceSessions`),
+        where('eventId', '==', eventId),
+        limitQuery(1)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) return null;
+    const d = snapshot.docs[0];
+    return { id: d.id, ...d.data() };
+}
+
+/**
+ * Create a new practice session
+ */
+export async function createPracticeSession(teamId, data) {
+    const user = auth.currentUser;
+    const attendance = data.attendance || {
+        rosterSize: 0,
+        checkedInCount: 0,
+        updatedAt: Timestamp.now(),
+        players: []
+    };
+    const sessionData = {
+        ...data,
+        createdBy: user ? user.uid : null,
+        status: data.status || 'draft',
+        blocks: data.blocks || [],
+        aiChatHistory: data.aiChatHistory || [],
+        attendance,
+        attendancePlayers: data.attendancePlayers ?? attendance.checkedInCount ?? 0,
+        homePacketGenerated: data.homePacketGenerated ?? false,
+        homePacketContent: data.homePacketContent ?? null,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/practiceSessions`), sessionData);
+    return docRef.id;
+}
+
+/**
+ * Update a practice session
+ */
+export async function updatePracticeSession(teamId, sessionId, data) {
+    data.updatedAt = Timestamp.now();
+    await updateDoc(doc(db, `teams/${teamId}/practiceSessions`, sessionId), data);
+}
+
+/**
+ * Create or update a practice session linked to a schedule event
+ */
+export async function upsertPracticeSessionForEvent(teamId, eventId, data = {}) {
+    const existing = await getPracticeSessionByEvent(teamId, eventId);
+    if (existing) {
+        await updatePracticeSession(teamId, existing.id, {
+            ...data,
+            eventId,
+            eventType: 'practice'
+        });
+        return existing.id;
+    }
+    return await createPracticeSession(teamId, {
+        ...data,
+        eventId,
+        eventType: 'practice',
+        sourcePage: data.sourcePage || 'edit-schedule'
+    });
+}
+
+/**
+ * Update attendance for a practice session
+ */
+export async function updatePracticeAttendance(teamId, sessionId, attendance) {
+    const players = (attendance?.players || []).map(p => ({
+        playerId: p.playerId,
+        displayName: p.displayName || '',
+        status: p.status || 'absent',
+        checkedInAt: p.checkedInAt || null,
+        note: p.note || null
+    }));
+    const rawEditedAt = attendance?.editedAt || null;
+    let editedAt = Timestamp.now();
+    if (rawEditedAt) {
+        if (typeof rawEditedAt?.toDate === 'function' || rawEditedAt instanceof Timestamp) {
+            editedAt = rawEditedAt;
+        } else {
+            const parsed = new Date(rawEditedAt);
+            editedAt = Number.isNaN(parsed.getTime()) ? Timestamp.now() : Timestamp.fromDate(parsed);
+        }
+    }
+    const checkedInCount = players.filter(p => p.status === 'present' || p.status === 'late').length;
+    const absentCount = players.filter(p => p.status === 'absent').length;
+    const lateCount = players.filter(p => p.status === 'late').length;
+    const normalized = {
+        rosterSize: players.length,
+        checkedInCount,
+        updatedAt: Timestamp.now(),
+        editedAt,
+        players
+    };
+    await updatePracticeSession(teamId, sessionId, {
+        attendance: normalized,
+        attendancePlayers: checkedInCount,
+        aiContext: {
+            presentPlayerIds: players.filter(p => p.status === 'present' || p.status === 'late').map(p => p.playerId),
+            attendanceSummary: { present: checkedInCount - lateCount, late: lateCount, absent: absentCount }
+        }
+    });
+}
+
+/**
+ * Delete a practice session
+ */
+export async function deletePracticeSession(teamId, sessionId) {
+    await deleteDoc(doc(db, `teams/${teamId}/practiceSessions`, sessionId));
+}
+
+/**
+ * Get packet completion records for a practice session
+ */
+export async function getPracticePacketCompletions(teamId, sessionId) {
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/practiceSessions/${sessionId}/packetCompletions`));
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Parent marks a specific child's packet as completed
+ */
+export async function upsertPracticePacketCompletion(teamId, sessionId, payload) {
+    const user = auth.currentUser;
+    const parentUserId = payload?.parentUserId || user?.uid || null;
+    const childId = payload?.childId || null;
+    if (!parentUserId || !childId) throw new Error('parentUserId and childId are required');
+    const docId = `${parentUserId}__${childId}`;
+    await setDoc(doc(db, `teams/${teamId}/practiceSessions/${sessionId}/packetCompletions`, docId), {
+        parentUserId,
+        parentName: payload?.parentName || user?.displayName || user?.email || 'Parent',
+        childId,
+        childName: payload?.childName || null,
+        status: 'completed',
+        completedAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    }, { merge: true });
 }
 
 /**

@@ -1,13 +1,30 @@
 # Practice & Recurring Schedule Feature - Implementation Plan
 
-**Last Updated:** December 2024
-**Status:** IMPLEMENTED (Phase 1 + Phase 2 Complete)
+**Last Updated:** February 16, 2026
+**Status:** IMPLEMENTED (Recurring schedule + Practice Command Center + parent packet flow)
 
 ---
 
 ## Implementation Summary
 
 Both Phase 1 (Basic Practices) and Phase 2 (Recurring Practices) have been fully implemented.
+
+### 2026 Additions (Practice Command Center)
+
+- Practice-specific planning entry from `edit-schedule.html` via **Plan Practice**.
+- Event-linked practice planning in `drills.html` (one session per practice event).
+- Drill Library support for:
+  - Community drills
+  - Team custom drills (add/edit/delete)
+  - Favorites and publish-to-community workflow
+- ALL PLAYS COACH chat for attendance-aware practice planning.
+- Practice Timeline with drill block durations and gap visibility.
+- Practice Mode attendance tracking (`present`, `late`, `absent`) and coach notes.
+- Home Packet builder tied to each practice session.
+- Parent Dashboard support for:
+  - Schedule filters (`All Upcoming`, `Upcoming Games`, `Upcoming Practices`, `Past Events`)
+  - Practice attendance visibility
+  - Home packet per-practice completion by parent/player
 
 ### What Was Built
 

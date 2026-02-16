@@ -7,6 +7,11 @@ A static HTML + JavaScript sports team management and stat tracking application,
 - **Team Management**: Create and manage multiple teams.
 - **Roster Management**: Add players with names and numbers.
 - **Schedule**: Manage upcoming games and past results.
+- **Practice Planning**: Build event-specific practice plans from `edit-schedule.html` with a dedicated Practice Command Center (`drills.html`).
+- **Drill Library**: Browse community drills, create/edit team drills, favorite drills, and publish team drills to community.
+- **Practice AI Coach**: Use ALL PLAYS COACH chat for attendance-aware planning and timeline recommendations.
+- **Practice Attendance & Notes**: Track present/late/absent players, capture quick/voice notes, and persist by practice session.
+- **Home Packet Workflow**: Create take-home drill packets from practice plans and track parent completion per player.
 - **Live Stat Tracking**: Track stats live during games with a mobile-friendly interface.
 - **Match Reports**: View detailed summaries and aggregated stats for completed games.
 - **Linked Opponents**: Link opponent teams to preload their roster in the live tracker and show logos/photos in reports.
@@ -104,10 +109,11 @@ The password reset flow:
 
 - `index.html`: Public home page.
 - `dashboard.html`: User dashboard (protected).
-- `parent-dashboard.html`: Parent dashboard (linked players + combined schedule).
+- `parent-dashboard.html`: Parent dashboard (player-linked schedule filters, practice attendance summaries, home packet completion).
 - `admin.html`: Admin dashboard (admin users only).
 - `team.html`: Public team details.
 - `game.html`: Match report.
+- `drills.html`: Practice Command Center (drill library, AI coach chat, practice timeline, attendance, home packet).
 - `track.html`: Standard live tracking interface (all sports).
 - `track-basketball.html`: Basketball-optimized mobile tracker with subs, queue mode, player photos, AI + email, and Firebase persistence.
 - `js/`: Shared JavaScript modules.
