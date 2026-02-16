@@ -9,6 +9,58 @@ This PR includes 4 commits that fix critical issues with basketball game trackin
 
 ---
 
+## Addendum: Practice Command Center + Parent Dashboard (2026-02-16)
+
+### A. Schedule to Practice Plan Linkage
+
+1. Open `edit-schedule.html` for a team with practices.
+2. Verify each practice row shows a `Plan Practice` action.
+3. Click `Plan Practice` and confirm `drills.html` opens with the same event context.
+4. Save a draft plan and return to schedule.
+5. Verify the same practice row shows linked plan summary (status/block/time).
+
+Pass criteria: each practice event has its own linked session and does not overwrite other events.
+
+### B. Drill Library + Custom Drill CRUD
+
+1. In `drills.html`, verify tabs render: Community, My Drills, Favorites.
+2. Create a custom drill from `My Drills`.
+3. Edit the same drill and save changes.
+4. Favorite/unfavorite it and verify state persists on refresh.
+5. (Admin) publish custom drill to community and verify author metadata uses current user.
+
+Pass criteria: add/edit/delete/favorite/publish flows persist and reload correctly.
+
+### C. Practice Timeline + Attendance
+
+1. Build a timeline with multiple drill blocks and total duration.
+2. Change drill durations and confirm timeline total updates.
+3. Enter Practice Mode and mark players present/late/absent.
+4. Refresh page and verify attendance state persists for that event session.
+
+Pass criteria: timeline + attendance are event-specific and persist after reload.
+
+### D. Parent Dashboard Filters + Packet Completion
+
+1. Open `parent-dashboard.html`.
+2. Validate schedule filters:
+   - All Upcoming
+   - Upcoming Games
+   - Upcoming Practices
+   - Past Events
+3. Confirm `Practice Attendance & Home Packet` appears below schedule only when session data exists.
+4. Open a packet and click `Mark Complete` for a child.
+5. Refresh and verify completion state persists.
+
+Pass criteria: filter behavior is correct and packet completion writes successfully.
+
+### E. Coach Visibility of Parent Completion
+
+1. In `drills.html`, open the matching practice session.
+2. Verify home packet completion summary reflects parent-completed players.
+
+Pass criteria: coach sees accurate completion rollup for the same session.
+
 ## 🎯 Critical Test Areas
 
 ### 1. Basketball Tracker Selection Modal
