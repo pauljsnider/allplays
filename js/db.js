@@ -342,10 +342,16 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
 
         // Rebuild parentTeamIds from remaining parentOf entries
         const updatedParentTeamIds = [...new Set(updatedParentOf.map(p => p.teamId).filter(Boolean))];
+        const updatedParentPlayerKeys = [...new Set(
+            updatedParentOf
+                .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
+                .filter(Boolean)
+        )];
 
         await updateDoc(userRef, {
             parentOf: updatedParentOf,
             parentTeamIds: updatedParentTeamIds,
+            parentPlayerKeys: updatedParentPlayerKeys,
             updatedAt: Timestamp.now()
         });
     }
@@ -932,6 +938,7 @@ export async function redeemParentInvite(userId, code) {
             }),
             // Denormalized array for fast Firestore rules lookup
             parentTeamIds: arrayUnion(codeData.teamId),
+            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
             roles: arrayUnion('parent')
         }, { merge: true });
         console.log('[redeemParentInvite] user profile updated');
@@ -1517,35 +1524,55 @@ export async function getDrills(options = {}) {
     constraints.push(orderBy('title'));
     const pageSize = options.limitCount || 24;
     const fetchLimit = Math.max(pageSize * 2, 24);
-    // Over-fetch slightly so client-side filtering can still return useful pages.
-    constraints.push(limitQuery(fetchLimit));
-    if (options.startAfterDoc) constraints.push(startAfterQuery(options.startAfterDoc));
+    const term = options.searchText ? options.searchText.toLowerCase() : null;
+    const drills = [];
+    let cursor = options.startAfterDoc || null;
+    let lastReturnedDoc = null;
+    let safety = 0;
+    let hasMore = true;
 
-    const q = query(collection(db, 'drillLibrary'), ...constraints);
-    const snapshot = await getDocs(q);
-    const all = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+    while (drills.length < pageSize && hasMore && safety < 8) {
+        const pageConstraints = [...constraints, limitQuery(fetchLimit)];
+        if (cursor) pageConstraints.push(startAfterQuery(cursor));
+        const q = query(collection(db, 'drillLibrary'), ...pageConstraints);
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+            hasMore = false;
+            break;
+        }
 
-    let filtered = all;
-    if (options.sport) {
-        filtered = filtered.filter(d => d.sport === options.sport);
-    }
-    if (!options.includeCustom) {
-        filtered = filtered.filter(d => d.source === 'community' || d.publishedToCommunity === true);
-    }
-    if (options.type) filtered = filtered.filter(d => d.type === options.type);
-    if (options.level) filtered = filtered.filter(d => d.level === options.level);
-    if (options.skill) filtered = filtered.filter(d => Array.isArray(d.skills) && d.skills.includes(options.skill));
-    if (options.searchText) {
-        const term = options.searchText.toLowerCase();
-        filtered = filtered.filter(d =>
-            (d.title || '').toLowerCase().includes(term) ||
-            (d.description || '').toLowerCase().includes(term) ||
-            (d.skills || []).some(s => s.toLowerCase().includes(term))
-        );
+        const page = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
+        let filtered = page;
+        if (options.sport) {
+            filtered = filtered.filter(d => d.sport === options.sport);
+        }
+        if (!options.includeCustom) {
+            filtered = filtered.filter(d => d.source === 'community' || d.publishedToCommunity === true);
+        }
+        if (options.type) filtered = filtered.filter(d => d.type === options.type);
+        if (options.level) filtered = filtered.filter(d => d.level === options.level);
+        if (options.skill) filtered = filtered.filter(d => Array.isArray(d.skills) && d.skills.includes(options.skill));
+        if (term) {
+            filtered = filtered.filter(d =>
+                (d.title || '').toLowerCase().includes(term) ||
+                (d.description || '').toLowerCase().includes(term) ||
+                (d.skills || []).some(s => s.toLowerCase().includes(term))
+            );
+        }
+
+        for (const d of filtered) {
+            if (drills.length >= pageSize) break;
+            drills.push(d);
+            lastReturnedDoc = d._doc;
+        }
+
+        const lastFetchedDoc = snapshot.docs[snapshot.docs.length - 1];
+        cursor = lastFetchedDoc || null;
+        hasMore = snapshot.docs.length >= fetchLimit;
+        safety += 1;
     }
 
-    const drills = filtered.slice(0, pageSize);
-    const lastDoc = snapshot.docs.length >= fetchLimit ? snapshot.docs[snapshot.docs.length - 1] : null;
+    const lastDoc = drills.length >= pageSize ? lastReturnedDoc : null;
     return { drills, lastDoc };
 }
 

@@ -1312,24 +1312,29 @@ ${JSON.stringify({
             loadLibrary();
         }
 
+        function getCommunityLibraryFilters(extra = {}) {
+            const sport = state.team?.sport || 'Soccer';
+            const opts = { sport, ...extra };
+            const type = document.getElementById('filter-type').value;
+            const level = document.getElementById('filter-level').value;
+            const skill = document.getElementById('filter-skill').value;
+            const search = document.getElementById('filter-search').value.trim();
+            if (type) opts.type = type;
+            if (level) opts.level = level;
+            if (skill) opts.skill = skill;
+            if (search) opts.searchText = search;
+            return opts;
+        }
+
         async function loadLibrary() {
             const container = document.getElementById('lib-cards');
             renderLibrarySkeleton();
 
             try {
                 let drills = [];
-                const sport = state.team?.sport || 'Soccer';
 
                 if (state.libTab === 'community') {
-                    const opts = { sport };
-                    const type = document.getElementById('filter-type').value;
-                    const level = document.getElementById('filter-level').value;
-                    const skill = document.getElementById('filter-skill').value;
-                    const search = document.getElementById('filter-search').value;
-                    if (type) opts.type = type;
-                    if (level) opts.level = level;
-                    if (skill) opts.skill = skill;
-                    if (search) opts.searchText = search;
+                    const opts = getCommunityLibraryFilters();
                     const result = await getDrills(opts);
                     drills = result.drills;
                     state.libLastDoc = result.lastDoc;
@@ -1401,14 +1406,7 @@ ${JSON.stringify({
         async function loadMoreDrills() {
             if (!state.libLastDoc) return;
             try {
-                const sport = state.team?.sport || 'Soccer';
-                const opts = { sport, startAfterDoc: state.libLastDoc };
-                const type = document.getElementById('filter-type').value;
-                const level = document.getElementById('filter-level').value;
-                const skill = document.getElementById('filter-skill').value;
-                if (type) opts.type = type;
-                if (level) opts.level = level;
-                if (skill) opts.skill = skill;
+                const opts = getCommunityLibraryFilters({ startAfterDoc: state.libLastDoc });
                 const result = await getDrills(opts);
                 state.libLastDoc = result.lastDoc;
                 state.aiDrillContext = {

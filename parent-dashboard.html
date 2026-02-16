@@ -252,9 +252,19 @@
                 const profile = await getUserProfile(userId);
                 const existing = Array.isArray(profile?.parentTeamIds) ? profile.parentTeamIds : [];
                 const merged = [...new Set([...existing, ...teamIds])];
-                const needsUpdate = merged.length !== existing.length;
+                const expectedParentPlayerKeys = [...new Set(
+                    (Array.isArray(profile?.parentOf) ? profile.parentOf : [])
+                        .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
+                        .filter(Boolean)
+                )];
+                const currentParentPlayerKeys = Array.isArray(profile?.parentPlayerKeys) ? profile.parentPlayerKeys : [];
+                const needsUpdate = merged.length !== existing.length ||
+                    JSON.stringify(expectedParentPlayerKeys.slice().sort()) !== JSON.stringify(currentParentPlayerKeys.slice().sort());
                 if (needsUpdate) {
-                    await updateUserProfile(userId, { parentTeamIds: merged });
+                    await updateUserProfile(userId, {
+                        parentTeamIds: merged,
+                        parentPlayerKeys: expectedParentPlayerKeys
+                    });
                 }
             } catch (err) {
                 console.warn('Failed to ensure parent team access:', err);

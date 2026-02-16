@@ -30,13 +30,13 @@ service cloud.firestore {
 
     // Check if user is a parent for a specific player.
     // IMPORTANT: must validate both teamId AND playerId (least privilege).
+    // Uses denormalized key `${teamId}::${playerId}` in users.parentPlayerKeys.
     function isParentForPlayer(teamId, playerId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let parentKey = teamId + "::" + playerId;
       return isSignedIn() &&
              exists(userPath) &&
-             get(userPath).data.get('parentOf', [])
-                .where(p, p.teamId == teamId && p.playerId == playerId)
-                .size() > 0;
+             parentKey in get(userPath).data.get('parentPlayerKeys', []);
     }
 
     // Check if user is a parent for any player on a team (uses parentTeamIds)
@@ -248,14 +248,21 @@ service cloud.firestore {
           allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
           allow create: if isTeamOwnerOrAdmin(teamId) ||
                            (isParentForTeam(teamId) &&
-                            request.resource.data.parentUserId == request.auth.uid);
+                            request.resource.data.parentUserId == request.auth.uid &&
+                            completionId == request.auth.uid + "__" + request.resource.data.childId &&
+                            isParentForPlayer(teamId, request.resource.data.childId));
           allow update: if isTeamOwnerOrAdmin(teamId) ||
                            (isParentForTeam(teamId) &&
                             resource.data.parentUserId == request.auth.uid &&
-                            request.resource.data.parentUserId == request.auth.uid);
+                            request.resource.data.parentUserId == request.auth.uid &&
+                            resource.data.childId == request.resource.data.childId &&
+                            completionId == request.auth.uid + "__" + request.resource.data.childId &&
+                            isParentForPlayer(teamId, request.resource.data.childId));
           allow delete: if isTeamOwnerOrAdmin(teamId) ||
                            (isParentForTeam(teamId) &&
-                            resource.data.parentUserId == request.auth.uid);
+                            resource.data.parentUserId == request.auth.uid &&
+                            completionId == request.auth.uid + "__" + resource.data.childId &&
+                            isParentForPlayer(teamId, resource.data.childId));
         }
       }
 
