@@ -211,6 +211,16 @@
         window.openPracticePacketPreview = openPracticePacketPreview;
         window.closePracticePacketPreview = closePracticePacketPreview;
         window.markPracticePacketComplete = markPracticePacketComplete;
+        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
+
+        function escapeAttr(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
 
         window.submitGameRsvp = async function(teamId, gameId, response) {
             try {
@@ -236,6 +246,13 @@
                 alert('Failed to submit RSVP: ' + err.message);
             }
         };
+
+        function submitGameRsvpFromButton(btn, response) {
+            const teamId = btn?.dataset?.teamId || '';
+            const gameId = btn?.dataset?.gameId || '';
+            if (!teamId || !gameId) return;
+            window.submitGameRsvp(teamId, gameId, response);
+        }
 
         function hasRecordedAttendance(attendance) {
             if (!attendance || !Array.isArray(attendance.players) || attendance.players.length === 0) return false;
@@ -725,9 +742,9 @@
                                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
                                     ${ev.isDbGame ? `
                                         <div class="flex gap-2">
-                                            <button onclick="submitGameRsvp('${ev.teamId}', '${ev.id}', 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                                            <button onclick="submitGameRsvp('${ev.teamId}', '${ev.id}', 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                                            <button onclick="submitGameRsvp('${ev.teamId}', '${ev.id}', 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                                         </div>
                                     ` : `<div class="text-xs text-gray-500">RSVP opens after coach tracks this event as a game.</div>`}
                                     ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${ev.rsvpSummary.going || 0} going · ${ev.rsvpSummary.maybe || 0} maybe · ${ev.rsvpSummary.notGoing || 0} can't go</div>` : '<div class="text-xs text-gray-400 mt-1">No RSVPs yet.</div>'}
@@ -1172,10 +1189,10 @@
                         <div class="mt-3 border-t border-gray-100 pt-3">
                             <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
                             ${game.isDbGame ? `
-                                <div class="flex gap-2" id="rsvp-buttons-${game.teamId}-${game.id}">
-                                    <button onclick="submitGameRsvp('${game.teamId}', '${game.id}', 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                                    <button onclick="submitGameRsvp('${game.teamId}', '${game.id}', 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                                    <button onclick="submitGameRsvp('${game.teamId}', '${game.id}', 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                <div class="flex gap-2">
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                                 </div>
                             ` : `<div class="text-xs text-gray-500">RSVP opens after coach tracks this event as a game.</div>`}
                             ${game.rsvpSummary ? `<div class="text-[10px] text-gray-400 mt-1">${game.rsvpSummary.going || 0} going · ${game.rsvpSummary.maybe || 0} maybe · ${game.rsvpSummary.notGoing || 0} can't go</div>` : '<div class="text-[10px] text-gray-400 mt-1">No RSVPs yet.</div>'}
@@ -1204,6 +1221,11 @@
 
         function buildIcs(events) {
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
+            const escapeIcsText = (value) => String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/;/g, '\\;')
+                .replace(/,/g, '\\,')
+                .replace(/\r?\n/g, '\\n');
 
             // Dedupe events by id to avoid duplicates for multiple kids on same team
             const seen = new Set();
@@ -1226,9 +1248,9 @@
                     `DTSTAMP:${formatIcsDate(new Date())}`,
                     `DTSTART:${start}`,
                     `DTEND:${end}`,
-                    `SUMMARY:${summary}`,
-                    `LOCATION:${(event.location || 'TBD').replace(/,/g, '\\,')}`,
-                    `DESCRIPTION:For ${event.childName}`,
+                    `SUMMARY:${escapeIcsText(summary)}`,
+                    `LOCATION:${escapeIcsText(event.location || 'TBD')}`,
+                    `DESCRIPTION:${escapeIcsText(`For ${event.childName}`)}`,
                     'END:VEVENT'
                 );
             });

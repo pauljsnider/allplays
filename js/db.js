@@ -1985,7 +1985,10 @@ export async function getLatestGameAssignments(teamId) {
 
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
-    const effectiveUserId = authUid || userId || null;
+    if (userId && authUid && userId !== authUid) {
+        throw new Error('RSVP user mismatch. Please refresh and try again.');
+    }
+    const effectiveUserId = userId || authUid || null;
     if (!effectiveUserId) {
         throw new Error('You must be signed in to submit RSVP');
     }

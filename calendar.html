@@ -161,6 +161,16 @@
         window.openDayDetail = openDayDetail;
         window.closeDayModal = closeDayModal;
         window.submitCalendarRsvp = submitCalendarRsvp;
+        window.submitCalendarRsvpFromButton = submitCalendarRsvpFromButton;
+
+        function escapeAttr(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
 
         function renderRsvpBlock(ev, compact = false) {
             if (ev.type !== 'game' || ev.status === 'cancelled') return '';
@@ -179,13 +189,20 @@
                 <div class="mt-3 border-t border-gray-100 pt-3">
                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
                     <div class="flex gap-2">
-                        <button onclick="submitCalendarRsvp('${ev.teamId}', '${ev.id}', 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                        <button onclick="submitCalendarRsvp('${ev.teamId}', '${ev.id}', 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                        <button onclick="submitCalendarRsvp('${ev.teamId}', '${ev.id}', 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                     </div>
                     <div class="mt-1 text-xs text-gray-500">${summary}</div>
                 </div>
             `;
+        }
+
+        function submitCalendarRsvpFromButton(btn, response) {
+            const teamId = btn?.dataset?.teamId || '';
+            const gameId = btn?.dataset?.gameId || '';
+            if (!teamId || !gameId) return;
+            submitCalendarRsvp(teamId, gameId, response);
         }
 
         async function init() {
@@ -620,6 +637,11 @@
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
             const pad = (n) => String(n).padStart(2, '0');
             const fmtDate = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+            const escapeIcsText = (value) => String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/;/g, '\\;')
+                .replace(/,/g, '\\,')
+                .replace(/\r?\n/g, '\\n');
 
             const seen = new Set();
             filteredEvents.forEach(ev => {
@@ -634,8 +656,8 @@
                     `DTSTAMP:${fmtDate(new Date())}`,
                     `DTSTART:${start}`,
                     `DTEND:${end}`,
-                    `SUMMARY:${ev.teamName} - ${ev.title}`,
-                    `LOCATION:${(ev.location || '').replace(/,/g, '\\,')}`,
+                    `SUMMARY:${escapeIcsText(`${ev.teamName} - ${ev.title}`)}`,
+                    `LOCATION:${escapeIcsText(ev.location || '')}`,
                     'END:VEVENT'
                 );
             });

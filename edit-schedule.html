@@ -2028,12 +2028,19 @@
 
         function normalizeAssignments(value) {
             if (!Array.isArray(value)) return [];
-            return value
+            const normalized = value
                 .map((a) => ({
                     role: String(a?.role || '').trim(),
                     value: String(a?.value || '').trim()
                 }))
                 .filter((a) => a.role);
+            if (value.length > normalized.length) {
+                console.warn('Bulk AI assignments: dropped malformed entries', {
+                    provided: value.length,
+                    kept: normalized.length
+                });
+            }
+            return normalized;
         }
 
         function formatAssignmentsForInput(assignments) {
