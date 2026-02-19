@@ -316,7 +316,9 @@ service cloud.firestore {
 
         // Update for reactions: any team member can add/remove reactions only
         allow update: if canAccessTeamChat(teamId) &&
-                         request.resource.data.diff(resource.data).affectedKeys()
+                         (
+                           // Current client writes nested reaction keys.
+                           request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly([
                                'reactions.thumbs_up',
                                'reactions.heart',
@@ -324,7 +326,20 @@ service cloud.firestore {
                                'reactions.wow',
                                'reactions.sad',
                                'reactions.clap'
-                             ]);
+                             ]) ||
+                           // Backward compatibility for stale cached clients that write the full map.
+                           (
+                             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
+                             request.resource.data.get('reactions', {}).keys().hasOnly([
+                               'thumbs_up',
+                               'heart',
+                               'joy',
+                               'wow',
+                               'sad',
+                               'clap'
+                             ])
+                           )
+                         );
       }
     }
 
