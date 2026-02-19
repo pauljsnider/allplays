@@ -2239,18 +2239,19 @@ ${JSON.stringify({
 
         function removeChildBlock(structureIndex, childIndex) {
             const structure = state.canvasBlocks[structureIndex];
-            if (!structure || !structure.children) return;
-            const [child] = structure.children.splice(childIndex, 1);
-            // Move child back to top level right after the structure
-            state.canvasBlocks.splice(structureIndex + 1, 0, child);
+            if (!structure || structure.blockType !== 'structure') return;
+            const children = getStructureChildren(structure);
+            const [child] = children.splice(childIndex, 1);
+            if (!child) return;
             renderCanvas();
-            showToast(`Moved "${child.drillTitle}" out of structure block`);
+            showToast(`Removed "${child.drillTitle}" from structure block`);
         }
 
         function updateStructureChildDuration(structureIndex, childIndex, value) {
             const structure = state.canvasBlocks[structureIndex];
-            if (!structure || !Array.isArray(structure.children)) return;
-            const child = structure.children[childIndex];
+            if (!structure || structure.blockType !== 'structure') return;
+            const children = getStructureChildren(structure);
+            const child = children[childIndex];
             if (!child) return;
             const next = Math.max(1, parseInt(value, 10) || 1);
             child.duration = next;
@@ -2259,8 +2260,9 @@ ${JSON.stringify({
 
         function updateStructureChildNote(structureIndex, childIndex, value) {
             const structure = state.canvasBlocks[structureIndex];
-            if (!structure || !Array.isArray(structure.children)) return;
-            const child = structure.children[childIndex];
+            if (!structure || structure.blockType !== 'structure') return;
+            const children = getStructureChildren(structure);
+            const child = children[childIndex];
             if (!child) return;
             child.notes = (value || '').trim();
             renderCanvas();
