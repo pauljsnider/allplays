@@ -34,7 +34,15 @@ import { getApp } from './vendor/firebase-app.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
 const startAfterQuery = startAfter;
-const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '👏'];
+const CHAT_REACTIONS = [
+    { key: 'thumbs_up', emoji: '👍' },
+    { key: 'heart', emoji: '❤️' },
+    { key: 'joy', emoji: '😂' },
+    { key: 'wow', emoji: '😮' },
+    { key: 'sad', emoji: '😢' },
+    { key: 'clap', emoji: '👏' }
+];
+const CHAT_REACTION_KEYS = new Set(CHAT_REACTIONS.map(r => r.key));
 
 export async function uploadTeamPhoto(file) {
     console.log('Starting photo upload...', {
@@ -1278,9 +1286,9 @@ export async function deleteChatMessage(teamId, messageId) {
     });
 }
 
-export async function toggleChatReaction(teamId, messageId, emoji, userId) {
-    if (!CHAT_REACTION_EMOJIS.includes(emoji)) {
-        throw new Error('Unsupported reaction emoji');
+export async function toggleChatReaction(teamId, messageId, reactionKey, userId) {
+    if (!CHAT_REACTION_KEYS.has(reactionKey)) {
+        throw new Error('Unsupported reaction key');
     }
     if (!userId) {
         throw new Error('Missing userId for reaction');
@@ -1293,11 +1301,26 @@ export async function toggleChatReaction(teamId, messageId, emoji, userId) {
     }
 
     const data = snap.data() || {};
-    const existing = Array.isArray(data?.reactions?.[emoji]) ? data.reactions[emoji] : [];
+    const raw = (data && typeof data.reactions === 'object' && data.reactions) ? data.reactions : {};
+    const existing = Array.isArray(raw[reactionKey]) ? raw[reactionKey] : [];
     const hasReaction = existing.includes(userId);
 
+    const nextUsers = hasReaction
+        ? existing.filter(uid => uid !== userId)
+        : [...new Set([...existing, userId])];
+
+    const nextReactions = {};
+    CHAT_REACTIONS.forEach(({ key }) => {
+        const users = key === reactionKey
+            ? nextUsers
+            : (Array.isArray(raw[key]) ? raw[key] : []);
+        if (users.length > 0) {
+            nextReactions[key] = users;
+        }
+    });
+
     await updateDoc(messageRef, {
-        [`reactions.${emoji}`]: hasReaction ? arrayRemove(userId) : arrayUnion(userId)
+        reactions: nextReactions
     });
 
     return !hasReaction;
