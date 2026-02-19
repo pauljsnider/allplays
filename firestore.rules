@@ -318,7 +318,6 @@ service cloud.firestore {
         allow update: if canAccessTeamChat(teamId) &&
                          request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly([
-                               'reactions',
                                'reactions.thumbs_up',
                                'reactions.heart',
                                'reactions.joy',
