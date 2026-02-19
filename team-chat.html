@@ -182,7 +182,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage } from './js/db.js?v=16';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=17';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -318,10 +318,13 @@
         const AI_EVENTS_GAMES_LIMIT = 3;
         const AI_EVENTS_PER_GAME_LIMIT = 25;
         const MAX_CHAT_IMAGE_SIZE = 5 * 1024 * 1024;
+        const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '👏'];
         let aiModelCache = null;
         let activeVoiceRecognition = null;
         let voiceListening = false;
         let pendingImageFile = null;
+        let activeReactionPickerMessageId = null;
+        const pendingReactionOps = new Set();
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
@@ -549,6 +552,64 @@
             });
         }
 
+        function normalizeMessageReactions(msg) {
+            const source = (msg && typeof msg.reactions === 'object' && msg.reactions) ? msg.reactions : {};
+            const normalized = {};
+
+            CHAT_REACTION_EMOJIS.forEach((emoji) => {
+                const users = Array.isArray(source[emoji]) ? source[emoji].filter(Boolean) : [];
+                if (users.length > 0) {
+                    normalized[emoji] = users;
+                }
+            });
+
+            return normalized;
+        }
+
+        function renderReactionControls(msg, { isOwn }) {
+            const reactions = normalizeMessageReactions(msg);
+            const pills = CHAT_REACTION_EMOJIS
+                .map((emoji) => {
+                    const users = reactions[emoji] || [];
+                    const count = users.length;
+                    if (count === 0) return '';
+                    const active = users.includes(currentUser.uid);
+                    return `
+                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${emoji}')"
+                            class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs transition ${active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}">
+                            <span>${emoji}</span>
+                            <span class="font-semibold">${count}</span>
+                        </button>
+                    `;
+                })
+                .filter(Boolean)
+                .join('');
+
+            const pickerOpen = activeReactionPickerMessageId === msg.id;
+            const picker = pickerOpen ? `
+                <div class="mt-1.5 flex flex-wrap gap-1.5" data-reaction-ui="true">
+                    ${CHAT_REACTION_EMOJIS.map((emoji) => `
+                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${emoji}')"
+                            class="px-2 py-1 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
+                            ${emoji}
+                        </button>
+                    `).join('')}
+                </div>
+            ` : '';
+
+            const alignClass = isOwn ? 'justify-end' : 'justify-start';
+            return `
+                <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-reaction-ui="true">
+                    ${pills}
+                    <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
+                        class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200">
+                        <span class="text-sm">+</span>
+                    </button>
+                </div>
+                ${picker}
+            `;
+        }
+
         function renderMessage(msg) {
             const isAi = msg.ai === true;
             const isOwn = !isAi && msg.senderId === currentUser.uid;
@@ -586,6 +647,7 @@
                 </a>
             ` : '';
             const messageText = msg.text ? `<p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>` : '';
+            const reactionControls = renderReactionControls(msg, { isOwn });
 
             const actions = [];
             if (canEdit) {
@@ -611,6 +673,7 @@
                             <div class="${bubbleClass} rounded-lg px-4 py-2 rounded-br-sm">
                                 ${messageImage}${messageText}
                             </div>
+                            ${reactionControls}
                             ${actions.length > 0 ? `
                                 <div class="flex justify-end gap-2 mt-1">
                                     ${actions.join(' ')}
@@ -633,6 +696,7 @@
                             <div class="${bubbleClass} rounded-lg px-4 py-2 rounded-bl-sm">
                                 ${messageImage}${messageText}
                             </div>
+                            ${reactionControls}
                             ${actions.length > 0 ? `
                                 <div class="flex gap-2 mt-1">
                                     ${actions.join(' ')}
@@ -1178,6 +1242,31 @@
             }
         }
 
+        window.toggleReactionPicker = function(messageId) {
+            activeReactionPickerMessageId = activeReactionPickerMessageId === messageId ? null : messageId;
+            renderMessages();
+        };
+
+        window.reactToMessage = async function(messageId, emoji) {
+            const msg = messages.find(m => m.id === messageId);
+            if (!msg || msg.deleted) return;
+            if (!CHAT_REACTION_EMOJIS.includes(emoji)) return;
+
+            const opKey = `${messageId}:${emoji}`;
+            if (pendingReactionOps.has(opKey)) return;
+            pendingReactionOps.add(opKey);
+
+            try {
+                await toggleChatReaction(teamId, messageId, emoji, currentUser.uid);
+                activeReactionPickerMessageId = null;
+            } catch (error) {
+                console.error('Error toggling reaction:', error);
+                showError('Failed to update reaction. Please try again.');
+            } finally {
+                pendingReactionOps.delete(opKey);
+            }
+        };
+
         function setupEventListeners() {
             // Send button
             document.getElementById('send-btn').addEventListener('click', triggerSend);
@@ -1211,6 +1300,7 @@
                 liveMessages = [];
                 liveOldestDoc = null;
                 hasMoreMessages = true;
+                activeReactionPickerMessageId = null;
                 startRealtimeUpdates();
                 btn.disabled = false;
             });
@@ -1282,6 +1372,10 @@
                 const menu = document.getElementById('mention-menu');
                 if (!menu.contains(e.target) && e.target !== input) {
                     hideMentionMenu();
+                }
+                if (!e.target.closest('[data-reaction-ui="true"]') && activeReactionPickerMessageId !== null) {
+                    activeReactionPickerMessageId = null;
+                    renderMessages();
                 }
             });
             window.addEventListener('beforeunload', stopVoiceCapture);
