@@ -1021,6 +1021,16 @@
                     : `<span class="truncate">${escapeHtml(game.location)}</span>`
                 }
                                 </div>
+                                <div class="flex flex-wrap gap-1 mt-2">
+                                    ${game.isHome === true ? '<span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
+                                    ${game.isHome === false ? '<span class="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
+                                    ${game.kitColor ? `<span class="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
+                                    ${game.status === 'cancelled' ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-semibold">CANCELLED</span>' : ''}
+                                </div>
+                                ${game.arrivalTime ? `<div class="text-xs text-amber-600 mt-1">Arrive by ${formatTime(game.arrivalTime)}</div>` : ''}
+                                ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
+                                ${game.assignments && game.assignments.length > 0 ? `<div class="mt-2 flex flex-wrap gap-1">${game.assignments.map(a => `<span class="text-xs bg-gray-100 rounded px-2 py-0.5"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                                ${game.rsvpSummary ? `<div class="mt-2 flex items-center gap-3 text-xs"><span class="text-green-600 font-semibold">${game.rsvpSummary.going || 0} going</span><span class="text-yellow-600">${game.rsvpSummary.maybe || 0} maybe</span><span class="text-red-600">${game.rsvpSummary.notGoing || 0} can't go</span></div>` : ''}
                             </div>
                             <div class="flex flex-col items-end gap-2">
                                 ${(isLive || isUpcoming) ? `

@@ -62,6 +62,34 @@
         .attendance-btn.active-present { background: #14532d; border-color: #22c55e; color: #bbf7d0; }
         .attendance-btn.active-late { background: #78350f; border-color: #f59e0b; color: #fde68a; }
         .attendance-btn.active-absent { background: #7f1d1d; border-color: #ef4444; color: #fecaca; }
+        /* Structure block styles */
+        .structure-warmup { border-color: #86efac; background: #f0fdf4; }
+        .structure-stations { border-color: #93c5fd; background: #eff6ff; }
+        .structure-scrimmage { border-color: #fca5a5; background: #fef2f2; }
+        .structure-cooldown { border-color: #c4b5fd; background: #f5f3ff; }
+        .structure-custom { border-color: #fde68a; background: #fffbeb; }
+        .structure-bar-warmup { background: #22c55e; }
+        .structure-bar-stations { background: #3b82f6; }
+        .structure-bar-scrimmage { background: #ef4444; }
+        .structure-bar-cooldown { background: #8b5cf6; }
+        .structure-bar-custom { background: #f59e0b; }
+        .canvas-edit-panel { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+        .canvas-edit-panel.open { max-height: 400px; }
+        .structure-children { min-height: 40px; border: 2px dashed #d1d5db; border-radius: 8px; padding: 8px; }
+        .structure-children.drag-over { border-color: #6366f1; background: rgba(99,102,241,0.05); }
+        .drag-handle { cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+        .timeline-drop-zone {
+            height: 14px;
+            border-radius: 9999px;
+            margin: 2px 6px;
+            transition: all 120ms ease;
+        }
+        .timeline-drop-zone.active {
+            height: 14px;
+            background: rgba(59, 130, 246, 0.15);
+            box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.45);
+        }
     </style>
 </head>
 
@@ -188,6 +216,30 @@
                                 Home Packet
                             </button>
                         </div>
+                    </div>
+                    <!-- Canvas action buttons -->
+                    <div class="flex items-center gap-2 mb-3 flex-wrap">
+                        <div class="relative">
+                            <button onclick="toggleStructurePicker()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 flex items-center gap-1">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                                Structure Block
+                            </button>
+                            <div id="structure-picker" class="hidden absolute left-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[160px]">
+                                <button onclick="addStructureBlock('warmup')" class="w-full text-left px-3 py-2 text-xs hover:bg-green-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500"></span> Warm-up</button>
+                                <button onclick="addStructureBlock('stations')" class="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-blue-500"></span> Stations</button>
+                                <button onclick="addStructureBlock('scrimmage')" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500"></span> Scrimmage</button>
+                                <button onclick="addStructureBlock('cooldown')" class="w-full text-left px-3 py-2 text-xs hover:bg-purple-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-purple-500"></span> Cool-down</button>
+                                <button onclick="addStructureBlock('custom')" class="w-full text-left px-3 py-2 text-xs hover:bg-amber-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Custom</button>
+                            </div>
+                        </div>
+                        <button onclick="saveAsTemplate()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+                            Save Template
+                        </button>
+                        <button onclick="openTemplateLoader()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                            Load Template
+                        </button>
                     </div>
                     <div id="canvas-blocks" class="space-y-3">
                         <p id="canvas-empty" class="text-sm text-gray-400 text-center py-8">No drills added yet. Browse the library or ask the AI Coach to build a plan.</p>
@@ -436,6 +488,20 @@
                             <label class="block text-sm font-medium text-gray-700 mb-1">Instructions</label>
                             <textarea id="form-drill-instructions" rows="6" placeholder="Setup, exercise, progressions, coaching points..." class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"></textarea>
                         </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">YouTube Video URL</label>
+                            <input type="url" id="drillYoutubeUrl" placeholder="https://youtube.com/watch?v=..."
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            <p class="text-xs text-gray-500 mt-1">Optional: Link a video demonstration</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Diagrams / Images</label>
+                            <div id="drill-diagram-previews" class="flex gap-2 mt-1 flex-wrap"></div>
+                            <input type="file" id="drillDiagramFiles" accept="image/*" multiple
+                                class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                            <p class="text-xs text-gray-500 mt-1">Up to 5 images (plays, formations, etc.)</p>
+                            <div id="drill-existing-diagrams" class="flex gap-2 mt-2 flex-wrap"></div>
+                        </div>
                         <label class="flex items-center gap-2">
                             <input type="checkbox" id="form-publish-community" class="rounded text-primary-600">
                             <span class="text-sm text-gray-700">Publish to Community Library</span>
@@ -485,6 +551,44 @@
             </div>
 
             <!-- Toast -->
+            <!-- Template Loader Modal -->
+            <div id="template-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+                    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                        <h3 class="text-sm font-bold text-gray-800">Load Practice Template</h3>
+                        <button onclick="closeTemplateModal()" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                    <div id="template-list" class="px-5 py-4 max-h-72 overflow-y-auto space-y-2">
+                        <p class="text-sm text-gray-400 text-center py-4">Loading templates...</p>
+                    </div>
+                    <div class="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end">
+                        <button onclick="closeTemplateModal()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Save Template Modal -->
+            <div id="save-template-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
+                    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                        <h3 class="text-sm font-bold text-gray-800">Save as Template</h3>
+                        <button onclick="closeSaveTemplateModal()" class="text-gray-400 hover:text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                    <div class="px-5 py-4">
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Template Name</label>
+                        <input type="text" id="template-name-input" placeholder="e.g. Game Day Prep" class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    </div>
+                    <div class="px-5 py-3 border-t border-gray-100 bg-gray-50 flex justify-end gap-2">
+                        <button onclick="closeSaveTemplateModal()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300">Cancel</button>
+                        <button onclick="confirmSaveTemplate()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700">Save</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="toast" class="hidden fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all"></div>
         </div>
     </main>
@@ -495,11 +599,12 @@
         import {
             getTeam, getGames, getPlayers, getUserProfile,
             getGameEvents, getAggregatedStatsForGames,
-            getDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill,
+            getDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill, uploadDrillDiagram,
             getDrillFavorites, addDrillFavorite, removeDrillFavorite,
             createPracticeSession, updatePracticeSession,
-            getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions
-        } from './js/db.js?v=19';
+            getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions,
+            savePracticeTemplate, getPracticeTemplates, deletePracticeTemplate
+        } from './js/db.js?v=20';
         import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { requireAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
@@ -585,6 +690,12 @@
         window.startDragBlock = startDragBlock;
         window.allowDropBlock = allowDropBlock;
         window.dropBlock = dropBlock;
+        window.moveCanvasBlock = moveCanvasBlock;
+        window.activateDropZone = activateDropZone;
+        window.deactivateDropZone = deactivateDropZone;
+        window.updateStructureChildDuration = updateStructureChildDuration;
+        window.updateStructureChildNote = updateStructureChildNote;
+        window.endDragBlock = endDragBlock;
         window.acceptAiProposal = acceptAiProposal;
         window.dismissAiProposal = dismissAiProposal;
         window.toggleProposalBlock = toggleProposalBlock;
@@ -596,6 +707,24 @@
         window.addFreeTextNote = addFreeTextNote;
         window.completePractice = completePractice;
         window.setChatIntentMode = setChatIntentMode;
+        window.toggleStructurePicker = toggleStructurePicker;
+        window.addStructureBlock = addStructureBlock;
+        window.toggleCanvasBlockEdit = toggleCanvasBlockEdit;
+        window.saveCanvasBlockEdit = saveCanvasBlockEdit;
+        window.openCanvasBlockDetail = openCanvasBlockDetail;
+        window.openStructureChildDetail = openStructureChildDetail;
+        window.moveBlockIntoStructure = moveBlockIntoStructure;
+        window.removeChildBlock = removeChildBlock;
+        window.saveAsTemplate = saveAsTemplate;
+        window.openTemplateLoader = openTemplateLoader;
+        window.closeTemplateModal = closeTemplateModal;
+        window.loadTemplate = loadTemplate;
+        window.deleteTemplateConfirm = deleteTemplateConfirm;
+        window.closeSaveTemplateModal = closeSaveTemplateModal;
+        window.confirmSaveTemplate = confirmSaveTemplate;
+        window.allowDropStructure = allowDropStructure;
+        window.dropIntoStructure = dropIntoStructure;
+        window.updateStructureField = updateStructureField;
 
         function parseHashParams() {
             const raw = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
@@ -883,10 +1012,12 @@
                 const d = session.date.toDate ? session.date.toDate() : new Date(session.date);
                 if (!isNaN(d.getTime())) document.getElementById('session-date').value = d.toISOString().split('T')[0];
             }
-            if (state.eventId && state.eventMeta?.duration && Number.isFinite(state.eventMeta.duration)) {
+            // Always prefer saved draft/session duration when present.
+            // The hash eventDuration is only a fallback for brand-new sessions.
+            if (session.duration) {
+                document.getElementById('session-duration').value = String(Math.max(15, parseInt(session.duration, 10) || 60));
+            } else if (state.eventId && state.eventMeta?.duration && Number.isFinite(state.eventMeta.duration)) {
                 document.getElementById('session-duration').value = String(Math.max(15, state.eventMeta.duration));
-            } else if (session.duration) {
-                document.getElementById('session-duration').value = session.duration;
             }
             if (session.attendance) {
                 state.attendance = {
@@ -1608,6 +1739,21 @@ ${JSON.stringify({
                     </div>
                     <p class="text-sm text-blue-700">${escapeHtml(drill.homeVariant)}</p>
                 </div>` : ''}
+                ${(() => {
+                    const embedUrl = getYoutubeEmbedUrl(drill.youtubeUrl);
+                    return embedUrl ? `<div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-3">Video Demonstration</h3>
+                        <div class="relative w-full" style="padding-bottom:56.25%;">
+                            <iframe class="absolute inset-0 w-full h-full rounded-xl" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                        </div>
+                    </div>` : '';
+                })()}
+                ${(drill.diagramUrls && drill.diagramUrls.length) ? `<div class="mb-6">
+                    <h3 class="text-sm font-semibold text-gray-700 mb-3">Diagrams</h3>
+                    <div class="flex gap-3 overflow-x-auto pb-2">
+                        ${drill.diagramUrls.map((url, i) => `<img src="${escapeHtml(url)}" alt="Diagram ${i+1}" class="h-40 rounded-lg border border-gray-200 cursor-pointer flex-shrink-0 hover:shadow-lg transition-shadow" onclick="openDiagramLightbox('${escapeHtml(url)}')">`).join('')}
+                    </div>
+                </div>` : ''}
                 ${attribution}`;
 
                 document.getElementById('drill-detail-modal').classList.remove('hidden');
@@ -1615,6 +1761,28 @@ ${JSON.stringify({
                 console.error('Open drill error:', err);
                 showToast('Failed to open drill details', 'error');
             }
+        };
+
+        function getYoutubeEmbedUrl(url) {
+            if (!url) return null;
+            let videoId = null;
+            try {
+                const u = new URL(url);
+                if (u.hostname.includes('youtube.com')) {
+                    videoId = u.searchParams.get('v');
+                } else if (u.hostname.includes('youtu.be')) {
+                    videoId = u.pathname.slice(1);
+                }
+            } catch(e) {}
+            return videoId ? `https://www.youtube.com/embed/${videoId}` : null;
+        }
+
+        window.openDiagramLightbox = function(url) {
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 cursor-pointer';
+            overlay.onclick = () => overlay.remove();
+            overlay.innerHTML = `<img src="${escapeHtml(url)}" class="max-w-full max-h-full rounded-xl shadow-2xl">`;
+            document.body.appendChild(overlay);
         };
 
         function closeDrillDetail() {
@@ -1666,11 +1834,13 @@ ${JSON.stringify({
             if (!state.currentDetailDrill) return;
             const d = state.currentDetailDrill;
             state.canvasBlocks.push({
+                blockType: 'drill',
                 drillId: d.id,
                 drillTitle: d.title,
                 type: d.type || 'Technical',
                 duration: d.setup?.duration || 15,
                 notes: '',
+                customInstructions: '',
                 description: d.description || ''
             });
             renderCanvas();
@@ -1679,14 +1849,264 @@ ${JSON.stringify({
             showToast(`Added "${d.title}" to canvas`);
         }
 
+        async function openCanvasBlockDetail(index) {
+            const block = state.canvasBlocks[index];
+            if (!block || block.blockType === 'structure') return;
+            if (!block.drillId) {
+                showToast('No linked drill details for this timeline item');
+                return;
+            }
+            await window._openDrill(block.drillId);
+        }
+
+        async function openStructureChildDetail(structureIndex, childIndex) {
+            const structure = state.canvasBlocks[structureIndex];
+            if (!structure || structure.blockType !== 'structure') return;
+            const children = getStructureChildren(structure);
+            const child = children[childIndex];
+            if (!child) return;
+            if (!child.drillId) {
+                showToast('No linked drill details for this timeline item');
+                return;
+            }
+            await window._openDrill(child.drillId);
+        }
+
         function removeCanvasBlock(index) {
             state.canvasBlocks.splice(index, 1);
             renderCanvas();
         }
 
+        function getStructureChildren(block) {
+            if (!block || block.blockType !== 'structure') return [];
+            if (Array.isArray(block.children)) return block.children;
+            // Backward compatibility for legacy structure payloads.
+            if (Array.isArray(block.blocks)) {
+                block.children = block.blocks;
+                return block.children;
+            }
+            if (Array.isArray(block.drills)) {
+                block.children = block.drills;
+                return block.children;
+            }
+            block.children = [];
+            return block.children;
+        }
+
+        function getBlockDurationMinutes(block) {
+            if (!block) return 0;
+            if (block.blockType === 'structure') {
+                const children = getStructureChildren(block);
+                return children.reduce((sum, child) => sum + getBlockDurationMinutes(child), 0);
+            }
+            const parsed = parseInt(block.duration, 10);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+        }
+
+        function syncStructureDurations() {
+            state.canvasBlocks.forEach((block) => {
+                if (block?.blockType !== 'structure') return;
+                const children = getStructureChildren(block);
+                block.duration = block.children.reduce((sum, child) => sum + getBlockDurationMinutes(child), 0);
+            });
+        }
+
+        function getCanvasTotalMinutes() {
+            syncStructureDurations();
+            return state.canvasBlocks.reduce((sum, block) => sum + getBlockDurationMinutes(block), 0);
+        }
+
+        function getStructureBarClass(structureType) {
+            const map = { warmup: 'structure-bar-warmup', stations: 'structure-bar-stations', scrimmage: 'structure-bar-scrimmage', cooldown: 'structure-bar-cooldown', custom: 'structure-bar-custom' };
+            return map[structureType] || 'structure-bar-custom';
+        }
+
+        function getStructureClass(structureType) {
+            const map = { warmup: 'structure-warmup', stations: 'structure-stations', scrimmage: 'structure-scrimmage', cooldown: 'structure-cooldown', custom: 'structure-custom' };
+            return map[structureType] || 'structure-custom';
+        }
+
+        function getStructureLabel(structureType) {
+            const map = { warmup: 'Warm-up', stations: 'Stations', scrimmage: 'Scrimmage', cooldown: 'Cool-down', custom: 'Custom' };
+            return map[structureType] || structureType;
+        }
+
+        function getStructureIcon(structureType) {
+            const icons = {
+                warmup: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/>',
+                stations: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>',
+                scrimmage: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>',
+                cooldown: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>',
+                custom: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>'
+            };
+            return `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">${icons[structureType] || icons.custom}</svg>`;
+        }
+
+        function renderDrillBlock(b, i) {
+            const barClass = getBarClass(b.type);
+            const tc = getTypeClass(b.type);
+            const editOpen = b._editing ? 'open' : '';
+            return `<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
+                    data-block-index="${i}"
+                    ondragover="allowDropBlock(event)"
+                    ondrop="dropBlock(event, ${i})">
+                <div class="flex items-stretch">
+                    <div class="w-1.5 ${barClass} flex-shrink-0"></div>
+                    <div class="flex-1 p-3 min-w-0 cursor-pointer" onclick="openCanvasBlockDetail(${i})">
+                        <div class="flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2 mb-1">
+                            <div class="flex items-center gap-2 min-w-0 flex-1">
+                                <button type="button" class="drag-handle text-gray-300 hover:text-gray-500 hover:bg-gray-100 rounded p-1 -ml-1" draggable="true" ondragstart="startDragBlock(event, ${i})" ondragend="endDragBlock()" onclick="event.stopPropagation()" title="Drag to reorder">
+                                    <svg class="w-4 h-4 pointer-events-none" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                </button>
+                                <span class="text-sm font-semibold text-gray-800 truncate">${escapeHtml(b.drillTitle)}</span>
+                                <span class="${tc} text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">${escapeHtml(b.type)}</span>
+                            </div>
+                            <div class="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto" onclick="event.stopPropagation()">
+                                <button onclick="moveCanvasBlock(${i}, -1)" ${i === 0 ? 'disabled' : ''} class="text-gray-300 hover:text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed" title="Move up">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                                </button>
+                                <button onclick="moveCanvasBlock(${i}, 1)" ${i >= state.canvasBlocks.length - 1 ? 'disabled' : ''} class="text-gray-300 hover:text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed" title="Move down">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                </button>
+                                <input type="number" value="${b.duration}" min="1" max="60" class="w-10 text-center text-sm font-bold text-gray-500 border-none bg-transparent focus:bg-primary-50 focus:outline-none rounded" onchange="window._updateBlockDur(${i}, this.value)">
+                                <span class="text-xs text-gray-400">min</span>
+                                <button onclick="toggleCanvasBlockEdit(${i})" class="text-gray-300 hover:text-primary-500" title="Edit">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                </button>
+                                <button onclick="removeCanvasBlock(${i})" class="text-gray-300 hover:text-red-400 ml-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 ml-6">${escapeHtml(b.description || '')}</p>
+                        ${b.customInstructions ? `<p class="text-xs text-indigo-600 ml-6 mt-1 italic">${escapeHtml(b.customInstructions)}</p>` : ''}
+                        ${b.notes ? `<p class="text-xs text-gray-400 ml-6 mt-1">${escapeHtml(b.notes)}</p>` : ''}
+                        <!-- Edit panel -->
+                        <div class="canvas-edit-panel ${editOpen} ml-6 mt-2" onclick="event.stopPropagation()">
+                            <div class="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Custom Instructions</label>
+                                    <textarea id="block-instructions-${i}" rows="2" class="w-full text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-400" placeholder="Special instructions for this drill...">${escapeHtml(b.customInstructions || '')}</textarea>
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Duration Override (min)</label>
+                                    <input type="number" id="block-duration-${i}" value="${b.duration}" min="1" max="60" class="w-20 text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-400">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Notes</label>
+                                    <textarea id="block-notes-${i}" rows="2" class="w-full text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-400" placeholder="Coach notes...">${escapeHtml(b.notes || '')}</textarea>
+                                </div>
+                                <div class="flex justify-end">
+                                    <button onclick="saveCanvasBlockEdit(${i})" class="px-3 py-1 text-xs font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700">Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function renderStructureBlock(b, i) {
+            const sc = getStructureClass(b.structureType);
+            const barClass = getStructureBarClass(b.structureType);
+            const label = getStructureLabel(b.structureType);
+            const icon = getStructureIcon(b.structureType);
+            const children = b.children || [];
+            const childrenHtml = children.length > 0
+                ? children.map((c, ci) => {
+                    const cBar = getBarClass(c.type);
+                    const cTc = getTypeClass(c.type);
+                    return `<div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden cursor-pointer" onclick="openStructureChildDetail(${i}, ${ci})">
+                        <div class="flex items-stretch">
+                            <div class="w-1 ${cBar} flex-shrink-0"></div>
+                            <div class="flex-1 p-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <div class="flex items-center gap-1.5 min-w-0">
+                                        <span class="text-xs font-semibold text-gray-700 truncate">${escapeHtml(c.drillTitle)}</span>
+                                        <span class="${cTc} text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase">${escapeHtml(c.type)}</span>
+                                    </div>
+                                    <div class="flex items-center gap-1 shrink-0">
+                                        <input type="number"
+                                            value="${Math.max(1, parseInt(c.duration, 10) || 1)}"
+                                            min="1"
+                                            max="120"
+                                            class="w-12 text-center text-[11px] text-gray-600 border border-gray-200 rounded px-1 py-0.5 bg-white"
+                                            onclick="event.stopPropagation()"
+                                            onchange="updateStructureChildDuration(${i}, ${ci}, this.value)">
+                                        <span class="text-[10px] text-gray-400">m</span>
+                                        <button onclick="event.stopPropagation(); removeChildBlock(${i}, ${ci})" class="text-gray-300 hover:text-red-400">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                                <input type="text"
+                                    value="${escapeHtml(c.notes || '')}"
+                                    class="mt-1 w-full text-[10px] text-gray-600 border border-gray-200 rounded px-2 py-1 bg-white"
+                                    placeholder="Child drill notes"
+                                    onclick="event.stopPropagation()"
+                                    onchange="updateStructureChildNote(${i}, ${ci}, this.value)">
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('')
+                : `<p class="text-[10px] text-gray-400 text-center py-2">Drag drills here</p>`;
+
+            const stationsFields = b.structureType === 'stations' ? `
+                <div class="flex flex-wrap items-center gap-3 mt-2 ml-0 sm:ml-7">
+                    <div class="flex items-center gap-1">
+                        <label class="text-[10px] text-gray-500">Groups:</label>
+                        <input type="number" value="${b.groupCount || 2}" min="1" max="10" class="w-10 text-center text-xs border border-gray-200 rounded px-1 py-0.5" onchange="updateStructureField(${i}, 'groupCount', parseInt(this.value))">
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <label class="text-[10px] text-gray-500">Rotation:</label>
+                        <input type="number" value="${b.rotationTime || 5}" min="1" max="30" class="w-10 text-center text-xs border border-gray-200 rounded px-1 py-0.5" onchange="updateStructureField(${i}, 'rotationTime', parseInt(this.value))">
+                        <span class="text-[10px] text-gray-400">min</span>
+                    </div>
+                </div>` : '';
+
+            return `<div class="rounded-xl border-2 ${sc} shadow-sm overflow-hidden"
+                    data-block-index="${i}"
+                    ondragover="allowDropBlock(event)"
+                    ondrop="dropBlock(event, ${i})">
+                <div class="flex items-stretch">
+                    <div class="w-2 ${barClass} flex-shrink-0"></div>
+                    <div class="flex-1 p-3 min-w-0">
+                        <div class="flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2 mb-1">
+                            <div class="flex items-center gap-2 min-w-0 flex-1">
+                                <button type="button" class="drag-handle text-gray-400 hover:text-gray-600 hover:bg-white/80 rounded p-1 -ml-1" draggable="true" ondragstart="startDragBlock(event, ${i})" ondragend="endDragBlock()" title="Drag to reorder">${icon}</button>
+                                <input type="text" value="${escapeHtml(b.title)}" class="text-sm font-bold bg-transparent border-none focus:bg-white focus:outline-none focus:ring-1 focus:ring-primary-300 rounded px-1 min-w-0 w-full sm:w-44 max-w-full" onchange="updateStructureField(${i}, 'title', this.value)">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-white/60 text-gray-600 shrink-0">${escapeHtml(label)}</span>
+                            </div>
+                            <div class="flex items-center gap-1 sm:gap-2 shrink-0">
+                                <button onclick="moveCanvasBlock(${i}, -1)" ${i === 0 ? 'disabled' : ''} class="text-gray-300 hover:text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed" title="Move up">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                                </button>
+                                <button onclick="moveCanvasBlock(${i}, 1)" ${i >= state.canvasBlocks.length - 1 ? 'disabled' : ''} class="text-gray-300 hover:text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed" title="Move down">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                </button>
+                                <span class="w-12 text-center text-sm font-bold text-gray-600">${b.duration || 0}</span>
+                                <span class="text-xs text-gray-400">min (auto)</span>
+                                <button onclick="removeCanvasBlock(${i})" class="text-gray-400 hover:text-red-400 ml-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        ${stationsFields}
+                        ${b.notes ? `<p class="text-xs text-gray-500 ml-0 sm:ml-7 mt-1 italic">${escapeHtml(b.notes)}</p>` : ''}
+                        <div class="structure-children mt-2 ml-0 sm:ml-5 space-y-1.5"
+                             ondragover="allowDropStructure(event)"
+                             ondrop="dropIntoStructure(event, ${i})">
+                            ${childrenHtml}
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
         function renderCanvas() {
             const container = document.getElementById('canvas-blocks');
             const empty = document.getElementById('canvas-empty');
+            syncStructureDurations();
             if (state.canvasBlocks.length === 0) {
                 container.innerHTML = '';
                 if (empty) container.appendChild(empty);
@@ -1695,56 +2115,266 @@ ${JSON.stringify({
                 return;
             }
             if (empty) empty.remove();
-            const total = state.canvasBlocks.reduce((s, b) => s + (b.duration || 0), 0);
+            const total = getCanvasTotalMinutes();
             document.getElementById('canvas-total').textContent = `Total: ${total} min`;
             updateTimelineAllocation(total);
 
-            container.innerHTML = state.canvasBlocks.map((b, i) => {
-                const barClass = getBarClass(b.type);
-                const tc = getTypeClass(b.type);
-                return `<div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden"
-                        draggable="true"
-                        data-block-index="${i}"
-                        ondragstart="startDragBlock(event, ${i})"
-                        ondragover="allowDropBlock(event)"
-                        ondrop="dropBlock(event, ${i})">
-                    <div class="flex items-stretch">
-                        <div class="w-1.5 ${barClass} flex-shrink-0"></div>
-                        <div class="flex-1 p-3">
-                            <div class="flex items-center justify-between mb-1">
-                                <div class="flex items-center gap-2">
-                                    <span class="drag-handle text-gray-300">
-                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
-                                    </span>
-                                    <span class="text-sm font-semibold text-gray-800">${escapeHtml(b.drillTitle)}</span>
-                                    <span class="${tc} text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">${escapeHtml(b.type)}</span>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <input type="number" value="${b.duration}" min="1" max="60" class="w-10 text-center text-sm font-bold text-gray-500 border-none bg-transparent focus:bg-primary-50 focus:outline-none rounded" onchange="window._updateBlockDur(${i}, this.value)">
-                                    <span class="text-xs text-gray-400">min</span>
-                                    <button onclick="removeCanvasBlock(${i})" class="text-gray-300 hover:text-red-400 ml-1">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                                    </button>
-                                </div>
-                            </div>
-                            <p class="text-xs text-gray-500 ml-6">${escapeHtml(b.description)}</p>
-                        </div>
-                    </div>
-                </div>`;
+            const dropZone = (i) => `<div class="timeline-drop-zone" data-drop-index="${i}" ondragenter="activateDropZone(event)" ondragleave="deactivateDropZone(event)" ondragover="allowDropBlock(event)" ondrop="dropBlock(event, ${i})"></div>`;
+            let html = dropZone(0);
+            html += state.canvasBlocks.map((b, i) => {
+                if (b.blockType === 'structure') {
+                    return `${renderStructureBlock(b, i)}${dropZone(i + 1)}`;
+                }
+                return `${renderDrillBlock(b, i)}${dropZone(i + 1)}`;
             }).join('');
+            container.innerHTML = html;
         }
 
         window._updateBlockDur = function(index, val) {
-            state.canvasBlocks[index].duration = parseInt(val) || 1;
-            const total = state.canvasBlocks.reduce((s, b) => s + (b.duration || 0), 0);
+            const block = state.canvasBlocks[index];
+            if (!block || block.blockType === 'structure') return;
+            block.duration = parseInt(val, 10) || 1;
+            const total = getCanvasTotalMinutes();
             document.getElementById('canvas-total').textContent = `Total: ${total} min`;
             updateTimelineAllocation(total);
         };
 
+        // ==================== EDIT DRILL ON CANVAS ====================
+        function toggleCanvasBlockEdit(index) {
+            const b = state.canvasBlocks[index];
+            b._editing = !b._editing;
+            renderCanvas();
+        }
+
+        function saveCanvasBlockEdit(index) {
+            const b = state.canvasBlocks[index];
+            const instrEl = document.getElementById(`block-instructions-${index}`);
+            const durEl = document.getElementById(`block-duration-${index}`);
+            const notesEl = document.getElementById(`block-notes-${index}`);
+            if (instrEl) b.customInstructions = instrEl.value.trim();
+            if (durEl && b.blockType !== 'structure') b.duration = parseInt(durEl.value, 10) || b.duration;
+            if (notesEl) b.notes = notesEl.value.trim();
+            b._editing = false;
+            renderCanvas();
+            showToast('Block updated');
+        }
+
+        // ==================== STRUCTURE BLOCKS ====================
+        function toggleStructurePicker() {
+            const picker = document.getElementById('structure-picker');
+            picker.classList.toggle('hidden');
+            // Close on outside click
+            if (!picker.classList.contains('hidden')) {
+                setTimeout(() => {
+                    const close = (e) => {
+                        if (!picker.contains(e.target)) {
+                            picker.classList.add('hidden');
+                            document.removeEventListener('click', close);
+                        }
+                    };
+                    document.addEventListener('click', close);
+                }, 10);
+            }
+        }
+
+        function addStructureBlock(structureType) {
+            document.getElementById('structure-picker').classList.add('hidden');
+            const label = getStructureLabel(structureType);
+            state.canvasBlocks.push({
+                blockType: 'structure',
+                structureType,
+                title: label,
+                duration: 0,
+                groupCount: structureType === 'stations' ? 3 : null,
+                rotationTime: structureType === 'stations' ? 5 : null,
+                grouping: null,
+                notes: null,
+                children: []
+            });
+            renderCanvas();
+            showToast(`Added ${label} structure block`);
+        }
+
+        function updateStructureField(index, field, value) {
+            state.canvasBlocks[index][field] = value;
+        }
+
+        function allowDropStructure(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            event.currentTarget.classList.add('drag-over');
+            updateDragAutoScrollFromPointer(event.clientY);
+        }
+
+        function dropIntoStructure(event, structureIndex) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.classList.remove('drag-over');
+            const sourceIndexRaw = event.dataTransfer.getData('text/plain');
+            const sourceIndex = sourceIndexRaw !== '' ? parseInt(sourceIndexRaw, 10) : draggedBlockIndex;
+            if (Number.isNaN(sourceIndex) || sourceIndex === null || sourceIndex === structureIndex) return;
+            const block = state.canvasBlocks[sourceIndex];
+            if (!block || block.blockType === 'structure') return; // Don't nest structures
+            // Remove from top level and add to structure children
+            state.canvasBlocks.splice(sourceIndex, 1);
+            // Adjust structure index if source was before it
+            const adjustedIndex = sourceIndex < structureIndex ? structureIndex - 1 : structureIndex;
+            if (!state.canvasBlocks[adjustedIndex].children) state.canvasBlocks[adjustedIndex].children = [];
+            state.canvasBlocks[adjustedIndex].children.push(block);
+            endDragBlock();
+            renderCanvas();
+            showToast(`Moved "${block.drillTitle}" into structure block`);
+        }
+
+        function moveBlockIntoStructure(blockIndex, structureIndex) {
+            const block = state.canvasBlocks[blockIndex];
+            if (!block || block.blockType === 'structure') return;
+            state.canvasBlocks.splice(blockIndex, 1);
+            const adjustedIndex = blockIndex < structureIndex ? structureIndex - 1 : structureIndex;
+            if (!state.canvasBlocks[adjustedIndex].children) state.canvasBlocks[adjustedIndex].children = [];
+            state.canvasBlocks[adjustedIndex].children.push(block);
+            renderCanvas();
+        }
+
+        function removeChildBlock(structureIndex, childIndex) {
+            const structure = state.canvasBlocks[structureIndex];
+            if (!structure || !structure.children) return;
+            const [child] = structure.children.splice(childIndex, 1);
+            // Move child back to top level right after the structure
+            state.canvasBlocks.splice(structureIndex + 1, 0, child);
+            renderCanvas();
+            showToast(`Moved "${child.drillTitle}" out of structure block`);
+        }
+
+        function updateStructureChildDuration(structureIndex, childIndex, value) {
+            const structure = state.canvasBlocks[structureIndex];
+            if (!structure || !Array.isArray(structure.children)) return;
+            const child = structure.children[childIndex];
+            if (!child) return;
+            const next = Math.max(1, parseInt(value, 10) || 1);
+            child.duration = next;
+            renderCanvas();
+        }
+
+        function updateStructureChildNote(structureIndex, childIndex, value) {
+            const structure = state.canvasBlocks[structureIndex];
+            if (!structure || !Array.isArray(structure.children)) return;
+            const child = structure.children[childIndex];
+            if (!child) return;
+            child.notes = (value || '').trim();
+            renderCanvas();
+        }
+
+        // ==================== TEMPLATES ====================
+        function saveAsTemplate() {
+            if (state.canvasBlocks.length === 0) {
+                showToast('Add drills to canvas first', 'error');
+                return;
+            }
+            document.getElementById('save-template-modal').classList.remove('hidden');
+            document.getElementById('template-name-input').value = '';
+            document.getElementById('template-name-input').focus();
+        }
+
+        function closeSaveTemplateModal() {
+            document.getElementById('save-template-modal').classList.add('hidden');
+        }
+
+        async function confirmSaveTemplate() {
+            const name = document.getElementById('template-name-input').value.trim();
+            if (!name) {
+                showToast('Enter a template name', 'error');
+                return;
+            }
+            try {
+                const total = getCanvasTotalMinutes();
+                // Strip transient fields like _editing before saving
+                const cleanBlocks = state.canvasBlocks.map((b, i) => {
+                    const { _editing, ...clean } = b;
+                    return { ...clean, order: i };
+                });
+                await savePracticeTemplate(state.teamId, {
+                    name,
+                    blocks: cleanBlocks,
+                    totalMinutes: total,
+                    createdBy: state.user?.uid || null
+                });
+                closeSaveTemplateModal();
+                showToast(`Template "${name}" saved`);
+            } catch (err) {
+                showToast('Failed to save template: ' + err.message, 'error');
+            }
+        }
+
+        async function openTemplateLoader() {
+            document.getElementById('template-modal').classList.remove('hidden');
+            const listEl = document.getElementById('template-list');
+            listEl.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">Loading templates...</p>';
+            try {
+                const templates = await getPracticeTemplates(state.teamId);
+                if (templates.length === 0) {
+                    listEl.innerHTML = '<p class="text-sm text-gray-400 text-center py-4">No templates saved yet.</p>';
+                    return;
+                }
+                listEl.innerHTML = templates.map(t => `
+                    <div class="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:bg-gray-50">
+                        <div class="flex-1 cursor-pointer" onclick="loadTemplate('${t.id}')">
+                            <p class="text-sm font-semibold text-gray-800">${escapeHtml(t.name)}</p>
+                            <p class="text-[10px] text-gray-400">${(t.blocks || []).length} blocks &middot; ${t.totalMinutes || 0} min</p>
+                        </div>
+                        <button onclick="deleteTemplateConfirm('${t.id}', '${escapeHtml(t.name)}')" class="text-gray-300 hover:text-red-400 ml-2" title="Delete">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                    </div>
+                `).join('');
+            } catch (err) {
+                listEl.innerHTML = `<p class="text-sm text-red-500 text-center py-4">Error loading templates</p>`;
+            }
+        }
+
+        function closeTemplateModal() {
+            document.getElementById('template-modal').classList.add('hidden');
+        }
+
+        async function loadTemplate(templateId) {
+            try {
+                const templates = await getPracticeTemplates(state.teamId);
+                const t = templates.find(tp => tp.id === templateId);
+                if (!t || !t.blocks) {
+                    showToast('Template not found', 'error');
+                    return;
+                }
+                if (state.canvasBlocks.length > 0) {
+                    if (!confirm('Replace current canvas with template? (Existing blocks will be replaced)')) return;
+                }
+                state.canvasBlocks = t.blocks.map(b => {
+                    const { order, ...rest } = b;
+                    return { ...rest };
+                });
+                renderCanvas();
+                closeTemplateModal();
+                showToast(`Loaded template "${t.name}"`);
+            } catch (err) {
+                showToast('Failed to load template: ' + err.message, 'error');
+            }
+        }
+
+        async function deleteTemplateConfirm(templateId, name) {
+            if (!confirm(`Delete template "${name}"?`)) return;
+            try {
+                await deletePracticeTemplate(state.teamId, templateId);
+                showToast('Template deleted');
+                openTemplateLoader(); // Refresh list
+            } catch (err) {
+                showToast('Failed to delete: ' + err.message, 'error');
+            }
+        }
+
         function updateTimelineAllocation(explicitTotal = null) {
             const total = explicitTotal !== null
                 ? explicitTotal
-                : state.canvasBlocks.reduce((s, b) => s + (b.duration || 0), 0);
+                : getCanvasTotalMinutes();
             const durationInput = document.getElementById('session-duration');
             const sessionDuration = parseInt(durationInput?.value, 10) || 60;
             const gapEl = document.getElementById('canvas-gap');
@@ -1780,27 +2410,93 @@ ${JSON.stringify({
         }
 
         let draggedBlockIndex = null;
+        let dragAutoScrollVelocity = 0;
+        let dragAutoScrollRaf = null;
+
+        function startDragAutoScrollLoop() {
+            if (dragAutoScrollRaf) return;
+            const tick = () => {
+                if (draggedBlockIndex === null) {
+                    dragAutoScrollRaf = null;
+                    return;
+                }
+                if (dragAutoScrollVelocity !== 0) {
+                    window.scrollBy(0, dragAutoScrollVelocity);
+                }
+                dragAutoScrollRaf = requestAnimationFrame(tick);
+            };
+            dragAutoScrollRaf = requestAnimationFrame(tick);
+        }
+
+        function updateDragAutoScrollFromPointer(clientY) {
+            const edgeThreshold = 96;
+            const maxSpeed = 20;
+            if (!Number.isFinite(clientY)) {
+                dragAutoScrollVelocity = 0;
+                return;
+            }
+            if (clientY < edgeThreshold) {
+                const ratio = (edgeThreshold - clientY) / edgeThreshold;
+                dragAutoScrollVelocity = -Math.max(2, Math.round(maxSpeed * ratio));
+            } else if (clientY > window.innerHeight - edgeThreshold) {
+                const ratio = (clientY - (window.innerHeight - edgeThreshold)) / edgeThreshold;
+                dragAutoScrollVelocity = Math.max(2, Math.round(maxSpeed * ratio));
+            } else {
+                dragAutoScrollVelocity = 0;
+            }
+        }
+
         function startDragBlock(event, index) {
             draggedBlockIndex = index;
             event.dataTransfer.effectAllowed = 'move';
             event.dataTransfer.setData('text/plain', String(index));
+            startDragAutoScrollLoop();
+        }
+
+        function endDragBlock() {
+            draggedBlockIndex = null;
+            dragAutoScrollVelocity = 0;
+            if (dragAutoScrollRaf) {
+                cancelAnimationFrame(dragAutoScrollRaf);
+                dragAutoScrollRaf = null;
+            }
+            document.querySelectorAll('.timeline-drop-zone.active').forEach(z => z.classList.remove('active'));
+            document.querySelectorAll('.structure-children.drag-over').forEach(z => z.classList.remove('drag-over'));
         }
 
         function allowDropBlock(event) {
             event.preventDefault();
             event.dataTransfer.dropEffect = 'move';
+            updateDragAutoScrollFromPointer(event.clientY);
+        }
+
+        function activateDropZone(event) {
+            const zone = event.currentTarget;
+            if (zone && zone.classList.contains('timeline-drop-zone')) {
+                zone.classList.add('active');
+            }
+        }
+
+        function deactivateDropZone(event) {
+            const zone = event.currentTarget;
+            if (zone && zone.classList.contains('timeline-drop-zone')) {
+                zone.classList.remove('active');
+            }
         }
 
         async function dropBlock(event, targetIndex) {
             event.preventDefault();
+            document.querySelectorAll('.timeline-drop-zone.active').forEach(z => z.classList.remove('active'));
             const sourceIndexRaw = event.dataTransfer.getData('text/plain');
             const sourceIndex = sourceIndexRaw ? parseInt(sourceIndexRaw, 10) : draggedBlockIndex;
             if (Number.isNaN(sourceIndex) || sourceIndex === null || sourceIndex === targetIndex) return;
             if (sourceIndex < 0 || sourceIndex >= state.canvasBlocks.length) return;
-            if (targetIndex < 0 || targetIndex >= state.canvasBlocks.length) return;
+            if (targetIndex < 0 || targetIndex > state.canvasBlocks.length) return;
 
             const [moved] = state.canvasBlocks.splice(sourceIndex, 1);
-            state.canvasBlocks.splice(targetIndex, 0, moved);
+            const insertionIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+            state.canvasBlocks.splice(Math.max(0, insertionIndex), 0, moved);
+            endDragBlock();
             renderCanvas();
 
             if (state.sessionId) {
@@ -1812,6 +2508,23 @@ ${JSON.stringify({
                     console.warn('Failed to persist reordered blocks:', err);
                     showToast('Failed to save order', 'error');
                 }
+            }
+        }
+
+        async function moveCanvasBlock(index, direction) {
+            const targetIndex = index + direction;
+            if (index < 0 || index >= state.canvasBlocks.length) return;
+            if (targetIndex < 0 || targetIndex >= state.canvasBlocks.length) return;
+            const [moved] = state.canvasBlocks.splice(index, 1);
+            state.canvasBlocks.splice(targetIndex, 0, moved);
+            renderCanvas();
+            if (!state.sessionId) return;
+            try {
+                await updatePracticeSession(state.teamId, state.sessionId, {
+                    blocks: state.canvasBlocks.map((b, i) => ({ ...b, order: i }))
+                });
+            } catch (err) {
+                console.warn('Failed to persist reordered blocks:', err);
             }
         }
 
@@ -1829,6 +2542,16 @@ ${JSON.stringify({
             document.getElementById('form-drill-desc').value = drill?.description || '';
             document.getElementById('form-drill-instructions').value = drill?.instructions || '';
             document.getElementById('form-publish-community').checked = !!drill?.publishedToCommunity;
+
+            // YouTube URL
+            document.getElementById('drillYoutubeUrl').value = drill?.youtubeUrl || '';
+
+            // Diagram files - reset file input and previews
+            document.getElementById('drillDiagramFiles').value = '';
+            document.getElementById('drill-diagram-previews').innerHTML = '';
+            state.formDiagramUrls = drill?.diagramUrls ? [...drill.diagramUrls] : [];
+            renderExistingDiagrams();
+
             state.formAiHistory = [{
                 role: 'assistant',
                 content: 'Tell me the drill concept and I will fill the card fields for you.'
@@ -1837,10 +2560,55 @@ ${JSON.stringify({
             document.getElementById('drill-form-modal').classList.remove('hidden');
         }
 
+        function renderExistingDiagrams() {
+            const container = document.getElementById('drill-existing-diagrams');
+            if (!container) return;
+            if (!state.formDiagramUrls || state.formDiagramUrls.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+            container.innerHTML = state.formDiagramUrls.map((url, i) => `
+                <div class="relative group">
+                    <img src="${escapeHtml(url)}" alt="Diagram ${i+1}" class="h-20 w-20 object-cover rounded-lg border border-gray-200">
+                    <button type="button" onclick="removeDiagram(${i})" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold shadow hover:bg-red-600">&times;</button>
+                </div>
+            `).join('');
+        }
+
+        window.removeDiagram = function(index) {
+            if (!state.formDiagramUrls) return;
+            state.formDiagramUrls.splice(index, 1);
+            renderExistingDiagrams();
+        };
+
         function closeDrillForm() {
             document.getElementById('drill-form-modal').classList.add('hidden');
             state.formAiHistory = [];
+            state.formDiagramUrls = [];
         }
+
+        // Preview selected diagram files before upload
+        document.getElementById('drillDiagramFiles')?.addEventListener('change', function() {
+            const container = document.getElementById('drill-diagram-previews');
+            container.innerHTML = '';
+            const files = Array.from(this.files || []);
+            const existingCount = (state.formDiagramUrls || []).length;
+            const maxNew = 5 - existingCount;
+            files.slice(0, maxNew).forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.className = 'h-20 w-20 object-cover rounded-lg border border-gray-200';
+                    img.alt = file.name;
+                    container.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            });
+            if (files.length > maxNew) {
+                showToast(`Only ${maxNew} more diagram(s) allowed (max 5 total)`, 'error');
+            }
+        });
 
         function renderFormAiMessages() {
             const box = document.getElementById('form-ai-messages');
@@ -1953,6 +2721,7 @@ ${text}
         async function submitDrillForm(e) {
             e.preventDefault();
             const id = document.getElementById('form-drill-id').value;
+            const youtubeUrl = document.getElementById('drillYoutubeUrl').value.trim();
             const data = {
                 title: document.getElementById('form-drill-title').value.trim(),
                 sport: state.team?.sport || 'Soccer',
@@ -1962,6 +2731,7 @@ ${text}
                 description: document.getElementById('form-drill-desc').value.trim(),
                 instructions: document.getElementById('form-drill-instructions').value.trim(),
                 publishedToCommunity: !!document.getElementById('form-publish-community').checked,
+                youtubeUrl: youtubeUrl || null,
                 setup: {
                     duration: parseInt(document.getElementById('form-drill-duration').value) || 15,
                     players: document.getElementById('form-drill-players').value.trim(),
@@ -1972,8 +2742,38 @@ ${text}
                 if (data.publishedToCommunity && !state.user?.isAdmin) {
                     showToast('Published drills are shared from your team. Save to publish.', 'success');
                 }
-                if (id) { await updateDrill(id, data); showToast('Drill updated'); }
-                else { await createDrill(state.teamId, data); showToast('Drill created'); }
+
+                // Determine the drill ID (create first if new)
+                let drillId = id;
+                if (drillId) {
+                    await updateDrill(drillId, data);
+                } else {
+                    drillId = await createDrill(state.teamId, data);
+                }
+
+                // Upload new diagram files if selected
+                const fileInput = document.getElementById('drillDiagramFiles');
+                const files = Array.from(fileInput.files || []);
+                const existingUrls = state.formDiagramUrls || [];
+                if (files.length > 0) {
+                    const maxNew = 5 - existingUrls.length;
+                    const toUpload = files.slice(0, Math.max(0, maxNew));
+                    if (toUpload.length > 0) {
+                        showToast('Uploading diagrams...', 'success');
+                        const uploaded = [];
+                        for (const file of toUpload) {
+                            const url = await uploadDrillDiagram(drillId, file);
+                            uploaded.push(url);
+                        }
+                        const allUrls = [...existingUrls, ...uploaded];
+                        await updateDrill(drillId, { diagramUrls: allUrls });
+                    }
+                } else if (existingUrls !== undefined) {
+                    // Persist existing diagram URLs (may have had removals)
+                    await updateDrill(drillId, { diagramUrls: existingUrls });
+                }
+
+                showToast(id ? 'Drill updated' : 'Drill created');
                 invalidateAiDrillUniverse();
                 closeDrillForm();
                 closeDrillDetail();
@@ -2300,14 +3100,41 @@ ${text}
         }
 
         function normalizeProposalBlocks(blocks) {
-            return (Array.isArray(blocks) ? blocks : []).map((b, i) => ({
-                drillId: b.drillId || null,
-                drillTitle: b.drillTitle || b.title || `Block ${i + 1}`,
-                type: normalizeDrillType(b.type || 'Technical'),
-                duration: parseInt(b.duration, 10) || 10,
-                notes: b.notes || '',
-                description: b.description || ''
-            }));
+            return (Array.isArray(blocks) ? blocks : []).map((b, i) => {
+                // Support structure blocks proposed by AI
+                if (b.blockType === 'structure') {
+                    return {
+                        blockType: 'structure',
+                        structureType: b.structureType || 'custom',
+                        title: b.title || b.drillTitle || `Block ${i + 1}`,
+                        duration: parseInt(b.duration, 10) || 10,
+                        groupCount: b.groupCount || null,
+                        rotationTime: b.rotationTime || null,
+                        grouping: b.grouping || null,
+                        notes: b.notes || null,
+                        children: Array.isArray(b.children) ? b.children.map(c => ({
+                            blockType: 'drill',
+                            drillId: c.drillId || null,
+                            drillTitle: c.drillTitle || c.title || 'Drill',
+                            type: normalizeDrillType(c.type || 'Technical'),
+                            duration: parseInt(c.duration, 10) || 10,
+                            notes: c.notes || '',
+                            customInstructions: c.customInstructions || '',
+                            description: c.description || ''
+                        })) : []
+                    };
+                }
+                return {
+                    blockType: 'drill',
+                    drillId: b.drillId || null,
+                    drillTitle: b.drillTitle || b.title || `Block ${i + 1}`,
+                    type: normalizeDrillType(b.type || 'Technical'),
+                    duration: parseInt(b.duration, 10) || 10,
+                    notes: b.notes || '',
+                    customInstructions: b.customInstructions || '',
+                    description: b.description || ''
+                };
+            });
         }
 
         function getProposalSelectedIndices(proposal) {
@@ -2454,21 +3281,22 @@ ${text}
                     aiText = await generateAiAnswer(text, attendanceSummary);
                 }
             } catch (err) {
+                const aiErrorSummary = formatAiErrorSummary(err);
                 if (effectiveIntent === 'plan') {
-                    console.warn('Gemini planning failed, using fallback:', err);
+                    console.warn('Gemini planning failed, using fallback:', aiErrorSummary, err);
                     const suggestedBlocks = normalizeProposalBlocks(buildAttendanceAwarePlan(attendanceSummary, text, targetMinutes, planScope));
-                    aiText = `ALL PLAYS AI is temporarily unavailable (${err?.message || 'unknown error'}). I prepared an attendance-aware fallback suggestion for ${attendanceSummary.checkedIn} checked-in players (${attendanceSummary.late} late, ${attendanceSummary.absent} absent). Target planning time: ${targetMinutes} min (${planScope === 'gap-fill' ? 'fill timeline gap' : 'full session'}). Review the suggested drills below, choose drills or use all, then move them to the timeline.`;
+                    aiText = `ALL PLAYS AI is temporarily unavailable (${aiErrorSummary}). I prepared an attendance-aware fallback suggestion for ${attendanceSummary.checkedIn} checked-in players (${attendanceSummary.late} late, ${attendanceSummary.absent} absent). Target planning time: ${targetMinutes} min (${planScope === 'gap-fill' ? 'fill timeline gap' : 'full session'}). Review the suggested drills below, choose drills or use all, then move them to the timeline.`;
                     aiProposal = {
                         status: 'pending',
                         blocks: suggestedBlocks,
                         targetMinutes,
                         planScope
                     };
-                    showToast(`AI unavailable (${err?.message || 'unknown error'}). Used fallback plan.`, 'error');
+                    showToast(`AI unavailable (${aiErrorSummary}). Used fallback plan.`, 'error');
                 } else {
-                    console.warn('Gemini Q&A failed:', err);
-                    aiText = `ALL PLAYS AI is temporarily unavailable (${err?.message || 'unknown error'}). Try again in a moment.`;
-                    showToast(`AI unavailable (${err?.message || 'unknown error'})`, 'error');
+                    console.warn('Gemini Q&A failed:', aiErrorSummary, err);
+                    aiText = `ALL PLAYS AI is temporarily unavailable (${aiErrorSummary}). Try again in a moment.`;
+                    showToast(`AI unavailable (${aiErrorSummary})`, 'error');
                 }
             } finally {
                 input.disabled = false;
@@ -2533,7 +3361,7 @@ ${text}
 
         function getTimelineDurationSummary() {
             const sessionDuration = parseInt(document.getElementById('session-duration').value, 10) || 60;
-            const allocated = state.canvasBlocks.reduce((sum, b) => sum + (parseInt(b.duration, 10) || 0), 0);
+            const allocated = getCanvasTotalMinutes();
             const gap = sessionDuration - allocated;
             return {
                 sessionDuration,
@@ -2543,8 +3371,30 @@ ${text}
             };
         }
 
+        function formatAiErrorSummary(err) {
+            if (!err) return 'unknown error';
+            const details = err?.customErrorData?.errorDetails;
+            const errorInfo = Array.isArray(details)
+                ? details.find(d => d && typeof d === 'object' && d.reason)
+                : null;
+            const reason = errorInfo?.reason || '';
+            const status = err?.customErrorData?.status ? `HTTP ${err.customErrorData.status}` : '';
+            const code = typeof err?.code === 'string' ? err.code : '';
+            const parts = [reason, status, code].filter(Boolean);
+            if (parts.length > 0) return parts.join(' | ');
+
+            const raw = typeof err?.message === 'string' ? err.message : 'unknown error';
+            return raw.replace(/\s+/g, ' ').trim().slice(0, 160);
+        }
+
         async function generateAiPlan(userPrompt, attendanceSummary, targetMinutes, planScope = 'full-session') {
-            const context = await buildAiPromptContext(attendanceSummary, userPrompt, targetMinutes, planScope);
+            let context;
+            try {
+                context = await buildAiPromptContext(attendanceSummary, userPrompt, targetMinutes, planScope);
+            } catch (err) {
+                console.warn('AI plan context build failed, using minimal context:', err);
+                context = buildMinimalAiPromptContext(attendanceSummary, userPrompt, targetMinutes, planScope);
+            }
             const app = getApp();
             const ai = getAI(app, { backend: new GoogleAIBackend() });
             const model = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
@@ -2561,11 +3411,17 @@ Hard constraints:
 - If plan scope is "full-session", include warm-up and cool-down considerations.
 - Prefer drills that match recent negative trends from recent games.
 
+You may optionally wrap drill blocks in structure containers (warmup, stations, scrimmage, cooldown, custom).
+Structure blocks group drills into logical practice phases. Use them when building full-session plans.
+
 Return ONLY valid JSON in this shape:
 {
   "assistantMessage": "short coaching rationale",
   "coreBlocks": [
-    { "title": "string", "type": "Technical|Tactical|Physical|Game|Warm-up", "duration": 12, "description": "string", "notes": "string" }
+    { "title": "string", "type": "Technical|Tactical|Physical|Game|Warm-up", "duration": 12, "description": "string", "notes": "string" },
+    { "blockType": "structure", "structureType": "warmup|stations|scrimmage|cooldown|custom", "title": "string", "duration": 15, "notes": "string", "groupCount": null, "rotationTime": null, "children": [
+      { "title": "string", "type": "Technical", "duration": 5, "description": "string" }
+    ]}
   ]
 }
 
@@ -2586,12 +3442,18 @@ ${userPrompt}
 
         async function generateAiAnswer(userPrompt, attendanceSummary) {
             const timelineSummary = getTimelineDurationSummary();
-            const context = await buildAiPromptContext(
-                attendanceSummary,
-                userPrompt,
-                timelineSummary.sessionDuration,
-                'qa'
-            );
+            let context;
+            try {
+                context = await buildAiPromptContext(
+                    attendanceSummary,
+                    userPrompt,
+                    timelineSummary.sessionDuration,
+                    'qa'
+                );
+            } catch (err) {
+                console.warn('AI Q&A context build failed, using minimal context:', err);
+                context = buildMinimalAiPromptContext(attendanceSummary, userPrompt, timelineSummary.sessionDuration, 'qa');
+            }
             const app = getApp();
             const ai = getAI(app, { backend: new GoogleAIBackend() });
             const model = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
@@ -2620,24 +3482,66 @@ ${userPrompt}
             return parsed.assistantMessage || 'I could not find enough context to answer that clearly yet.';
         }
 
+        function buildMinimalAiPromptContext(attendanceSummary, userPrompt = '', targetMinutes = null, planScope = 'full-session') {
+            const sessionDuration = parseInt(document.getElementById('session-duration').value, 10) || 60;
+            const sessionDate = document.getElementById('session-date').value || new Date().toISOString().split('T')[0];
+            return {
+                team: {
+                    id: state.teamId,
+                    name: state.team?.name || '',
+                    sport: state.team?.sport || 'Soccer'
+                },
+                eventContext: {
+                    eventId: state.eventId || null,
+                    sourcePage: state.sourcePage || 'drills',
+                    eventDate: state.eventMeta?.date || null,
+                    eventDuration: state.eventMeta?.duration || null,
+                    eventLocation: state.eventMeta?.location || null
+                },
+                sessionDuration,
+                targetPlanMinutes: targetMinutes || sessionDuration,
+                planScope,
+                sessionDate,
+                attendance: attendanceSummary,
+                coachPrompt: userPrompt || '',
+                note: 'Using minimal context because full Firestore context is unavailable.'
+            };
+        }
+
         async function buildAiPromptContext(attendanceSummary, userPrompt = '', targetMinutes = null, planScope = 'full-session') {
             const sport = state.team?.sport || 'Soccer';
             const sessionDuration = parseInt(document.getElementById('session-duration').value, 10) || 60;
             const sessionDate = document.getElementById('session-date').value || new Date().toISOString().split('T')[0];
 
             if (!state.aiDrillContext?.community || state.aiDrillContext.community.length === 0) {
-                const communityResult = await getDrills({ sport, limitCount: 12 });
-                state.aiDrillContext = {
-                    ...(state.aiDrillContext || {}),
-                    community: communityResult.drills || []
-                };
+                try {
+                    const communityResult = await getDrills({ sport, limitCount: 12 });
+                    state.aiDrillContext = {
+                        ...(state.aiDrillContext || {}),
+                        community: communityResult.drills || []
+                    };
+                } catch (err) {
+                    console.warn('AI context: unable to load community drills:', err);
+                    state.aiDrillContext = {
+                        ...(state.aiDrillContext || {}),
+                        community: []
+                    };
+                }
             }
             if (!state.aiDrillContext?.myDrills && state.accessLevel === 'full') {
-                const myDrills = await getTeamDrills(state.teamId);
-                state.aiDrillContext = {
-                    ...(state.aiDrillContext || {}),
-                    myDrills: myDrills.slice(0, 12)
-                };
+                try {
+                    const myDrills = await getTeamDrills(state.teamId);
+                    state.aiDrillContext = {
+                        ...(state.aiDrillContext || {}),
+                        myDrills: myDrills.slice(0, 12)
+                    };
+                } catch (err) {
+                    console.warn('AI context: unable to load team drills, continuing with community drills only:', err);
+                    state.aiDrillContext = {
+                        ...(state.aiDrillContext || {}),
+                        myDrills: []
+                    };
+                }
             }
 
             const libraryShortlist = [...(state.aiDrillContext?.myDrills || []), ...(state.aiDrillContext?.community || [])]
@@ -2660,8 +3564,23 @@ ${userPrompt}
             const recentGamesRaw = (state.recentGames || []).map(g => normalizeForAiPayload(g, 0));
             const recentWindowRaw = (state.allGames || []).slice(-10).reverse().map(g => normalizeForAiPayload(g, 0));
             const scoringLeaders = deriveScoringLeaders(recentWindowRaw);
-            const rawGameContext = await ensureRawGameContext();
-            const drillUniverse = await ensureAiDrillUniverse();
+            let rawGameContext = {
+                recentGameIds: [],
+                aggregatedStatsByPlayer: {},
+                recentEventsByGame: {}
+            };
+            try {
+                rawGameContext = await ensureRawGameContext();
+            } catch (err) {
+                console.warn('AI context: unable to load raw game context:', err);
+            }
+
+            let drillUniverse = [];
+            try {
+                drillUniverse = await ensureAiDrillUniverse();
+            } catch (err) {
+                console.warn('AI context: unable to load drill universe:', err);
+            }
             const drillTopMatches = getRelevantDrillMatches(drillUniverse, userPrompt, attendanceSummary, 40);
             const drillCatalog = drillUniverse.slice(0, 500).map(d => ({
                 id: d.id,
@@ -2703,9 +3622,11 @@ ${userPrompt}
                 attendance: attendanceSummary,
                 currentCanvas: state.canvasBlocks.map((b, idx) => ({
                     order: idx,
-                    title: b.drillTitle,
-                    type: b.type,
-                    duration: b.duration
+                    blockType: b.blockType || 'drill',
+                    title: b.drillTitle || b.title,
+                    type: b.type || b.structureType,
+                    duration: b.duration,
+                    ...(b.blockType === 'structure' ? { structureType: b.structureType, children: (b.children || []).map(c => c.drillTitle || c.title) } : {})
                 })),
                 recentGames: recentGameContext,
                 recentGamesRaw,
@@ -2828,6 +3749,11 @@ ${userPrompt}
             const includeBuffers = options.includeBuffers !== false;
             const warmupDuration = includeBuffers ? (totalDuration === 60 ? 10 : Math.max(8, Math.round(totalDuration * 0.15))) : 0;
             const cooldownDuration = includeBuffers ? (totalDuration === 60 ? 5 : Math.max(5, Math.round(totalDuration * 0.1))) : 0;
+            // Check if the AI returned structure blocks; if so, pass them through directly
+            const hasStructureBlocks = Array.isArray(coreBlocks) && coreBlocks.some(b => b.blockType === 'structure');
+            if (hasStructureBlocks) {
+                return coreBlocks; // normalizeProposalBlocks will handle them downstream
+            }
             const usableCore = Array.isArray(coreBlocks) ? coreBlocks.slice(0, 3) : [];
             const rawCoreTotal = usableCore.reduce((sum, b) => sum + (parseInt(b.duration, 10) || 0), 0);
             const remainingCoreTarget = Math.max(10, totalDuration - warmupDuration - cooldownDuration);
@@ -3368,6 +4294,50 @@ ${userPrompt}
             renderPracticeDrill();
         }
 
+        function getPracticePlaybackBlocks() {
+            const blocks = [];
+            (state.canvasBlocks || []).forEach((b) => {
+                if (b?.blockType === 'structure') {
+                    const children = Array.isArray(b.children) ? b.children : [];
+                    if (children.length === 0) {
+                        blocks.push({
+                            drillTitle: b.title || getStructureLabel(b.structureType),
+                            type: getStructureLabel(b.structureType),
+                            duration: Math.max(1, parseInt(b.duration, 10) || 1),
+                            description: b.notes || '',
+                            notes: b.notes || '',
+                            notesLog: Array.isArray(b.notesLog) ? b.notesLog : [],
+                            _source: b
+                        });
+                        return;
+                    }
+                    children.forEach((child, idx) => {
+                        blocks.push({
+                            drillTitle: child.drillTitle || child.title || `${b.title || getStructureLabel(b.structureType)} ${idx + 1}`,
+                            type: child.type || 'Technical',
+                            duration: Math.max(1, parseInt(child.duration, 10) || 1),
+                            description: child.description || child.notes || '',
+                            notes: child.notes || '',
+                            notesLog: Array.isArray(child.notesLog) ? child.notesLog : [],
+                            _source: child
+                        });
+                    });
+                    return;
+                }
+
+                blocks.push({
+                    drillTitle: b.drillTitle || b.title || 'Drill',
+                    type: b.type || 'Technical',
+                    duration: Math.max(1, parseInt(b.duration, 10) || 1),
+                    description: b.description || '',
+                    notes: b.notes || '',
+                    notesLog: Array.isArray(b.notesLog) ? b.notesLog : [],
+                    _source: b
+                });
+            });
+            return blocks;
+        }
+
         function stopActiveVoiceRecognition() {
             if (state.activeVoiceRecognition && state.voiceListening) {
                 try { state.activeVoiceRecognition.stop(); } catch (_) {}
@@ -3390,7 +4360,7 @@ ${userPrompt}
         }
 
         function renderPracticeDrill() {
-            const blocks = state.canvasBlocks;
+            const blocks = getPracticePlaybackBlocks();
             const idx = state.practiceIndex;
             const counter = document.getElementById('practice-drill-counter');
             counter.textContent = blocks.length ? `Drill ${idx + 1} of ${blocks.length}` : 'No drills';
@@ -3405,10 +4375,13 @@ ${userPrompt}
             }
 
             const b = blocks[idx];
-            document.getElementById('practice-type-badge').className = `${getTypeClass(b.type)} text-xs font-bold px-3 py-1 rounded-full uppercase`;
-            document.getElementById('practice-type-badge').textContent = b.type;
-            document.getElementById('practice-drill-title').textContent = b.drillTitle;
-            document.getElementById('practice-drill-desc').textContent = b.description || '';
+            const displayType = b.type || 'Technical';
+            const displayTitle = b.drillTitle || 'Drill';
+            const displayDesc = b.description || '';
+            document.getElementById('practice-type-badge').className = `${getTypeClass(displayType)} text-xs font-bold px-3 py-1 rounded-full uppercase`;
+            document.getElementById('practice-type-badge').textContent = displayType;
+            document.getElementById('practice-drill-title').textContent = displayTitle;
+            document.getElementById('practice-drill-desc').textContent = displayDesc;
 
             state.practiceSecondsLeft = (b.duration || 1) * 60;
             updateTimerDisplay();
@@ -3431,8 +4404,8 @@ ${userPrompt}
             if (idx < blocks.length - 1) {
                 const next = blocks[idx + 1];
                 document.getElementById('practice-next-btn').classList.remove('hidden');
-                document.getElementById('practice-next-title').textContent = next.drillTitle;
-                document.getElementById('practice-next-meta').textContent = `${next.duration} min \u00b7 ${next.type}`;
+                document.getElementById('practice-next-title').textContent = next.drillTitle || 'Next drill';
+                document.getElementById('practice-next-meta').textContent = `${next.duration} min \u00b7 ${next.type || 'Technical'}`;
             } else {
                 document.getElementById('practice-next-btn').classList.add('hidden');
             }
@@ -3445,7 +4418,7 @@ ${userPrompt}
         }
 
         function practiceToggle() {
-            if (state.canvasBlocks.length === 0) return;
+            if (getPracticePlaybackBlocks().length === 0) return;
             state.practiceRunning = !state.practiceRunning;
             const icon = document.getElementById('practice-play-icon');
             if (state.practiceRunning) {
@@ -3471,7 +4444,7 @@ ${userPrompt}
         }
 
         function practiceNext() {
-            if (state.practiceIndex < state.canvasBlocks.length - 1) {
+            if (state.practiceIndex < getPracticePlaybackBlocks().length - 1) {
                 stopActiveVoiceRecognition();
                 state.practiceIndex++;
                 state.practiceRunning = false;
@@ -3493,7 +4466,7 @@ ${userPrompt}
         }
 
         function appendPracticeNote(text, type = 'text') {
-            const block = state.canvasBlocks[state.practiceIndex];
+            const block = getPracticePlaybackBlocks()[state.practiceIndex]?._source;
             if (!block) return false;
             const clean = (text || '').trim();
             if (!clean) return false;

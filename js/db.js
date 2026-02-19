@@ -1520,7 +1520,10 @@ export async function getUpcomingLiveGames(limitCount = 10) {
  */
 export async function getDrills(options = {}) {
     const constraints = [];
-    // Keep Firestore query index-safe: only orderBy title at query time, then filter client-side.
+    // Security + index-safe query:
+    // only fetch community docs server-side so Firestore rules never evaluate
+    // inaccessible custom documents from other teams.
+    constraints.push(where('source', '==', 'community'));
     constraints.push(orderBy('title'));
     const pageSize = options.limitCount || 24;
     const fetchLimit = Math.max(pageSize * 2, 24);
@@ -1545,9 +1548,6 @@ export async function getDrills(options = {}) {
         let filtered = page;
         if (options.sport) {
             filtered = filtered.filter(d => d.sport === options.sport);
-        }
-        if (!options.includeCustom) {
-            filtered = filtered.filter(d => d.source === 'community' || d.publishedToCommunity === true);
         }
         if (options.type) filtered = filtered.filter(d => d.type === options.type);
         if (options.level) filtered = filtered.filter(d => d.level === options.level);
@@ -1638,6 +1638,18 @@ export async function updateDrill(drillId, data) {
  */
 export async function deleteDrill(drillId) {
     await deleteDoc(doc(db, 'drillLibrary', drillId));
+}
+
+// ============================================
+// Drill Diagrams
+// ============================================
+
+export async function uploadDrillDiagram(drillId, file) {
+    await requireImageAuth();
+    const path = `drill-diagrams/${drillId}/${Date.now()}_${file.name}`;
+    const storageRef = ref(imageStorage, path);
+    const snapshot = await uploadBytes(storageRef, file);
+    return await getDownloadURL(snapshot.ref);
 }
 
 // ============================================
@@ -1845,6 +1857,38 @@ export async function upsertPracticePacketCompletion(teamId, sessionId, payload)
     }, { merge: true });
 }
 
+// ==================== PRACTICE TEMPLATES ====================
+
+/**
+ * Save a practice plan as a reusable template
+ */
+export async function savePracticeTemplate(teamId, { name, blocks, totalMinutes, createdBy }) {
+    return await addDoc(collection(db, `teams/${teamId}/practiceTemplates`), {
+        name,
+        blocks,
+        totalMinutes: totalMinutes || 0,
+        createdBy,
+        createdAt: Timestamp.now()
+    });
+}
+
+/**
+ * Get all practice templates for a team, newest first
+ */
+export async function getPracticeTemplates(teamId) {
+    const ref = collection(db, `teams/${teamId}/practiceTemplates`);
+    const q = query(ref, orderBy('createdAt', 'desc'));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Delete a practice template
+ */
+export async function deletePracticeTemplate(teamId, templateId) {
+    await deleteDoc(doc(db, `teams/${teamId}/practiceTemplates`, templateId));
+}
+
 /**
  * Get currently live games
  */
@@ -1903,4 +1947,95 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
     }
 
     return games;
+}
+
+// ============================================
+// Game Cancellation
+// ============================================
+
+export async function cancelGame(teamId, gameId, userId) {
+    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
+    await updateDoc(gameRef, {
+        status: 'cancelled',
+        cancelledAt: Timestamp.now(),
+        cancelledBy: userId
+    });
+}
+
+// ============================================
+// Game Assignments - Carry Forward
+// ============================================
+
+export async function getLatestGameAssignments(teamId) {
+    const gamesRef = collection(db, `teams/${teamId}/games`);
+    const q = query(gamesRef, where('type', '==', 'game'), orderBy('date', 'desc'), limit(20));
+    const snap = await getDocs(q);
+    for (const docSnap of snap.docs) {
+        const data = docSnap.data();
+        if (data.assignments && data.assignments.length > 0) {
+            return data.assignments;
+        }
+    }
+    return [];
+}
+
+// ============================================
+// RSVP / Availability
+// ============================================
+
+export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
+    const authUid = auth.currentUser?.uid || null;
+    const effectiveUserId = authUid || userId || null;
+    if (!effectiveUserId) {
+        throw new Error('You must be signed in to submit RSVP');
+    }
+
+    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
+    await setDoc(rsvpRef, {
+        userId: effectiveUserId,
+        displayName: displayName || null,
+        playerIds: playerIds || [],
+        response, // 'going' | 'maybe' | 'not_going'
+        respondedAt: Timestamp.now(),
+        note: note || null
+    });
+
+    // Best effort: aggregate summary if caller can read RSVPs.
+    // Parent accounts may be able to write their own RSVP but still fail this read
+    // depending on team linkage state in profile claims/data.
+    let summary = null;
+    try {
+        const rsvps = await getRsvps(teamId, gameId);
+        summary = { going: 0, maybe: 0, notGoing: 0, total: rsvps.length };
+        rsvps.forEach(r => {
+            if (r.response === 'going') summary.going++;
+            else if (r.response === 'maybe') summary.maybe++;
+            else if (r.response === 'not_going') summary.notGoing++;
+        });
+    } catch (err) {
+        if (err?.code !== 'permission-denied') throw err;
+    }
+
+    // Best effort: write denormalized summary if caller is allowed to update game doc.
+    if (summary) {
+        try {
+            await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
+        } catch (err) {
+            if (err?.code !== 'permission-denied') throw err;
+        }
+    }
+
+    return summary;
+}
+
+export async function getRsvps(teamId, gameId) {
+    const rsvpsRef = collection(db, `teams/${teamId}/games/${gameId}/rsvps`);
+    const snap = await getDocs(rsvpsRef);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function getMyRsvp(teamId, gameId, userId) {
+    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
+    const snap = await getDoc(rsvpRef);
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
