@@ -254,14 +254,16 @@
                     }
 
                     // Load ICS calendar events
-                    if (team.calendars && team.calendars.length > 0) {
+                    const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls : [];
+                    if (calendarUrls.length > 0) {
                         const trackedUids = await getTrackedCalendarEventUids(team.id);
-                        for (const calUrl of team.calendars) {
+                        for (const calUrl of calendarUrls) {
                             try {
                                 const icsEvents = await fetchAndParseCalendar(calUrl);
                                 for (const ev of icsEvents) {
-                                    if (trackedUids.has(ev.uid)) continue;
-                                    const evDate = ev.start instanceof Date ? ev.start : new Date(ev.start);
+                                    if (trackedUids.includes(ev.uid)) continue;
+                                    const evDate = ev.dtstart instanceof Date ? ev.dtstart : new Date(ev.dtstart);
+                                    if (Number.isNaN(evDate.getTime())) continue;
                                     events.push({
                                         id: ev.uid || `ics-${evDate.getTime()}`,
                                         teamId: team.id,

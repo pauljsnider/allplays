@@ -230,7 +230,7 @@ export async function updateTeam(teamId, teamData) {
 
 export async function deleteTeam(teamId) {
     // Delete games and their subcollections
-    const gamesSnapshot = await getDocs(collection(db, `teams / ${teamId}/games`));
+    const gamesSnapshot = await getDocs(collection(db, `teams/${teamId}/games`));
     for (const gameDoc of gamesSnapshot.docs) {
         const gameId = gameDoc.id;
         // Remove events
