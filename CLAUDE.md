@@ -52,6 +52,8 @@ See `PR-TESTING-GUIDE.md` for critical flow testing and `FOUL-TRACKING-TEST-GUID
 - `track-basketball.js` - Mobile basketball tracker (primary tracker)
 - `live-tracker.js` - Live game monitoring
 - `live-game.js` - Live game viewer and replay player
+- `drill-constants.js` - Practice drill library data (categories, skill levels)
+- `global-search.js` - Cross-entity search functionality
 - `vendor/` - Firebase SDK bundles (ES Module format): app, auth, firestore, storage, ai
 
 ### Two Firebase Projects
@@ -77,6 +79,7 @@ Non-basketball games always route to `track.html`.
 /users/{userId}
 /teams/{teamId}
   /players/{playerId}
+    /private/profile         # Sensitive fields (medical, contacts) - restricted access
   /games/{gameId}
     /events/{eventId}        # Raw stat events
     /aggregatedStats/{statId}
@@ -85,6 +88,12 @@ Non-basketball games always route to `track.html`.
     /liveReactions/{reactionId}
   /statTrackerConfigs/{configId}
   /chatMessages/{messageId}  # Team-level chat
+  /practiceSessions/{sessionId}
+    /attendance/{playerId}
+    /packets/{packetId}
+      /completions/{odp}     # Parent-submitted drill completions
+  /drills/{drillId}          # Custom team drills
+/drills/{drillId}            # Community drill library
 /accessCodes/{codeId}        # Signup activation codes
 ```
 
@@ -107,15 +116,19 @@ Linked opponent fields on `games/{gameId}` (Phase 1):
 
 ## Migration Scripts
 
-The `_migration/` directory contains one-off Node.js scripts for data fixes and migrations (e.g., `migrate-parent-team-ids.js`, `fix-summary-field.js`, `delete-game.js`). These run against Firestore using a service account key. See `_migration/MIGRATION-README.md`.
+The `_migration/` directory contains one-off Node.js scripts for data fixes and migrations (e.g., `migrate-parent-team-ids.js`, `fix-summary-field.js`, `delete-game.js`). These run against Firestore using a service account key (`firebase-admin` SDK). Requires Node.js 18+. See `_migration/MIGRATION-README.md`.
 
 ## Spec-Driven Development
 
 Feature specs live in `/spec/{feature_name}/` with `requirements.md`, `design.md`, and `tasks.md`.
 
-Existing specs: `linked-opponent-teams`, `live-game-tracker`, `team-chat`, `parent-teams-dashboard-single-button`.
+Existing specs: `linked-opponent-teams`, `live-game-tracker`, `team-chat`, `parent-teams-dashboard-single-button`, `practice-drills`.
 
 Use custom commands: `/spec-init`, `/spec-execute-task`, `/spec-update`
+
+## Commit and PR Guidelines
+
+See `AGENTS.md` for commit message style (short, imperative, sentence-case) and PR requirements (bullet summary, manual test steps, screenshots for UI changes).
 
 ## Coding Conventions
 

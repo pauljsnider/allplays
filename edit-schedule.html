@@ -118,6 +118,37 @@
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                         </div>
                         <div>
+                            <label class="block text-sm font-medium text-gray-700">Home / Away</label>
+                            <div class="mt-1 flex gap-2">
+                                <button type="button" id="homeAwayHome" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('home')">Home</button>
+                                <button type="button" id="homeAwayAway" class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-indigo-50 focus:outline-none transition" onclick="setHomeAway('away')">Away</button>
+                                <button type="button" id="homeAwayClear" class="px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-400 hover:bg-gray-50 focus:outline-none transition" onclick="setHomeAway(null)">Clear</button>
+                            </div>
+                            <input type="hidden" id="isHome" value="">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Kit Color</label>
+                            <input type="text" id="kitColor" placeholder="e.g. White home kit"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Arrival Time</label>
+                            <input type="datetime-local" id="arrivalTime"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <p class="text-xs text-gray-500 mt-1">When players should arrive (if different from game time)</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Notes</label>
+                            <textarea id="gameNotes" rows="2" placeholder="Optional game notes..."
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"></textarea>
+                        </div>
+                        <!-- Assignments Section -->
+                        <div id="assignments-section">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Assignments</label>
+                            <div id="assignment-rows" class="space-y-2"></div>
+                            <button type="button" id="add-assignment-btn" class="mt-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add Assignment</button>
+                        </div>
+                        <div>
                             <label class="block text-sm font-medium text-gray-700">Stat Config</label>
                             <select id="statConfig"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
@@ -369,6 +400,20 @@
         </div>
     </main>
 
+    <!-- RSVP Detail Modal -->
+    <div id="rsvp-modal" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('rsvp-modal').classList.add('hidden')"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-md bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <h3 class="text-lg font-bold text-gray-900">RSVPs</h3>
+                <button onclick="document.getElementById('rsvp-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div id="rsvp-modal-content" class="px-6 py-5"></div>
+        </div>
+    </div>
+
     <div id="footer-container"></div>
 
     <!-- Track Calendar Event Modal -->
@@ -517,8 +562,8 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions } from './js/db.js?v=18';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy } from './js/utils.js?v=8';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvps } from './js/db.js?v=20';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { Timestamp } from "./js/firebase.js?v=9";
@@ -965,6 +1010,84 @@
                     handleTrackClick(gameId);
                 });
             });
+
+            // Attach cancel game button handlers
+            document.querySelectorAll('.cancel-game-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const gameId = e.target.dataset.gameId;
+                    const game = gamesCache[gameId];
+                    if (!game) return;
+                    if (!confirm(`Cancel the game vs. ${game.opponent}? This will notify the team via chat.`)) return;
+                    try {
+                        await cancelGame(currentTeamId, gameId, currentUser.uid);
+                        // Post cancellation to team chat
+                        const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+                        const dateStr = gameDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                        await postChatMessage(currentTeamId, {
+                            text: `⚠️ Game cancelled: vs. ${game.opponent} on ${dateStr}`,
+                            senderId: currentUser.uid,
+                            senderName: currentUser.displayName || currentUser.email,
+                            senderEmail: currentUser.email
+                        });
+                        loadSchedule();
+                    } catch (err) {
+                        console.error('Failed to cancel game:', err);
+                        alert('Error cancelling game: ' + err.message);
+                    }
+                });
+            });
+
+            // Attach RSVP view button handlers
+            document.querySelectorAll('.view-rsvps-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const gameId = e.target.dataset.gameId;
+                    const modal = document.getElementById('rsvp-modal');
+                    const content = document.getElementById('rsvp-modal-content');
+                    content.innerHTML = '<div class="text-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>';
+                    modal.classList.remove('hidden');
+                    try {
+                        const rsvps = await getRsvps(currentTeamId, gameId);
+                        if (rsvps.length === 0) {
+                            content.innerHTML = '<p class="text-gray-500 text-center py-8">No RSVPs yet.</p>';
+                            return;
+                        }
+                        const grouped = { going: [], maybe: [], not_going: [] };
+                        rsvps.forEach(r => {
+                            if (grouped[r.response]) grouped[r.response].push(r);
+                        });
+                        content.innerHTML = `
+                            <div class="space-y-4">
+                                <div>
+                                    <h4 class="text-sm font-bold text-green-700 mb-2">Going (${grouped.going.length})</h4>
+                                    ${grouped.going.length ? grouped.going.map((r) => {
+                                        const name = escapeHtml(r.displayName || r.userId || 'Unknown');
+                                        const note = r.note ? ` <span class="text-gray-400 text-xs">- ${escapeHtml(r.note)}</span>` : '';
+                                        return `<div class="text-sm py-1">${name}${note}</div>`;
+                                    }).join('') : '<p class="text-xs text-gray-400">None</p>'}
+                                </div>
+                                <div>
+                                    <h4 class="text-sm font-bold text-yellow-700 mb-2">Maybe (${grouped.maybe.length})</h4>
+                                    ${grouped.maybe.length ? grouped.maybe.map((r) => {
+                                        const name = escapeHtml(r.displayName || r.userId || 'Unknown');
+                                        const note = r.note ? ` <span class="text-gray-400 text-xs">- ${escapeHtml(r.note)}</span>` : '';
+                                        return `<div class="text-sm py-1">${name}${note}</div>`;
+                                    }).join('') : '<p class="text-xs text-gray-400">None</p>'}
+                                </div>
+                                <div>
+                                    <h4 class="text-sm font-bold text-red-700 mb-2">Can't Go (${grouped.not_going.length})</h4>
+                                    ${grouped.not_going.length ? grouped.not_going.map((r) => {
+                                        const name = escapeHtml(r.displayName || r.userId || 'Unknown');
+                                        const note = r.note ? ` <span class="text-gray-400 text-xs">- ${escapeHtml(r.note)}</span>` : '';
+                                        return `<div class="text-sm py-1">${name}${note}</div>`;
+                                    }).join('') : '<p class="text-xs text-gray-400">None</p>'}
+                                </div>
+                            </div>
+                        `;
+                    } catch (err) {
+                        content.innerHTML = `<p class="text-red-600 text-center py-8">Error loading RSVPs: ${err.message}</p>`;
+                    }
+                });
+            });
         }
 
         // Render practice events (single or recurring instance)
@@ -1178,11 +1301,21 @@
                 <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
                         <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1">${formatDate(game.date)} • ${formatTime(game.date)}</div>
-                        <div class="text-lg font-bold text-gray-900">vs. ${game.opponent}</div>
+                        <div class="text-lg font-bold text-gray-900">vs. ${escapeHtml(game.opponent || 'TBD')}</div>
                         <div class="text-sm text-gray-600">
-                            ${mapLink(game.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(game.location)}">${game.location || 'TBD'}</a>` : (game.location || 'TBD')}
+                            ${mapLink(game.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(game.location)}">${escapeHtml(game.location || 'TBD')}</a>` : escapeHtml(game.location || 'TBD')}
                         </div>
+                        <div class="flex flex-wrap gap-1 mt-1">
+                            ${game.isHome === true ? '<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
+                            ${game.isHome === false ? '<span class="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
+                            ${game.kitColor ? `<span class="inline-block bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
+                        </div>
+                        ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${formatTime(game.arrivalTime)}</div>` : ''}
+                        ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
+                        ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
+                        ${game.status === 'cancelled' ? '<div class="mt-1"><span class="inline-block bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-semibold">CANCELLED</span></div>' : ''}
+                        ${game.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${game.rsvpSummary.going || 0} going · ${game.rsvpSummary.maybe || 0} maybe · ${game.rsvpSummary.notGoing || 0} can't go</div>` : ''}
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
@@ -1192,6 +1325,8 @@
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
                         ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
+                        <button data-game-id="${game.id}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">RSVPs</button>
+                        ${game.status !== 'cancelled' ? `<button data-game-id="${game.id}" class="cancel-game-btn px-3 py-1 border border-orange-300 text-orange-600 rounded text-sm hover:bg-orange-50">Cancel</button>` : '<span class="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-semibold">Cancelled</span>'}
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
                     </div>
                 </div>
@@ -1226,6 +1361,19 @@
                 clearLinkedOpponent();
             }
 
+            // Populate new fields
+            setHomeAway(game.isHome === true ? 'home' : (game.isHome === false ? 'away' : null));
+            document.getElementById('kitColor').value = game.kitColor || '';
+            if (game.arrivalTime) {
+                const at = game.arrivalTime.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime);
+                const atStr = new Date(at.getTime() - at.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+                document.getElementById('arrivalTime').value = atStr;
+            } else {
+                document.getElementById('arrivalTime').value = '';
+            }
+            document.getElementById('gameNotes').value = game.notes || '';
+            populateAssignments(game.assignments || []);
+
             // Update UI
             document.getElementById('submit-game-btn').textContent = 'Update Game';
             document.getElementById('cancel-edit-game-btn').classList.remove('hidden');
@@ -1234,12 +1382,71 @@
             document.getElementById('add-game-form').scrollIntoView({ behavior: 'smooth' });
         };
 
+        // ===== HOME/AWAY TOGGLE =====
+        window.setHomeAway = function(val) {
+            document.getElementById('isHome').value = val === null ? '' : val;
+            document.getElementById('homeAwayHome').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'home' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
+            document.getElementById('homeAwayAway').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'away' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
+        };
+
+        // ===== ASSIGNMENT ROWS =====
+        function addAssignmentRow(role = '', value = '') {
+            const container = document.getElementById('assignment-rows');
+            const row = document.createElement('div');
+            row.className = 'flex gap-2 items-center';
+            row.innerHTML = `
+                <input type="text" placeholder="Role (e.g. Snack)" value="${role}" class="assignment-role flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <input type="text" placeholder="Assigned to" value="${value}" class="assignment-value flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <button type="button" class="text-red-400 hover:text-red-600 text-lg font-bold" onclick="this.parentElement.remove()">&times;</button>
+            `;
+            container.appendChild(row);
+        }
+
+        document.getElementById('add-assignment-btn').addEventListener('click', () => addAssignmentRow());
+
+        function getAssignmentsFromForm() {
+            const rows = document.querySelectorAll('#assignment-rows .flex');
+            const assignments = [];
+            rows.forEach(row => {
+                const role = row.querySelector('.assignment-role').value.trim();
+                const value = row.querySelector('.assignment-value').value.trim();
+                if (role) assignments.push({ role, value });
+            });
+            return assignments;
+        }
+
+        function populateAssignments(assignments) {
+            const container = document.getElementById('assignment-rows');
+            container.innerHTML = '';
+            if (assignments && assignments.length > 0) {
+                assignments.forEach(a => addAssignmentRow(a.role, a.value));
+            }
+        }
+
         function resetGameForm() {
             editingGameId = null;
             document.getElementById('add-game-form').reset();
             document.getElementById('submit-game-btn').textContent = 'Add Game';
             document.getElementById('cancel-edit-game-btn').classList.add('hidden');
             clearLinkedOpponent();
+            setHomeAway(null);
+            document.getElementById('kitColor').value = '';
+            document.getElementById('arrivalTime').value = '';
+            document.getElementById('gameNotes').value = '';
+            document.getElementById('assignment-rows').innerHTML = '';
+        }
+
+        // Pre-populate assignments for new games from the latest game
+        async function prefillAssignments() {
+            if (editingGameId) return; // Don't prefill when editing
+            try {
+                const latest = await getLatestGameAssignments(currentTeamId);
+                if (latest && latest.length > 0) {
+                    populateAssignments(latest.map(a => ({ role: a.role, value: '' })));
+                }
+            } catch (e) {
+                console.log('Could not prefill assignments:', e);
+            }
         }
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
@@ -1254,6 +1461,8 @@
             if (!dateVal) return;
 
             try {
+                const isHomeVal = document.getElementById('isHome').value;
+                const arrivalVal = document.getElementById('arrivalTime').value;
                 const gameData = {
                     type: 'game',
                     date: Timestamp.fromDate(new Date(dateVal)),
@@ -1262,7 +1471,12 @@
                     statTrackerConfigId: configId || null,
                     opponentTeamId: selectedOpponentTeam ? selectedOpponentTeam.id : null,
                     opponentTeamName: selectedOpponentTeam ? selectedOpponentTeam.name || opponent : null,
-                    opponentTeamPhoto: selectedOpponentTeam ? selectedOpponentTeam.photoUrl || null : null
+                    opponentTeamPhoto: selectedOpponentTeam ? selectedOpponentTeam.photoUrl || null : null,
+                    isHome: isHomeVal === 'home' ? true : (isHomeVal === 'away' ? false : null),
+                    kitColor: document.getElementById('kitColor').value.trim() || null,
+                    arrivalTime: arrivalVal ? Timestamp.fromDate(new Date(arrivalVal)) : null,
+                    notes: document.getElementById('gameNotes').value.trim() || null,
+                    assignments: getAssignmentsFromForm()
                 };
 
                 if (editingGameId) {
@@ -1733,7 +1947,10 @@
             });
         }
 
-        document.getElementById('tab-add-game').addEventListener('click', () => switchTab('tab-add-game'));
+        document.getElementById('tab-add-game').addEventListener('click', () => {
+            switchTab('tab-add-game');
+            if (!editingGameId) prefillAssignments();
+        });
         document.getElementById('tab-add-practice').addEventListener('click', () => switchTab('tab-add-practice'));
         document.getElementById('tab-bulk-ai').addEventListener('click', () => switchTab('tab-bulk-ai'));
 
@@ -1791,6 +2008,73 @@
             };
         }
 
+        function normalizeIsHome(value) {
+            if (value === true || value === false || value === null) return value;
+            if (typeof value === 'string') {
+                const v = value.trim().toLowerCase();
+                if (v === 'home') return true;
+                if (v === 'away') return false;
+                if (v === '' || v === 'unknown' || v === 'null') return null;
+            }
+            return null;
+        }
+
+        function formatIsoForInput(value) {
+            if (!value) return '';
+            const d = value?.toDate ? value.toDate() : new Date(value);
+            if (Number.isNaN(d.getTime())) return '';
+            return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        }
+
+        function normalizeAssignments(value) {
+            if (!Array.isArray(value)) return [];
+            const normalized = value
+                .map((a) => ({
+                    role: String(a?.role || '').trim(),
+                    value: String(a?.value || '').trim()
+                }))
+                .filter((a) => a.role);
+            if (value.length > normalized.length) {
+                console.warn('Bulk AI assignments: dropped malformed entries', {
+                    provided: value.length,
+                    kept: normalized.length
+                });
+            }
+            return normalized;
+        }
+
+        function formatAssignmentsForInput(assignments) {
+            const normalized = normalizeAssignments(assignments);
+            return normalized.map((a) => `${a.role}:${a.value || ''}`).join('; ');
+        }
+
+        function parseAssignmentsInput(text) {
+            if (!text || !text.trim()) return [];
+            return text
+                .split(';')
+                .map((chunk) => {
+                    const [rolePart, ...valueParts] = chunk.split(':');
+                    return {
+                        role: (rolePart || '').trim(),
+                        value: valueParts.join(':').trim()
+                    };
+                })
+                .filter((a) => a.role);
+        }
+
+        function normalizeBulkGameForAdd(game) {
+            const normalizedIsHome = normalizeIsHome(game?.isHome);
+            const rawKitColor = typeof game?.kitColor === 'string' ? game.kitColor.trim() : '';
+            const kitColor = rawKitColor || (normalizedIsHome === true ? 'Home kit' : (normalizedIsHome === false ? 'Away kit' : 'TBD kit'));
+            return {
+                ...game,
+                isHome: normalizedIsHome,
+                kitColor,
+                notes: game?.notes ? String(game.notes).trim() : null,
+                assignments: normalizeAssignments(game?.assignments || [])
+            };
+        }
+
         // Process with AI
         document.getElementById('process-ai-btn').addEventListener('click', async () => {
             const textInput = document.getElementById('bulk-text-input').value.trim();
@@ -1843,20 +2127,44 @@
                                             date: Schema.string(),
                                             opponent: Schema.string(),
                                             location: Schema.string(),
+                                            isHome: Schema.boolean(),
+                                            kitColor: Schema.string(),
+                                            arrivalTime: Schema.string(),
+                                            notes: Schema.string(),
+                                            assignments: Schema.array({
+                                                items: Schema.object({
+                                                    properties: {
+                                                        role: Schema.string(),
+                                                        value: Schema.string()
+                                                    }
+                                                })
+                                            }),
                                             status: Schema.string(),
                                             homeScore: Schema.number(),
                                             awayScore: Schema.number()
                                         },
-                                        optionalProperties: ["status", "homeScore", "awayScore"]
+                                        optionalProperties: ["isHome", "kitColor", "arrivalTime", "notes", "assignments", "status", "homeScore", "awayScore"]
                                     }),
                                     gameId: Schema.string(),
                                     changes: Schema.object({
                                         properties: {
                                             date: Schema.string(),
                                             opponent: Schema.string(),
-                                            location: Schema.string()
+                                            location: Schema.string(),
+                                            isHome: Schema.boolean(),
+                                            kitColor: Schema.string(),
+                                            arrivalTime: Schema.string(),
+                                            notes: Schema.string(),
+                                            assignments: Schema.array({
+                                                items: Schema.object({
+                                                    properties: {
+                                                        role: Schema.string(),
+                                                        value: Schema.string()
+                                                    }
+                                                })
+                                            })
                                         },
-                                        optionalProperties: ["date", "opponent", "location"]
+                                        optionalProperties: ["date", "opponent", "location", "isHome", "kitColor", "arrivalTime", "notes", "assignments"]
                                     }),
                                     reason: Schema.string()
                                 },
@@ -1887,7 +2195,13 @@ PARSING RULES:
    - "11/15" = November 15, "Sat 11/22" = November 22
    - Use year ${currentYear} for future dates, ${currentYear + 1} for past dates
 6. Time: "8:30 AM" = 08:30:00, "2:20 PM" = 14:20:00, "12:00 PM" = 12:00:00
-7. For each game, create an operation with action="add" and game object with date, opponent, location, status="scheduled", homeScore=0, awayScore=0`;
+7. Extract extra fields when available:
+   - Home/Away -> isHome (true for home, false for away)
+   - Kit/Uniform color -> kitColor
+   - Arrival/check-in time -> arrivalTime (ISO 8601 datetime)
+   - Notes/comments -> notes
+   - Assignments (snack, carpool, etc.) -> assignments array: [{ role, value }]
+8. For each game, create an operation with action="add" and game object with date, opponent, location, status="scheduled", homeScore=0, awayScore=0`;
 
                 // Call Firebase AI with structured output
                 const firebaseApp = getApp();
@@ -1918,7 +2232,12 @@ PARSING RULES:
                 }
 
                 // Store operations and render preview
-                proposedOperations = aiResponse.operations;
+                proposedOperations = aiResponse.operations.map((op) => {
+                    if (op.action === 'add' && op.game) {
+                        return { ...op, game: normalizeBulkGameForAdd(op.game) };
+                    }
+                    return op;
+                });
 
                 if (proposedOperations.length === 0) {
                     alert('AI did not find any games to add/update/delete in the text. Please try being more specific with dates and opponents.');
@@ -1988,6 +2307,24 @@ PARSING RULES:
                                         <input type="text" value="${game.location || ''}" placeholder="Location"
                                             onchange="updateOperation(${index}, 'location', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full">
+                                        <select onchange="updateOperation(${index}, 'isHome', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
+                                            <option value="" ${game.isHome === null || game.isHome === undefined ? 'selected' : ''}>Home/Away Unknown</option>
+                                            <option value="home" ${game.isHome === true ? 'selected' : ''}>Home</option>
+                                            <option value="away" ${game.isHome === false ? 'selected' : ''}>Away</option>
+                                        </select>
+                                        <input type="text" value="${game.kitColor || ''}" placeholder="Kit color"
+                                            onchange="updateOperation(${index}, 'kitColor', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
+                                        <input type="datetime-local" value="${formatIsoForInput(game.arrivalTime)}"
+                                            onchange="updateOperation(${index}, 'arrivalTime', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
+                                        <textarea rows="2" placeholder="Notes"
+                                            onchange="updateOperation(${index}, 'notes', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">${game.notes || ''}</textarea>
+                                        <input type="text" value="${formatAssignmentsForInput(game.assignments)}" placeholder="Assignments: Role:Value; Role2:Value2"
+                                            onchange="updateOperation(${index}, 'assignments', this.value)"
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
                                     </div>
                                     ${hasConflict ? `<div class="text-xs text-yellow-700 mt-1">⚠️ Similar game exists within 24 hours</div>` : ''}
                                 </div>
@@ -2058,6 +2395,12 @@ PARSING RULES:
             if (proposedOperations[index].action === 'add') {
                 if (field === 'date') {
                     proposedOperations[index].game[field] = new Date(value).toISOString();
+                } else if (field === 'arrivalTime') {
+                    proposedOperations[index].game[field] = value ? new Date(value).toISOString() : null;
+                } else if (field === 'isHome') {
+                    proposedOperations[index].game[field] = normalizeIsHome(value);
+                } else if (field === 'assignments') {
+                    proposedOperations[index].game[field] = parseAssignmentsInput(value);
                 } else {
                     proposedOperations[index].game[field] = value;
                 }
@@ -2098,13 +2441,19 @@ PARSING RULES:
                 for (const op of proposedOperations) {
                     try {
                         if (op.action === 'add') {
+                            const normalizedGame = normalizeBulkGameForAdd(op.game);
                             const gameData = {
-                                ...op.game,
+                                ...normalizedGame,
                                 type: 'game',
-                                date: Timestamp.fromDate(new Date(op.game.date)),
-                                status: op.game.status || 'scheduled',
-                                homeScore: op.game.homeScore || 0,
-                                awayScore: op.game.awayScore || 0
+                                date: Timestamp.fromDate(new Date(normalizedGame.date)),
+                                isHome: normalizedGame.isHome,
+                                kitColor: normalizedGame.kitColor,
+                                arrivalTime: normalizedGame.arrivalTime ? Timestamp.fromDate(new Date(normalizedGame.arrivalTime)) : null,
+                                notes: normalizedGame.notes,
+                                assignments: normalizedGame.assignments,
+                                status: normalizedGame.status || 'scheduled',
+                                homeScore: normalizedGame.homeScore || 0,
+                                awayScore: normalizedGame.awayScore || 0
                             };
                             await addGame(currentTeamId, gameData);
                             successCount++;
@@ -2112,6 +2461,21 @@ PARSING RULES:
                             const changes = { ...op.changes };
                             if (changes.date) {
                                 changes.date = Timestamp.fromDate(new Date(changes.date));
+                            }
+                            if ('arrivalTime' in changes) {
+                                changes.arrivalTime = changes.arrivalTime ? Timestamp.fromDate(new Date(changes.arrivalTime)) : null;
+                            }
+                            if ('isHome' in changes) {
+                                changes.isHome = normalizeIsHome(changes.isHome);
+                            }
+                            if ('kitColor' in changes) {
+                                changes.kitColor = changes.kitColor ? String(changes.kitColor).trim() : null;
+                            }
+                            if ('notes' in changes) {
+                                changes.notes = changes.notes ? String(changes.notes).trim() : null;
+                            }
+                            if ('assignments' in changes) {
+                                changes.assignments = normalizeAssignments(changes.assignments);
                             }
                             await updateGame(currentTeamId, op.gameId, changes);
                             successCount++;

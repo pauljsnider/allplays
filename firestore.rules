@@ -20,11 +20,19 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
+    function isCoachForTeam(teamId) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isSignedIn() &&
+             exists(userPath) &&
+             teamId in get(userPath).data.get('coachOf', []);
+    }
+
     function isTeamOwnerOrAdmin(teamId) {
       return isSignedIn() &&
              (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
               (request.auth.token.email != null &&
                request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
+              isCoachForTeam(teamId) ||
               isGlobalAdmin());
     }
 
@@ -55,6 +63,7 @@ service cloud.firestore {
       let isOwnerOrAdmin = team.ownerId == request.auth.uid ||
         (request.auth.token.email != null &&
          request.auth.token.email.lower() in team.get('adminEmails', [])) ||
+        isCoachForTeam(teamId) ||
         isGlobalAdmin();
 
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
@@ -222,6 +231,16 @@ service cloud.firestore {
           allow create: if true;  // Anyone can react
           allow update, delete: if false;  // Reactions are immutable
         }
+
+        // RSVP subcollection - game attendance responses
+        match /rsvps/{rsvpId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+          allow create, update: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
+                                   isSignedIn() && rsvpId == request.auth.uid &&
+                                   request.resource.data.userId == request.auth.uid;
+          allow delete: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
+                           isSignedIn() && rsvpId == request.auth.uid;
+        }
       }
 
       // Stat tracker configs subcollection
@@ -264,6 +283,12 @@ service cloud.firestore {
                             completionId == request.auth.uid + "__" + resource.data.childId &&
                             isParentForPlayer(teamId, resource.data.childId));
         }
+      }
+
+      // Practice Templates subcollection
+      match /practiceTemplates/{templateId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       // Chat messages subcollection

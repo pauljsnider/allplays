@@ -13,7 +13,9 @@ export function getTeamAccessInfo(user, team) {
 
   // Check for full access: owner, admin, coach, or platform admin
   const isOwner = team.ownerId === user.uid;
-  const isTeamAdmin = (team.adminEmails || []).includes(user.email);
+  const normalizedEmail = (user.email || '').toLowerCase();
+  const adminEmails = (team.adminEmails || []).map(email => String(email || '').toLowerCase());
+  const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;
   const isCoach = (user.coachOf || []).includes(team.id);
 
@@ -202,4 +204,3 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
     </div>
   `;
 }
-

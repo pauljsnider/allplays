@@ -45,8 +45,17 @@
     <main class="container mx-auto px-4 py-8 md:py-12">
         <!-- Page Header -->
         <div class="mb-8 md:mb-12">
-            <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">Parent Dashboard</h1>
-            <p class="text-gray-600 text-sm md:text-base">Track your athletes' schedules and stats.</p>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                    <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">Parent Dashboard</h1>
+                    <p class="text-gray-600 text-sm md:text-base">Track your athletes' schedules and stats.</p>
+                </div>
+                <a href="calendar.html"
+                    class="inline-flex items-center gap-2 bg-white text-primary-600 px-4 py-3 rounded-xl border border-primary-200 hover:bg-primary-50 transition font-semibold text-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    Calendar
+                </a>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -91,6 +100,10 @@
                     <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3">
                         <h2 class="text-xl font-bold text-gray-900">Schedule</h2>
                         <div class="flex items-center gap-2">
+                            <div class="flex rounded-lg border border-gray-200 overflow-hidden">
+                                <button id="schedule-view-list" onclick="setScheduleView('list')" class="px-2.5 py-1 text-xs font-semibold bg-primary-600 text-white">List</button>
+                                <button id="schedule-view-calendar" onclick="setScheduleView('calendar')" class="px-2.5 py-1 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-100">Calendar</button>
+                            </div>
                             <select id="player-filter" class="text-xs font-medium bg-white px-2 py-1 rounded border border-gray-200 text-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500">
                                 <option value="">All Players</option>
                             </select>
@@ -110,12 +123,18 @@
                             <button id="schedule-filter-past-all" onclick="setScheduleFilter('past-all')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
                         </div>
                     </div>
+                    <div id="schedule-calendar-nav" class="hidden px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-center gap-4">
+                        <button onclick="navScheduleMonth(-1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
+                        <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
+                        <button onclick="navScheduleMonth(1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Next &rarr;</button>
+                    </div>
                     <div id="schedule-list" class="divide-y divide-gray-100">
                         <div class="text-center py-12">
                             <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
                             <p class="text-sm text-gray-500">Loading schedule...</p>
                         </div>
                     </div>
+                    <div id="schedule-calendar-grid" class="hidden"></div>
                 </div>
                 <div id="practice-packets-card" class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden mt-6">
                     <div class="p-6 border-b border-gray-100 bg-gray-50">
@@ -151,9 +170,23 @@
             <div id="packet-preview-content" class="px-6 py-5"></div>
         </div>
     </div>
+    <div id="schedule-day-modal" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="closeScheduleDayModal()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <h3 id="schedule-day-modal-title" class="text-lg font-bold text-gray-900"></h3>
+                <button onclick="closeScheduleDayModal()" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="schedule-day-modal-content" class="px-6 py-5"></div>
+        </div>
+    </div>
 
     <script type="module">
-        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile } from './js/db.js?v=19';
+        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=20';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
 
@@ -165,12 +198,61 @@
         let allPracticePacketSessions = [];
         let practicePacketFilter = 'recent_upcoming';
         let scheduleViewFilter = 'upcoming-all';
+        let scheduleViewMode = 'list';
+        let scheduleCalendarMonth = new Date().getMonth();
+        let scheduleCalendarYear = new Date().getFullYear();
         const practicePacketSessionMap = new Map();
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
+        window.setScheduleView = setScheduleView;
+        window.navScheduleMonth = navScheduleMonth;
+        window.openScheduleDayModal = openScheduleDayModal;
+        window.closeScheduleDayModal = closeScheduleDayModal;
         window.openPracticePacketPreview = openPracticePacketPreview;
         window.closePracticePacketPreview = closePracticePacketPreview;
         window.markPracticePacketComplete = markPracticePacketComplete;
+        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
+
+        function escapeAttr(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        window.submitGameRsvp = async function(teamId, gameId, response) {
+            try {
+                const playerIds = allScheduleEvents
+                    .filter(e => e.teamId === teamId)
+                    .map(e => e.childId || e.playerId)
+                    .filter(Boolean);
+                const summary = await submitRsvp(teamId, gameId, currentUserId, {
+                    displayName: currentUser?.displayName || currentUser?.email,
+                    playerIds: [...new Set(playerIds)],
+                    response
+                });
+                // Update local state and re-render
+                const game = allScheduleEvents.find(e => e.teamId === teamId && e.id === gameId);
+                if (game) {
+                    game.myRsvp = response;
+                    if (summary) game.rsvpSummary = summary;
+                    else if (!game.rsvpSummary) game.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, total: 0 };
+                }
+                renderScheduleFromControls();
+            } catch (err) {
+                console.error('RSVP error:', err);
+                alert('Failed to submit RSVP: ' + err.message);
+            }
+        };
+
+        function submitGameRsvpFromButton(btn, response) {
+            const teamId = btn?.dataset?.teamId || '';
+            const gameId = btn?.dataset?.gameId || '';
+            if (!teamId || !gameId) return;
+            window.submitGameRsvp(teamId, gameId, response);
+        }
 
         function hasRecordedAttendance(attendance) {
             if (!attendance || !Array.isArray(attendance.players) || attendance.players.length === 0) return false;
@@ -211,6 +293,27 @@
                 renderTeamChats(data.children, unreadCounts);
                 const combinedSchedule = await buildCombinedSchedule(data.children);
                 allScheduleEvents = combinedSchedule;
+
+                // Fetch my RSVPs for game events (deduped by team/game).
+                const uniqueGameKeys = [...new Set(
+                    allScheduleEvents
+                        .filter((event) => event.type === 'game' && !event.isCancelled && event.teamId && event.id)
+                        .map((event) => `${event.teamId}::${event.id}`)
+                )];
+                await Promise.all(uniqueGameKeys.map(async (key) => {
+                    const [teamId, gameId] = key.split('::');
+                    try {
+                        const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
+                        allScheduleEvents.forEach((event) => {
+                            if (event.teamId === teamId && event.id === gameId) {
+                                event.myRsvp = myRsvp ? myRsvp.response : null;
+                            }
+                        });
+                    } catch (e) {
+                        // Ignore per-game RSVP read failures.
+                    }
+                }));
+
                 allPracticePacketSessions = await buildPracticePacketSessions(data.children);
                 initPlayerFilter(data.children);
                 setScheduleFilter('upcoming-all');
@@ -342,6 +445,7 @@
                     const location = game.location || 'TBD';
                     const opponent = game.opponent || 'TBD';
                     const id = game.id || game.gameId;
+                    const isCancelled = game.status === 'cancelled';
                     const session = isPractice ? resolvePracticeSession(game, date) : null;
 
                     for (const child of teamChildren) {
@@ -352,8 +456,18 @@
                             opponent,
                             teamId,
                             id,
+                            isDbGame: true,
                             childId: child.playerId,
                             childName: child.playerName,
+                            title: game.title || null,
+                            status: game.status || 'scheduled',
+                            isCancelled,
+                            isHome: game.isHome ?? null,
+                            kitColor: game.kitColor || null,
+                            arrivalTime: game.arrivalTime || null,
+                            notes: game.notes || null,
+                            assignments: Array.isArray(game.assignments) ? game.assignments : [],
+                            rsvpSummary: game.rsvpSummary || null,
                             practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
                             practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null
                         });
@@ -402,6 +516,7 @@
                                         opponent,
                                         teamId,
                                         id: event.uid || null,
+                                        isDbGame: false,
                                         childId: child.playerId,
                                         childName: child.playerName,
                                         isCancelled,
@@ -433,6 +548,7 @@
                                 opponent: null,
                                 teamId,
                                 id: session.eventId || session.id,
+                                isDbGame: false,
                                 childId: child.playerId,
                                 childName: child.playerName,
                                 title: session.title || 'Practice',
@@ -489,7 +605,198 @@
 
         function renderScheduleFromControls(selectedPlayerId = '') {
             const playerId = selectedPlayerId || (document.getElementById('player-filter')?.value || '');
-            renderSchedule(getFilteredScheduleEvents(playerId));
+            const events = getFilteredScheduleEvents(playerId);
+            const listEl = document.getElementById('schedule-list');
+            const calEl = document.getElementById('schedule-calendar-grid');
+            const navEl = document.getElementById('schedule-calendar-nav');
+            if (!listEl || !calEl || !navEl) {
+                renderSchedule(events);
+                return;
+            }
+            if (scheduleViewMode === 'calendar') {
+                listEl.classList.add('hidden');
+                calEl.classList.remove('hidden');
+                navEl.classList.remove('hidden');
+                renderScheduleCalendar(events);
+            } else {
+                calEl.classList.add('hidden');
+                navEl.classList.add('hidden');
+                listEl.classList.remove('hidden');
+                renderSchedule(events);
+            }
+        }
+
+        function getCalendarEntries(events) {
+            const byKey = new Map();
+            (events || []).forEach((event) => {
+                const d = event.date?.toDate ? event.date.toDate() : new Date(event.date);
+                if (!d || Number.isNaN(d.getTime())) return;
+                const key = `${event.teamId || ''}::${event.id || ''}::${d.toISOString()}::${event.type || ''}`;
+                if (!byKey.has(key)) {
+                    byKey.set(key, { ...event, date: d, childNames: [] });
+                }
+                const item = byKey.get(key);
+                if (event.childName) item.childNames.push(event.childName);
+            });
+            return Array.from(byKey.values()).map((item) => ({
+                ...item,
+                childNames: [...new Set(item.childNames)]
+            }));
+        }
+
+        function renderScheduleCalendar(events) {
+            const container = document.getElementById('schedule-calendar-grid');
+            const label = document.getElementById('schedule-calendar-month-label');
+            if (!container || !label) return;
+
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            label.textContent = `${monthNames[scheduleCalendarMonth]} ${scheduleCalendarYear}`;
+
+            const monthStart = new Date(scheduleCalendarYear, scheduleCalendarMonth, 1);
+            const monthEnd = new Date(scheduleCalendarYear, scheduleCalendarMonth + 1, 0, 23, 59, 59);
+            const firstDay = new Date(scheduleCalendarYear, scheduleCalendarMonth, 1);
+            const startDow = firstDay.getDay();
+            const daysInMonth = monthEnd.getDate();
+
+            const calendarEvents = getCalendarEntries(events).filter((ev) => ev.date >= monthStart && ev.date <= monthEnd);
+            const eventsByDay = {};
+            calendarEvents.forEach((ev) => {
+                const day = ev.date.getDate();
+                if (!eventsByDay[day]) eventsByDay[day] = [];
+                eventsByDay[day].push(ev);
+            });
+
+            const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+            const today = new Date();
+            const isCurrentMonth = today.getMonth() === scheduleCalendarMonth && today.getFullYear() === scheduleCalendarYear;
+
+            let html = `
+                <div class="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+                    ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => `<div class="text-center text-xs font-bold text-gray-500 py-2">${d}</div>`).join('')}
+                </div>
+                <div class="grid grid-cols-7">
+            `;
+
+            for (let i = 0; i < totalCells; i++) {
+                const dayNum = i - startDow + 1;
+                const inMonth = dayNum >= 1 && dayNum <= daysInMonth;
+                const dayEvents = inMonth ? (eventsByDay[dayNum] || []) : [];
+                const isToday = isCurrentMonth && inMonth && dayNum === today.getDate();
+                html += `
+                    <div class="min-h-[96px] border border-gray-100 p-1.5 ${inMonth ? 'bg-white' : 'bg-gray-50 text-gray-300'} ${isToday ? 'ring-1 ring-primary-300' : ''} ${inMonth && dayEvents.length ? 'cursor-pointer hover:bg-gray-50' : ''}"
+                        ${inMonth && dayEvents.length ? `onclick="openScheduleDayModal(${scheduleCalendarYear}, ${scheduleCalendarMonth}, ${dayNum})"` : ''}>
+                        ${inMonth ? `<div class="text-xs font-semibold ${isToday ? 'text-primary-700' : 'text-gray-700'}">${dayNum}</div>` : ''}
+                        ${inMonth && dayEvents.length ? `
+                            <div class="mt-1 space-y-1">
+                                ${dayEvents.slice(0, 3).map((ev) => `
+                                    <div class="text-[10px] px-1 py-0.5 rounded truncate ${ev.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}">
+                                        ${escapeHtml(ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`)}
+                                        ${ev.type === 'game' ? `<span class="ml-1 text-[9px] opacity-70">(${ev.rsvpSummary?.going || 0}/${ev.rsvpSummary?.maybe || 0}/${ev.rsvpSummary?.notGoing || 0})</span>` : ''}
+                                    </div>
+                                `).join('')}
+                                ${dayEvents.length > 3 ? `<div class="text-[10px] text-gray-400">+${dayEvents.length - 3} more</div>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function openScheduleDayModal(year, month, day) {
+            const titleEl = document.getElementById('schedule-day-modal-title');
+            const contentEl = document.getElementById('schedule-day-modal-content');
+            const modalEl = document.getElementById('schedule-day-modal');
+            if (!titleEl || !contentEl || !modalEl) return;
+
+            const dayStart = new Date(year, month, day);
+            const dayEnd = new Date(year, month, day, 23, 59, 59);
+            const playerId = document.getElementById('player-filter')?.value || '';
+            const events = getCalendarEntries(getFilteredScheduleEvents(playerId))
+                .filter((ev) => ev.date >= dayStart && ev.date <= dayEnd)
+                .sort((a, b) => a.date - b.date);
+
+            titleEl.textContent = dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            if (!events.length) {
+                contentEl.innerHTML = '<p class="text-gray-500 text-center py-8">No events on this day.</p>';
+            } else {
+                contentEl.innerHTML = events.map((ev) => {
+                    const timeStr = ev.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                    const title = ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`;
+                    return `
+                        <div class="mb-4 p-4 rounded-lg border border-gray-200 ${ev.isCancelled ? 'opacity-60' : ''}">
+                            <div class="text-xs font-semibold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'}">${ev.type}</div>
+                            <div class="font-bold text-gray-900 ${ev.isCancelled ? 'line-through' : ''}">${escapeHtml(title)}</div>
+                            <div class="text-sm text-gray-600 mt-1">${timeStr} · ${escapeHtml(ev.location || 'TBD')}</div>
+                            ${ev.type === 'game' && ev.isHome === true ? '<span class="inline-block text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">HOME</span>' : ''}
+                            ${ev.type === 'game' && ev.isHome === false ? '<span class="inline-block text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">AWAY</span>' : ''}
+                            ${ev.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(ev.kitColor)}</div>` : ''}
+                            ${ev.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = ev.arrivalTime?.toDate ? ev.arrivalTime.toDate() : new Date(ev.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
+                            ${ev.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(ev.notes)}</div>` : ''}
+                            ${ev.assignments && ev.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${ev.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                            ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${ev.rsvpSummary.going || 0} going · ${ev.rsvpSummary.maybe || 0} maybe · ${ev.rsvpSummary.notGoing || 0} can't go</div>` : ''}
+                            ${ev.childNames?.length ? `<div class="text-xs text-gray-500 mt-1">For ${escapeHtml(ev.childNames.join(', '))}</div>` : ''}
+                            ${!ev.isCancelled && ev.type === 'game' ? `
+                                <div class="mt-3 border-t border-gray-100 pt-3">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
+                                    ${ev.isDbGame ? `
+                                        <div class="flex gap-2">
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                        </div>
+                                    ` : `<div class="text-xs text-gray-500">RSVP opens after coach tracks this event as a game.</div>`}
+                                    ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${ev.rsvpSummary.going || 0} going · ${ev.rsvpSummary.maybe || 0} maybe · ${ev.rsvpSummary.notGoing || 0} can't go</div>` : '<div class="text-xs text-gray-400 mt-1">No RSVPs yet.</div>'}
+                                </div>
+                            ` : ''}
+                            ${ev.isCancelled ? '<div class="text-xs text-red-700 mt-1 font-semibold">Cancelled</div>' : ''}
+                        </div>
+                    `;
+                }).join('');
+            }
+            modalEl.classList.remove('hidden');
+        }
+
+        function closeScheduleDayModal() {
+            document.getElementById('schedule-day-modal')?.classList.add('hidden');
+        }
+
+        function setScheduleView(mode) {
+            scheduleViewMode = mode === 'calendar' ? 'calendar' : 'list';
+            const listBtn = document.getElementById('schedule-view-list');
+            const calBtn = document.getElementById('schedule-view-calendar');
+            if (scheduleViewMode === 'calendar') {
+                const playerId = document.getElementById('player-filter')?.value || '';
+                const events = getCalendarEntries(getFilteredScheduleEvents(playerId));
+                if (events.length > 0) {
+                    const hasCurrentMonthEvents = events.some((ev) =>
+                        ev.date.getMonth() === scheduleCalendarMonth && ev.date.getFullYear() === scheduleCalendarYear
+                    );
+                    if (!hasCurrentMonthEvents) {
+                        scheduleCalendarMonth = events[0].date.getMonth();
+                        scheduleCalendarYear = events[0].date.getFullYear();
+                    }
+                }
+            }
+            if (listBtn && calBtn) {
+                const listActive = scheduleViewMode === 'list';
+                listBtn.className = `px-2.5 py-1 text-xs font-semibold ${listActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`;
+                calBtn.className = `px-2.5 py-1 text-xs font-semibold ${!listActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`;
+            }
+            renderScheduleFromControls();
+        }
+
+        function navScheduleMonth(delta) {
+            scheduleCalendarMonth += delta;
+            if (scheduleCalendarMonth > 11) {
+                scheduleCalendarMonth = 0;
+                scheduleCalendarYear += 1;
+            } else if (scheduleCalendarMonth < 0) {
+                scheduleCalendarMonth = 11;
+                scheduleCalendarYear -= 1;
+            }
+            if (scheduleViewMode === 'calendar') renderScheduleFromControls();
         }
 
         function setScheduleFilter(next) {
@@ -854,6 +1161,12 @@
                             </svg>
                             ${escapeHtml(game.location || 'TBD')}
                         </div>
+                        ${game.type !== 'practice' && game.isHome === true ? '<span class="inline-block text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">HOME</span>' : ''}
+                        ${game.type !== 'practice' && game.isHome === false ? '<span class="inline-block text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">AWAY</span>' : ''}
+                        ${game.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(game.kitColor)}</div>` : ''}
+                        ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = game.arrivalTime?.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
+                        ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
+                        ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                         ${attendanceRecorded ? `
                             <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                                 <div class="text-[11px] font-bold uppercase tracking-wide text-amber-800">Practice Attendance</div>
@@ -872,7 +1185,20 @@
                             </div>
                         ` : ''}
                     </div>
-                    ${!isCancelled ? `
+                    ${!isCancelled && game.type === 'game' ? `
+                        <div class="mt-3 border-t border-gray-100 pt-3">
+                            <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
+                            ${game.isDbGame ? `
+                                <div class="flex gap-2">
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                </div>
+                            ` : `<div class="text-xs text-gray-500">RSVP opens after coach tracks this event as a game.</div>`}
+                            ${game.rsvpSummary ? `<div class="text-[10px] text-gray-400 mt-1">${game.rsvpSummary.going || 0} going · ${game.rsvpSummary.maybe || 0} maybe · ${game.rsvpSummary.notGoing || 0} can't go</div>` : '<div class="text-[10px] text-gray-400 mt-1">No RSVPs yet.</div>'}
+                        </div>
+                    ` : ''}
+                    ${!isCancelled && game.isDbGame ? `
                     <div class="flex-shrink-0 text-right">
                          <a href="game.html?teamId=${game.teamId}&gameId=${game.id}"
                             class="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700">
@@ -895,6 +1221,11 @@
 
         function buildIcs(events) {
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
+            const escapeIcsText = (value) => String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/;/g, '\\;')
+                .replace(/,/g, '\\,')
+                .replace(/\r?\n/g, '\\n');
 
             // Dedupe events by id to avoid duplicates for multiple kids on same team
             const seen = new Set();
@@ -917,9 +1248,9 @@
                     `DTSTAMP:${formatIcsDate(new Date())}`,
                     `DTSTART:${start}`,
                     `DTEND:${end}`,
-                    `SUMMARY:${summary}`,
-                    `LOCATION:${(event.location || 'TBD').replace(/,/g, '\\,')}`,
-                    `DESCRIPTION:For ${event.childName}`,
+                    `SUMMARY:${escapeIcsText(summary)}`,
+                    `LOCATION:${escapeIcsText(event.location || 'TBD')}`,
+                    `DESCRIPTION:${escapeIcsText(`For ${event.childName}`)}`,
                     'END:VEVENT'
                 );
             });
