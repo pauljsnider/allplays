@@ -100,18 +100,39 @@ export async function uploadUserPhoto(file) {
 export async function uploadChatImage(teamId, file) {
     await requireImageAuth();
 
-    const path = `chat-images/${teamId}/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-    const snapshot = await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(snapshot.ref);
+    const ts = Date.now();
+    const safeName = String(file.name || 'image').replace(/[^\w.\-]+/g, '_');
+    const imagePath = `team-photos/${ts}_chat_${teamId}_${safeName}`;
 
-    return {
-        url,
-        path,
-        name: file.name || null,
-        type: file.type || null,
-        size: Number.isFinite(file.size) ? file.size : null
-    };
+    try {
+        const storageRef = ref(imageStorage, imagePath);
+        const snapshot = await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(snapshot.ref);
+        return {
+            url,
+            path: imagePath,
+            name: file.name || null,
+            type: file.type || null,
+            size: Number.isFinite(file.size) ? file.size : null
+        };
+    } catch (error) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+            console.warn('Image storage denied chat upload, falling back to main storage:', error?.message || error);
+            const fallbackPath = `stat-sheets/${ts}_chat_${teamId}_${safeName}`;
+            const fallbackRef = ref(storage, fallbackPath);
+            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
+            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
+            return {
+                url: fallbackUrl,
+                path: fallbackPath,
+                name: file.name || null,
+                type: file.type || null,
+                size: Number.isFinite(file.size) ? file.size : null
+            };
+        }
+        throw error;
+    }
 }
 
 export async function uploadStatSheetPhoto(file) {

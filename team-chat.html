@@ -89,21 +89,33 @@
             <!-- Composer -->
             <div class="p-4 border-t border-gray-200 bg-gray-50">
                 <div class="flex gap-2 items-start">
-                    <button id="voice-btn" type="button"
-                        class="shrink-0 px-3 py-2.5 border border-gray-300 rounded-lg text-gray-600 hover:text-primary-600 hover:border-primary-300 bg-white transition"
-                        title="Voice to text">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10v2a7 7 0 01-14 0v-2"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19v4"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 23h8"></path>
-                        </svg>
-                    </button>
                     <div class="relative flex-1">
-                        <input type="text" id="message-input"
-                            placeholder="Type a message..."
-                            class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                            maxlength="2000">
+                        <div class="flex items-center gap-1 w-full rounded-lg border border-gray-300 bg-white px-2 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500">
+                            <button id="voice-btn" type="button"
+                                class="shrink-0 p-2 rounded-md text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
+                                title="Voice to text">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10v2a7 7 0 01-14 0v-2"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19v4"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 23h8"></path>
+                                </svg>
+                            </button>
+                            <input type="text" id="message-input"
+                                placeholder="Type a message..."
+                                class="w-full px-2 py-2.5 border-0 focus:outline-none focus:ring-0"
+                                maxlength="2000">
+                            <input id="chat-image-input" type="file" accept="image/*" class="hidden">
+                            <button id="image-btn" type="button"
+                                class="shrink-0 p-2 rounded-md text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
+                                title="Attach image">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.5 11.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15l-4-4L6 22"></path>
+                                </svg>
+                            </button>
+                        </div>
                         <div id="mention-menu"
                             class="hidden absolute bottom-full left-0 mb-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
                             <button type="button" id="mention-allplays"
@@ -113,16 +125,6 @@
                             </button>
                         </div>
                     </div>
-                    <input id="chat-image-input" type="file" accept="image/*" class="hidden">
-                    <button id="image-btn" type="button"
-                        class="shrink-0 px-3 py-2.5 border border-gray-300 rounded-lg text-gray-600 hover:text-primary-600 hover:border-primary-300 bg-white transition"
-                        title="Attach image">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.5 11.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"></path>
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15l-4-4L6 22"></path>
-                        </svg>
-                    </button>
                     <button id="send-btn"
                         class="px-5 py-2.5 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition">
                         Send
@@ -180,7 +182,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage } from './js/db.js?v=15';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage } from './js/db.js?v=16';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -722,7 +724,6 @@
             const voiceBtn = document.getElementById('voice-btn');
             const hint = document.getElementById('voice-hint');
             voiceBtn.classList.toggle('text-red-600', isListening);
-            voiceBtn.classList.toggle('border-red-300', isListening);
             voiceBtn.classList.toggle('bg-red-50', isListening);
             hint.classList.toggle('hidden', !isListening);
         }
