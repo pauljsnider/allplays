@@ -182,7 +182,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=17';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=18';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -318,7 +318,15 @@
         const AI_EVENTS_GAMES_LIMIT = 3;
         const AI_EVENTS_PER_GAME_LIMIT = 25;
         const MAX_CHAT_IMAGE_SIZE = 5 * 1024 * 1024;
-        const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '👏'];
+        const CHAT_REACTIONS = [
+            { key: 'thumbs_up', emoji: '👍' },
+            { key: 'heart', emoji: '❤️' },
+            { key: 'joy', emoji: '😂' },
+            { key: 'wow', emoji: '😮' },
+            { key: 'sad', emoji: '😢' },
+            { key: 'clap', emoji: '👏' }
+        ];
+        const CHAT_REACTION_BY_KEY = new Map(CHAT_REACTIONS.map(r => [r.key, r.emoji]));
         let aiModelCache = null;
         let activeVoiceRecognition = null;
         let voiceListening = false;
@@ -556,10 +564,12 @@
             const source = (msg && typeof msg.reactions === 'object' && msg.reactions) ? msg.reactions : {};
             const normalized = {};
 
-            CHAT_REACTION_EMOJIS.forEach((emoji) => {
-                const users = Array.isArray(source[emoji]) ? source[emoji].filter(Boolean) : [];
+            CHAT_REACTIONS.forEach(({ key, emoji }) => {
+                const byKey = Array.isArray(source[key]) ? source[key] : [];
+                const legacyByEmoji = Array.isArray(source[emoji]) ? source[emoji] : [];
+                const users = Array.from(new Set([...byKey, ...legacyByEmoji])).filter(Boolean);
                 if (users.length > 0) {
-                    normalized[emoji] = users;
+                    normalized[key] = users;
                 }
             });
 
@@ -568,14 +578,14 @@
 
         function renderReactionControls(msg, { isOwn }) {
             const reactions = normalizeMessageReactions(msg);
-            const pills = CHAT_REACTION_EMOJIS
-                .map((emoji) => {
-                    const users = reactions[emoji] || [];
+            const pills = CHAT_REACTIONS
+                .map(({ key, emoji }) => {
+                    const users = reactions[key] || [];
                     const count = users.length;
                     if (count === 0) return '';
                     const active = users.includes(currentUser.uid);
                     return `
-                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${emoji}')"
+                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
                             class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs transition ${active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}">
                             <span>${emoji}</span>
                             <span class="font-semibold">${count}</span>
@@ -587,10 +597,10 @@
 
             const pickerOpen = activeReactionPickerMessageId === msg.id;
             const picker = pickerOpen ? `
-                <div class="mt-1.5 flex flex-wrap gap-1.5" data-reaction-ui="true">
-                    ${CHAT_REACTION_EMOJIS.map((emoji) => `
-                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${emoji}')"
-                            class="px-2 py-1 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
+                <div class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-gray-200 bg-white shadow-sm" data-reaction-ui="true">
+                    ${CHAT_REACTIONS.map(({ key, emoji }) => `
+                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
+                            class="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
                             ${emoji}
                         </button>
                     `).join('')}
@@ -598,12 +608,13 @@
             ` : '';
 
             const alignClass = isOwn ? 'justify-end' : 'justify-start';
+            const addBtnState = pickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100';
             return `
                 <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-reaction-ui="true">
                     ${pills}
                     <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
-                        class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200">
-                        <span class="text-sm">+</span>
+                        class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200 transition ${addBtnState}">
+                        <span class="text-sm">😊</span>
                     </button>
                 </div>
                 ${picker}
@@ -665,7 +676,7 @@
 
             if (isOwn) {
                 return `
-                    <div class="flex justify-end gap-2">
+                    <div class="group flex justify-end gap-2">
                         <div class="max-w-[75%]">
                             <div class="text-xs text-gray-500 text-right mb-1">
                                 ${msg.editedAt ? '<span class="italic">(edited)</span> ' : ''}${timestamp}
@@ -685,7 +696,7 @@
                 `;
             } else {
                 return `
-                    <div class="flex justify-start gap-2">
+                    <div class="group flex justify-start gap-2">
                         ${avatar}
                         <div class="max-w-[75%]">
                             <div class="text-xs text-gray-500 mb-1">
@@ -1247,17 +1258,17 @@
             renderMessages();
         };
 
-        window.reactToMessage = async function(messageId, emoji) {
+        window.reactToMessage = async function(messageId, reactionKey) {
             const msg = messages.find(m => m.id === messageId);
             if (!msg || msg.deleted) return;
-            if (!CHAT_REACTION_EMOJIS.includes(emoji)) return;
+            if (!CHAT_REACTION_BY_KEY.has(reactionKey)) return;
 
-            const opKey = `${messageId}:${emoji}`;
+            const opKey = `${messageId}:${reactionKey}`;
             if (pendingReactionOps.has(opKey)) return;
             pendingReactionOps.add(opKey);
 
             try {
-                await toggleChatReaction(teamId, messageId, emoji, currentUser.uid);
+                await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid);
                 activeReactionPickerMessageId = null;
             } catch (error) {
                 console.error('Error toggling reaction:', error);
