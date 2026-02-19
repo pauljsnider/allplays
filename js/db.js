@@ -97,6 +97,23 @@ export async function uploadUserPhoto(file) {
     return downloadURL;
 }
 
+export async function uploadChatImage(teamId, file) {
+    await requireImageAuth();
+
+    const path = `chat-images/${teamId}/${Date.now()}_${file.name}`;
+    const storageRef = ref(imageStorage, path);
+    const snapshot = await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(snapshot.ref);
+
+    return {
+        url,
+        path,
+        name: file.name || null,
+        type: file.type || null,
+        size: Number.isFinite(file.size) ? file.size : null
+    };
+}
+
 export async function uploadStatSheetPhoto(file) {
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
@@ -1180,7 +1197,22 @@ export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages)
 /**
  * Post a new chat message.
  */
-export async function postChatMessage(teamId, { text, senderId, senderName, senderEmail, senderPhotoUrl, ai = false, aiName = null, aiQuestion = null, aiMeta = null }) {
+export async function postChatMessage(teamId, {
+    text,
+    senderId,
+    senderName,
+    senderEmail,
+    senderPhotoUrl,
+    imageUrl = null,
+    imagePath = null,
+    imageName = null,
+    imageType = null,
+    imageSize = null,
+    ai = false,
+    aiName = null,
+    aiQuestion = null,
+    aiMeta = null
+}) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
     return await addDoc(messagesRef, {
         text,
@@ -1188,6 +1220,11 @@ export async function postChatMessage(teamId, { text, senderId, senderName, send
         senderName: senderName || null,
         senderEmail: senderEmail || null,
         senderPhotoUrl: senderPhotoUrl || null,
+        imageUrl: imageUrl || null,
+        imagePath: imagePath || null,
+        imageName: imageName || null,
+        imageType: imageType || null,
+        imageSize: Number.isFinite(imageSize) ? imageSize : null,
         createdAt: Timestamp.now(),
         editedAt: null,
         deleted: false,
