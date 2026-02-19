@@ -317,7 +317,14 @@ service cloud.firestore {
         // Update for reactions: any team member can add/remove reactions only
         allow update: if canAccessTeamChat(teamId) &&
                          request.resource.data.diff(resource.data).affectedKeys()
-                             .hasOnly(['reactions']);
+                             .hasOnly([
+                               'reactions.thumbs_up',
+                               'reactions.heart',
+                               'reactions.joy',
+                               'reactions.wow',
+                               'reactions.sad',
+                               'reactions.clap'
+                             ]);
       }
     }
 

@@ -1305,22 +1305,8 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId)
     const existing = Array.isArray(raw[reactionKey]) ? raw[reactionKey] : [];
     const hasReaction = existing.includes(userId);
 
-    const nextUsers = hasReaction
-        ? existing.filter(uid => uid !== userId)
-        : [...new Set([...existing, userId])];
-
-    const nextReactions = {};
-    CHAT_REACTIONS.forEach(({ key }) => {
-        const users = key === reactionKey
-            ? nextUsers
-            : (Array.isArray(raw[key]) ? raw[key] : []);
-        if (users.length > 0) {
-            nextReactions[key] = users;
-        }
-    });
-
     await updateDoc(messageRef, {
-        reactions: nextReactions
+        [`reactions.${reactionKey}`]: hasReaction ? arrayRemove(userId) : arrayUnion(userId)
     });
 
     return !hasReaction;
