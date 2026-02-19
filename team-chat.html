@@ -182,7 +182,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=19';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=20';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -332,7 +332,14 @@
         let voiceListening = false;
         let pendingImageFile = null;
         let activeReactionPickerMessageId = null;
+        let activeReactionInfo = null;
         const pendingReactionOps = new Set();
+        const reactionUserNameCache = new Map();
+        const reactionLongPress = {
+            timer: null,
+            key: null,
+            suppressUntil: 0
+        };
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
@@ -435,6 +442,7 @@
                 if (olderBatch.length > 0) {
                     olderMessages = [...olderBatch, ...olderMessages];
                     await hydrateSenderPhotos(olderBatch);
+                    await hydrateReactionUserNames(olderBatch);
                     messages = [...olderMessages, ...liveMessages];
                 }
 
@@ -474,6 +482,7 @@
                 }
 
                 await hydrateSenderPhotos(liveMessages);
+                await hydrateReactionUserNames(liveMessages);
                 messages = [...olderMessages, ...liveMessages];
                 renderMessages();
                 updateLoadMoreButton();
@@ -560,6 +569,38 @@
             });
         }
 
+        async function hydrateReactionUserNames(messageList) {
+            const missing = new Set();
+            messageList.forEach((msg) => {
+                const reactions = normalizeMessageReactions(msg);
+                Object.values(reactions).forEach((users) => {
+                    users.forEach((uid) => {
+                        if (uid && uid !== currentUser.uid && !reactionUserNameCache.has(uid)) {
+                            missing.add(uid);
+                        }
+                    });
+                });
+            });
+
+            if (missing.size === 0) return;
+
+            await Promise.all(Array.from(missing).map(async (uid) => {
+                try {
+                    const profile = await getUserProfile(uid);
+                    const name = profile?.fullName || profile?.displayName || profile?.email || `User ${uid.slice(0, 6)}`;
+                    reactionUserNameCache.set(uid, name);
+                } catch (_) {
+                    reactionUserNameCache.set(uid, `User ${uid.slice(0, 6)}`);
+                }
+            }));
+        }
+
+        function getReactionNames(users) {
+            const names = users.map((uid) => (uid === currentUser.uid ? 'You' : (reactionUserNameCache.get(uid) || `User ${uid.slice(0, 6)}`)));
+            if (names.length <= 4) return names.join(', ');
+            return `${names.slice(0, 4).join(', ')} +${names.length - 4} more`;
+        }
+
         function normalizeMessageReactions(msg) {
             const source = (msg && typeof msg.reactions === 'object' && msg.reactions) ? msg.reactions : {};
             const normalized = {};
@@ -584,12 +625,29 @@
                     const count = users.length;
                     if (count === 0) return '';
                     const active = users.includes(currentUser.uid);
+                    const tooltipActive = activeReactionInfo?.messageId === msg.id && activeReactionInfo?.reactionKey === key;
+                    const tooltipText = escapeHtml(getReactionNames(users));
                     return `
-                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
-                            class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs transition ${active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}">
-                            <span>${emoji}</span>
-                            <span class="font-semibold">${count}</span>
-                        </button>
+                        <div class="relative" data-reaction-ui="true">
+                            <button type="button"
+                                onclick="window.reactToMessage('${msg.id}', '${key}')"
+                                onmouseenter="window.showReactionInfo('${msg.id}', '${key}')"
+                                onmouseleave="window.hideReactionInfo('${msg.id}', '${key}')"
+                                onfocus="window.showReactionInfo('${msg.id}', '${key}')"
+                                onblur="window.hideReactionInfo('${msg.id}', '${key}')"
+                                ontouchstart="window.startReactionLongPress(event, '${msg.id}', '${key}')"
+                                ontouchend="window.endReactionLongPress()"
+                                ontouchcancel="window.endReactionLongPress()"
+                                class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs transition ${active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}">
+                                <span>${emoji}</span>
+                                <span class="font-semibold">${count}</span>
+                            </button>
+                            ${tooltipActive ? `
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-30 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap shadow-lg" data-reaction-ui="true">
+                                    ${tooltipText}
+                                </div>
+                            ` : ''}
+                        </div>
                     `;
                 })
                 .filter(Boolean)
@@ -597,7 +655,7 @@
 
             const pickerOpen = activeReactionPickerMessageId === msg.id;
             const picker = pickerOpen ? `
-                <div class="mt-1.5 inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-gray-200 bg-white shadow-sm" data-reaction-ui="true">
+                <div class="absolute bottom-full ${isOwn ? 'right-0' : 'left-0'} mb-2 inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-gray-200 bg-white shadow-lg z-20" data-reaction-ui="true">
                     ${CHAT_REACTIONS.map(({ key, emoji }) => `
                         <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
                             class="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
@@ -608,16 +666,18 @@
             ` : '';
 
             const alignClass = isOwn ? 'justify-end' : 'justify-start';
-            const addBtnState = pickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100';
+            const addBtnState = pickerOpen ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100';
             return `
                 <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-reaction-ui="true">
-                    ${pills}
-                    <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
-                        class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200 transition ${addBtnState}">
-                        <span class="text-sm">😊</span>
-                    </button>
+                    <div class="relative inline-flex items-center gap-1.5" data-reaction-ui="true">
+                        ${pills}
+                        <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
+                            class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200 transition ${addBtnState}">
+                            <span class="text-sm">😊</span>
+                        </button>
+                        ${picker}
+                    </div>
                 </div>
-                ${picker}
             `;
         }
 
@@ -1255,7 +1315,43 @@
 
         window.toggleReactionPicker = function(messageId) {
             activeReactionPickerMessageId = activeReactionPickerMessageId === messageId ? null : messageId;
+            activeReactionInfo = null;
             renderMessages();
+        };
+
+        window.showReactionInfo = function(messageId, reactionKey) {
+            if (activeReactionInfo?.messageId === messageId && activeReactionInfo?.reactionKey === reactionKey) return;
+            activeReactionInfo = { messageId, reactionKey };
+            renderMessages();
+        };
+
+        window.hideReactionInfo = function(messageId, reactionKey) {
+            if (!activeReactionInfo) return;
+            if (activeReactionInfo.messageId !== messageId || activeReactionInfo.reactionKey !== reactionKey) return;
+            activeReactionInfo = null;
+            renderMessages();
+        };
+
+        window.startReactionLongPress = function(event, messageId, reactionKey) {
+            if (!event?.touches || event.touches.length !== 1) return;
+            if (reactionLongPress.timer) {
+                clearTimeout(reactionLongPress.timer);
+                reactionLongPress.timer = null;
+            }
+            const opKey = `${messageId}:${reactionKey}`;
+            reactionLongPress.key = opKey;
+            reactionLongPress.timer = setTimeout(() => {
+                reactionLongPress.suppressUntil = Date.now() + 650;
+                activeReactionInfo = { messageId, reactionKey };
+                renderMessages();
+            }, 450);
+        };
+
+        window.endReactionLongPress = function() {
+            if (reactionLongPress.timer) {
+                clearTimeout(reactionLongPress.timer);
+                reactionLongPress.timer = null;
+            }
         };
 
         window.reactToMessage = async function(messageId, reactionKey) {
@@ -1264,12 +1360,14 @@
             if (!CHAT_REACTION_BY_KEY.has(reactionKey)) return;
 
             const opKey = `${messageId}:${reactionKey}`;
+            if (reactionLongPress.key === opKey && Date.now() < reactionLongPress.suppressUntil) return;
             if (pendingReactionOps.has(opKey)) return;
             pendingReactionOps.add(opKey);
 
             try {
                 await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid);
                 activeReactionPickerMessageId = null;
+                activeReactionInfo = null;
             } catch (error) {
                 console.error('Error toggling reaction:', error);
                 showError('Failed to update reaction. Please try again.');
@@ -1312,6 +1410,7 @@
                 liveOldestDoc = null;
                 hasMoreMessages = true;
                 activeReactionPickerMessageId = null;
+                activeReactionInfo = null;
                 startRealtimeUpdates();
                 btn.disabled = false;
             });
@@ -1384,11 +1483,17 @@
                 if (!menu.contains(e.target) && e.target !== input) {
                     hideMentionMenu();
                 }
-                if (!e.target.closest('[data-reaction-ui="true"]') && activeReactionPickerMessageId !== null) {
+                if (!e.target.closest('[data-reaction-ui="true"]')) {
+                    const hadPicker = activeReactionPickerMessageId !== null;
+                    const hadInfo = activeReactionInfo !== null;
                     activeReactionPickerMessageId = null;
-                    renderMessages();
+                    activeReactionInfo = null;
+                    if (hadPicker || hadInfo) {
+                        renderMessages();
+                    }
                 }
             });
+            document.addEventListener('touchend', () => window.endReactionLongPress(), { passive: true });
             window.addEventListener('beforeunload', stopVoiceCapture);
             sendBtn.disabled = true;
             updateComposerState();
