@@ -313,6 +313,11 @@ service cloud.firestore {
                          request.resource.data.deleted == true &&
                          (resource.data.senderId == request.auth.uid ||
                           isTeamOwnerOrAdmin(teamId));
+
+        // Update for reactions: any team member can add/remove reactions only
+        allow update: if canAccessTeamChat(teamId) &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['reactions']);
       }
     }
 

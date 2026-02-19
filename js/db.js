@@ -34,6 +34,7 @@ import { getApp } from './vendor/firebase-app.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
 const startAfterQuery = startAfter;
+const CHAT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '👏'];
 
 export async function uploadTeamPhoto(file) {
     console.log('Starting photo upload...', {
@@ -1275,6 +1276,31 @@ export async function deleteChatMessage(teamId, messageId) {
     return await updateDoc(messageRef, {
         deleted: true
     });
+}
+
+export async function toggleChatReaction(teamId, messageId, emoji, userId) {
+    if (!CHAT_REACTION_EMOJIS.includes(emoji)) {
+        throw new Error('Unsupported reaction emoji');
+    }
+    if (!userId) {
+        throw new Error('Missing userId for reaction');
+    }
+
+    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    const snap = await getDoc(messageRef);
+    if (!snap.exists()) {
+        throw new Error('Message not found');
+    }
+
+    const data = snap.data() || {};
+    const existing = Array.isArray(data?.reactions?.[emoji]) ? data.reactions[emoji] : [];
+    const hasReaction = existing.includes(userId);
+
+    await updateDoc(messageRef, {
+        [`reactions.${emoji}`]: hasReaction ? arrayRemove(userId) : arrayUnion(userId)
+    });
+
+    return !hasReaction;
 }
 
 /**
