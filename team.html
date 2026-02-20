@@ -151,8 +151,8 @@
                         <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Schedule</h2>
                         <div class="flex items-center gap-2 flex-wrap">
                             <div class="flex rounded-lg border border-gray-200 overflow-hidden">
-                                <button id="schedule-view-list" onclick="setScheduleView('list')" class="px-2.5 py-1 text-xs font-semibold bg-primary-600 text-white">List</button>
-                                <button id="schedule-view-calendar" onclick="setScheduleView('calendar')" class="px-2.5 py-1 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-100">Calendar</button>
+                                <button id="schedule-view-list" class="px-2.5 py-1 text-xs font-semibold bg-primary-600 text-white">List</button>
+                                <button id="schedule-view-calendar" class="px-2.5 py-1 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-100">Calendar</button>
                             </div>
                             <label
                                 class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-gray-200 hover:border-primary-300 transition">
@@ -173,17 +173,17 @@
                     </div>
                     <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
                         <div class="flex flex-wrap items-center gap-2">
-                            <button id="schedule-filter-recent-results" onclick="setScheduleFilter('recent-results')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">Recent Results</button>
-                            <button id="schedule-filter-upcoming-games" onclick="setScheduleFilter('upcoming-games')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Games</button>
-                            <button id="schedule-filter-upcoming-practices" onclick="setScheduleFilter('upcoming-practices')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Practices</button>
-                            <button id="schedule-filter-all-upcoming" onclick="setScheduleFilter('all-upcoming')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">All Upcoming</button>
-                            <button id="schedule-filter-past-events" onclick="setScheduleFilter('past-events')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
+                            <button id="schedule-filter-recent-results" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">Recent Results</button>
+                            <button id="schedule-filter-upcoming-games" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Games</button>
+                            <button id="schedule-filter-upcoming-practices" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Practices</button>
+                            <button id="schedule-filter-all-upcoming" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">All Upcoming</button>
+                            <button id="schedule-filter-past-events" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
                         </div>
                     </div>
                     <div id="schedule-calendar-nav" class="hidden px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-center gap-4">
-                        <button onclick="navScheduleMonth(-1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
+                        <button id="schedule-calendar-prev" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
                         <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
-                        <button onclick="navScheduleMonth(1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Next &rarr;</button>
+                        <button id="schedule-calendar-next" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Next &rarr;</button>
                     </div>
                     <div id="schedule-list" class="p-4 space-y-4">
                         <!-- Games will be displayed here -->
@@ -214,11 +214,11 @@
 
     <div id="footer-container"></div>
     <div id="schedule-day-modal" class="hidden fixed inset-0 z-50">
-        <div class="absolute inset-0 bg-black/50" onclick="closeScheduleDayModal()"></div>
+        <div id="schedule-day-modal-backdrop" class="absolute inset-0 bg-black/50"></div>
         <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
             <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
                 <h3 id="schedule-day-modal-title" class="text-lg font-bold text-gray-900"></h3>
-                <button onclick="closeScheduleDayModal()" class="text-gray-400 hover:text-gray-700">
+                <button id="schedule-day-modal-close" class="text-gray-400 hover:text-gray-700">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
@@ -261,6 +261,7 @@
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
+        let countdownIntervalId = null;
         let teamGames = [];
         let gamesById = {};
         let allScheduleEvents = [];
@@ -274,6 +275,31 @@
         window.navScheduleMonth = navScheduleMonth;
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
+
+        function renderNextGameBody(nextGame) {
+            if (!nextGame) return '<p class="text-sm text-gray-500">No upcoming games</p>';
+            return `
+                <div id="next-game-countdown" class="mb-2"></div>
+                <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
+                <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>
+            `;
+        }
+
+        function ensureCountdownTimer() {
+            if (countdownIntervalId) return;
+            countdownIntervalId = setInterval(updateCountdown, 60000);
+        }
+
+        function refreshSeasonOverviewNextGame() {
+            const bodyEl = document.getElementById('season-overview-next-game-body');
+            if (!bodyEl) return;
+            nextGameCountdown = getNextGame(allScheduleEvents || []);
+            bodyEl.innerHTML = renderNextGameBody(nextGameCountdown);
+            if (nextGameCountdown) {
+                updateCountdown();
+                ensureCountdownTimer();
+            }
+        }
 
         function mapLink(locationText) {
             if (!locationText) return null;
@@ -616,15 +642,10 @@
                 await renderSchedule(team, dbGames);
 
                 // After schedule is rendered, update season overview with next game info
-                let nextGame = null;
-                try {
-                    const allEventsForOverview = await getAllEvents(team, dbGames);
+                const nextGame = getNextGame(allScheduleEvents);
+                nextGameCountdown = nextGame;
 
-                    nextGame = getNextGame(allEventsForOverview);
-
-                    nextGameCountdown = nextGame;
-
-                    document.getElementById('season-overview').innerHTML = `
+                document.getElementById('season-overview').innerHTML = `
                     <!-- Season Record -->
                     <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
                         <div class="flex items-center justify-between mb-3">
@@ -654,12 +675,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                             </svg>
                         </div>
-                        ${nextGame
-                            ? `<div id="next-game-countdown" class="mb-2"></div>
-                               <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
-                               <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>`
-                            : `<p class="text-sm text-gray-500">No upcoming games</p>`
-                        }
+                        <div id="season-overview-next-game-body">${renderNextGameBody(nextGame)}</div>
                     </div>
 
                     <!-- Total Players -->
@@ -674,14 +690,11 @@
                         <p class="text-xs text-gray-500 mt-2">Active player${players.length === 1 ? '' : 's'}</p>
                     </div>
                 `;
-                } catch (err) {
-                    console.error('Error updating season overview:', err);
-                }
 
                 // Start countdown updates
                 if (nextGame) {
                     updateCountdown();
-                    setInterval(updateCountdown, 60000); // Update every minute
+                    ensureCountdownTimer();
                 }
 
                 await renderPlayingTimeInsights(teamId, team, players, dbGames);
@@ -1103,7 +1116,7 @@
                 const displayNum = inMonth ? dayNum : (dayNum <= 0 ? prevMonthDays + dayNum : dayNum - daysInMonth);
                 html += `
                     <div class="border-b border-r border-gray-100 p-1.5 ${inMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'} ${isToday ? 'ring-2 ring-primary-400 ring-inset' : ''} ${inMonth && dayEvents.length ? 'cursor-pointer hover:bg-primary-50' : ''}"
-                        ${inMonth && dayEvents.length ? `onclick="openScheduleDayModal(${scheduleCalendarYear}, ${scheduleCalendarMonth}, ${dayNum})"` : ''}>
+                        ${inMonth && dayEvents.length ? `data-schedule-year="${scheduleCalendarYear}" data-schedule-month="${scheduleCalendarMonth}" data-schedule-day="${dayNum}"` : ''}>
                         <div class="text-[11px] font-semibold ${isToday ? 'text-primary-700' : 'text-gray-600'}">${displayNum}</div>
                         <div class="mt-1 space-y-1">
                             ${dayEvents.slice(0, 2).map((ev) => `
@@ -1172,8 +1185,10 @@
                 const events = getFilteredScheduleEvents();
                 if (events.length > 0) {
                     const ref = events[0].date;
-                    scheduleCalendarMonth = ref.getMonth();
-                    scheduleCalendarYear = ref.getFullYear();
+                    if (ref instanceof Date && !Number.isNaN(ref.getTime())) {
+                        scheduleCalendarMonth = ref.getMonth();
+                        scheduleCalendarYear = ref.getFullYear();
+                    }
                 }
             }
             renderScheduleFromControls();
@@ -1419,6 +1434,26 @@
         document.getElementById('show-practices').addEventListener('change', (e) => {
             showPractices = e.target.checked;
             renderScheduleFromControls();
+            refreshSeasonOverviewNextGame();
+        });
+
+        document.getElementById('schedule-view-list')?.addEventListener('click', () => setScheduleView('list'));
+        document.getElementById('schedule-view-calendar')?.addEventListener('click', () => setScheduleView('calendar'));
+        document.getElementById('schedule-calendar-prev')?.addEventListener('click', () => navScheduleMonth(-1));
+        document.getElementById('schedule-calendar-next')?.addEventListener('click', () => navScheduleMonth(1));
+        document.getElementById('schedule-day-modal-backdrop')?.addEventListener('click', closeScheduleDayModal);
+        document.getElementById('schedule-day-modal-close')?.addEventListener('click', closeScheduleDayModal);
+        document.getElementById('schedule-calendar-grid')?.addEventListener('click', (event) => {
+            const dayCell = event.target.closest('[data-schedule-day]');
+            if (!dayCell) return;
+            const year = Number(dayCell.dataset.scheduleYear);
+            const month = Number(dayCell.dataset.scheduleMonth);
+            const day = Number(dayCell.dataset.scheduleDay);
+            if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return;
+            openScheduleDayModal(year, month, day);
+        });
+        ['recent-results', 'upcoming-games', 'upcoming-practices', 'all-upcoming', 'past-events'].forEach((id) => {
+            document.getElementById(`schedule-filter-${id}`)?.addEventListener('click', () => setScheduleFilter(id));
         });
 
         function showToast(message) {
