@@ -361,12 +361,7 @@ export async function updatePlayer(teamId, playerId, playerData) {
 }
 
 export async function deletePlayer(teamId, playerId) {
-    // Soft-delete: preserve historical references/stats while removing from active roster.
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
-        active: false,
-        deactivatedAt: Timestamp.now(),
-        updatedAt: Timestamp.now()
-    });
+    await deleteDoc(doc(db, `teams/${teamId}/players`, playerId));
 }
 
 export async function deactivatePlayer(teamId, playerId) {
@@ -2104,6 +2099,66 @@ export async function getLatestGameAssignments(teamId) {
 // RSVP / Availability
 // ============================================
 
+function normalizeRsvpResponse(response) {
+    if (response === 'going' || response === 'maybe' || response === 'not_going') {
+        return response;
+    }
+    return 'not_responded';
+}
+
+function uniqueNonEmptyIds(ids) {
+    if (!Array.isArray(ids)) return [];
+    return Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
+}
+
+function extractDirectRsvpPlayerIds(rsvp) {
+    const direct = uniqueNonEmptyIds(rsvp?.playerIds);
+    if (direct.length) return direct;
+    const legacy = [];
+    if (typeof rsvp?.playerId === 'string' && rsvp.playerId.trim()) legacy.push(rsvp.playerId.trim());
+    if (typeof rsvp?.childId === 'string' && rsvp.childId.trim()) legacy.push(rsvp.childId.trim());
+    return uniqueNonEmptyIds(legacy);
+}
+
+async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
+    const fallbackByUser = new Map();
+    const unresolvedUserIds = Array.from(new Set(
+        rsvps
+            .filter((rsvp) => extractDirectRsvpPlayerIds(rsvp).length === 0)
+            .map((rsvp) => rsvp?.userId || rsvp?.id)
+            .filter(Boolean)
+    ));
+    if (unresolvedUserIds.length === 0) return fallbackByUser;
+
+    await Promise.all(unresolvedUserIds.map(async (uid) => {
+        try {
+            const profile = await getUserProfile(uid);
+            const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+            const idsForTeam = uniqueNonEmptyIds(
+                parentLinks
+                    .filter((link) => link?.teamId === teamId)
+                    .map((link) => link?.playerId)
+            );
+            fallbackByUser.set(uid, idsForTeam);
+        } catch (err) {
+            if (err?.code === 'permission-denied') {
+                fallbackByUser.set(uid, []);
+                return;
+            }
+            throw err;
+        }
+    }));
+
+    return fallbackByUser;
+}
+
+function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
+    const direct = extractDirectRsvpPlayerIds(rsvp);
+    if (direct.length) return direct;
+    const uid = rsvp?.userId || rsvp?.id;
+    return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
@@ -2129,21 +2184,29 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // depending on team linkage state in profile claims/data.
     let summary = null;
     try {
-        const rsvps = await getRsvps(teamId, gameId);
+        const [rsvps, roster] = await Promise.all([
+            getRsvps(teamId, gameId),
+            getPlayers(teamId)
+        ]);
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+        const activeRosterIds = new Set(roster.map((player) => player.id));
         summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-        rsvps.forEach(r => {
-            if (r.response === 'going') summary.going++;
-            else if (r.response === 'maybe') summary.maybe++;
-            else if (r.response === 'not_going') summary.notGoing++;
+        rsvps.forEach((rsvp) => {
+            const responseKey = normalizeRsvpResponse(rsvp.response);
+            if (responseKey === 'not_responded') return;
+
+            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+                .filter((id) => activeRosterIds.has(id))
+                .length;
+            if (playerCount === 0) return;
+
+            if (responseKey === 'going') summary.going += playerCount;
+            else if (responseKey === 'maybe') summary.maybe += playerCount;
+            else if (responseKey === 'not_going') summary.notGoing += playerCount;
         });
         summary.total = summary.going + summary.maybe + summary.notGoing;
-        try {
-            const roster = await getPlayers(teamId);
-            summary.notResponded = Math.max(0, roster.length - summary.total);
-            summary.total = roster.length;
-        } catch (rosterErr) {
-            if (rosterErr?.code !== 'permission-denied') throw rosterErr;
-        }
+        summary.notResponded = Math.max(0, roster.length - summary.total);
+        summary.total = roster.length;
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
@@ -2174,9 +2237,10 @@ export async function getMyRsvp(teamId, gameId, userId) {
 
 export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     const [players, rsvps] = await Promise.all([
-        getPlayers(teamId),
+        getPlayers(teamId, { includeInactive: true }),
         getRsvps(teamId, gameId)
     ]);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
 
     const byPlayer = new Map();
     players.forEach((player) => {
@@ -2200,15 +2264,25 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     };
 
     rsvps.forEach((rsvp) => {
-        const ids = Array.isArray(rsvp.playerIds) ? rsvp.playerIds.filter(Boolean) : [];
+        const ids = resolveRsvpPlayerIds(rsvp, fallbackByUser);
         if (!ids.length) return;
         ids.forEach((playerId) => {
-            const existing = byPlayer.get(playerId);
-            if (!existing) return;
+            let existing = byPlayer.get(playerId);
+            if (!existing) {
+                existing = {
+                    playerId,
+                    playerName: 'Former Player',
+                    playerNumber: '',
+                    response: 'not_responded',
+                    respondedAt: null,
+                    note: null,
+                    responderUserId: null
+                };
+            }
             const existingMillis = toMillis(existing.respondedAt);
             const nextMillis = toMillis(rsvp.respondedAt);
             if (nextMillis < existingMillis) return;
-            existing.response = rsvp.response || 'not_responded';
+            existing.response = normalizeRsvpResponse(rsvp.response);
             existing.respondedAt = rsvp.respondedAt || null;
             existing.note = rsvp.note || null;
             existing.responderUserId = rsvp.userId || null;
