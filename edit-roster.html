@@ -343,7 +343,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deletePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount } from './js/db.js?v=14';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -406,7 +406,7 @@
 
         async function loadRoster() {
             const [players, games, allUsers] = await Promise.all([
-                getPlayers(currentTeamId),
+                getPlayers(currentTeamId, { includeInactive: true }),
                 getGames(currentTeamId),
                 getAllUsers()
             ]);
@@ -460,7 +460,7 @@
                             ` : '';
 
                 return `
-                <tr class="hover:bg-gray-50">
+                <tr class="hover:bg-gray-50 ${p.active === false ? 'bg-gray-50/60' : ''}">
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono align-middle">
                         <a class="text-gray-600 hover:text-indigo-700" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">${p.number || '-'}</a>
                     </td>
@@ -474,24 +474,37 @@
                                 `}
                                 </span>
                                 <span>${p.name}</span>
+                                ${p.active === false ? '<span class="inline-flex ml-2 text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Inactive</span>' : ''}
                             </a>
                             ${parentChips}
                         </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex items-center gap-3 justify-end">
-                            <button data-id="${p.id}" class="text-green-600 hover:text-green-800 invite-btn text-xs uppercase font-bold tracking-wide border border-green-200 bg-green-50 px-2 py-1 rounded">Invite Parent</button>
+                            <button data-id="${p.id}" class="text-green-600 hover:text-green-800 invite-btn text-xs uppercase font-bold tracking-wide border border-green-200 bg-green-50 px-2 py-1 rounded ${p.active === false ? 'opacity-50 cursor-not-allowed' : ''}" ${p.active === false ? 'disabled' : ''}>Invite Parent</button>
                             <button data-id="${p.id}" class="text-indigo-600 hover:text-indigo-800 edit-btn">Edit</button>
-                            <button data-id="${p.id}" class="text-red-600 hover:text-red-900 delete-btn">Delete</button>
+                            ${p.active === false
+                                ? `<button data-id="${p.id}" class="text-emerald-700 hover:text-emerald-900 reactivate-btn">Reactivate</button>`
+                                : `<button data-id="${p.id}" class="text-amber-700 hover:text-amber-900 deactivate-btn">Deactivate</button>`
+                            }
                         </div>
                     </td>
                 </tr>
             `;
             }).join('');
 
-            document.querySelectorAll('.delete-btn').forEach(btn => {
+            document.querySelectorAll('.deactivate-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    if (confirm('Are you sure you want to remove this player?')) {
-                        await deletePlayer(currentTeamId, e.target.dataset.id);
+                    if (confirm('Deactivate this player? This keeps all historical stats and reports.')) {
+                        await deactivatePlayer(currentTeamId, e.target.dataset.id);
+                        loadRoster();
+                    }
+                });
+            });
+
+            document.querySelectorAll('.reactivate-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    if (confirm('Reactivate this player on the roster?')) {
+                        await reactivatePlayer(currentTeamId, e.target.dataset.id);
                         loadRoster();
                     }
                 });
@@ -995,10 +1008,10 @@ EXAMPLES:
                         <div class="border border-red-300 bg-red-50 rounded-lg p-3" data-index="${index}">
                             <div class="flex justify-between items-start gap-2">
                                 <div class="flex-1">
-                                    <div class="text-xs font-bold text-red-700 uppercase mb-1">🗑️ Delete</div>
+                                    <div class="text-xs font-bold text-red-700 uppercase mb-1">⏸️ Deactivate</div>
                                     <div class="text-sm">
                                         Player ID: ${op.playerId}<br>
-                                        <span class="text-xs text-gray-600">${op.reason || 'Removed from roster'}</span>
+                                        <span class="text-xs text-gray-600">${op.reason || 'Deactivate from active roster (preserve history)'}</span>
                                     </div>
                                 </div>
                                 <button onclick="removePlayerOperation(${index})"
@@ -1061,7 +1074,13 @@ EXAMPLES:
                             await updatePlayer(currentTeamId, op.playerId, op.changes);
                             successCount++;
                         } else if (op.action === 'delete') {
-                            await deletePlayer(currentTeamId, op.playerId);
+                            await deactivatePlayer(currentTeamId, op.playerId);
+                            successCount++;
+                        } else if (op.action === 'deactivate') {
+                            await deactivatePlayer(currentTeamId, op.playerId);
+                            successCount++;
+                        } else if (op.action === 'reactivate') {
+                            await reactivatePlayer(currentTeamId, op.playerId);
                             successCount++;
                         }
                     } catch (error) {

@@ -222,6 +222,11 @@
                 .replace(/>/g, '&gt;');
         }
 
+        function formatRsvpSummary(summary) {
+            if (!summary) return 'No RSVPs yet.';
+            return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
+        }
+
         window.submitGameRsvp = async function(teamId, gameId, response) {
             try {
                 const playerIds = allScheduleEvents
@@ -238,7 +243,7 @@
                 if (game) {
                     game.myRsvp = response;
                     if (summary) game.rsvpSummary = summary;
-                    else if (!game.rsvpSummary) game.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, total: 0 };
+                    else if (!game.rsvpSummary) game.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
                 }
                 renderScheduleFromControls();
             } catch (err) {
@@ -294,10 +299,10 @@
                 const combinedSchedule = await buildCombinedSchedule(data.children);
                 allScheduleEvents = combinedSchedule;
 
-                // Fetch my RSVPs for game events (deduped by team/game).
+                // Fetch my RSVPs for tracked DB events (games + practices).
                 const uniqueGameKeys = [...new Set(
                     allScheduleEvents
-                        .filter((event) => event.type === 'game' && !event.isCancelled && event.teamId && event.id)
+                        .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
                         .map((event) => `${event.teamId}::${event.id}`)
                 )];
                 await Promise.all(uniqueGameKeys.map(async (key) => {
@@ -691,7 +696,7 @@
                                 ${dayEvents.slice(0, 3).map((ev) => `
                                     <div class="text-[10px] px-1 py-0.5 rounded truncate ${ev.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}">
                                         ${escapeHtml(ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`)}
-                                        ${ev.type === 'game' ? `<span class="ml-1 text-[9px] opacity-70">(${ev.rsvpSummary?.going || 0}/${ev.rsvpSummary?.maybe || 0}/${ev.rsvpSummary?.notGoing || 0})</span>` : ''}
+                                        ${ev.type === 'game' ? `<span class="ml-1 text-[9px] opacity-70">(${ev.rsvpSummary?.going || 0}/${ev.rsvpSummary?.maybe || 0}/${ev.rsvpSummary?.notGoing || 0}/${ev.rsvpSummary?.notResponded || 0})</span>` : ''}
                                     </div>
                                 `).join('')}
                                 ${dayEvents.length > 3 ? `<div class="text-[10px] text-gray-400">+${dayEvents.length - 3} more</div>` : ''}
@@ -735,19 +740,19 @@
                             ${ev.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = ev.arrivalTime?.toDate ? ev.arrivalTime.toDate() : new Date(ev.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
                             ${ev.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(ev.notes)}</div>` : ''}
                             ${ev.assignments && ev.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${ev.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
-                            ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${ev.rsvpSummary.going || 0} going · ${ev.rsvpSummary.maybe || 0} maybe · ${ev.rsvpSummary.notGoing || 0} can't go</div>` : ''}
+                            ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>` : ''}
                             ${ev.childNames?.length ? `<div class="text-xs text-gray-500 mt-1">For ${escapeHtml(ev.childNames.join(', '))}</div>` : ''}
-                            ${!ev.isCancelled && ev.type === 'game' ? `
+                            ${!ev.isCancelled && (ev.type === 'game' || ev.type === 'practice') ? `
                                 <div class="mt-3 border-t border-gray-100 pt-3">
-                                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                                     ${ev.isDbGame ? `
                                         <div class="flex gap-2">
                                             <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
                                             <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
                                             <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                                         </div>
-                                    ` : `<div class="text-xs text-gray-500">RSVP opens after coach tracks this event as a game.</div>`}
-                                    ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${ev.rsvpSummary.going || 0} going · ${ev.rsvpSummary.maybe || 0} maybe · ${ev.rsvpSummary.notGoing || 0} can't go</div>` : '<div class="text-xs text-gray-400 mt-1">No RSVPs yet.</div>'}
+                                    ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
+                                    <div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>
                                 </div>
                             ` : ''}
                             ${ev.isCancelled ? '<div class="text-xs text-red-700 mt-1 font-semibold">Cancelled</div>' : ''}
@@ -1185,17 +1190,17 @@
                             </div>
                         ` : ''}
                     </div>
-                    ${!isCancelled && game.type === 'game' ? `
+                    ${!isCancelled && (game.type === 'game' || game.type === 'practice') ? `
                         <div class="mt-3 border-t border-gray-100 pt-3">
-                            <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
+                            <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                             ${game.isDbGame ? `
                                 <div class="flex gap-2">
                                     <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
                                     <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
                                     <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                                 </div>
-                            ` : `<div class="text-xs text-gray-500">RSVP opens after coach tracks this event as a game.</div>`}
-                            ${game.rsvpSummary ? `<div class="text-[10px] text-gray-400 mt-1">${game.rsvpSummary.going || 0} going · ${game.rsvpSummary.maybe || 0} maybe · ${game.rsvpSummary.notGoing || 0} can't go</div>` : '<div class="text-[10px] text-gray-400 mt-1">No RSVPs yet.</div>'}
+                            ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
+                            <div class="text-[10px] text-gray-400 mt-1">${formatRsvpSummary(game.rsvpSummary)}</div>
                         </div>
                     ` : ''}
                     ${!isCancelled && game.isDbGame ? `
