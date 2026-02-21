@@ -101,6 +101,39 @@ require_bin() {
   }
 }
 
+is_placeholder_value() {
+  local value="${1:-}"
+  local lowered
+  lowered="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+
+  [[ -z "$value" ]] && return 0
+  [[ "$value" == "xoxb-your-token-here" ]] && return 0
+  [[ "$value" == "C0123456789" ]] && return 0
+  [[ "$value" == "U0123456789" ]] && return 0
+  [[ "$value" == *"your-token-here"* ]] && return 0
+  [[ "$lowered" == *"placeholder"* ]] && return 0
+  [[ "$lowered" == *"example"* ]] && return 0
+  [[ "$lowered" == *"changeme"* ]] && return 0
+  return 1
+}
+
+validate_slack_settings() {
+  [[ "$SLACK_NOTIFY_ENABLED" == "true" ]] || return 0
+
+  if is_placeholder_value "$SLACK_BOT_TOKEN"; then
+    log "invalid SLACK_BOT_TOKEN: set a real token instead of example/placeholder text"
+    exit 1
+  fi
+  if is_placeholder_value "$SLACK_NOTIFY_CHANNEL"; then
+    log "invalid SLACK_NOTIFY_CHANNEL: set a real channel ID instead of example/placeholder text"
+    exit 1
+  fi
+  if [[ -n "$SLACK_NOTIFY_FALLBACK_USER" ]] && is_placeholder_value "$SLACK_NOTIFY_FALLBACK_USER"; then
+    log "invalid SLACK_NOTIFY_FALLBACK_USER: set a real user ID or leave it empty"
+    exit 1
+  fi
+}
+
 count_open_tasks() {
   local file="$1"
   if [[ ! -f "$file" ]]; then
@@ -116,6 +149,8 @@ if ! flock -n 9; then
   log "nightly smoke job is already running; exiting"
   exit 0
 fi
+
+validate_slack_settings
 
 require_bin npm
 require_bin npx
