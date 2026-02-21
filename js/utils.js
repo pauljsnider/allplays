@@ -1,11 +1,24 @@
 export function getUrlParams() {
-  // Combine params from both search (?) and hash (#)
-  const searchParams = new URLSearchParams(window.location.search);
-  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+  // Combine params from both search (?) and hash (#).
+  // Some shared links arrive HTML-escaped (e.g. "&amp;"), so normalize first.
+  const normalizeParamString = (value) => {
+    if (!value) return '';
+    return value.replace(/^\?/, '').replace(/^#/, '').replace(/&amp;/gi, '&');
+  };
+
+  const searchParams = new URLSearchParams(normalizeParamString(window.location.search));
+  const hashParams = new URLSearchParams(normalizeParamString(window.location.hash));
 
   const params = {};
-  for (const [key, value] of searchParams) params[key] = value;
-  for (const [key, value] of hashParams) params[key] = value;
+  const collect = (entries) => {
+    for (const [rawKey, value] of entries) {
+      const key = rawKey.startsWith('amp;') ? rawKey.slice(4) : rawKey;
+      if (key) params[key] = value;
+    }
+  };
+
+  collect(searchParams);
+  collect(hashParams);
 
   return params;
 }
