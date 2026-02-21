@@ -1,0 +1,11 @@
+[Unit]
+Description=AllPlays nightly Playwright smoke test
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/allplays/nightly-playwright-smoke.env
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.openclaw/workspace/allplays/scripts/nightly-playwright-smoke.sh
+WorkingDirectory=%h/.openclaw/workspace/allplays
