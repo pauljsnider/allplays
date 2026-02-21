@@ -135,9 +135,9 @@ Success metric:
 
 ### Week 1
 - Day 1 (2026-02-23): finalize test architecture and CI shape
-  - [ ] Confirm suite taxonomy: `@smoke`, `@critical`, `@extended`
-  - [ ] Add CI job for `test:e2e:smoke`
-  - [ ] Add artifacts upload (report/trace on fail)
+  - [x] Confirm suite taxonomy: `@smoke`, `@critical`, `@extended`
+  - [x] Add CI job for `test:e2e:smoke`
+  - [x] Add artifacts upload (report/trace on fail)
 - Day 2 (2026-02-24): seed deterministic test data
   - [ ] Create base fixture users (admin/coach/parent)
   - [ ] Create base fixture team + schedule entries
@@ -182,7 +182,11 @@ Success metric:
 ### Foundation
 - [x] Playwright scaffold in repo
 - [x] First smoke test passing locally
-- [ ] CI smoke gate enabled
+- [x] CI smoke gate enabled (`.github/workflows/playwright-smoke.yml`)
+- [x] Nightly CI run enabled (`.github/workflows/playwright-nightly.yml`)
+- [x] Smoke test hardened — removed Firebase-dependent assertion, added `@smoke` tag
+- [x] `playwright.config.js` — CI-aware retries, workers, and reporter
+- [x] `data-testid` selector convention documented in `docs/playwright-setup.md`
 
 ### Integration (Playwright)
 - [ ] Auth + signup guardrails suite complete

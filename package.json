@@ -4,9 +4,11 @@
   "description": "A static HTML + JavaScript sports team management and stat tracking application, powered by Firebase.",
   "scripts": {
     "test:e2e": "playwright test",
-    "test:e2e:smoke": "playwright test tests/smoke/homepage.spec.js",
+    "test:e2e:smoke": "playwright test tests/smoke/",
+    "test:e2e:critical": "playwright test --grep @critical",
     "test:e2e:headed": "playwright test --headed",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "test:e2e:ui": "playwright test --ui"
   },
   "repository": {
     "type": "git",
