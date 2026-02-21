@@ -149,6 +149,7 @@
         let currentTeamFilter = '';
         let calendarMonth = new Date().getMonth();
         let calendarYear = new Date().getFullYear();
+        let playerIdsByTeam = new Map();
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
 
@@ -172,22 +173,25 @@
                 .replace(/>/g, '&gt;');
         }
 
+        function formatRsvpSummary(summary) {
+            if (!summary) return 'No RSVPs yet.';
+            return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
+        }
+
         function renderRsvpBlock(ev, compact = false) {
-            if (ev.type !== 'game' || ev.status === 'cancelled') return '';
-            const summary = ev.rsvpSummary
-                ? `${ev.rsvpSummary.going || 0} going · ${ev.rsvpSummary.maybe || 0} maybe · ${ev.rsvpSummary.notGoing || 0} can't go`
-                : 'No RSVPs yet.';
+            if ((ev.type !== 'game' && ev.type !== 'practice') || ev.status === 'cancelled') return '';
+            const summary = formatRsvpSummary(ev.rsvpSummary);
             if (ev.source !== 'db') {
                 return compact
-                    ? `<span class="text-[10px] text-gray-400">RSVP after tracking game</span>`
-                    : `<div class="mt-1 text-xs text-gray-400">RSVP opens after this event is tracked as a game.</div><div class="mt-1 text-xs text-gray-400">${summary}</div>`;
+                    ? `<span class="text-[10px] text-gray-400">Availability after tracking</span>`
+                    : `<div class="mt-1 text-xs text-gray-400">Availability opens after this event is tracked in the schedule.</div><div class="mt-1 text-xs text-gray-400">${summary}</div>`;
             }
             if (compact) {
                 return `<span class="text-[10px] text-gray-500">${summary}</span>`;
             }
             return `
                 <div class="mt-3 border-t border-gray-100 pt-3">
-                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">RSVP</div>
+                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                     <div class="flex gap-2">
                         <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
                         <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
@@ -214,6 +218,15 @@
 
                 const profile = await getUserProfile(user.uid);
                 const email = user.email || profile?.email;
+                const parentOf = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+                playerIdsByTeam = parentOf.reduce((acc, link) => {
+                    const teamId = link?.teamId;
+                    const playerId = link?.playerId;
+                    if (!teamId || !playerId) return acc;
+                    if (!acc.has(teamId)) acc.set(teamId, new Set());
+                    acc.get(teamId).add(playerId);
+                    return acc;
+                }, new Map());
 
                 // Load all teams the user has access to (coach + parent)
                 const [coachTeams, parentTeams] = await Promise.all([
@@ -306,9 +319,9 @@
                 const results = await Promise.all(loadPromises);
                 allEvents = results.flat().sort((a, b) => a.date - b.date);
 
-                // Fetch current user's RSVP for DB games.
-                const dbGames = allEvents.filter(ev => ev.source === 'db' && ev.type === 'game' && ev.status !== 'cancelled');
-                const uniqueGameKeys = [...new Set(dbGames.map(ev => `${ev.teamId}::${ev.id}`))];
+                // Fetch current user's RSVP for DB schedule events (games + practices).
+                const dbEvents = allEvents.filter(ev => ev.source === 'db' && (ev.type === 'game' || ev.type === 'practice') && ev.status !== 'cancelled');
+                const uniqueGameKeys = [...new Set(dbEvents.map(ev => `${ev.teamId}::${ev.id}`))];
                 await Promise.all(uniqueGameKeys.map(async (key) => {
                     const [teamId, gameId] = key.split('::');
                     try {
@@ -566,9 +579,12 @@
 
         async function submitCalendarRsvp(teamId, gameId, response) {
             try {
+                const playerIds = playerIdsByTeam.has(teamId)
+                    ? Array.from(playerIdsByTeam.get(teamId))
+                    : [];
                 const summary = await submitRsvp(teamId, gameId, currentUserId, {
                     displayName: currentUser?.displayName || currentUser?.email || null,
-                    playerIds: [],
+                    playerIds,
                     response
                 });
                 allEvents.forEach(ev => {
