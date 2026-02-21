@@ -178,7 +178,9 @@ log "starting nightly Playwright smoke run: id=$run_id open_tasks=$open_tasks"
 set +e
 (
   cd "$WORKDIR"
-  bash -lc "$TEST_CMD"
+  # Parse TEST_CMD into argv and run directly (no login shell/profile loading).
+  read -r -a test_cmd_argv <<<"$TEST_CMD"
+  "${test_cmd_argv[@]}"
 ) >"$run_log" 2>&1
 test_exit=$?
 set -e
