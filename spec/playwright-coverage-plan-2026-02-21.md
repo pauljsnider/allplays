@@ -10,11 +10,13 @@ Ship reliable, repeatable browser automation for critical user journeys with CI 
 - Manual test guides exist (`PR-TESTING-GUIDE.md`, feature task docs).
 - No automated Playwright suite was previously wired into the repo.
 - High-risk flows depend on browser + Firebase behavior (Auth, Firestore, role-gated UI).
+- No unit-test harness is currently wired for shared JS modules.
 
 ## Proposed State
 - Playwright runs in CI and locally.
 - Critical-path smoke and regression suites cover auth, role isolation, scheduling/tracking, and practice workflows.
 - Test data is deterministic via Firebase Emulator + seed fixtures.
+- Unit tests cover extracted pure logic (stat math, routing decisions, validation helpers) with fast feedback.
 
 ## Risk Surface and Blast Radius
 - Multi-tenant/role mistakes can expose cross-team data and parent/player details.
@@ -32,6 +34,44 @@ Prioritize integration coverage in chunks: high-risk, high-frequency flows first
 
 Tradeoff:
 - This delays broad long-tail coverage, but it sharply reduces risk in auth/data isolation and game-day workflows.
+
+## Unit Test Strategy
+
+### Problem We Are Solving
+Catch pure-logic regressions quickly without requiring full browser + emulator startup.
+
+### Tooling
+- Runner: `vitest`
+- Environment:
+  - `node` for pure utilities
+  - `jsdom` only where minimal DOM interaction is needed
+- Coverage: `@vitest/coverage-v8`
+
+### Scope (what to unit test first)
+- `js/utils.js`: date/time formatting, parsing, guards, mapping helpers
+- `js/db.js` extracted helpers: query option normalization, payload validation/sanitization helpers
+- Tracker logic (`track*.html`/`js/live-game.js`) after extraction into testable modules:
+  - stat aggregation math
+  - period/clock transformations
+  - tracker route decision helpers
+
+### Scope (what not to unit test)
+- Firebase SDK internals
+- Cross-page browser flows already covered by Playwright
+- Tailwind/UI layout behavior
+
+### Design Rule to Make Unit Testing Work
+- New logic goes into small exported modules under `js/lib/` with no direct `document` access.
+- Pages call these modules; modules are unit-tested directly.
+
+### Quality Gates
+- Unit tests run on every PR (`<2 min` target).
+- Playwright smoke runs on every PR.
+- Critical Playwright suite runs on PR (or required nightly until stable).
+
+### Coverage Targets by 2026-03-06
+- Unit: >= 80% on targeted helper modules introduced/extracted during this plan window.
+- Integration (Playwright): >= 70% of P0/P1 user journeys.
 
 ## Scope by Chunk (10 Working Days)
 
@@ -91,8 +131,81 @@ Success metric:
 Success metric:
 - Critical suite runtime <= 10 minutes; flaky rate < 2%.
 
+## Daily Plan (2 Weeks)
+
+### Week 1
+- Day 1 (2026-02-23): finalize test architecture and CI shape
+  - [ ] Confirm suite taxonomy: `@smoke`, `@critical`, `@extended`
+  - [ ] Add CI job for `test:e2e:smoke`
+  - [ ] Add artifacts upload (report/trace on fail)
+- Day 2 (2026-02-24): seed deterministic test data
+  - [ ] Create base fixture users (admin/coach/parent)
+  - [ ] Create base fixture team + schedule entries
+  - [ ] Validate emulator reset/seed script repeatability
+- Day 3 (2026-02-25): auth integration tests
+  - [ ] Login happy path
+  - [ ] Signup code accept/reject path
+  - [ ] Unauthorized route blocking checks
+- Day 4 (2026-02-26): access-control integration tests
+  - [ ] Parent/coach/admin nav and action visibility assertions
+  - [ ] Negative checks for forbidden actions
+  - [ ] Add stable test ids/selectors where needed
+- Day 5 (2026-02-27): schedule/tracker routing integration tests
+  - [ ] Basketball chooser modal decision path
+  - [ ] Non-basketball direct route path
+  - [ ] Calendar-originated game track path
+
+### Week 2
+- Day 6 (2026-03-02): unit test harness + first unit set
+  - [ ] Add `vitest` config + scripts
+  - [ ] Add unit tests for `js/utils.js` pure helpers
+  - [ ] Enforce pass in CI
+- Day 7 (2026-03-03): extract and unit-test tracker logic
+  - [ ] Extract stat math helpers to `js/lib/`
+  - [ ] Add unit tests for aggregation/clock edge cases
+  - [ ] Add fixtures for overtime/empty-stats edge cases
+- Day 8 (2026-03-04): practice + parent integration tests
+  - [ ] Drill CRUD happy path
+  - [ ] Practice attendance persistence path
+  - [ ] Parent packet completion + coach visibility rollup
+- Day 9 (2026-03-05): security/isolation hardening
+  - [ ] Cross-team data visibility negative tests
+  - [ ] Parent edit-boundary tests
+  - [ ] Admin-only operation guard tests
+- Day 10 (2026-03-06): stabilization and release criteria
+  - [ ] Flake triage + quarantine list
+  - [ ] Ensure critical runtime <= 10 minutes
+  - [ ] Publish summary metrics + remaining backlog
+
+## Trackable Task List (Master Checklist)
+
+### Foundation
+- [x] Playwright scaffold in repo
+- [x] First smoke test passing locally
+- [ ] CI smoke gate enabled
+
+### Integration (Playwright)
+- [ ] Auth + signup guardrails suite complete
+- [ ] Role/access-control suite complete
+- [ ] Schedule/tracker routing suite complete
+- [ ] Practice + parent workflow suite complete
+- [ ] Security/isolation negative suite complete
+
+### Unit Tests
+- [ ] `vitest` harness and coverage configured
+- [ ] `js/utils.js` unit tests complete
+- [ ] Extracted tracker logic unit tests complete
+- [ ] Query/payload helper unit tests complete
+
+### Reliability and Reporting
+- [ ] Suite tags and shard strategy finalized
+- [ ] Flake rate under 2%
+- [ ] Runtime targets met
+- [ ] Weekly evidence report published
+
 ## Coverage Targets by End of Week 2
 - Critical-path Playwright coverage: >= 70% of defined P0/P1 user journeys.
+- Unit coverage: >= 80% of targeted extracted helper modules.
 - PR gate: smoke + critical suite required.
 - Nightly run: full extended suite with report artifact.
 
@@ -115,9 +228,12 @@ Success metric:
 
 ## Owners, Dates, Outcomes
 - Owner: AllPlays engineering lead for rollout orchestration
-- Support: feature owners for fixture and selector hardening
+- Support:
+  - Feature owners for fixture and selector hardening
+  - QA partner for checklist tracking and evidence capture
 - Deadline: 2026-03-06 (two-week mark)
 - Outcomes:
   - Repeatable automation for high-risk workflows
+  - Fast unit guardrails for core business logic
   - Lower escaped regression rate
   - Auditable evidence for auth/access controls
