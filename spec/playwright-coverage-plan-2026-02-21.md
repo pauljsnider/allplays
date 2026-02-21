@@ -177,6 +177,13 @@ Success metric:
   - [ ] Ensure critical runtime <= 10 minutes
   - [ ] Publish summary metrics + remaining backlog
 
+## Nightly Throughput Targets (Automation)
+- New-test quota per nightly run: 10-20 tests
+- Preferred nightly target: 12 tests
+- Warning threshold: below 10 tests added (non-blocking)
+- Pacing: one checklist item batch per night into rolling PR
+- Two-week output goal: at least 140 net new tests
+
 ## Trackable Task List (Master Checklist)
 
 ### Foundation
