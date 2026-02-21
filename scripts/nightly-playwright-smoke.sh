@@ -153,6 +153,7 @@ if ! flock -n 9; then
   log "nightly smoke job is already running; exiting"
   exit 0
 fi
+trap 'exec 9>&-' EXIT
 
 validate_slack_settings
 
