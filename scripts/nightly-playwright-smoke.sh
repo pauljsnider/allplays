@@ -22,6 +22,41 @@ log() {
   printf '[%s] %s\n' "$(timestamp_utc)" "$*"
 }
 
+redact_sensitive() {
+  local input="$1"
+  local redacted="$input"
+
+  if [[ -n "$SLACK_BOT_TOKEN" ]]; then
+    redacted="${redacted//${SLACK_BOT_TOKEN}/[REDACTED_SLACK_BOT_TOKEN]}"
+  fi
+  # Best-effort masking for bearer tokens and Slack token formats in upstream errors.
+  redacted="$(sed -E \
+    -e 's/(Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/g' \
+    -e 's/xox[baprs]-[A-Za-z0-9-]+/[REDACTED_SLACK_TOKEN]/g' <<<"$redacted")"
+  printf '%s' "$redacted"
+}
+
+slack_api_post() {
+  local endpoint="$1"
+  local payload="$2"
+  local resp stderr_file curl_err
+
+  stderr_file="$(mktemp)"
+  resp="$(curl -sS -X POST "https://slack.com/api/${endpoint}" \
+    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+    -H "Content-Type: application/json; charset=utf-8" \
+    --data "$payload" \
+    2>"$stderr_file")"
+  if [[ $? -ne 0 ]]; then
+    curl_err="$(cat "$stderr_file" 2>/dev/null || true)"
+    rm -f "$stderr_file"
+    log "slack notify failed: curl error: $(redact_sensitive "$curl_err")"
+    return 1
+  fi
+  rm -f "$stderr_file"
+  printf '%s' "$resp"
+}
+
 slack_notify() {
   local text="$1"
   local resp ok err dm_resp dm_chan
@@ -32,12 +67,8 @@ slack_notify() {
     return 0
   fi
 
-  resp="$(curl -sS -X POST "https://slack.com/api/chat.postMessage" \
-    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-    -H "Content-Type: application/json; charset=utf-8" \
-    --data "$(jq -cn --arg ch "$SLACK_NOTIFY_CHANNEL" --arg t "$text" '{channel:$ch,text:$t}')" \
-  )" || {
-    log "slack notify failed: curl error"
+  resp="$(slack_api_post "chat.postMessage" \
+    "$(jq -cn --arg ch "$SLACK_NOTIFY_CHANNEL" --arg t "$text" '{channel:$ch,text:$t}')")" || {
     return 0
   }
 
@@ -47,23 +78,18 @@ slack_notify() {
   fi
 
   err="$(jq -r '.error // "unknown_error"' <<<"$resp" 2>/dev/null || echo unknown_error)"
-  log "slack notify failed: $err"
+  log "slack notify failed: $(redact_sensitive "$err")"
 
   if [[ "$err" != "not_in_channel" || -z "$SLACK_NOTIFY_FALLBACK_USER" ]]; then
     return 0
   fi
 
-  dm_resp="$(curl -sS -X POST "https://slack.com/api/conversations.open" \
-    -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-    -H "Content-Type: application/json; charset=utf-8" \
-    --data "$(jq -cn --arg u "$SLACK_NOTIFY_FALLBACK_USER" '{users:$u}')" \
-  )" || true
+  dm_resp="$(slack_api_post "conversations.open" \
+    "$(jq -cn --arg u "$SLACK_NOTIFY_FALLBACK_USER" '{users:$u}')")" || true
   dm_chan="$(jq -r '.channel.id // ""' <<<"$dm_resp" 2>/dev/null || true)"
   if [[ -n "$dm_chan" ]]; then
-    curl -sS -X POST "https://slack.com/api/chat.postMessage" \
-      -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-      -H "Content-Type: application/json; charset=utf-8" \
-      --data "$(jq -cn --arg ch "$dm_chan" --arg t "$text" '{channel:$ch,text:$t}')" \
+    slack_api_post "chat.postMessage" \
+      "$(jq -cn --arg ch "$dm_chan" --arg t "$text" '{channel:$ch,text:$t}')" \
       >/dev/null || true
   fi
 }
