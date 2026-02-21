@@ -21,9 +21,11 @@ test.describe('Auth + signup guardrails @critical', () => {
   test('invite code URL auto-switches into signup guardrail mode', async ({ page }) => {
     await page.goto('/login.html?code=abcd1234');
 
+    const activationCodeInput = page.locator('#activation-code');
+
     await expect(page.locator('#form-title')).toHaveText('Sign Up');
-    await expect(page.locator('#activation-code')).toHaveValue('ABCD1234');
-    await expect(page.locator('#activation-code')).not.toBeVisible();
+    await expect(page.locator('#activation-code-field')).toBeHidden();
+    await expect.poll(async () => activationCodeInput.inputValue()).toBe('ABCD1234');
     await expect(page.getByText("You've been invited to ALL PLAYS!")).toBeVisible();
   });
 
