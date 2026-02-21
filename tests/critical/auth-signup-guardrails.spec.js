@@ -22,8 +22,8 @@ test.describe('Auth + signup guardrails @critical', () => {
     await page.goto('/login.html?code=abcd1234');
 
     await expect(page.locator('#form-title')).toHaveText('Sign Up');
-    await expect(page.locator('#activation-code-field')).toBeHidden();
     await expect(page.locator('#activation-code')).toHaveValue('ABCD1234');
+    await expect(page.locator('#activation-code')).not.toBeVisible();
     await expect(page.getByText("You've been invited to ALL PLAYS!")).toBeVisible();
   });
 
