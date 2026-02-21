@@ -64,6 +64,28 @@ npx http-server .
 
 Open `http://localhost:8000` (or port shown) in your browser.
 
+## Automated Browser Testing (Playwright)
+
+Playwright smoke testing is configured for this repo.
+
+Quick start:
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:e2e:smoke
+```
+
+If you are on a non-root environment and hit missing Linux browser libraries, follow:
+- `docs/playwright-setup.md`
+
+## Nightly 3am Smoke Job
+
+A `systemd`-based nightly job template is included to run Playwright smoke tests at `03:00` local time and post status to Slack.
+
+See:
+- `docs/nightly-playwright-smoke-job.md`
+
 ## Admin Setup
 
 To grant admin access to a user:
