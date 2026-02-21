@@ -47,7 +47,8 @@ test.describe('Auth + signup guardrails @critical', () => {
 
     await page.locator('#google-btn').click();
 
-    await expect(page.locator('#error-message')).toBeVisible();
-    await expect(page.locator('#error-message')).toHaveText('Activation code is required for new accounts');
+    const errorMessage = page.locator('#error-message');
+    await errorMessage.waitFor({ state: 'visible', timeout: 5000 });
+    await expect(errorMessage).toHaveText('Activation code is required for new accounts');
   });
 });
