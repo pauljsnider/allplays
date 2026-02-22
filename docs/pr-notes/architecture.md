@@ -1,36 +1,24 @@
-# Architecture Role Notes (Issue #28)
+# Architecture Role Notes (PR #33 Clock Sync)
 
 ## Objective
-Implement issue #28 with minimal schema churn and rule-safe read patterns.
+Validate architecture impact of periodic live heartbeat sync and silent viewer reconciliation.
 
 ## Current Architecture
-- Drill library data in top-level `drillLibrary` collection.
-- Community listing: `getDrills()` constrained to `source == 'community'`.
-- Team custom listing: `getTeamDrills(teamId)`.
-- Practice timeline blocks: primarily `drill` and `structure`.
+- Tracker emits live events through `broadcastEvent(baseLiveEvent(...))`.
+- Viewer ingests live events and appends non-system events to play feed.
 
-## Proposed Architecture
-1. Query composition:
-- Keep existing `getDrills()` for seeded community documents.
-- Add `getPublishedDrills()` to fetch `publishedToCommunity == true` custom drills.
-- Merge and de-duplicate both sets in the UI Community tab.
+## Decision
+Keep event-driven sync approach with `clock_sync` as a system-only event.
 
-2. Cross-team My Drills:
-- Resolve accessible teams via `getUserTeamsWithAccess(userId, email)`.
-- Fetch `getTeamDrills(team.id)` for each team and merge/dedupe by drill ID.
+## Controls and Blast Radius
+- Current state blast radius: normal play events can drift when viewer joins late.
+- New state blast radius: bounded heartbeat every 5s; viewer UI state can self-heal without chat/feed spam.
+- Control equivalence: no expansion of access scope; same Firebase paths and auth controls.
 
-3. Upload resilience:
-- In `uploadDrillDiagram`, use `ensureImageAuth()` (non-hard-fail) and fallback to main storage on auth/authorization errors.
+## Tradeoffs
+1. Keep heartbeat (selected): predictable reconciliation with low event overhead.
+2. Increase heartbeat frequency: tighter sync but higher event volume.
+3. Snapshot-on-join only: lower volume but stale state until reconnect/refresh.
 
-4. Timeline block model extension:
-- Add `blockType: 'note'` as a first-class free-text timeline block.
-- Render/edit/save similarly to drill blocks, but with no linked `drillId`.
-- Prevent note blocks from being nested into structure children.
-
-5. Practice mode drill access:
-- Add an explicit `openCurrentPracticeDrill()` action that opens detail when current playback block has `drillId`.
-
-## Controls / Tradeoffs
-- Tradeoff: Community pagination currently still uses `getDrills` cursor; published custom drills are merged in initial load without dedicated cursor paging.
-- Benefit: avoids introducing complex multi-cursor state and preserves existing behavior for seeded community drills.
-- Control: query paths remain rule-safe and limited to signed-in allowed documents.
+## Rollback Plan
+- Revert commits `bb4c0a3` and/or `0a69b6f` if live event volume or client behavior regresses.

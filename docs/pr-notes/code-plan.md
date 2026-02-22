@@ -1,29 +1,23 @@
-# Code Role Plan Notes (Issue #28)
+# Code Role Notes (PR #33 Clock Sync)
 
 ## Objective
-Deliver a scoped implementation for issue #28 in `drills.html` and `js/db.js`.
+Determine whether additional code changes are required after positive review summary.
 
-## Plan
-1. Data/query changes (`js/db.js`)
-- Add `getPublishedDrills(options)` for published custom drill retrieval.
-- Harden `uploadDrillDiagram` with image-storage fallback to main storage.
+## Result
+No further code changes required for `js/live-game.js` or `js/live-tracker.js`.
 
-2. Library behavior (`drills.html`)
-- Import new query + team access helpers.
-- Community tab: merge `getDrills` + `getPublishedDrills` and dedupe.
-- My Drills tab: aggregate drills across all accessible teams.
+## Why
+- Reviewed branch diff vs `origin/master`: only intended clock-sync changes are present.
+- Review summary reported no blocking issues and aligns with code behavior.
+- Additional patch would add risk without clear requirement/evidence.
 
-3. Drill detail UX (`drills.html`)
-- Linkify instruction URLs.
-- For `drillYoutubeUrl`: embed YouTube, otherwise render clickable external resource link.
-- Update form label/help text to indicate non-YouTube links are supported.
+## Deliverables Updated
+- `docs/pr-notes/requirements.md`
+- `docs/pr-notes/architecture.md`
+- `docs/pr-notes/qa.md`
+- `docs/pr-notes/code-plan.md`
 
-4. Planning/Practice workflow (`drills.html`)
-- Add Free Text block action in structure picker.
-- Implement `blockType: 'note'` render/edit/save behavior.
-- Guard structure nesting to drills only.
-- Add Practice Mode “View Drill Details” button + handler for current playback block.
-
-5. Validation + PR
-- Run relevant test command(s).
-- Commit with issue-linked message and open PR including `Closes #28` and Role Summaries references.
+## Success Criteria
+- Branch remains merge-ready.
+- Role artifacts are current for PR #33 run.
+- Checks executed and recorded.
