@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "description": "A static HTML + JavaScript sports team management and stat tracking application, powered by Firebase.",
   "scripts": {
+    "test:unit": "vitest run",
+    "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test tests/smoke/",
     "test:e2e:critical": "playwright test --grep @critical",
@@ -27,6 +29,8 @@
   },
   "homepage": "https://github.com/pauljsnider/allplays#readme",
   "devDependencies": {
-    "@playwright/test": "^1.58.2"
+    "@playwright/test": "^1.58.2",
+    "@vitest/coverage-v8": "^4.0.18",
+    "vitest": "^4.0.18"
   }
 }
