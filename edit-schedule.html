@@ -590,6 +590,7 @@
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
+        import { buildTrackerHref, isBasketballConfig, resolveCalendarTrackRouting, resolveTrackGameRouting } from './js/schedule-tracker-routing.js?v=1';
         import { Timestamp } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -1286,23 +1287,6 @@
         let pendingTrackGameId = null;
         let pendingTrackIsBasketball = false;
 
-        // Helper function to check if a stat config is for basketball
-        function isBasketballConfig(configId) {
-            if (configId) {
-                const config = allConfigs.find(c => c.id === configId);
-                if (config) {
-                    return (config.baseType || '').toLowerCase() === 'basketball';
-                }
-            }
-            // If no config, infer from team sport
-            return (currentTeam?.sport || '').toLowerCase().includes('basketball');
-        }
-
-        function isBasketballForGame(game) {
-            if (!game) return false;
-            return isBasketballConfig(game.statTrackerConfigId);
-        }
-
         function closeBasketballTrackerModal() {
             document.getElementById('basketball-tracker-modal')?.classList.add('hidden');
             pendingTrackGameId = null;
@@ -1331,8 +1315,25 @@
 
         function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
-            if (!game) return;
-            openTrackerChoiceModal(gameId, isBasketballForGame(game));
+            const routing = resolveTrackGameRouting({
+                gameId,
+                game,
+                configs: allConfigs,
+                teamSport: currentTeam?.sport || '',
+                teamId: currentTeamId
+            });
+
+            if (routing.action === 'modal') {
+                openTrackerChoiceModal(
+                    routing.pendingGameId,
+                    isBasketballConfig(game?.statTrackerConfigId, allConfigs, currentTeam?.sport || '')
+                );
+                return;
+            }
+
+            if (routing.action === 'redirect') {
+                window.location.href = routing.href;
+            }
         }
 
         function renderDbGame(game) {
@@ -1975,7 +1976,23 @@
                     calendarEventUid: calendarEvent.uid
                 });
 
-                openTrackerChoiceModal(gameId, isBasketballConfig(configId));
+                const routing = resolveCalendarTrackRouting({
+                    configId,
+                    configs: allConfigs,
+                    teamSport: currentTeam?.sport || '',
+                    teamId: currentTeamId,
+                    gameId
+                });
+
+                if (routing.action === 'modal') {
+                    openTrackerChoiceModal(
+                        routing.pendingGameId,
+                        isBasketballConfig(configId, allConfigs, currentTeam?.sport || '')
+                    );
+                    return;
+                }
+
+                if (routing.action === 'redirect') window.location.href = routing.href;
             } catch (error) {
                 console.error('Error tracking game:', error);
                 alert('Error tracking game: ' + error.message);
@@ -2574,30 +2591,25 @@ PARSING RULES:
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;
             closeBasketballTrackerModal();
-            window.location.href = `track.html#teamId=${currentTeamId}&gameId=${gameId}`;
+            window.location.href = buildTrackerHref(currentTeamId, gameId, 'standard');
         });
         document.getElementById('basketball-tracker-beta')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;
             closeBasketballTrackerModal();
-            window.location.href = `track-basketball.html#teamId=${currentTeamId}&gameId=${gameId}`;
+            window.location.href = buildTrackerHref(currentTeamId, gameId, 'beta');
         });
         document.getElementById('basketball-tracker-live')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;
-            const isBasketball = pendingTrackIsBasketball;
             closeBasketballTrackerModal();
-            if (isBasketball) {
-                window.location.href = `live-tracker.html#teamId=${currentTeamId}&gameId=${gameId}`;
-            } else {
-                window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}`;
-            }
+            window.location.href = buildTrackerHref(currentTeamId, gameId, 'live');
         });
         document.getElementById('basketball-tracker-photo')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;
             closeBasketballTrackerModal();
-            window.location.href = `track-statsheet.html#teamId=${currentTeamId}&gameId=${gameId}`;
+            window.location.href = buildTrackerHref(currentTeamId, gameId, 'photo');
         });
         function showToast(message) {
             const toast = document.createElement('div');

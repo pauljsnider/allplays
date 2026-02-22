@@ -1568,7 +1568,9 @@ export function canAccessTeamChat(user, team) {
     if (team.ownerId === user.uid) return true;
 
     // Team admin (email in adminEmails)
-    if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {
+    const normalizedEmail = typeof user.email === 'string' ? user.email.toLowerCase() : '';
+    const adminEmails = (team.adminEmails || []).map(e => String(e || '').toLowerCase());
+    if (normalizedEmail && adminEmails.includes(normalizedEmail)) {
         return true;
     }
 
@@ -1576,7 +1578,7 @@ export function canAccessTeamChat(user, team) {
     if (user.isAdmin) return true;
 
     // Parent (has parentOf entry for this team)
-    if (user.parentOf?.some(p => p.teamId === team.id)) return true;
+    if (user.parentOf?.some(p => p?.teamId === team.id)) return true;
 
     return false;
 }
@@ -1593,7 +1595,9 @@ export function canModerateChat(user, team) {
     if (team.ownerId === user.uid) return true;
 
     // Team admin (email in adminEmails)
-    if (user.email && team.adminEmails?.map(e => e.toLowerCase()).includes(user.email.toLowerCase())) {
+    const normalizedEmail = typeof user.email === 'string' ? user.email.toLowerCase() : '';
+    const adminEmails = (team.adminEmails || []).map(e => String(e || '').toLowerCase());
+    if (normalizedEmail && adminEmails.includes(normalizedEmail)) {
         return true;
     }
 
