@@ -230,6 +230,7 @@
                                 <button onclick="addStructureBlock('scrimmage')" class="w-full text-left px-3 py-2 text-xs hover:bg-red-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500"></span> Scrimmage</button>
                                 <button onclick="addStructureBlock('cooldown')" class="w-full text-left px-3 py-2 text-xs hover:bg-purple-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-purple-500"></span> Cool-down</button>
                                 <button onclick="addStructureBlock('custom')" class="w-full text-left px-3 py-2 text-xs hover:bg-amber-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amber-500"></span> Custom</button>
+                                <button onclick="addFreeTextBlock()" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-slate-500"></span> Free Text</button>
                             </div>
                         </div>
                         <button onclick="saveAsTemplate()" class="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 flex items-center gap-1">
@@ -291,6 +292,9 @@
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z"/></svg>
                             </button>
                         </div>
+                        <button id="practice-open-drill-btn" onclick="openCurrentPracticeDrill()" class="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900/70 hover:bg-gray-900 px-4 py-2.5 text-sm font-medium text-gray-200 mb-4">
+                            View Drill Details
+                        </button>
                         <button id="practice-next-btn" onclick="practiceNext()" class="w-full max-w-md bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-500 hover:to-primary-600 text-white rounded-2xl px-6 py-5 flex items-center justify-between shadow-lg shadow-primary-500/20 transition-all hidden">
                             <div class="text-left">
                                 <p class="text-xs text-primary-200 uppercase tracking-wider font-medium">Next Up</p>
@@ -489,10 +493,10 @@
                             <textarea id="form-drill-instructions" rows="6" placeholder="Setup, exercise, progressions, coaching points..." class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm"></textarea>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700">YouTube Video URL</label>
-                            <input type="url" id="drillYoutubeUrl" placeholder="https://youtube.com/watch?v=..."
+                            <label class="block text-sm font-medium text-gray-700">Video or Resource URL</label>
+                            <input type="url" id="drillYoutubeUrl" placeholder="https://youtube.com/watch?v=... or https://kinoli.com/..."
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            <p class="text-xs text-gray-500 mt-1">Optional: Link a video demonstration</p>
+                            <p class="text-xs text-gray-500 mt-1">Optional: YouTube links embed inline; other links show as clickable resources.</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Diagrams / Images</label>
@@ -597,14 +601,14 @@
 
     <script type="module">
         import {
-            getTeam, getGames, getPlayers, getUserProfile,
+            getTeam, getGames, getPlayers, getUserProfile, getUserTeamsWithAccess,
             getGameEvents, getAggregatedStatsForGames,
-            getDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill, uploadDrillDiagram,
+            getDrills, getPublishedDrills, getTeamDrills, getDrill, createDrill, updateDrill, deleteDrill, uploadDrillDiagram,
             getDrillFavorites, addDrillFavorite, removeDrillFavorite,
             createPracticeSession, updatePracticeSession,
             getPracticeSessionByEvent, upsertPracticeSessionForEvent, updatePracticeAttendance, getPracticeSessions, getPracticePacketCompletions,
             savePracticeTemplate, getPracticeTemplates, deletePracticeTemplate
-        } from './js/db.js?v=20';
+        } from './js/db.js?v=21';
         import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { requireAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
@@ -709,10 +713,12 @@
         window.setChatIntentMode = setChatIntentMode;
         window.toggleStructurePicker = toggleStructurePicker;
         window.addStructureBlock = addStructureBlock;
+        window.addFreeTextBlock = addFreeTextBlock;
         window.toggleCanvasBlockEdit = toggleCanvasBlockEdit;
         window.saveCanvasBlockEdit = saveCanvasBlockEdit;
         window.openCanvasBlockDetail = openCanvasBlockDetail;
         window.openStructureChildDetail = openStructureChildDetail;
+        window.openCurrentPracticeDrill = openCurrentPracticeDrill;
         window.moveBlockIntoStructure = moveBlockIntoStructure;
         window.removeChildBlock = removeChildBlock;
         window.saveAsTemplate = saveAsTemplate;
@@ -1466,6 +1472,24 @@ ${JSON.stringify({
             return opts;
         }
 
+        async function getMyDrillsAcrossTeams() {
+            const teams = await getUserTeamsWithAccess(state.user.uid, state.user.email || null);
+            const teamMap = new Map((teams || []).map(t => [t.id, t.name || 'Team']));
+            const drillsById = new Map();
+            await Promise.all((teams || []).map(async (team) => {
+                const drills = await getTeamDrills(team.id);
+                drills.forEach((drill) => {
+                    if (!drill?.id) return;
+                    drillsById.set(drill.id, {
+                        ...drill,
+                        ownerTeamId: team.id,
+                        ownerTeamName: teamMap.get(team.id) || 'Team'
+                    });
+                });
+            }));
+            return [...drillsById.values()].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        }
+
         async function loadLibrary() {
             const container = document.getElementById('lib-cards');
             renderLibrarySkeleton();
@@ -1475,15 +1499,23 @@ ${JSON.stringify({
 
                 if (state.libTab === 'community') {
                     const opts = getCommunityLibraryFilters();
-                    const result = await getDrills(opts);
-                    drills = result.drills;
+                    const [result, published] = await Promise.all([
+                        getDrills(opts),
+                        getPublishedDrills({ ...opts, limitCount: 60 })
+                    ]);
+                    const byId = new Map();
+                    [...result.drills, ...published].forEach((drill) => {
+                        if (!drill?.id) return;
+                        byId.set(drill.id, drill);
+                    });
+                    drills = [...byId.values()].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
                     state.libLastDoc = result.lastDoc;
                     state.aiDrillContext = {
                         ...(state.aiDrillContext || {}),
                         community: drills.slice(0, 12)
                     };
                 } else if (state.libTab === 'mydrills') {
-                    drills = await getTeamDrills(state.teamId);
+                    drills = await getMyDrillsAcrossTeams();
                     state.aiDrillContext = {
                         ...(state.aiDrillContext || {}),
                         myDrills: drills.slice(0, 12)
@@ -1502,7 +1534,7 @@ ${JSON.stringify({
                 if (drills.length === 0) {
                     const msgs = {
                         community: 'No drills match your filters.',
-                        mydrills: "Your team hasn't created any drills yet.",
+                        mydrills: "No team drills found across your teams yet.",
                         favorites: 'No favorited drills yet.'
                     };
                     container.innerHTML = `<div class="col-span-full text-center py-12">
@@ -1585,7 +1617,7 @@ ${JSON.stringify({
 
             let teamDrills = [];
             try {
-                teamDrills = await getTeamDrills(state.teamId);
+                teamDrills = await getMyDrillsAcrossTeams();
             } catch (err) {
                 console.warn('Failed loading team drills for AI index:', err);
             }
@@ -1651,6 +1683,9 @@ ${JSON.stringify({
             const skills = (d.skills || []).slice(0, 3).map(s => `<span class="bg-gray-100 text-gray-600 text-[10px] px-2 py-0.5 rounded-full">${escapeHtml(s)}</span>`).join('');
             const dur = d.setup?.duration || '?';
             const players = d.setup?.players ? (typeof d.setup.players === 'object' ? `${d.setup.players.min}-${d.setup.players.max}` : d.setup.players) : '?';
+            const ownerTeamLabel = state.libTab === 'mydrills' && d.ownerTeamName
+                ? `<p class="text-[10px] text-indigo-600 mb-1">Team: ${escapeHtml(d.ownerTeamName)}</p>`
+                : '';
 
             return `<div class="bg-white rounded-xl border border-gray-200 shadow-sm card-hover overflow-hidden cursor-pointer" onclick="window._openDrill('${d.id}')">
                 <div class="p-4">
@@ -1659,6 +1694,7 @@ ${JSON.stringify({
                         <button onclick="event.stopPropagation(); window._toggleFav('${d.id}', this)" class="fav-btn">${favSvg}</button>
                     </div>
                     <h4 class="font-semibold text-gray-800 text-sm mb-1">${escapeHtml(d.title || 'Untitled')}</h4>
+                    ${ownerTeamLabel}
                     <p class="text-xs text-gray-500 mb-3 line-clamp-2">${escapeHtml(d.description || '')}</p>
                     <div class="flex flex-wrap gap-1 mb-3">${skills}</div>
                     <div class="flex items-center justify-between text-[10px] text-gray-400 border-t border-gray-100 pt-2">
@@ -1676,6 +1712,11 @@ ${JSON.stringify({
         function getBarClass(type) {
             const map = { 'Warm-up': 'bar-warmup', 'Tactical': 'bar-tactical', 'Technical': 'bar-technical', 'Physical': 'bar-physical', 'Game': 'bar-game' };
             return map[type] || 'bar-technical';
+        }
+
+        function renderLinkedText(text) {
+            const escaped = escapeHtml(text || '');
+            return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-primary-600 underline break-all">$1</a>');
         }
 
         // ==================== DRILL DETAIL ====================
@@ -1730,7 +1771,7 @@ ${JSON.stringify({
                 </div>
                 <div class="mb-6">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3">Instructions</h3>
-                    <div class="prose prose-sm text-gray-600 whitespace-pre-wrap">${escapeHtml(drill.instructions || 'No instructions provided.')}</div>
+                    <div class="prose prose-sm text-gray-600 whitespace-pre-wrap">${renderLinkedText(drill.instructions || 'No instructions provided.')}</div>
                 </div>
                 ${drill.homeVariant ? `<div class="bg-blue-50 rounded-xl p-4 mb-6 border border-blue-100">
                     <div class="flex items-center gap-2 mb-2">
@@ -1741,12 +1782,16 @@ ${JSON.stringify({
                 </div>` : ''}
                 ${(() => {
                     const embedUrl = getYoutubeEmbedUrl(drill.youtubeUrl);
+                    const externalUrl = drill.youtubeUrl ? escapeHtml(drill.youtubeUrl) : '';
                     return embedUrl ? `<div class="mb-6">
                         <h3 class="text-sm font-semibold text-gray-700 mb-3">Video Demonstration</h3>
                         <div class="relative w-full" style="padding-bottom:56.25%;">
                             <iframe class="absolute inset-0 w-full h-full rounded-xl" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
                         </div>
-                    </div>` : '';
+                    </div>` : (externalUrl ? `<div class="mb-6">
+                        <h3 class="text-sm font-semibold text-gray-700 mb-3">External Drill Resource</h3>
+                        <a href="${externalUrl}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 text-sm text-primary-700 font-medium underline break-all">${externalUrl}</a>
+                    </div>` : '');
                 })()}
                 ${(drill.diagramUrls && drill.diagramUrls.length) ? `<div class="mb-6">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3">Diagrams</h3>
@@ -1851,7 +1896,7 @@ ${JSON.stringify({
 
         async function openCanvasBlockDetail(index) {
             const block = state.canvasBlocks[index];
-            if (!block || block.blockType === 'structure') return;
+            if (!block || block.blockType === 'structure' || block.blockType === 'note') return;
             if (!block.drillId) {
                 showToast('No linked drill details for this timeline item');
                 return;
@@ -2103,6 +2148,63 @@ ${JSON.stringify({
             </div>`;
         }
 
+        function renderFreeTextBlock(b, i) {
+            const title = (b.title || 'Free Text').trim() || 'Free Text';
+            const noteText = (b.notes || '').trim();
+            const editOpen = b._editing ? 'open' : '';
+            return `<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+                    data-block-index="${i}"
+                    ondragover="allowDropBlock(event)"
+                    ondrop="dropBlock(event, ${i})">
+                <div class="flex items-stretch">
+                    <div class="w-1.5 bg-slate-500 flex-shrink-0"></div>
+                    <div class="flex-1 p-3 min-w-0">
+                        <div class="flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2 mb-1">
+                            <div class="flex items-center gap-2 min-w-0 flex-1">
+                                <button type="button" class="drag-handle text-gray-300 hover:text-gray-500 hover:bg-gray-100 rounded p-1 -ml-1" draggable="true" ondragstart="startDragBlock(event, ${i})" ondragend="endDragBlock()" title="Drag to reorder">
+                                    <svg class="w-4 h-4 pointer-events-none" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM7 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 8a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM13 14a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                                </button>
+                                <span class="text-sm font-semibold text-gray-800 truncate">${escapeHtml(title)}</span>
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-slate-100 text-slate-700">Free Text</span>
+                            </div>
+                            <div class="flex items-center gap-1 sm:gap-2 shrink-0 ml-auto">
+                                <button onclick="moveCanvasBlock(${i}, -1)" ${i === 0 ? 'disabled' : ''} class="text-gray-300 hover:text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed" title="Move up">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+                                </button>
+                                <button onclick="moveCanvasBlock(${i}, 1)" ${i >= state.canvasBlocks.length - 1 ? 'disabled' : ''} class="text-gray-300 hover:text-gray-500 disabled:opacity-30 disabled:cursor-not-allowed" title="Move down">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                                </button>
+                                <input type="number" value="${Math.max(1, parseInt(b.duration, 10) || 5)}" min="1" max="120" class="w-12 text-center text-sm font-bold text-gray-500 border-none bg-transparent focus:bg-primary-50 focus:outline-none rounded" onchange="window._updateBlockDur(${i}, this.value)">
+                                <span class="text-xs text-gray-400">min</span>
+                                <button onclick="toggleCanvasBlockEdit(${i})" class="text-gray-300 hover:text-primary-500" title="Edit">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                                </button>
+                                <button onclick="removeCanvasBlock(${i})" class="text-gray-300 hover:text-red-400 ml-1">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        ${noteText ? `<p class="text-xs text-gray-600 ml-6 whitespace-pre-line">${escapeHtml(noteText)}</p>` : '<p class="text-xs text-gray-400 ml-6 italic">Add notes for game prep, reminders, or announcements.</p>'}
+                        <div class="canvas-edit-panel ${editOpen} ml-6 mt-2">
+                            <div class="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Title</label>
+                                    <input type="text" id="block-title-${i}" value="${escapeHtml(title)}" class="w-full text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-400">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-semibold text-gray-500 mb-0.5">Notes</label>
+                                    <textarea id="block-notes-${i}" rows="3" class="w-full text-xs px-2 py-1.5 border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-400" placeholder="What should we cover?">${escapeHtml(b.notes || '')}</textarea>
+                                </div>
+                                <div class="flex justify-end">
+                                    <button onclick="saveCanvasBlockEdit(${i})" class="px-3 py-1 text-xs font-medium rounded-lg bg-primary-600 text-white hover:bg-primary-700">Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
         function renderCanvas() {
             const container = document.getElementById('canvas-blocks');
             const empty = document.getElementById('canvas-empty');
@@ -2124,6 +2226,9 @@ ${JSON.stringify({
             html += state.canvasBlocks.map((b, i) => {
                 if (b.blockType === 'structure') {
                     return `${renderStructureBlock(b, i)}${dropZone(i + 1)}`;
+                }
+                if (b.blockType === 'note') {
+                    return `${renderFreeTextBlock(b, i)}${dropZone(i + 1)}`;
                 }
                 return `${renderDrillBlock(b, i)}${dropZone(i + 1)}`;
             }).join('');
@@ -2148,9 +2253,11 @@ ${JSON.stringify({
 
         function saveCanvasBlockEdit(index) {
             const b = state.canvasBlocks[index];
+            const titleEl = document.getElementById(`block-title-${index}`);
             const instrEl = document.getElementById(`block-instructions-${index}`);
             const durEl = document.getElementById(`block-duration-${index}`);
             const notesEl = document.getElementById(`block-notes-${index}`);
+            if (titleEl && b.blockType === 'note') b.title = titleEl.value.trim() || 'Free Text';
             if (instrEl) b.customInstructions = instrEl.value.trim();
             if (durEl && b.blockType !== 'structure') b.duration = parseInt(durEl.value, 10) || b.duration;
             if (notesEl) b.notes = notesEl.value.trim();
@@ -2195,6 +2302,19 @@ ${JSON.stringify({
             showToast(`Added ${label} structure block`);
         }
 
+        function addFreeTextBlock() {
+            document.getElementById('structure-picker').classList.add('hidden');
+            state.canvasBlocks.push({
+                blockType: 'note',
+                title: 'Free Text',
+                duration: 5,
+                notes: '',
+                customInstructions: ''
+            });
+            renderCanvas();
+            showToast('Added Free Text block');
+        }
+
         function updateStructureField(index, field, value) {
             state.canvasBlocks[index][field] = value;
         }
@@ -2215,7 +2335,7 @@ ${JSON.stringify({
             const sourceIndex = sourceIndexRaw !== '' ? parseInt(sourceIndexRaw, 10) : draggedBlockIndex;
             if (Number.isNaN(sourceIndex) || sourceIndex === null || sourceIndex === structureIndex) return;
             const block = state.canvasBlocks[sourceIndex];
-            if (!block || block.blockType === 'structure') return; // Don't nest structures
+            if (!block || block.blockType !== 'drill') return; // Only drills can be nested
             // Remove from top level and add to structure children
             state.canvasBlocks.splice(sourceIndex, 1);
             // Adjust structure index if source was before it
@@ -2224,12 +2344,12 @@ ${JSON.stringify({
             state.canvasBlocks[adjustedIndex].children.push(block);
             endDragBlock();
             renderCanvas();
-            showToast(`Moved "${block.drillTitle}" into structure block`);
+            showToast(`Moved "${block.drillTitle || 'Drill'}" into structure block`);
         }
 
         function moveBlockIntoStructure(blockIndex, structureIndex) {
             const block = state.canvasBlocks[blockIndex];
-            if (!block || block.blockType === 'structure') return;
+            if (!block || block.blockType !== 'drill') return;
             state.canvasBlocks.splice(blockIndex, 1);
             const adjustedIndex = blockIndex < structureIndex ? structureIndex - 1 : structureIndex;
             if (!state.canvasBlocks[adjustedIndex].children) state.canvasBlocks[adjustedIndex].children = [];
@@ -3532,7 +3652,7 @@ ${userPrompt}
             }
             if (!state.aiDrillContext?.myDrills && state.accessLevel === 'full') {
                 try {
-                    const myDrills = await getTeamDrills(state.teamId);
+                    const myDrills = await getMyDrillsAcrossTeams();
                     state.aiDrillContext = {
                         ...(state.aiDrillContext || {}),
                         myDrills: myDrills.slice(0, 12)
@@ -4327,6 +4447,19 @@ ${userPrompt}
                     return;
                 }
 
+                if (b?.blockType === 'note') {
+                    blocks.push({
+                        drillTitle: b.title || 'Free Text',
+                        type: 'Free Text',
+                        duration: Math.max(1, parseInt(b.duration, 10) || 1),
+                        description: b.notes || '',
+                        notes: b.notes || '',
+                        notesLog: Array.isArray(b.notesLog) ? b.notesLog : [],
+                        _source: b
+                    });
+                    return;
+                }
+
                 blocks.push({
                     drillTitle: b.drillTitle || b.title || 'Drill',
                     type: b.type || 'Technical',
@@ -4373,6 +4506,7 @@ ${userPrompt}
                 document.getElementById('practice-timer').textContent = '0:00';
                 document.getElementById('practice-next-btn').classList.add('hidden');
                 document.getElementById('practice-note').classList.add('hidden');
+                document.getElementById('practice-open-drill-btn')?.classList.add('hidden');
                 return;
             }
 
@@ -4384,6 +4518,11 @@ ${userPrompt}
             document.getElementById('practice-type-badge').textContent = displayType;
             document.getElementById('practice-drill-title').textContent = displayTitle;
             document.getElementById('practice-drill-desc').textContent = displayDesc;
+            const openBtn = document.getElementById('practice-open-drill-btn');
+            if (openBtn) {
+                const hasLinkedDrill = !!b?._source?.drillId;
+                openBtn.classList.toggle('hidden', !hasLinkedDrill);
+            }
 
             state.practiceSecondsLeft = (b.duration || 1) * 60;
             updateTimerDisplay();
@@ -4417,6 +4556,16 @@ ${userPrompt}
             const elapsedMin = blocks.slice(0, idx).reduce((s, bl) => s + (bl.duration || 0), 0);
             document.getElementById('practice-progress-text').textContent = `${elapsedMin} of ${totalMin} min`;
             document.getElementById('practice-progress-bar').style.width = totalMin ? `${(elapsedMin / totalMin) * 100}%` : '0%';
+        }
+
+        async function openCurrentPracticeDrill() {
+            const block = getPracticePlaybackBlocks()[state.practiceIndex];
+            const drillId = block?._source?.drillId;
+            if (!drillId) {
+                showToast('No linked drill details for this block');
+                return;
+            }
+            await window._openDrill(drillId);
         }
 
         function practiceToggle() {
