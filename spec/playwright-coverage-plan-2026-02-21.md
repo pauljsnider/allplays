@@ -203,7 +203,7 @@ Success metric:
 - [x] Security/isolation negative suite complete
 
 ### Unit Tests
-- [ ] `vitest` harness and coverage configured
+- [x] `vitest` harness and coverage configured
 - [ ] `js/utils.js` unit tests complete
 - [ ] Extracted tracker logic unit tests complete
 - [ ] Query/payload helper unit tests complete
