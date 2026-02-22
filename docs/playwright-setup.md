@@ -43,10 +43,6 @@ export LD_LIBRARY_PATH="$HOME/.local/pw-libs/usr/lib/x86_64-linux-gnu:$HOME/.loc
 ### 3. Run tests locally
 
 ```bash
-# Unit tests (Vitest)
-npm run test:unit
-npm run test:unit:coverage
-
 # Smoke suite only (< 2 min)
 npm run test:e2e:smoke
 
@@ -62,8 +58,6 @@ npm run test:e2e:headed
 # View last HTML report
 npm run test:e2e:report
 ```
-
-`test:unit:coverage` writes reports to `coverage/unit/`.
 
 ---
 
