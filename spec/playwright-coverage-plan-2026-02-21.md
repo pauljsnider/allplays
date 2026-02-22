@@ -204,7 +204,7 @@ Success metric:
 
 ### Unit Tests
 - [x] `vitest` harness and coverage configured
-- [ ] `js/utils.js` unit tests complete
+- [x] `js/utils.js` unit tests complete
 - [ ] Extracted tracker logic unit tests complete
 - [ ] Query/payload helper unit tests complete
 

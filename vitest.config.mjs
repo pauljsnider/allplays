@@ -8,7 +8,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: 'coverage/unit',
-      include: ['js/schedule-tracker-routing.js']
+      include: ['js/schedule-tracker-routing.js', 'js/utils.js']
     }
   }
 });
