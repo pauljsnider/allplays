@@ -276,7 +276,7 @@ function renderPlayByPlay(event, isNew = false) {
   const card = document.createElement('div');
 
   // System events (clock, period changes) don't have a side
-  const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove', 'clock_sync'].includes(event.type);
+  const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove'].includes(event.type);
   const sideClass = isSystemEvent ? 'border-slate' : (event.isOpponent ? 'event-away' : 'event-home');
   card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${sideClass} ${isNew ? 'event-slide' : ''}`;
   const opponentLabel = [
@@ -724,18 +724,6 @@ function processNewEvents(events) {
     if (event.type === 'lineup') {
       return;
     }
-
-    // Tracker emits heartbeat events to keep late-joining viewers on an accurate clock.
-    // Apply score/period/clock updates but don't add feed noise.
-    if (event.type === 'clock_sync') {
-      if (event.homeScore !== undefined) state.homeScore = event.homeScore;
-      if (event.awayScore !== undefined) state.awayScore = event.awayScore;
-      if (event.period) state.period = event.period;
-      if (event.gameClockMs !== undefined) state.gameClockMs = event.gameClockMs;
-      renderScoreboard();
-      return;
-    }
-
     state.events.push(event);
 
     if (event.homeScore !== undefined) state.homeScore = event.homeScore;
