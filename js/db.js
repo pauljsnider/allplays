@@ -1693,6 +1693,40 @@ export async function getDrills(options = {}) {
 }
 
 /**
+ * Get drills published by teams to the community feed.
+ * Uses explicit query guards so Firestore rules evaluate safely for all documents.
+ * @param {Object} options - { sport, type, level, skill, searchText, limitCount }
+ * @returns {Promise<Array>}
+ */
+export async function getPublishedDrills(options = {}) {
+    const q = query(
+        collection(db, 'drillLibrary'),
+        where('publishedToCommunity', '==', true),
+        limitQuery(options.limitCount || 40)
+    );
+    const snapshot = await getDocs(q);
+    let drills = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data(), _doc: d }))
+        .filter(d => d.source === 'custom');
+    const term = options.searchText ? options.searchText.toLowerCase() : null;
+    if (options.sport) {
+        drills = drills.filter(d => d.sport === options.sport);
+    }
+    if (options.type) drills = drills.filter(d => d.type === options.type);
+    if (options.level) drills = drills.filter(d => d.level === options.level);
+    if (options.skill) drills = drills.filter(d => Array.isArray(d.skills) && d.skills.includes(options.skill));
+    if (term) {
+        drills = drills.filter(d =>
+            (d.title || '').toLowerCase().includes(term) ||
+            (d.description || '').toLowerCase().includes(term) ||
+            (d.skills || []).some(s => s.toLowerCase().includes(term))
+        );
+    }
+    drills.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    return drills;
+}
+
+/**
  * Get custom drills for a specific team
  */
 export async function getTeamDrills(teamId) {
@@ -1761,11 +1795,22 @@ export async function deleteDrill(drillId) {
 // ============================================
 
 export async function uploadDrillDiagram(drillId, file) {
-    await requireImageAuth();
+    await ensureImageAuth();
     const path = `drill-diagrams/${drillId}/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-    const snapshot = await uploadBytes(storageRef, file);
-    return await getDownloadURL(snapshot.ref);
+    try {
+        const storageRef = ref(imageStorage, path);
+        const snapshot = await uploadBytes(storageRef, file);
+        return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+            // Fallback to main storage to avoid hard failure when image bucket auth is unavailable.
+            const fallbackRef = ref(storage, path);
+            const snapshot = await uploadBytes(fallbackRef, file);
+            return await getDownloadURL(snapshot.ref);
+        }
+        throw error;
+    }
 }
 
 // ============================================
