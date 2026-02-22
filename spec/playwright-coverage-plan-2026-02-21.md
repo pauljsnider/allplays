@@ -177,6 +177,13 @@ Success metric:
   - [ ] Ensure critical runtime <= 10 minutes
   - [ ] Publish summary metrics + remaining backlog
 
+## Nightly Throughput Targets (Automation)
+- New-test quota per nightly run: 10-20 tests
+- Preferred nightly target: 12 tests
+- Warning threshold: below 10 tests added (non-blocking)
+- Pacing: one checklist item batch per night into rolling PR
+- Two-week output goal: at least 140 net new tests
+
 ## Trackable Task List (Master Checklist)
 
 ### Foundation
@@ -189,15 +196,15 @@ Success metric:
 - [x] `data-testid` selector convention documented in `docs/playwright-setup.md`
 
 ### Integration (Playwright)
-- [ ] Auth + signup guardrails suite complete
-- [ ] Role/access-control suite complete
-- [ ] Schedule/tracker routing suite complete
-- [ ] Practice + parent workflow suite complete
-- [ ] Security/isolation negative suite complete
+- [x] Auth + signup guardrails suite complete
+- [x] Role/access-control suite complete
+- [x] Schedule/tracker routing suite complete
+- [x] Practice + parent workflow suite complete
+- [x] Security/isolation negative suite complete
 
 ### Unit Tests
-- [ ] `vitest` harness and coverage configured
-- [ ] `js/utils.js` unit tests complete
+- [x] `vitest` harness and coverage configured
+- [x] `js/utils.js` unit tests complete
 - [ ] Extracted tracker logic unit tests complete
 - [ ] Query/payload helper unit tests complete
 

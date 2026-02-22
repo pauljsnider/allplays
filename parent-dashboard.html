@@ -189,6 +189,7 @@
         import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=20';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
+        import { hasRecordedAttendance, hasHomePacket, getHomePacketBlocks, getHomePacketMinutes, getAttendanceBreakdown, getCompletedChildIds, countCompletedChildren, filterPracticePacketRows } from './js/practice-parent-workflow.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -257,18 +258,6 @@
             const gameId = btn?.dataset?.gameId || '';
             if (!teamId || !gameId) return;
             window.submitGameRsvp(teamId, gameId, response);
-        }
-
-        function hasRecordedAttendance(attendance) {
-            if (!attendance || !Array.isArray(attendance.players) || attendance.players.length === 0) return false;
-            if (attendance.editedAt) return true;
-            if ((attendance.checkedInCount ?? attendance.players.length) !== attendance.players.length) return true;
-            return attendance.players.some(p => (p.status && p.status !== 'present') || (typeof p.note === 'string' && p.note.trim()));
-        }
-
-        function hasHomePacket(session) {
-            const blocks = session?.homePacketContent?.blocks;
-            return !!(session?.homePacketGenerated && Array.isArray(blocks) && blocks.length > 0);
         }
 
         function toDateSafe(value) {
@@ -865,16 +854,10 @@
             const card = document.getElementById('practice-packets-card');
             const list = document.getElementById('practice-packets-list');
             if (!card || !list) return;
-            const now = new Date();
-            const recentCutoff = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-            let rows = (allPracticePacketSessions || []).filter(row => !selectedPlayerId || row.childIds.includes(selectedPlayerId));
-            if (practicePacketFilter === 'recent_upcoming') {
-                rows = rows.filter(row => row.date >= recentCutoff);
-                rows.sort((a, b) => a.date - b.date);
-            } else {
-                rows = rows.filter(row => row.date < recentCutoff);
-                rows.sort((a, b) => b.date - a.date);
-            }
+            const rows = filterPracticePacketRows(allPracticePacketSessions || [], {
+                filter: practicePacketFilter,
+                selectedPlayerId
+            });
             if (!rows.length) {
                 card.classList.remove('hidden');
                 list.innerHTML = `<div class="p-6 text-sm text-gray-500">No ${practicePacketFilter === 'past' ? 'past' : 'recent/upcoming'} practice attendance or home packet records.</div>`;
@@ -885,18 +868,17 @@
             list.innerHTML = rows.map((row) => {
                 const dateStr = row.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
                 const timeStr = row.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-                const blocks = Array.isArray(row.homePacket?.blocks) ? row.homePacket.blocks : [];
+                const blocks = getHomePacketBlocks(row.homePacket);
                 const homePacketReady = blocks.length > 0;
-                const totalMinutes = row.homePacket?.totalMinutes || blocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+                const totalMinutes = getHomePacketMinutes(row.homePacket);
                 const preview = blocks.slice(0, 3).map(b => b?.drillTitle || b?.title).filter(Boolean);
                 const names = [...row.childNames];
                 const att = row.attendance;
-                const attendanceReady = !!(att && Array.isArray(att.players) && att.players.length > 0);
-                const attSummary = attendanceReady
-                    ? `${att.players.filter(p => p.status === 'present' || p.status === 'late').length}/${att.players.length} present`
-                    : null;
-                const completionChildIds = new Set((row.completions || []).filter(c => c.status === 'completed').map(c => c.childId));
-                const completedCount = (row.children || []).filter(c => completionChildIds.has(c.id)).length;
+                const attendanceStats = getAttendanceBreakdown(att);
+                const attendanceReady = attendanceStats.recorded;
+                const attSummary = attendanceReady ? `${attendanceStats.presentLikeCount}/${attendanceStats.rosterSize} present` : null;
+                const completionChildIds = getCompletedChildIds(row.completions);
+                const completedCount = countCompletedChildren(row.children, row.completions);
                 practicePacketSessionMap.set(row.sessionId, row);
                 return `
                     <div class="p-5">
@@ -983,9 +965,9 @@
             if (!row || !row.homePacket || !Array.isArray(row.homePacket.blocks)) return;
             const content = document.getElementById('packet-preview-content');
             if (!content) return;
-            const blocks = row.homePacket.blocks;
-            const total = row.homePacket.totalMinutes || blocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
-            const completionChildIds = new Set((row.completions || []).filter(c => c.status === 'completed').map(c => c.childId));
+            const blocks = getHomePacketBlocks(row.homePacket);
+            const total = getHomePacketMinutes(row.homePacket);
+            const completionChildIds = getCompletedChildIds(row.completions);
             const completionControls = (row.children || []).map(child => {
                 const done = completionChildIds.has(child.id);
                 return `<button onclick="markPracticePacketComplete('${row.sessionId}', '${child.id}')" class="text-[11px] px-2 py-1 rounded border ${done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}">${done ? 'Completed' : 'Mark Complete'}: ${escapeHtml(child.name || 'Child')}</button>`;
@@ -1123,22 +1105,19 @@
                 const typeColor = game.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800';
                 const isCancelled = game.isCancelled;
                 const attendance = game.practiceAttendance || null;
-                const attendanceRecorded = game.type === 'practice' && hasRecordedAttendance(attendance);
+                const attendanceStats = game.type === 'practice'
+                    ? getAttendanceBreakdown(attendance)
+                    : { recorded: false, rosterSize: 0, presentLikeCount: 0, lateCount: 0, absentCount: 0 };
+                const attendanceRecorded = attendanceStats.recorded;
                 const homePacket = game.practiceHomePacket || null;
-                const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
+                const homePacketBlocks = getHomePacketBlocks(homePacket);
                 const homePacketReady = game.type === 'practice' && homePacketBlocks.length > 0;
-                const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+                const homePacketMinutes = getHomePacketMinutes(homePacket);
                 const homePacketPreview = homePacketBlocks.slice(0, 2).map(b => b?.drillTitle || b?.title).filter(Boolean);
-                const presentCount = attendanceRecorded
-                    ? attendance.players.filter(p => p.status === 'present' || p.status === 'late').length
-                    : 0;
-                const lateCount = attendanceRecorded
-                    ? attendance.players.filter(p => p.status === 'late').length
-                    : 0;
-                const absentCount = attendanceRecorded
-                    ? attendance.players.filter(p => p.status === 'absent').length
-                    : 0;
-                const rosterSize = attendanceRecorded ? attendance.players.length : 0;
+                const presentCount = attendanceStats.presentLikeCount;
+                const lateCount = attendanceStats.lateCount;
+                const absentCount = attendanceStats.absentCount;
+                const rosterSize = attendanceStats.rosterSize;
 
                 return `
                 <div class="p-6 hover:bg-gray-50 transition flex flex-col sm:flex-row gap-4 sm:items-center ${isCancelled ? 'opacity-60' : ''}">
