@@ -190,7 +190,7 @@ Success metric:
 
 ### Integration (Playwright)
 - [x] Auth + signup guardrails suite complete
-- [ ] Role/access-control suite complete
+- [x] Role/access-control suite complete
 - [ ] Schedule/tracker routing suite complete
 - [ ] Practice + parent workflow suite complete
 - [ ] Security/isolation negative suite complete
