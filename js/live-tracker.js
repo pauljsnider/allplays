@@ -6,6 +6,7 @@ import { checkAuth } from './auth.js?v=9';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
+import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -48,7 +49,9 @@ let state = {
   pendingIn: null,
   subQueue: [],
   queueMode: false,
-  history: []
+  history: [],
+  voiceListening: false,
+  activeVoiceRecognition: null
 };
 
 let liveState = {
@@ -223,6 +226,10 @@ const els = {
   oppInput: q('#opp-input-mobile'),
   oppAdd: q('#opp-add-mobile'),
   oppCards: q('#opp-cards-mobile'),
+  voiceNoteBtn: q('#voice-note-btn'),
+  voiceNoteHint: q('#voice-note-hint'),
+  liveNoteInput: q('#live-note-input'),
+  liveNoteAdd: q('#live-note-add'),
   homeFinal: q('#home-final'),
   awayFinal: q('#away-final'),
   notesFinal: q('#notes-final'),
@@ -272,6 +279,9 @@ async function safeGetDocs(ref, label = 'collection') {
 }
 
 function setTab(tab) {
+  if (tab !== 'live') {
+    stopActiveVoiceRecognition();
+  }
   els.panelLineup.classList.toggle('hidden', tab !== 'lineup');
   els.panelLive.classList.toggle('hidden', tab !== 'live');
   els.panelOpp.classList.toggle('hidden', tab !== 'opp');
@@ -841,6 +851,106 @@ function safeDecrement(currentValue, delta) {
 function addLog(text, undoData = null) {
   state.log.unshift({ text, ts: Date.now(), period: state.period, clock: formatClock(state.clock), undoData });
   renderLog();
+}
+
+function setVoiceNoteButtonLabel(isListening) {
+  if (!els.voiceNoteBtn) return;
+  els.voiceNoteBtn.textContent = isListening ? 'Stop voice note' : 'Start voice note';
+}
+
+function setVoiceNoteHint(isListening) {
+  if (!els.voiceNoteHint) return;
+  els.voiceNoteHint.textContent = isListening
+    ? 'Recording... tap Stop voice note when finished.'
+    : 'Tap Start voice note, speak, then tap Stop voice note.';
+}
+
+function stopActiveVoiceRecognition() {
+  if (state.activeVoiceRecognition && state.voiceListening) {
+    try { state.activeVoiceRecognition.stop(); } catch (_) {}
+  }
+  state.voiceListening = false;
+  state.activeVoiceRecognition = null;
+  setVoiceNoteButtonLabel(false);
+  setVoiceNoteHint(false);
+}
+
+function appendGameNote(text, type = 'text') {
+  const clean = normalizeGameNoteText(text);
+  if (!clean) return false;
+  if (els.notesFinal) {
+    els.notesFinal.value = appendGameSummaryLine(els.notesFinal.value, clean);
+  }
+  const logText = buildGameNoteLogText(clean, type);
+  if (logText) {
+    addLog(logText);
+    if (liveState.isLive) {
+      broadcastEvent(baseLiveEvent({
+        type: 'note',
+        description: logText,
+        note: clean,
+        noteType: type
+      }));
+    }
+  }
+  return true;
+}
+
+function addManualGameNote() {
+  if (!els.liveNoteInput) return;
+  const text = normalizeGameNoteText(els.liveNoteInput.value);
+  if (!text) return;
+  if (appendGameNote(text, 'text')) {
+    els.liveNoteInput.value = '';
+  }
+}
+
+function startVoiceNote() {
+  if (!isVoiceRecognitionSupported(window)) {
+    addLog('Voice notes not supported in this browser');
+    return;
+  }
+
+  if (state.voiceListening && state.activeVoiceRecognition) {
+    try {
+      state.activeVoiceRecognition.stop();
+    } catch (err) {
+      console.warn('Voice stop failed:', err);
+    }
+    return;
+  }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SR();
+  state.activeVoiceRecognition = recognition;
+  state.voiceListening = true;
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.continuous = false;
+
+  setVoiceNoteButtonLabel(true);
+  setVoiceNoteHint(true);
+
+  recognition.onresult = (e) => {
+    const transcript = e.results?.[0]?.[0]?.transcript || '';
+    if (!appendGameNote(transcript, 'voice')) {
+      addLog('No speech detected');
+    }
+  };
+  recognition.onerror = (event) => {
+    console.warn('Voice recognition error:', event);
+    if (event?.error !== 'no-speech' && event?.error !== 'aborted') {
+      addLog('Voice recognition failed');
+    }
+  };
+  recognition.onend = () => {
+    state.voiceListening = false;
+    state.activeVoiceRecognition = null;
+    setVoiceNoteButtonLabel(false);
+    setVoiceNoteHint(false);
+  };
+
+  recognition.start();
 }
 
 async function broadcastEvent(eventData) {
@@ -1751,6 +1861,20 @@ function attachEvents() {
   els.closeEmail.addEventListener('click', () => els.emailOutput.classList.add('hidden'));
   els.copyEmail.addEventListener('click', copyEmailToClipboard);
   els.clearLog.addEventListener('click', () => { state.log = []; renderLog(); });
+  if (els.voiceNoteBtn) {
+    els.voiceNoteBtn.addEventListener('click', startVoiceNote);
+  }
+  if (els.liveNoteAdd) {
+    els.liveNoteAdd.addEventListener('click', addManualGameNote);
+  }
+  if (els.liveNoteInput) {
+    els.liveNoteInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addManualGameNote();
+      }
+    });
+  }
   if (els.chatToggle) {
     els.chatToggle.addEventListener('click', toggleChat);
   }
@@ -2159,6 +2283,10 @@ async function init() {
     state.history = [];
     state.subQueue = [];
     state.queueMode = false;
+    state.voiceListening = false;
+    state.activeVoiceRecognition = null;
+    setVoiceNoteButtonLabel(false);
+    setVoiceNoteHint(false);
 
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
