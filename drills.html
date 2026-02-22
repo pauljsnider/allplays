@@ -613,6 +613,7 @@
         import { requireAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
+        import { mergeUniqueDrills, linkifySafeText } from './js/drills-issue28-helpers.js?v=1';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
 
@@ -1503,12 +1504,7 @@ ${JSON.stringify({
                         getDrills(opts),
                         getPublishedDrills({ ...opts, limitCount: 60 })
                     ]);
-                    const byId = new Map();
-                    [...result.drills, ...published].forEach((drill) => {
-                        if (!drill?.id) return;
-                        byId.set(drill.id, drill);
-                    });
-                    drills = [...byId.values()].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+                    drills = mergeUniqueDrills(result.drills, published);
                     state.libLastDoc = result.lastDoc;
                     state.aiDrillContext = {
                         ...(state.aiDrillContext || {}),
@@ -1715,8 +1711,7 @@ ${JSON.stringify({
         }
 
         function renderLinkedText(text) {
-            const escaped = escapeHtml(text || '');
-            return escaped.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-primary-600 underline break-all">$1</a>');
+            return linkifySafeText(text, escapeHtml);
         }
 
         // ==================== DRILL DETAIL ====================
