@@ -657,6 +657,7 @@
             homePacketLibraryOpen: false,
             homePacketCompletions: [],
             isSavingDrill: false,
+            lastDrillCloseBlockedToastAt: 0,
             practiceDrillCache: new Map(),
             // Practice mode
             practiceIndex: 0,
@@ -2770,7 +2771,14 @@ ${JSON.stringify({
         };
 
         function closeDrillForm(force = false) {
-            if (state.isSavingDrill && !force) return;
+            if (state.isSavingDrill && !force) {
+                const now = Date.now();
+                if ((now - state.lastDrillCloseBlockedToastAt) > 1200) {
+                    showToast('Save in progress. Please wait for it to finish.', 'success');
+                    state.lastDrillCloseBlockedToastAt = now;
+                }
+                return;
+            }
             document.getElementById('drill-form-modal').classList.add('hidden');
             state.formAiHistory = [];
             state.formDiagramUrls = [];
