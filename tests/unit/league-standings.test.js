@@ -25,6 +25,17 @@ const SAMPLE_STANDINGS_HTML = `
   </div>
 `;
 
+const SAMPLE_STANDINGS_HTML_SINGLE_QUOTE_ID = `
+  <table id='ctl00_ContentPlaceHolder1_StandingsResultsControl_standingsGrid_ctl00'>
+    <tr>
+      <th>Team</th><th>W</th><th>L</th>
+    </tr>
+    <tr>
+      <td>Red Hawks</td><td>3</td><td>2</td>
+    </tr>
+  </table>
+`;
+
 describe('league standings parser', () => {
   it('parses TeamSideline rows with W/L/T values', () => {
     const rows = parseTeamSidelineStandings(SAMPLE_STANDINGS_HTML);
@@ -56,5 +67,21 @@ describe('league standings parser', () => {
 
   it('returns empty results when no standings table exists', () => {
     expect(parseTeamSidelineStandings('<html><body>No standings here</body></html>')).toEqual([]);
+  });
+
+  it('parses standings table when id uses single quotes', () => {
+    const rows = parseTeamSidelineStandings(SAMPLE_STANDINGS_HTML_SINGLE_QUOTE_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      team: 'Red Hawks',
+      w: 3,
+      l: 2,
+      record: '3-2'
+    });
+  });
+
+  it('handles large non-table input safely', () => {
+    const payload = `${'x'.repeat(250000)}<div>${'y'.repeat(250000)}</div>`;
+    expect(parseTeamSidelineStandings(payload)).toEqual([]);
   });
 });

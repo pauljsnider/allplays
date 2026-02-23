@@ -28,20 +28,58 @@ export function normalizeTeamKey(value) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+function collectTableHtml(source) {
+  const html = String(source || '');
+  const lower = html.toLowerCase();
+  const tables = [];
+  let cursor = 0;
+
+  while (cursor < html.length) {
+    const tableOpen = lower.indexOf('<table', cursor);
+    if (tableOpen < 0) break;
+
+    const openEnd = lower.indexOf('>', tableOpen);
+    if (openEnd < 0) break;
+
+    const closeStart = lower.indexOf('</table>', openEnd + 1);
+    if (closeStart < 0) break;
+
+    const closeEnd = closeStart + '</table>'.length;
+    tables.push(html.slice(tableOpen, closeEnd));
+    cursor = closeEnd;
+  }
+
+  return tables;
+}
+
+function findStandingsTable(source) {
+  const tables = collectTableHtml(source);
+  if (tables.length === 0) return '';
+
+  const idRegex = /\bid\s*=\s*["'][^"']*standingsgrid[^"']*["']/i;
+  const teamHeaderRegex = /<th\b[^>]*>\s*Team\s*<\/th>/i;
+  const winsHeaderRegex = /<th\b[^>]*>\s*W\s*<\/th>/i;
+  const lossesHeaderRegex = /<th\b[^>]*>\s*L\s*<\/th>/i;
+
+  const byId = tables.find((tableHtml) => idRegex.test(tableHtml.slice(0, 600)));
+  if (byId) return byId;
+
+  return tables.find((tableHtml) => {
+    return teamHeaderRegex.test(tableHtml)
+      && winsHeaderRegex.test(tableHtml)
+      && lossesHeaderRegex.test(tableHtml);
+  }) || '';
+}
+
 export function parseTeamSidelineStandings(html) {
   const source = String(html || '');
-  const tableMatch = source.match(
-    /<table[^>]*id="[^"]*standingsGrid[^"]*"[^>]*>[\s\S]*?<\/table>/i
-  ) || source.match(
-    /<table[^>]*>[\s\S]*?<th[^>]*>\s*Team\s*<\/th>[\s\S]*?<th[^>]*>\s*W\s*<\/th>[\s\S]*?<th[^>]*>\s*L\s*<\/th>[\s\S]*?<\/table>/i
-  );
-
-  if (!tableMatch) return [];
+  const tableHtml = findStandingsTable(source);
+  if (!tableHtml) return [];
 
   const rows = [];
   const rowRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
   let rowMatch;
-  while ((rowMatch = rowRegex.exec(tableMatch[0])) !== null) {
+  while ((rowMatch = rowRegex.exec(tableHtml)) !== null) {
     const rowHtml = rowMatch[1];
     const cellMatches = [...rowHtml.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)];
     if (cellMatches.length < 3) continue;
