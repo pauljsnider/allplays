@@ -29,6 +29,7 @@ import {
     getDownloadURL
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -1796,17 +1797,15 @@ export async function deleteDrill(drillId) {
 
 export async function uploadDrillDiagram(drillId, file) {
     await ensureImageAuth();
-    const path = `drill-diagrams/${drillId}/${Date.now()}_${file.name}`;
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(drillId, file?.name, Date.now());
     try {
-        const storageRef = ref(imageStorage, path);
+        const storageRef = ref(imageStorage, imagePath);
         const snapshot = await uploadBytes(storageRef, file);
         return await getDownloadURL(snapshot.ref);
     } catch (error) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
-            // Fallback to main storage path used by other uploads in case image bucket auth/rules reject writes.
-            const safeName = String(file?.name || 'diagram').replace(/[^\w.\-]+/g, '_');
-            const fallbackPath = `team-photos/${Date.now()}_drill_${safeName}`;
+            // Match fallback behavior used by chat/stat-sheet uploads.
             const fallbackRef = ref(storage, fallbackPath);
             const snapshot = await uploadBytes(fallbackRef, file);
             return await getDownloadURL(snapshot.ref);
