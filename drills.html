@@ -273,6 +273,10 @@
                             <h2 id="practice-drill-title" class="text-3xl font-bold mt-3">No Drills</h2>
                             <p id="practice-drill-desc" class="text-gray-400 text-sm mt-1">Add drills to get started</p>
                         </div>
+                        <div id="practice-resource-panel" class="hidden w-full max-w-2xl mb-6 bg-gray-900 border border-gray-700 rounded-2xl p-4">
+                            <div class="text-xs uppercase tracking-wider text-gray-400 mb-2">Live Drill Resources</div>
+                            <div id="practice-resource-content" class="text-sm text-gray-200"></div>
+                        </div>
                         <div class="relative mb-6">
                             <div class="w-56 h-56 sm:w-64 sm:h-64 rounded-full border-4 border-primary-500 flex items-center justify-center bg-gray-800/50">
                                 <div class="text-center">
@@ -323,7 +327,7 @@
                             <div id="notes-panel-content">
                                 <div id="practice-note" class="bg-gray-900 rounded-xl px-4 py-3 border border-gray-700 mb-3 hidden">
                                     <p class="text-xs text-gray-400 mb-1">Coach Note</p>
-                                    <p id="practice-note-text" class="text-sm text-gray-200 whitespace-pre-line"></p>
+                                    <div id="practice-note-text" class="text-sm text-gray-200 space-y-1"></div>
                                 </div>
                                 <button id="voice-note-btn" onclick="startVoiceNote()" class="flex items-center gap-2 text-sm text-gray-400 hover:text-white">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
@@ -511,7 +515,7 @@
                             <span class="text-sm text-gray-700">Publish to Community Library</span>
                         </label>
                         <div class="flex gap-3 pt-2">
-                            <button type="submit" class="flex-1 px-4 py-2.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700">Save Drill</button>
+                            <button id="drill-form-save-btn" type="submit" class="flex-1 px-4 py-2.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700">Save Drill</button>
                             <button type="button" onclick="closeDrillForm()" class="px-4 py-2.5 bg-gray-100 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-200">Cancel</button>
                         </div>
                     </form>
@@ -652,6 +656,9 @@
             homePacketDragIndex: null,
             homePacketLibraryOpen: false,
             homePacketCompletions: [],
+            isSavingDrill: false,
+            lastDrillCloseBlockedToastAt: 0,
+            practiceDrillCache: new Map(),
             // Practice mode
             practiceIndex: 0,
             practiceRunning: false,
@@ -1714,6 +1721,71 @@ ${JSON.stringify({
             return linkifySafeText(text, escapeHtml);
         }
 
+        function normalizeHttpUrl(url) {
+            if (!url) return null;
+            const trimmed = String(url).trim();
+            if (!trimmed) return null;
+            if (/^https?:\/\//i.test(trimmed)) return trimmed;
+            return null;
+        }
+
+        function getPracticeBlockResourceSnapshot(block) {
+            const source = block?._source || {};
+            const fromCache = source.drillId ? state.practiceDrillCache.get(source.drillId) : null;
+            const merged = fromCache ? { ...source, ...fromCache } : source;
+            return {
+                drillId: merged.drillId || null,
+                instructions: merged.instructions || '',
+                youtubeUrl: normalizeHttpUrl(merged.youtubeUrl || merged.resourceUrl || ''),
+                notes: merged.notes || '',
+                customInstructions: merged.customInstructions || ''
+            };
+        }
+
+        function renderPracticeResourcePanel(block) {
+            const panel = document.getElementById('practice-resource-panel');
+            const content = document.getElementById('practice-resource-content');
+            if (!panel || !content) return;
+            const details = getPracticeBlockResourceSnapshot(block);
+            const lines = [];
+            if (details.instructions) lines.push(`<div class="mb-2">${renderLinkedText(details.instructions)}</div>`);
+            if (details.customInstructions) lines.push(`<div class="mb-2 text-indigo-200">${renderLinkedText(details.customInstructions)}</div>`);
+            if (details.notes) lines.push(`<div class="mb-2 text-gray-300">${renderLinkedText(details.notes)}</div>`);
+
+            const embedUrl = getYoutubeEmbedUrl(details.youtubeUrl);
+            if (embedUrl) {
+                lines.push(`<div class="relative w-full mt-2" style="padding-bottom:56.25%;">
+                    <iframe class="absolute inset-0 w-full h-full rounded-xl" src="${embedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                </div>`);
+            } else if (details.youtubeUrl) {
+                const safeUrl = escapeHtml(details.youtubeUrl);
+                lines.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="text-primary-300 underline break-all">${safeUrl}</a>`);
+            }
+
+            if (!lines.length) {
+                panel.classList.add('hidden');
+                content.innerHTML = '';
+                return;
+            }
+            content.innerHTML = lines.join('');
+            panel.classList.remove('hidden');
+        }
+
+        async function hydratePracticeDrillDetails(block) {
+            const drillId = block?._source?.drillId;
+            if (!drillId || state.practiceDrillCache.has(drillId)) return;
+            try {
+                const drill = await getDrill(drillId);
+                if (drill) state.practiceDrillCache.set(drillId, drill);
+                const activeBlock = getPracticePlaybackBlocks()[state.practiceIndex];
+                if (activeBlock?._source?.drillId === drillId) {
+                    renderPracticeResourcePanel(activeBlock);
+                }
+            } catch (err) {
+                console.warn('Failed to load drill details for practice mode:', err);
+            }
+        }
+
         // ==================== DRILL DETAIL ====================
         window._openDrill = async function(drillId) {
             try {
@@ -2019,8 +2091,8 @@ ${JSON.stringify({
                             </div>
                         </div>
                         <p class="text-xs text-gray-500 ml-6">${escapeHtml(b.description || '')}</p>
-                        ${b.customInstructions ? `<p class="text-xs text-indigo-600 ml-6 mt-1 italic">${escapeHtml(b.customInstructions)}</p>` : ''}
-                        ${b.notes ? `<p class="text-xs text-gray-400 ml-6 mt-1">${escapeHtml(b.notes)}</p>` : ''}
+                        ${b.customInstructions ? `<p class="text-xs text-indigo-600 ml-6 mt-1 italic whitespace-pre-wrap">${renderLinkedText(b.customInstructions)}</p>` : ''}
+                        ${b.notes ? `<p class="text-xs text-gray-400 ml-6 mt-1 whitespace-pre-wrap">${renderLinkedText(b.notes)}</p>` : ''}
                         <!-- Edit panel -->
                         <div class="canvas-edit-panel ${editOpen} ml-6 mt-2" onclick="event.stopPropagation()">
                             <div class="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
@@ -2179,7 +2251,7 @@ ${JSON.stringify({
                                 </button>
                             </div>
                         </div>
-                        ${noteText ? `<p class="text-xs text-gray-600 ml-6 whitespace-pre-line">${escapeHtml(noteText)}</p>` : '<p class="text-xs text-gray-400 ml-6 italic">Add notes for game prep, reminders, or announcements.</p>'}
+                        ${noteText ? `<p class="text-xs text-gray-600 ml-6 whitespace-pre-wrap">${renderLinkedText(noteText)}</p>` : '<p class="text-xs text-gray-400 ml-6 italic">Add notes for game prep, reminders, or announcements.</p>'}
                         <div class="canvas-edit-panel ${editOpen} ml-6 mt-2">
                             <div class="bg-gray-50 rounded-lg p-3 space-y-2 border border-gray-100">
                                 <div>
@@ -2698,7 +2770,15 @@ ${JSON.stringify({
             renderExistingDiagrams();
         };
 
-        function closeDrillForm() {
+        function closeDrillForm(force = false) {
+            if (state.isSavingDrill && !force) {
+                const now = Date.now();
+                if ((now - state.lastDrillCloseBlockedToastAt) > 1200) {
+                    showToast('Save in progress. Please wait for it to finish.', 'success');
+                    state.lastDrillCloseBlockedToastAt = now;
+                }
+                return;
+            }
             document.getElementById('drill-form-modal').classList.add('hidden');
             state.formAiHistory = [];
             state.formDiagramUrls = [];
@@ -2837,6 +2917,13 @@ ${text}
 
         async function submitDrillForm(e) {
             e.preventDefault();
+            if (state.isSavingDrill) return;
+            state.isSavingDrill = true;
+            const saveBtn = document.getElementById('drill-form-save-btn');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving...';
+            }
             const id = document.getElementById('form-drill-id').value;
             const youtubeUrl = document.getElementById('drillYoutubeUrl').value.trim();
             const data = {
@@ -2892,11 +2979,19 @@ ${text}
 
                 showToast(id ? 'Drill updated' : 'Drill created');
                 invalidateAiDrillUniverse();
-                closeDrillForm();
+                state.formAiHistory = [];
+                state.formDiagramUrls = [];
+                closeDrillForm(true);
                 closeDrillDetail();
                 setLibTab('mydrills');
             } catch (err) {
                 showToast('Failed to save drill: ' + err.message, 'error');
+            } finally {
+                state.isSavingDrill = false;
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save Drill';
+                }
             }
         }
 
@@ -4502,6 +4597,7 @@ ${userPrompt}
                 document.getElementById('practice-next-btn').classList.add('hidden');
                 document.getElementById('practice-note').classList.add('hidden');
                 document.getElementById('practice-open-drill-btn')?.classList.add('hidden');
+                document.getElementById('practice-resource-panel')?.classList.add('hidden');
                 return;
             }
 
@@ -4518,6 +4614,8 @@ ${userPrompt}
                 const hasLinkedDrill = !!b?._source?.drillId;
                 openBtn.classList.toggle('hidden', !hasLinkedDrill);
             }
+            renderPracticeResourcePanel(b);
+            hydratePracticeDrillDetails(b).catch(() => {});
 
             state.practiceSecondsLeft = (b.duration || 1) * 60;
             updateTimerDisplay();
@@ -4531,7 +4629,9 @@ ${userPrompt}
                     ...notesList.map(n => `• ${n.type === 'voice' ? '[Voice]' : '[Text]'} ${n.text || ''}`.trim()),
                     ...(noteText ? [`• ${noteText}`] : [])
                 ];
-                document.getElementById('practice-note-text').textContent = rendered.join('\n');
+                document.getElementById('practice-note-text').innerHTML = rendered
+                    .map(line => `<div>${renderLinkedText(line)}</div>`)
+                    .join('');
             } else {
                 document.getElementById('practice-note').classList.add('hidden');
             }
