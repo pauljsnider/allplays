@@ -39,26 +39,31 @@ redact_sensitive() {
 slack_api_post() {
   local endpoint="$1"
   local payload="$2"
-  local resp stderr_file curl_err curl_exit
+  local resp stderr_file resp_file curl_err curl_exit
 
   stderr_file="$(mktemp)"
-  if ! resp="$(curl -sS -X POST "https://slack.com/api/${endpoint}" \
+  resp_file="$(mktemp)"
+  if curl -sS -X POST "https://slack.com/api/${endpoint}" \
     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
     -H "Content-Type: application/json; charset=utf-8" \
     --data "$payload" \
-    2>"$stderr_file")"; then
+    >"$resp_file" \
+    2>"$stderr_file"; then
+    resp="$(cat "$resp_file" 2>/dev/null || true)"
+    rm -f "$stderr_file" "$resp_file"
+    printf '%s' "$resp"
+    return 0
+  else
     curl_exit=$?
     curl_err="$(cat "$stderr_file" 2>/dev/null || true)"
-    rm -f "$stderr_file"
+    rm -f "$stderr_file" "$resp_file"
     if [[ -n "$curl_err" ]]; then
-      log "slack notify failed: curl error (exit=${curl_exit}): $(redact_sensitive "$curl_err")"
+      log "slack notify failed: curl error (exit=${curl_exit}): $(redact_sensitive "$curl_err")" >&2
     else
-      log "slack notify failed: curl error (exit=${curl_exit})"
+      log "slack notify failed: curl error (exit=${curl_exit})" >&2
     fi
     return 1
   fi
-  rm -f "$stderr_file"
-  printf '%s' "$resp"
 }
 
 slack_notify() {
