@@ -231,6 +231,7 @@
     <script type="module">
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -282,6 +283,37 @@
                 <div id="next-game-countdown" class="mb-2"></div>
                 <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
                 <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>
+            `;
+        }
+
+        function renderLeagueOverviewBody(leagueSnapshot, team) {
+            const sourceUrl = team?.leagueUrl ? escapeHtml(team.leagueUrl) : '';
+            if (!sourceUrl) {
+                return '<p class="text-sm text-gray-500">No league link configured</p>';
+            }
+
+            if (!leagueSnapshot || !leagueSnapshot.ok) {
+                return `
+                    <p class="text-sm text-amber-700">Could not load standings</p>
+                    <a class="text-xs text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+                `;
+            }
+
+            const row = leagueSnapshot.match || leagueSnapshot.rows[0];
+            if (!row) {
+                return `
+                    <p class="text-sm text-amber-700">No W/L rows found</p>
+                    <a class="text-xs text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+                `;
+            }
+
+            return `
+                <div class="mb-2">
+                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
+                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • PCT ${escapeHtml(row.pct || 'N/A')}</div>
+                </div>
+                <div class="text-xs text-gray-500">PF ${row.pf} · PA ${row.pa} · PD ${row.pd}</div>
+                <a class="text-xs text-primary-600 hover:underline mt-2 inline-block" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
             `;
         }
 
@@ -628,6 +660,15 @@
                                     </a>`
                         : ''
                     }
+                                ${team.leagueUrl
+                        ? `<a class="inline-flex items-center gap-1 text-sm text-primary-700 hover:text-primary-800 transition" target="_blank" rel="noopener noreferrer" href="${escapeHtml(team.leagueUrl)}">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 000 5.656m-3.656-9.192l-3.536 3.536a4 4 0 000 5.656 4 4 0 005.656 0l1.414-1.414m-3.536-3.536l1.414-1.414a4 4 0 015.656 0 4 4 0 010 5.656l-3.536 3.536"></path>
+                                        </svg>
+                                        League Page
+                                    </a>`
+                        : ''
+                    }
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
                         </div>
@@ -637,6 +678,9 @@
                 // Render Season Overview Cards
                 const totalGames = dbGames.filter(g => g.status === 'completed').length;
                 const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+                const leagueSnapshot = team.leagueUrl
+                    ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
+                    : { ok: false, reason: 'missing-url', rows: [], match: null };
 
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
@@ -688,6 +732,17 @@
                         </div>
                         <div class="text-3xl md:text-4xl font-bold text-gray-900">${players.length}</div>
                         <p class="text-xs text-gray-500 mt-2">Active player${players.length === 1 ? '' : 's'}</p>
+                    </div>
+
+                    <!-- League Standings -->
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">League Standings</h3>
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-5m3 5V7m3 10v-3m4 8H5a2 2 0 01-2-2V4a2 2 0 012-2h14a2 2 0 012 2v16a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                        ${renderLeagueOverviewBody(leagueSnapshot, team)}
                     </div>
                 `;
 

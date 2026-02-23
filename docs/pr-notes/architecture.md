@@ -1,24 +1,27 @@
-# Architecture Role Notes (PR #33 Clock Sync)
+# Architecture Role Notes (League Link + Standings)
 
 ## Objective
-Validate architecture impact of periodic live heartbeat sync and silent viewer reconciliation.
+Add external league standings visibility without changing existing schedule ingestion or local scoring system behavior.
 
 ## Current Architecture
-- Tracker emits live events through `broadcastEvent(baseLiveEvent(...))`.
-- Viewer ingests live events and appends non-system events to play feed.
+- Team metadata is managed in `edit-team.html` and persisted by existing Firestore team write paths.
+- Team page computes season record from local game data only.
+- External schedule ingestion uses ICS parsing (`fetchAndParseCalendar`) and does not parse standings.
 
 ## Decision
-Keep event-driven sync approach with `clock_sync` as a system-only event.
+Introduce a separate league standings module (`js/league-standings.js`) and keep it orthogonal to ICS schedule ingestion.
 
 ## Controls and Blast Radius
-- Current state blast radius: normal play events can drift when viewer joins late.
-- New state blast radius: bounded heartbeat every 5s; viewer UI state can self-heal without chat/feed spam.
-- Control equivalence: no expansion of access scope; same Firebase paths and auth controls.
+- Current blast radius: local record visibility only.
+- New blast radius: read-only outbound fetch to league URL + proxy fallback attempts for standings parsing.
+- Control equivalence: no broadened team data access, no new write permissions, no schema migration requirement.
 
 ## Tradeoffs
-1. Keep heartbeat (selected): predictable reconciliation with low event overhead.
-2. Increase heartbeat frequency: tighter sync but higher event volume.
-3. Snapshot-on-join only: lower volume but stale state until reconnect/refresh.
+1. Parse TeamSideline HTML directly (selected): immediate value with no backend service.
+2. Build server-side adapter: more stable parsing but adds infra/toil.
+3. Manual standings entry: low technical risk but high coach toil and stale data risk.
 
 ## Rollback Plan
-- Revert commits `bb4c0a3` and/or `0a69b6f` if live event volume or client behavior regresses.
+- Remove standings card render in `team.html`.
+- Remove `leagueUrl` field usage in `edit-team.html`.
+- Revert `js/league-standings.js` and associated tests.

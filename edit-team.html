@@ -87,6 +87,14 @@
                         placeholder="For game summaries">
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">League Link (optional)</label>
+                    <input type="url" id="leagueUrl"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                        placeholder="https://teamsideline.com/sites/.../schedule/...">
+                    <p class="text-xs text-gray-500 mt-1">Used to display external league standings (W/L/T) on the team page.</p>
+                </div>
+
                 <div class="flex items-start">
                     <div class="flex items-center h-5">
                         <input id="isPublic" type="checkbox"
@@ -244,6 +252,7 @@
                     document.getElementById('description').value = team.description || '';
                     document.getElementById('sport').value = team.sport || '';
                     document.getElementById('notificationEmail').value = team.notificationEmail || '';
+                    document.getElementById('leagueUrl').value = team.leagueUrl || '';
                     document.getElementById('zip').value = team.zip || '';
                     document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
                     adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
@@ -458,6 +467,7 @@
                     description: document.getElementById('description').value,
                     sport: document.getElementById('sport').value,
                     notificationEmail: document.getElementById('notificationEmail').value,
+                    leagueUrl: document.getElementById('leagueUrl').value.trim(),
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
