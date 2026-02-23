@@ -1,23 +1,27 @@
-# Code Role Notes (PR #33 Clock Sync)
+# Code Role Notes (League Link + Standings)
 
 ## Objective
-Determine whether additional code changes are required after positive review summary.
+Implement league URL capture and standings display with test coverage.
 
-## Result
-No further code changes required for `js/live-game.js` or `js/live-tracker.js`.
+## Code Changes
+- Added `leagueUrl` field in team editor form and save/load flow:
+  - `edit-team.html`
+- Added standalone standings module:
+  - `js/league-standings.js`
+  - Parses TeamSideline standings table with W/L/T/PCT/PF/PA/PD extraction.
+  - Provides matching helper and resilient fetch strategy (direct + proxy fallback).
+- Integrated standings display into team page:
+  - `team.html`
+  - Adds league link badge in header.
+  - Adds "League Standings" season overview card.
 
-## Why
-- Reviewed branch diff vs `origin/master`: only intended clock-sync changes are present.
-- Review summary reported no blocking issues and aligns with code behavior.
-- Additional patch would add risk without clear requirement/evidence.
-
-## Deliverables Updated
-- `docs/pr-notes/requirements.md`
-- `docs/pr-notes/architecture.md`
-- `docs/pr-notes/qa.md`
-- `docs/pr-notes/code-plan.md`
+## Tests Added
+- `tests/unit/league-standings.test.js`
+  - parser extraction of W/L/T row values
+  - normalization/matching behavior
+  - no-table fallback behavior
 
 ## Success Criteria
-- Branch remains merge-ready.
-- Role artifacts are current for PR #33 run.
-- Checks executed and recorded.
+- Team settings persist `leagueUrl`.
+- Team page shows league standings when URL is configured.
+- Unit tests pass for parser/matching logic.
