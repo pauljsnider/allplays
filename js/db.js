@@ -1803,9 +1803,11 @@ export async function uploadDrillDiagram(drillId, file) {
         return await getDownloadURL(snapshot.ref);
     } catch (error) {
         const code = error?.code || '';
-        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
-            // Fallback to main storage to avoid hard failure when image bucket auth is unavailable.
-            const fallbackRef = ref(storage, path);
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
+            // Fallback to main storage path used by other uploads in case image bucket auth/rules reject writes.
+            const safeName = String(file?.name || 'diagram').replace(/[^\w.\-]+/g, '_');
+            const fallbackPath = `team-photos/${Date.now()}_drill_${safeName}`;
+            const fallbackRef = ref(storage, fallbackPath);
             const snapshot = await uploadBytes(fallbackRef, file);
             return await getDownloadURL(snapshot.ref);
         }
