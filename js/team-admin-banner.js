@@ -75,6 +75,11 @@ function icon(name) {
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path>
     </svg>`;
   }
+  if (name === 'gameday') {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"></path>
+    </svg>`;
+  }
   if (name === 'exit') {
     return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v8a2 2 0 002 2h4"></path>
@@ -145,6 +150,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
     stats: `edit-config.html#teamId=${teamId}`,
     chat: `team-chat.html#teamId=${teamId}`,
     drills: `drills.html#teamId=${teamId}`,
+    gameday: `game-day.html#teamId=${teamId}`,
     exit: exitUrl
   };
 
@@ -161,6 +167,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
       ${actionCard({ href: hrefs.stats, label: 'Stats', iconName: 'stats', active: active === 'stats' })}
       ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
       ${actionCard({ href: hrefs.drills, label: 'Drills', iconName: 'drills', active: active === 'drills' })}
+      ${actionCard({ href: hrefs.gameday, label: 'Game Day', iconName: 'gameday', active: active === 'gameday' })}
     `;
   } else {
     // Parent: View, Chat only
@@ -172,7 +179,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
 
   // Determine grid columns based on number of items
   const gridCols = isFullAccess
-    ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-8'
+    ? 'grid-cols-2 sm:grid-cols-5 lg:grid-cols-9'
     : 'grid-cols-2';
 
   container.innerHTML = `

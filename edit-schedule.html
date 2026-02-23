@@ -1321,6 +1321,7 @@
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
                         ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
+                        ${game.status !== 'cancelled' ? `<a href="game-day.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-orange-100 text-orange-700 rounded text-sm hover:bg-orange-200">Command Center</a>` : ''}
                         <button data-game-id="${game.id}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">RSVPs</button>
                         ${game.status !== 'cancelled' ? `<button data-game-id="${game.id}" class="cancel-game-btn px-3 py-1 border border-orange-300 text-orange-600 rounded text-sm hover:bg-orange-50">Cancel</button>` : '<span class="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-semibold">Cancelled</span>'}
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
