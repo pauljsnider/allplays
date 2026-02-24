@@ -45,7 +45,8 @@ let state = {
   pendingIn: null,
   subQueue: [],
   queueMode: false,
-  history: []
+  history: [],
+  scoreLogIsComplete: true
 };
 
 const els = {
@@ -390,7 +391,8 @@ function saveHistory(action) {
     bench: [...state.bench],
     stats: JSON.parse(JSON.stringify(state.stats)),
     log: [...state.log],
-    opp: JSON.parse(JSON.stringify(state.opp))
+    opp: JSON.parse(JSON.stringify(state.opp)),
+    scoreLogIsComplete: state.scoreLogIsComplete
   };
   state.history.push(snapshot);
   // Keep only last 50 actions
@@ -412,6 +414,7 @@ function undo() {
   state.stats = prev.stats;
   state.log = prev.log;
   state.opp = prev.opp;
+  state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;
   renderAll();
   addLog(`Undid: ${prev.action}`);
 }
@@ -636,7 +639,7 @@ async function saveAndComplete() {
   let finalHome = requestedHome;
   let finalAway = requestedAway;
 
-  if (canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
+  if (state.scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
     const reconciledScore = reconcileFinalScoreFromLog({
       requestedHome,
       requestedAway,
@@ -1023,7 +1026,11 @@ function attachEvents() {
   els.closeAiSummary.addEventListener('click', () => els.aiSummaryOutput.classList.add('hidden'));
   els.closeEmail.addEventListener('click', () => els.emailOutput.classList.add('hidden'));
   els.copyEmail.addEventListener('click', copyEmailToClipboard);
-  els.clearLog.addEventListener('click', () => { state.log = []; renderLog(); });
+  els.clearLog.addEventListener('click', () => {
+    state.log = [];
+    state.scoreLogIsComplete = false;
+    renderLog();
+  });
   updateSubsButton();
   if (els.autoFill) {
     els.autoFill.addEventListener('click', autoFillStarters);
@@ -1374,9 +1381,15 @@ async function init() {
     state.history = [];
     state.subQueue = [];
     state.queueMode = false;
+    state.scoreLogIsComplete = true;
 
     // Load existing aggregated stats
     const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+    const hasScores = (game.homeScore || 0) > 0 || (game.awayScore || 0) > 0;
+    const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
+    const hasAggregatedStats = statsSnapshot.size > 0;
+    const hasPersistedTrackingData = hasScores || hasOpponentStats || hasAggregatedStats;
+    state.scoreLogIsComplete = !hasPersistedTrackingData;
     statsSnapshot.forEach(d => {
       if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
       const existing = d.data().stats || {};

@@ -51,6 +51,7 @@ let state = {
   subQueue: [],
   queueMode: false,
   history: [],
+  scoreLogIsComplete: true,
   voiceListening: false,
   activeVoiceRecognition: null
 };
@@ -792,7 +793,8 @@ function saveHistory(action) {
     bench: [...state.bench],
     stats: JSON.parse(JSON.stringify(state.stats)),
     log: [...state.log],
-    opp: JSON.parse(JSON.stringify(state.opp))
+    opp: JSON.parse(JSON.stringify(state.opp)),
+    scoreLogIsComplete: state.scoreLogIsComplete
   };
   state.history.push(snapshot);
   // Keep only last 50 actions
@@ -815,6 +817,7 @@ function undo() {
   state.stats = prev.stats;
   state.log = prev.log;
   state.opp = prev.opp;
+  state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;
   renderAll();
   addLog(`Undid: ${prev.action}`);
   if (lastLog?.undoData?.type === 'stat' && isPointsColumn(lastLog.undoData.statKey)) {
@@ -1392,7 +1395,7 @@ async function saveAndComplete() {
   let finalHome = requestedHome;
   let finalAway = requestedAway;
 
-  if (canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
+  if (state.scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
     const reconciledScore = reconcileFinalScoreFromLog({
       requestedHome,
       requestedAway,
@@ -1902,7 +1905,11 @@ function attachEvents() {
   els.closeAiSummary.addEventListener('click', () => els.aiSummaryOutput.classList.add('hidden'));
   els.closeEmail.addEventListener('click', () => els.emailOutput.classList.add('hidden'));
   els.copyEmail.addEventListener('click', copyEmailToClipboard);
-  els.clearLog.addEventListener('click', () => { state.log = []; renderLog(); });
+  els.clearLog.addEventListener('click', () => {
+    state.log = [];
+    state.scoreLogIsComplete = false;
+    renderLog();
+  });
   if (els.voiceNoteBtn) {
     els.voiceNoteBtn.addEventListener('click', startVoiceNote);
   }
@@ -2327,6 +2334,7 @@ async function init() {
     state.history = [];
     state.subQueue = [];
     state.queueMode = false;
+    state.scoreLogIsComplete = true;
     state.voiceListening = false;
     state.activeVoiceRecognition = null;
     setVoiceNoteButtonLabel(false);
@@ -2392,6 +2400,8 @@ async function init() {
           const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
           liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         }
+        const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
+        state.scoreLogIsComplete = !resumedFromPersistedData;
 
         // Load existing aggregated stats
         statsSnapshot.forEach(d => {
