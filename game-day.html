@@ -583,6 +583,7 @@
             // Unsubs
             unsubscribers: []
         };
+        let pageInitialized = false;
 
         // ==================== PLAYER COLOR UTILITIES ====================
         function loadPlayerColors() {
@@ -621,28 +622,81 @@
             }
             state.user = user;
             renderHeader(document.getElementById('header-container'), user);
+            if (pageInitialized) return;
+            pageInitialized = true;
             await initPage();
         });
 
+        function getGameDate(game) {
+            if (!game || !game.date) return null;
+            return game.date.toDate ? game.date.toDate() : new Date(game.date);
+        }
+
+        function pickBestGameId(games, requestedGameId) {
+            const list = (games || []).filter((g) => g && g.id && g.type !== 'practice');
+            if (requestedGameId) {
+                const exact = list.find((g) => g.id === requestedGameId);
+                if (exact) return exact.id;
+            }
+            if (!list.length) return null;
+
+            const now = new Date();
+
+            // Highest priority: currently live game
+            const live = list.find((g) => (g.liveStatus || '').toLowerCase() === 'live');
+            if (live) return live.id;
+
+            // Next: nearest scheduled future game
+            const scheduledFuture = list
+                .filter((g) => (g.status || '').toLowerCase() !== 'cancelled')
+                .map((g) => ({ game: g, date: getGameDate(g) }))
+                .filter((entry) => entry.date && entry.date >= now)
+                .sort((a, b) => a.date - b.date);
+            if (scheduledFuture.length) return scheduledFuture[0].game.id;
+
+            // Fallback: most recent non-cancelled game
+            const recent = list
+                .filter((g) => (g.status || '').toLowerCase() !== 'cancelled')
+                .map((g) => ({ game: g, date: getGameDate(g) }))
+                .filter((entry) => entry.date)
+                .sort((a, b) => b.date - a.date);
+            if (recent.length) return recent[0].game.id;
+
+            // Last resort: first game in list
+            return list[0].id;
+        }
+
+        function normalizeGameDayUrl(teamId, gameId) {
+            if (!teamId || !gameId) return;
+            const normalized = `game-day.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
+            if (window.location.pathname.endsWith('/game-day.html') && `${window.location.pathname}${window.location.search}` === `/game-day.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`) {
+                return;
+            }
+            window.history.replaceState({}, '', normalized);
+        }
+
         async function initPage() {
             const { teamId, gameId } = getUrlParams();
-            if (!teamId || !gameId) {
-                showError('Missing teamId or gameId in URL.');
+            if (!teamId) {
+                showError('Missing teamId in URL.');
                 return;
             }
             state.teamId = teamId;
-            state.gameId = gameId;
 
             try {
-                const [team, game, players, configs] = await Promise.all([
+                const [team, players, configs, games] = await Promise.all([
                     getTeam(teamId),
-                    getGame(teamId, gameId),
                     getPlayers(teamId),
-                    getConfigs(teamId)
+                    getConfigs(teamId),
+                    getGames(teamId)
                 ]);
 
+                if (!team) {
+                    showError('Team not found.');
+                    return;
+                }
+
                 state.team = team;
-                state.game = game;
                 state.players = players;
                 state.configs = configs;
                 loadPlayerColors();
@@ -653,6 +707,21 @@
                     window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches+and+admins+only`;
                     return;
                 }
+
+                const resolvedGameId = pickBestGameId(games, gameId);
+                if (!resolvedGameId) {
+                    showError(`No games found for this team. Add one in edit-schedule.html#teamId=${teamId}`);
+                    return;
+                }
+                state.gameId = resolvedGameId;
+                normalizeGameDayUrl(teamId, resolvedGameId);
+
+                const game = await getGame(teamId, resolvedGameId);
+                if (!game) {
+                    showError('Could not load selected game.');
+                    return;
+                }
+                state.game = game;
 
                 // Render banner
                 renderTeamAdminBanner(document.getElementById('banner-container'), {
@@ -701,7 +770,7 @@
                 loadLastGame();
 
                 // Set up real-time subscriptions
-                const unsubGame = subscribeGame(teamId, gameId, (updatedGame) => {
+                const unsubGame = subscribeGame(teamId, state.gameId, (updatedGame) => {
                     const prevLiveStatus = state.game?.liveStatus;
                     state.game = updatedGame;
                     state.score = { home: updatedGame.homeScore || 0, away: updatedGame.awayScore || 0 };
@@ -850,6 +919,12 @@
             const breakdown = state.rsvpBreakdown;
             if (!breakdown) return;
             const el = document.getElementById('rsvp-panel');
+            if (!el) return;
+
+            const going = Array.isArray(breakdown.going) ? breakdown.going : [];
+            const maybe = Array.isArray(breakdown.maybe) ? breakdown.maybe : [];
+            const notGoing = Array.isArray(breakdown.not_going) ? breakdown.not_going : [];
+            const noResponse = Array.isArray(breakdown.not_responded) ? breakdown.not_responded : [];
 
             const chip = (p) => `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-full text-xs font-medium">${p.playerNumber ? `#${p.playerNumber} ` : ''}${escapeHtml(p.playerName)}</span>`;
 
@@ -862,10 +937,10 @@
             };
 
             el.innerHTML =
-                section('Going', 'text-green-600', breakdown.going) +
-                section('Maybe', 'text-amber-600', breakdown.maybe) +
-                section('Not Going', 'text-red-500', breakdown.not_going) +
-                section('No Response', 'text-gray-400', breakdown.not_responded);
+                section('Going', 'text-green-600', going) +
+                section('Maybe', 'text-amber-600', maybe) +
+                section('Not Going', 'text-red-500', notGoing) +
+                section('No Response', 'text-gray-400', noResponse);
         }
 
         function renderScoutingNotes() {
@@ -972,7 +1047,7 @@ Respond with ONLY the directive text, no markdown.`;
         function renderChatStarters() {
             const chips = document.getElementById('chat-starter-chips');
             const starters = state.chatMode === 'ask' ? [
-                'What's our team strength today?',
+                "What's our team strength today?",
                 'How should we start the game?',
                 'Who should play keeper?'
             ] : [
@@ -980,10 +1055,19 @@ Respond with ONLY the directive text, no markdown.`;
                 'Balance playing time evenly',
                 'Suggest an optimal formation'
             ];
-            chips.innerHTML = starters.map(s =>
-                `<button onclick="sendChatMessage('${escapeHtml(s).replace(/'/g, "\\'")}')"
-                    class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold hover:bg-primary-100 hover:text-primary-700 transition">${escapeHtml(s)}</button>`
-            ).join('');
+            chips.innerHTML = starters.map((s) => {
+                const escapedLabel = escapeHtml(s);
+                const escapedAttr = escapedLabel.replace(/"/g, '&quot;');
+                return `<button data-chat-starter="${escapedAttr}"
+                    class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-full text-xs font-semibold hover:bg-primary-100 hover:text-primary-700 transition">${escapedLabel}</button>`;
+            }).join('');
+
+            chips.querySelectorAll('[data-chat-starter]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const msg = btn.getAttribute('data-chat-starter') || '';
+                    sendChatMessage(msg);
+                });
+            });
         }
 
         window.sendChatMessage = async function(text) {
@@ -993,18 +1077,16 @@ Respond with ONLY the directive text, no markdown.`;
             input.value = '';
 
             appendChatBubble(msg, 'user');
+            state.chatHistory.push({ role: 'user', text: msg });
 
             try {
                 const model = getAIModel();
-                if (!state.aiChatSession) {
-                    const systemPrompt = buildChatSystemPrompt();
-                    state.aiChatSession = model.startChat({ systemInstruction: systemPrompt });
-                }
 
                 const thinkingEl = appendChatBubble('…', 'ai');
-                const response = await state.aiChatSession.sendMessage(msg);
+                const response = await model.generateContent(buildChatPrompt(msg));
                 const aiText = response.response.text().trim();
                 thinkingEl.textContent = '';
+                state.chatHistory.push({ role: 'assistant', text: aiText });
 
                 // Check if response is a lineup JSON
                 if (state.chatMode === 'lineup' && aiText.includes('"H1"')) {
@@ -1014,7 +1096,7 @@ Respond with ONLY the directive text, no markdown.`;
                             const parsed = JSON.parse(jsonMatch[0]);
                             const aiMsg = document.createElement('div');
                             aiMsg.className = 'ai-bubble-ai px-3 py-2 text-sm self-start max-w-xs';
-                            aiMsg.textContent = 'Here's a suggested lineup:';
+                            aiMsg.textContent = "Here's a suggested lineup:";
                             thinkingEl.appendChild(aiMsg);
 
                             const acceptBtn = document.createElement('button');
@@ -1057,6 +1139,19 @@ Going players: ${goingList}.
 Formation: ${state.formationId || 'Not selected'} — Positions: ${positions}.
 When asked for a lineup, return ONLY valid JSON: { "H1": { "positionId": "PlayerName", ... }, "H2": { ... } }.
 Otherwise answer concisely in 2-4 sentences.`;
+        }
+
+        function buildChatPrompt(currentUserMessage) {
+            const systemPrompt = buildChatSystemPrompt();
+            const history = state.chatHistory.slice(-10)
+                .map((turn) => `${turn.role === 'assistant' ? 'Assistant' : 'User'}: ${turn.text}`)
+                .join('\n');
+            return `${systemPrompt}
+
+Conversation:
+${history}
+User: ${currentUserMessage}
+Assistant:`;
         }
 
         function acceptLineupProposal(proposal) {
