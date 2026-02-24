@@ -1439,6 +1439,17 @@ export async function getLiveEvents(teamId, gameId) {
 }
 
 /**
+ * Subscribe to aggregated stats (real-time) for Game Day Command Center
+ */
+export function subscribeAggregatedStats(teamId, gameId, callback, onError) {
+    const ref = collection(db, 'teams', teamId, 'games', gameId, 'aggregatedStats');
+    return onSnapshot(ref, snap => {
+        const stats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        callback(stats);
+    }, onError);
+}
+
+/**
  * Update game live status
  */
 export async function setGameLiveStatus(teamId, gameId, status) {
