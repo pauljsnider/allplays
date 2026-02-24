@@ -192,7 +192,7 @@ Success metric:
 - [x] Auth + signup guardrails suite complete
 - [x] Role/access-control suite complete
 - [x] Schedule/tracker routing suite complete
-- [ ] Practice + parent workflow suite complete
+- [x] Practice + parent workflow suite complete
 - [ ] Security/isolation negative suite complete
 
 ### Unit Tests
