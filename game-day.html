@@ -650,7 +650,7 @@
                 // Access check — full access only
                 const accessInfo = getTeamAccessInfo(state.user, { ...team, id: teamId });
                 if (!accessInfo.hasAccess || accessInfo.accessLevel !== 'full') {
-                    window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches+only`;
+                    window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches+and+admins+only`;
                     return;
                 }
 
