@@ -16,6 +16,7 @@ import {
 } from './db.js?v=14';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=9';
+import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 
@@ -1288,18 +1289,7 @@ function handleGameUpdate(gameDoc) {
 }
 
 function updateChatAvailability() {
-  if (state.isReplay) {
-    state.chatEnabled = false;
-  } else {
-    const gameDate = state.game?.date?.toDate ? state.game.date.toDate() : (state.game?.date ? new Date(state.game.date) : null);
-    const today = new Date();
-    const isSameDay = gameDate
-      ? gameDate.getFullYear() === today.getFullYear() &&
-        gameDate.getMonth() === today.getMonth() &&
-        gameDate.getDate() === today.getDate()
-      : false;
-    state.chatEnabled = isSameDay;
-  }
+  state.chatEnabled = isViewerChatEnabled(state.game, { isReplay: state.isReplay });
 
   if (els.chatInput) {
     if (state.chatEnabled) {
