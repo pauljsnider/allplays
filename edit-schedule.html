@@ -566,6 +566,7 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { getTeamAccessInfo } from './js/team-access.js';
         import { Timestamp } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -664,10 +665,8 @@
         let currentTeam = null;
         function hasAccess(team, user) {
             if (!team || !user) return false;
-            if (team.ownerId === user.uid) return true;
-            if (user.isAdmin) return true;
-            const email = (user.email || '').toLowerCase();
-            return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
+            const accessInfo = getTeamAccessInfo(user, { ...team, id: team.id || currentTeamId });
+            return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
         }
 
         async function init() {

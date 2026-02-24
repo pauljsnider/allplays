@@ -1,36 +1,7 @@
 import { escapeHtml } from './utils.js?v=8';
+import { getTeamAccessInfo } from './team-access.js';
 
-/**
- * Determine user's access level for a team
- * @param {Object} user - Firebase user object with enriched profile (coachOf, parentOf, isAdmin)
- * @param {Object} team - Team object with ownerId, adminEmails
- * @returns {{ hasAccess: boolean, accessLevel: 'full'|'parent'|null, exitUrl: string }}
- */
-export function getTeamAccessInfo(user, team) {
-  if (!user || !team) {
-    return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };
-  }
-
-  // Check for full access: owner, admin, coach, or platform admin
-  const isOwner = team.ownerId === user.uid;
-  const normalizedEmail = (user.email || '').toLowerCase();
-  const adminEmails = (team.adminEmails || []).map(email => String(email || '').toLowerCase());
-  const isTeamAdmin = adminEmails.includes(normalizedEmail);
-  const isPlatformAdmin = user.isAdmin === true;
-  const isCoach = (user.coachOf || []).includes(team.id);
-
-  if (isOwner || isTeamAdmin || isPlatformAdmin || isCoach) {
-    return { hasAccess: true, accessLevel: 'full', exitUrl: 'dashboard.html' };
-  }
-
-  // Check for parent access
-  const isParent = (user.parentOf || []).some(p => p.teamId === team.id);
-  if (isParent) {
-    return { hasAccess: true, accessLevel: 'parent', exitUrl: 'parent-dashboard.html' };
-  }
-
-  return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };
-}
+export { getTeamAccessInfo } from './team-access.js';
 
 function icon(name) {
   if (name === 'view') {
