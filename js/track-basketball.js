@@ -6,7 +6,7 @@ import { checkAuth } from './auth.js?v=9';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { canApplySubstitution, applySubstitution, reconcileFinalScoreFromLog } from './live-tracker-integrity.js?v=1';
+import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -633,16 +633,21 @@ async function saveAndComplete() {
   const rawFinalAway = parseInt(els.awayFinal.value, 10);
   const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
   const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
-  const reconciledScore = reconcileFinalScoreFromLog({
-    requestedHome,
-    requestedAway,
-    log: state.log
-  });
-  if (reconciledScore.mismatch) {
-    addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${reconciledScore.home}-${reconciledScore.away} based on scoring events`);
+  let finalHome = requestedHome;
+  let finalAway = requestedAway;
+
+  if (canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
+    const reconciledScore = reconcileFinalScoreFromLog({
+      requestedHome,
+      requestedAway,
+      log: state.log
+    });
+    if (reconciledScore.mismatch) {
+      addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${reconciledScore.home}-${reconciledScore.away} based on scoring events`);
+    }
+    finalHome = reconciledScore.home;
+    finalAway = reconciledScore.away;
   }
-  const finalHome = reconciledScore.home;
-  const finalAway = reconciledScore.away;
   const summary = els.notesFinal.value.trim();
   const sendEmail = els.finishSendEmail?.checked;
 

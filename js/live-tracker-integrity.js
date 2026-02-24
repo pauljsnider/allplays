@@ -52,6 +52,26 @@ export function deriveScoreFromLog(log = []) {
   }, { home: 0, away: 0 });
 }
 
+function countScoringEvents(log = []) {
+  return log.reduce((count, entry) => {
+    const undoData = entry?.undoData;
+    if (!undoData || undoData.type !== 'stat') return count;
+    if (!isPointsKey(undoData.statKey)) return count;
+    const value = Number(undoData.value) || 0;
+    if (value === 0) return count;
+    return count + 1;
+  }, 0);
+}
+
+export function canTrustScoreLogForFinalization({ liveHome, liveAway, log = [] } = {}) {
+  const derived = deriveScoreFromLog(log);
+  const home = Number.isFinite(Number(liveHome)) ? Number(liveHome) : 0;
+  const away = Number.isFinite(Number(liveAway)) ? Number(liveAway) : 0;
+  const hasScoringEvents = countScoringEvents(log) > 0;
+  const matchesLiveScore = derived.home === home && derived.away === away;
+  return hasScoringEvents && matchesLiveScore;
+}
+
 export function reconcileFinalScoreFromLog({ requestedHome, requestedAway, log = [] } = {}) {
   const derived = deriveScoreFromLog(log);
   const home = Number.isFinite(Number(requestedHome)) ? Number(requestedHome) : 0;

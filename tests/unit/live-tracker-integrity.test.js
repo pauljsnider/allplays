@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applySubstitution,
   canApplySubstitution,
+  canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog
 } from '../../js/live-tracker-integrity.js';
 
@@ -42,5 +43,43 @@ describe('live tracker integrity helpers', () => {
     expect(result.away).toBe(2);
     expect(result.derived.home).toBe(5);
     expect(result.derived.away).toBe(2);
+  });
+
+  it('trusts score log when derived totals match live score and contains scoring events', () => {
+    const log = [
+      { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },
+      { undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: true } }
+    ];
+
+    expect(canTrustScoreLogForFinalization({
+      liveHome: 2,
+      liveAway: 3,
+      log
+    })).toBe(true);
+  });
+
+  it('does not trust score log when live score includes points missing from log', () => {
+    const log = [
+      { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } }
+    ];
+
+    expect(canTrustScoreLogForFinalization({
+      liveHome: 10,
+      liveAway: 0,
+      log
+    })).toBe(false);
+  });
+
+  it('does not trust score log when there are no scoring events', () => {
+    const log = [
+      { undoData: { type: 'stat', statKey: 'fouls', value: 1, isOpponent: false } },
+      { undoData: { type: 'note' } }
+    ];
+
+    expect(canTrustScoreLogForFinalization({
+      liveHome: 0,
+      liveAway: 0,
+      log
+    })).toBe(false);
   });
 });
