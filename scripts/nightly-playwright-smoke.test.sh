@@ -98,3 +98,34 @@ if grep -q 'Bearer xoxb' "$RUN_OUTPUT"; then
 fi
 
 echo "PASS nightly-playwright-smoke token redaction + curl exit logging"
+
+PLACEHOLDER_OUTPUT="$TMP_DIR/placeholder-output.log"
+set +e
+PATH="$FAKE_BIN:$PATH" \
+STATE_DIR="$STATE_DIR" \
+LOCK_FILE="$STATE_DIR/lock2" \
+LOG_DIR="$LOG_DIR" \
+WORKDIR="$WORKDIR" \
+TEST_PLAN_FILE="$PLAN_FILE" \
+TEST_CMD="true" \
+SLACK_NOTIFY_ENABLED="true" \
+SLACK_NOTIFY_ON_SUCCESS="false" \
+SLACK_BOT_TOKEN="xoxb-your-token-here" \
+SLACK_NOTIFY_CHANNEL="C0123456789" \
+"$SCRIPT" >"$PLACEHOLDER_OUTPUT" 2>&1
+placeholder_exit=$?
+set -e
+
+if [[ "$placeholder_exit" -ne 1 ]]; then
+  echo "expected exit 1 for placeholder Slack settings, got $placeholder_exit"
+  cat "$PLACEHOLDER_OUTPUT"
+  exit 1
+fi
+
+if ! grep -q 'invalid SLACK_BOT_TOKEN' "$PLACEHOLDER_OUTPUT"; then
+  echo "expected placeholder token validation error"
+  cat "$PLACEHOLDER_OUTPUT"
+  exit 1
+fi
+
+echo "PASS nightly-playwright-smoke placeholder Slack settings validation"
