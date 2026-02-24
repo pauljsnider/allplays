@@ -189,10 +189,10 @@ Success metric:
 - [x] `data-testid` selector convention documented in `docs/playwright-setup.md`
 
 ### Integration (Playwright)
-- [ ] Auth + signup guardrails suite complete
-- [ ] Role/access-control suite complete
-- [ ] Schedule/tracker routing suite complete
-- [ ] Practice + parent workflow suite complete
+- [x] Auth + signup guardrails suite complete
+- [x] Role/access-control suite complete
+- [x] Schedule/tracker routing suite complete
+- [x] Practice + parent workflow suite complete
 - [ ] Security/isolation negative suite complete
 
 ### Unit Tests
