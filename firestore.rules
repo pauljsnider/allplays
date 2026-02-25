@@ -69,6 +69,33 @@ service cloud.firestore {
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
     }
 
+    function rideshareOfferPath(teamId, gameId, offerId) {
+      return /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId);
+    }
+
+    // Require request status decisions/deletes to keep parent offer seat counters consistent.
+    function isRideshareSeatCountUpdateValid(teamId, gameId, offerId, previousStatus, nextStatus) {
+      let offerPath = rideshareOfferPath(teamId, gameId, offerId);
+      let offerBefore = get(offerPath).data;
+      let offerAfter = getAfter(offerPath).data;
+      let seatCountBefore = offerBefore.seatCountConfirmed is int ? offerBefore.seatCountConfirmed : 0;
+      let seatDelta = (nextStatus == 'confirmed' ? 1 : 0) - (previousStatus == 'confirmed' ? 1 : 0);
+      let expectedSeatCount = seatCountBefore + seatDelta;
+
+      return exists(offerPath) &&
+             existsAfter(offerPath) &&
+             offerBefore.status == 'open' &&
+             offerAfter.status == offerBefore.status &&
+             offerAfter.driverUserId == offerBefore.driverUserId &&
+             offerAfter.seatCapacity == offerBefore.seatCapacity &&
+             offerAfter.seatCapacity is int &&
+             offerAfter.seatCapacity > 0 &&
+             offerAfter.seatCountConfirmed is int &&
+             offerAfter.seatCountConfirmed == expectedSeatCount &&
+             offerAfter.seatCountConfirmed >= 0 &&
+             offerAfter.seatCountConfirmed <= offerAfter.seatCapacity;
+    }
+
     // Users collection - users should only write their own profile
     match /users/{userId} {
       allow read: if true;  // Public profiles
@@ -279,20 +306,27 @@ service cloud.firestore {
                                  (isTeamOwnerOrAdmin(teamId) || get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid) &&
                                  request.resource.data.parentUserId == resource.data.parentUserId &&
                                  request.resource.data.childId == resource.data.childId &&
-                                 request.resource.data.status in ['confirmed', 'waitlisted', 'declined']
+                                 request.resource.data.requestedAt == resource.data.requestedAt &&
+                                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'respondedAt', 'updatedAt']) &&
+                                 request.resource.data.status in ['confirmed', 'waitlisted', 'declined'] &&
+                                 isRideshareSeatCountUpdateValid(teamId, gameId, offerId, resource.data.status, request.resource.data.status)
                                ) ||
-                               // Request owner can reset to pending or update childName only.
+                               // Request owner can edit childName while request is still pending.
                                (
                                  resource.data.parentUserId == request.auth.uid &&
                                  request.resource.data.parentUserId == resource.data.parentUserId &&
                                  request.resource.data.childId == resource.data.childId &&
-                                 request.resource.data.status == 'pending'
+                                 request.resource.data.requestedAt == resource.data.requestedAt &&
+                                 resource.data.status == 'pending' &&
+                                 request.resource.data.status == 'pending' &&
+                                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'updatedAt'])
                                )
                              );
             allow delete: if isSignedIn() &&
                              (isTeamOwnerOrAdmin(teamId) ||
                               resource.data.parentUserId == request.auth.uid ||
-                              get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid);
+                              get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid) &&
+                             isRideshareSeatCountUpdateValid(teamId, gameId, offerId, resource.data.status, 'declined');
           }
         }
       }
