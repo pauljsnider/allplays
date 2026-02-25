@@ -142,7 +142,7 @@ export async function executeRainoutPollingRun(options = {}) {
     const errorClassSet = new Set();
 
     for (const target of targets) {
-        const targetStartedAt = Date.now();
+        const targetStartedAt = nowMs;
         const targetCorrelationId = `${runId}:${target.tenantId}:${target.zip}`;
         try {
             const events = await fetchSourceEvents(target, {
@@ -264,7 +264,7 @@ export async function executeRainoutPollingRun(options = {}) {
                 resultCount: sourceEvents.length,
                 changedEvents: targetChangedEvents,
                 skippedUnchangedEvents: targetSkippedUnchanged,
-                durationMs: Date.now() - targetStartedAt,
+                durationMs: nowMs - targetStartedAt,
                 errorClass: null
             });
         } catch (error) {
@@ -281,7 +281,7 @@ export async function executeRainoutPollingRun(options = {}) {
                 resultCount: 0,
                 changedEvents: 0,
                 skippedUnchangedEvents: 0,
-                durationMs: Date.now() - targetStartedAt,
+                durationMs: nowMs - targetStartedAt,
                 errorClass
             });
         }
