@@ -193,7 +193,7 @@ Success metric:
 - [x] Role/access-control suite complete
 - [x] Schedule/tracker routing suite complete
 - [x] Practice + parent workflow suite complete
-- [ ] Security/isolation negative suite complete
+- [x] Security/isolation negative suite complete
 
 ### Unit Tests
 - [ ] `vitest` harness and coverage configured
