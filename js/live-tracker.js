@@ -7,6 +7,7 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
+import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -50,6 +51,7 @@ let state = {
   subQueue: [],
   queueMode: false,
   history: [],
+  scoreLogIsComplete: true,
   voiceListening: false,
   activeVoiceRecognition: null
 };
@@ -791,7 +793,8 @@ function saveHistory(action) {
     bench: [...state.bench],
     stats: JSON.parse(JSON.stringify(state.stats)),
     log: [...state.log],
-    opp: JSON.parse(JSON.stringify(state.opp))
+    opp: JSON.parse(JSON.stringify(state.opp)),
+    scoreLogIsComplete: state.scoreLogIsComplete
   };
   state.history.push(snapshot);
   // Keep only last 50 actions
@@ -814,6 +817,7 @@ function undo() {
   state.stats = prev.stats;
   state.log = prev.log;
   state.opp = prev.opp;
+  state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;
   renderAll();
   addLog(`Undid: ${prev.action}`);
   if (lastLog?.undoData?.type === 'stat' && isPointsColumn(lastLog.undoData.statKey)) {
@@ -1384,8 +1388,25 @@ function generateEmailRecap() {
 }
 
 async function saveAndComplete() {
-  const finalHome = parseInt(els.homeFinal.value) || state.home;
-  const finalAway = parseInt(els.awayFinal.value) || state.away;
+  const rawFinalHome = parseInt(els.homeFinal.value, 10);
+  const rawFinalAway = parseInt(els.awayFinal.value, 10);
+  const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
+  const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
+  let finalHome = requestedHome;
+  let finalAway = requestedAway;
+
+  if (state.scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
+    const reconciledScore = reconcileFinalScoreFromLog({
+      requestedHome,
+      requestedAway,
+      log: state.log
+    });
+    if (reconciledScore.mismatch) {
+      addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${reconciledScore.home}-${reconciledScore.away} based on scoring events`);
+    }
+    finalHome = reconciledScore.home;
+    finalAway = reconciledScore.away;
+  }
   const summary = els.notesFinal.value.trim();
   const sendEmail = els.finishSendEmail?.checked;
 
@@ -1740,6 +1761,11 @@ function attachEvents() {
     const btn = e.target.closest('[data-sub-in]');
     if (!btn) return;
     state.pendingIn = btn.dataset.subIn;
+    if (!canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
+      renderSubPlayers();
+      updateSubButton();
+      return;
+    }
 
     if (state.pendingOut && state.pendingIn) {
       if (state.queueMode) {
@@ -1762,7 +1788,7 @@ function attachEvents() {
   els.subConfirm.addEventListener('click', () => {
     if (state.queueMode) {
       // Add pending swap to queue if exists
-      if (state.pendingOut && state.pendingIn) {
+      if (canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
         state.subQueue.push({ out: state.pendingOut, in: state.pendingIn });
         state.pendingOut = null;
         state.pendingIn = null;
@@ -1770,7 +1796,7 @@ function attachEvents() {
       applyQueue();
     } else {
       // Quick mode: apply single swap
-      if (state.pendingOut && state.pendingIn) {
+      if (canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
         saveHistory(`Sub: #${getNum(state.pendingOut)} → #${getNum(state.pendingIn)}`);
         applySub(state.pendingOut, state.pendingIn);
         state.pendingOut = null;
@@ -1879,7 +1905,11 @@ function attachEvents() {
   els.closeAiSummary.addEventListener('click', () => els.aiSummaryOutput.classList.add('hidden'));
   els.closeEmail.addEventListener('click', () => els.emailOutput.classList.add('hidden'));
   els.copyEmail.addEventListener('click', copyEmailToClipboard);
-  els.clearLog.addEventListener('click', () => { state.log = []; renderLog(); });
+  els.clearLog.addEventListener('click', () => {
+    state.log = [];
+    state.scoreLogIsComplete = false;
+    renderLog();
+  });
   if (els.voiceNoteBtn) {
     els.voiceNoteBtn.addEventListener('click', startVoiceNote);
   }
@@ -2015,9 +2045,10 @@ function updateSubHint() {
 }
 
 function updateSubButton() {
+  const pendingValid = canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn);
   if (state.queueMode) {
     const hasQueue = state.subQueue.length > 0;
-    els.subConfirm.disabled = !hasQueue && !(state.pendingOut && state.pendingIn);
+    els.subConfirm.disabled = !hasQueue && !pendingValid;
     els.subConfirm.textContent = hasQueue ? `Apply ${state.subQueue.length} Swap${state.subQueue.length > 1 ? 's' : ''}` : 'Make Swap';
 
     // Show "Save for Later" button if there's a queue
@@ -2029,7 +2060,7 @@ function updateSubButton() {
       els.subConfirm.classList.add('w-full');
     }
   } else {
-    els.subConfirm.disabled = !(state.pendingOut && state.pendingIn);
+    els.subConfirm.disabled = !pendingValid;
     els.subConfirm.textContent = 'Make Swap';
     els.saveQueueLater.classList.add('hidden');
     els.subConfirm.classList.add('w-full');
@@ -2068,9 +2099,12 @@ function renderSubPlayers() {
   // Render bench players
   els.subIn.innerHTML = state.bench.map(id => {
     const selected = state.pendingIn === id;
-    const cls = selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
+    const disabled = state.onCourt.includes(id);
+    const cls = disabled
+      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+      : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
     const p = roster.find(r => r.id === id);
-    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-in="${id}">
+    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-in="${id}" ${disabled ? 'disabled aria-disabled="true"' : ''}>
       ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
       <span class="truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</span>
     </button>`;
@@ -2085,11 +2119,10 @@ function closeSubModal() {
 }
 
 function applySub(outId, inId) {
-  const idx = state.onCourt.indexOf(outId);
-  if (idx === -1) return;
-  state.onCourt[idx] = inId;
-  state.bench = state.bench.filter(id => id !== inId);
-  state.bench.push(outId);
+  const result = applySubstitution(state.onCourt, state.bench, outId, inId);
+  if (!result.applied) return;
+  state.onCourt = result.onCourt;
+  state.bench = result.bench;
   state.subs.push({ out: outId, in: inId, period: state.period, clock: formatClock(state.clock) });
   const logText = `Sub: #${getNum(outId)} ${playerName(outId)} → #${getNum(inId)} ${playerName(inId)}`;
   addLog(logText);
@@ -2112,11 +2145,10 @@ function applyQueue(closeModal = true) {
 
   // Log each individual swap for clarity
   state.subQueue.forEach(pair => {
-    const idx = state.onCourt.indexOf(pair.out);
-    if (idx !== -1) {
-      state.onCourt[idx] = pair.in;
-      state.bench = state.bench.filter(id => id !== pair.in);
-      state.bench.push(pair.out);
+    const result = applySubstitution(state.onCourt, state.bench, pair.out, pair.in);
+    if (result.applied) {
+      state.onCourt = result.onCourt;
+      state.bench = result.bench;
       state.subs.push({ out: pair.out, in: pair.in, period: state.period, clock: formatClock(state.clock) });
       // Log each swap individually
       const logText = `Sub: #${getNum(pair.out)} ${playerName(pair.out)} → #${getNum(pair.in)} ${playerName(pair.in)}`;
@@ -2302,6 +2334,7 @@ async function init() {
     state.history = [];
     state.subQueue = [];
     state.queueMode = false;
+    state.scoreLogIsComplete = true;
     state.voiceListening = false;
     state.activeVoiceRecognition = null;
     setVoiceNoteButtonLabel(false);
@@ -2367,6 +2400,8 @@ async function init() {
           const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
           liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         }
+        const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
+        state.scoreLogIsComplete = !resumedFromPersistedData;
 
         // Load existing aggregated stats
         statsSnapshot.forEach(d => {
