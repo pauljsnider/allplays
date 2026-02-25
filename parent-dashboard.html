@@ -227,7 +227,7 @@
         const practicePacketSessionMap = new Map();
         const rideshareOffersByEvent = new Map();
         const teamChildrenByTeamId = new Map();
-        const selectedRideChildBySelector = new Map();
+        const selectedRideChildByOffer = new Map();
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -277,10 +277,15 @@
             }));
         }
 
-        function setRideChildSelection(selectorId, childId) {
-            if (!selectorId) return;
-            if (!childId) selectedRideChildBySelector.delete(selectorId);
-            else selectedRideChildBySelector.set(selectorId, childId);
+        function getRideOfferSelectionKey(teamId, eventId, offerId) {
+            return `${teamId || ''}::${eventId || ''}::${offerId || ''}`;
+        }
+
+        function setRideChildSelection(teamId, eventId, offerId, childId) {
+            const selectionKey = getRideOfferSelectionKey(teamId, eventId, offerId);
+            if (!selectionKey) return;
+            if (!childId) selectedRideChildByOffer.delete(selectionKey);
+            else selectedRideChildByOffer.set(selectionKey, childId);
             rerenderActiveDayModal();
         }
 
@@ -325,8 +330,9 @@
                             const seatInfo = getOfferSeatInfo(offer);
                             const canManageOffer = offer.driverUserId === currentUserId;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+                            const selectionKey = getRideOfferSelectionKey(event.teamId, event.id, offer.id);
                             const selectedChildId = includeChildPicker
-                                ? (selectedRideChildBySelector.get(childSelectorId) || defaultChildId)
+                                ? (selectedRideChildByOffer.get(selectionKey) || defaultChildId)
                                 : defaultChildId;
                             const selectedChild = childChoices.find((child) => child.childId === selectedChildId);
                             const selectedChildName = selectedChild?.childName || defaultChildName;
@@ -343,7 +349,7 @@
                                         </div>
                                         <div class="flex items-center gap-2">
                                             ${includeChildPicker && childChoices.length > 0 ? `
-                                                <select id="${escapeAttr(childSelectorId)}" onchange="setRideChildSelection('${escapeAttr(childSelectorId)}', this.value)" class="px-2 py-1 text-xs border border-gray-300 rounded">
+                                                <select id="${escapeAttr(childSelectorId)}" onchange="setRideChildSelection('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}', this.value)" class="px-2 py-1 text-xs border border-gray-300 rounded">
                                                     ${childChoices.map((child) => `<option value="${escapeAttr(child.childId)}" ${child.childId === selectedChildId ? 'selected' : ''}>${escapeHtml(child.childName)}</option>`).join('')}
                                                 </select>
                                             ` : ''}
