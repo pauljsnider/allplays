@@ -13,6 +13,7 @@ function createHarness({
     const chatUpdates = [];
     const statusUpdates = [];
     const noChangeUpdates = [];
+    const stateWrites = [];
 
     return {
         stateStore,
@@ -22,6 +23,7 @@ function createHarness({
         chatUpdates,
         statusUpdates,
         noChangeUpdates,
+        stateWrites,
         deps: {
             async fetchSourceEvents(target) {
                 const key = `${target.tenantId}::${target.zip}`;
@@ -34,6 +36,7 @@ function createHarness({
                 return stateStore.get(stateKey) || null;
             },
             async writeRainoutState(stateKey, state) {
+                stateWrites.push({ stateKey, state });
                 stateStore.set(stateKey, { ...state });
             },
             async hasProcessedIdempotencyKey(idempotencyKey) {
@@ -114,19 +117,32 @@ describe('rainout polling runtime integration', () => {
         expect(harness.statusUpdates).toHaveLength(1);
     });
 
-    it('enforces schedule boundaries and feature flag kill switch', async () => {
+    it('enforces schedule boundaries with jitter tolerance and feature flag kill switch', async () => {
         const harness = createHarness();
         const subscriptions = [{ id: 's1', tenantId: 't1', zip: '20176' }];
+        const boundaryMs = Date.UTC(2026, 1, 25, 6, 30, 0);
+        const withinTolerance = boundaryMs + 20 * 1000;
+        const outsideTolerance = boundaryMs + 2 * 60 * 1000;
 
         const notBoundary = await executeRainoutPollingRun({
-            nowMs: Date.UTC(2026, 1, 25, 6, 41, 0),
+            nowMs: outsideTolerance,
             subscriptions,
+            config: { boundaryToleranceMs: 30 * 1000 },
             ...harness.deps
         });
         expect(notBoundary.skippedReason).toBe('not_on_boundary');
 
+        const jitterBoundary = await executeRainoutPollingRun({
+            nowMs: withinTolerance,
+            subscriptions,
+            config: { boundaryToleranceMs: 30 * 1000 },
+            ...harness.deps
+        });
+        expect(jitterBoundary.skippedReason).toBe(null);
+        expect(jitterBoundary.processedTargets).toBe(1);
+
         const disabled = await executeRainoutPollingRun({
-            nowMs: Date.UTC(2026, 1, 25, 6, 30, 0),
+            nowMs: boundaryMs,
             subscriptions,
             config: { enabled: false },
             ...harness.deps
@@ -169,5 +185,38 @@ describe('rainout polling runtime integration', () => {
         expect(harness.chatUpdates).toHaveLength(1);
         expect(harness.chatUpdates[0].tenantId).toBe('t2');
         expect(harness.auditLogs.some((entry) => entry.status === 'error')).toBe(true);
+    });
+
+    it('does not advance state when fanout fails', async () => {
+        const harness = createHarness({
+            fetchByTarget: {
+                't1::20176': [
+                    {
+                        tenantId: 't1',
+                        sourceEventId: 'ev-1',
+                        zip: '20176',
+                        facilityId: 'f1',
+                        status: 'closed',
+                        updatedAt: 2000
+                    }
+                ]
+            }
+        });
+
+        const subscriptions = [{ id: 's1', tenantId: 't1', userId: 'u1', zip: '20176', facilityId: 'f1' }];
+
+        const result = await executeRainoutPollingRun({
+            nowMs: Date.UTC(2026, 1, 25, 7, 0, 0),
+            subscriptions,
+            ...harness.deps,
+            postChatUpdate: async () => {
+                throw new Error('chat-down');
+            }
+        });
+
+        expect(result.failedTargets).toBe(1);
+        expect(harness.stateWrites).toHaveLength(0);
+        expect(harness.stateStore.get('t1::ev-1')).toBeUndefined();
+        expect(harness.idempotencyKeys.size).toBe(0);
     });
 });

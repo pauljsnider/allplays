@@ -8,6 +8,7 @@ import {
 } from './rainout-polling.js';
 
 const DEFAULT_MAX_ZIPS_PER_TENANT = 50;
+const DEFAULT_BOUNDARY_TOLERANCE_MS = 60 * 1000;
 
 function toFiniteNumber(value, fallback) {
     return Number.isFinite(value) ? Number(value) : fallback;
@@ -67,16 +68,24 @@ function uniqueStrings(values) {
     return [...new Set((values || []).filter(Boolean).map((value) => String(value)))];
 }
 
+function isWithinPollBoundaryWindow(nowMs, intervalMinutes, toleranceMs) {
+    const intervalMs = Math.max(1, toFiniteNumber(intervalMinutes, DEFAULT_POLL_INTERVAL_MINUTES)) * 60 * 1000;
+    const boundedToleranceMs = Math.min(Math.max(0, toFiniteNumber(toleranceMs, 0)), intervalMs - 1);
+    const elapsedSinceBoundary = ((nowMs % intervalMs) + intervalMs) % intervalMs;
+    return elapsedSinceBoundary <= boundedToleranceMs;
+}
+
 export async function executeRainoutPollingRun(options = {}) {
     const nowMs = toFiniteNumber(options.nowMs, Date.now());
     const config = options.config || {};
     const intervalMinutes = Math.max(1, toFiniteNumber(config.intervalMinutes, DEFAULT_POLL_INTERVAL_MINUTES));
     const enabled = config.enabled !== false;
     const forceRun = config.forceRun === true;
+    const boundaryToleranceMs = toFiniteNumber(config.boundaryToleranceMs, DEFAULT_BOUNDARY_TOLERANCE_MS);
     const maxZipsPerTenant = toFiniteNumber(config.maxZipsPerTenant, DEFAULT_MAX_ZIPS_PER_TENANT);
     const runId = String(options.runId || `rainout-run-${nowMs}`);
     const nextPollAtMs = getNextPollTimeMs(nowMs, intervalMinutes);
-    const isOnBoundary = nowMs === nextPollAtMs;
+    const isOnBoundary = isWithinPollBoundaryWindow(nowMs, intervalMinutes, boundaryToleranceMs);
 
     if (!enabled) {
         return {
@@ -207,12 +216,6 @@ export async function executeRainoutPollingRun(options = {}) {
                     createdAt: nowMs
                 });
 
-                await writeRainoutState(stateKey, {
-                    ...normalizedEvent,
-                    lastPollRunId: runId,
-                    lastChangedAt: nowMs
-                });
-
                 await postChatUpdate({
                     runId,
                     correlationId: targetCorrelationId,
@@ -228,6 +231,12 @@ export async function executeRainoutPollingRun(options = {}) {
                     subscriptionIds,
                     userIds,
                     noChanges: false
+                });
+
+                await writeRainoutState(stateKey, {
+                    ...normalizedEvent,
+                    lastPollRunId: runId,
+                    lastChangedAt: nowMs
                 });
 
                 await markProcessedIdempotencyKey(idempotencyKey, {
@@ -291,4 +300,4 @@ export async function executeRainoutPollingRun(options = {}) {
     return results;
 }
 
-export { DEFAULT_MAX_ZIPS_PER_TENANT };
+export { DEFAULT_MAX_ZIPS_PER_TENANT, DEFAULT_BOUNDARY_TOLERANCE_MS };
