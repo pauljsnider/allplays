@@ -1390,7 +1390,6 @@ function generateEmailRecap() {
 
 async function saveAndComplete() {
   if (!acquireSingleFlightLock(finishSubmissionLock)) return;
-  isFinishing = true;
   if (els.finishSave) {
     els.finishSave.disabled = true;
   }
@@ -1470,6 +1469,7 @@ async function saveAndComplete() {
 
     await batch.commit();
     await endLiveBroadcast();
+    isFinishing = true;
 
     if (sendEmail) {
       const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
