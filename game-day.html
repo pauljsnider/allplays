@@ -706,7 +706,7 @@
             persistLocalChatState();
             state.lastPersistedChatSignature = fromGameDoc
                 ? getChatStateSignature(fromGameDoc.chatMode, fromGameDoc.chatHistory)
-                : getChatStateSignature();
+                : '';
         }
 
         function renderChatHistory() {
