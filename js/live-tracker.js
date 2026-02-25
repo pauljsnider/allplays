@@ -7,7 +7,7 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js?v=1';
+import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -22,6 +22,7 @@ let opponentRoster = [];
 let opponentRosterSelected = new Set();
 let allTeamsCache = null;
 let isFinishing = false;
+const finishSubmissionLock = { active: false };
 let allowNavigation = false;
 
 function statDefaults(columns) {
@@ -1388,6 +1389,12 @@ function generateEmailRecap() {
 }
 
 async function saveAndComplete() {
+  if (!acquireSingleFlightLock(finishSubmissionLock)) return;
+  isFinishing = true;
+  if (els.finishSave) {
+    els.finishSave.disabled = true;
+  }
+
   const rawFinalHome = parseInt(els.homeFinal.value, 10);
   const rawFinalAway = parseInt(els.awayFinal.value, 10);
   const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
@@ -1463,7 +1470,6 @@ async function saveAndComplete() {
 
     await batch.commit();
     await endLiveBroadcast();
-    isFinishing = true;
 
     if (sendEmail) {
       const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
@@ -1478,6 +1484,11 @@ async function saveAndComplete() {
       window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
     }
   } catch (error) {
+    releaseSingleFlightLock(finishSubmissionLock);
+    isFinishing = false;
+    if (els.finishSave) {
+      els.finishSave.disabled = false;
+    }
     console.error('Error finishing game:', error);
     alert('Error finishing game: ' + error.message);
   }
