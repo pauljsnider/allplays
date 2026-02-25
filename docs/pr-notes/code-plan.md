@@ -1,27 +1,21 @@
-# Code Role Notes (League Link + Standings)
+# Code Role Notes (Parent Take-Home Packet Visibility)
 
-## Objective
-Implement league URL capture and standings display with test coverage.
+## Implementation Summary
+- Enhanced resolver module to provide packet context fallback:
+  - `resolvePracticePacketContextForEvent(event, sessions)` in `js/parent-dashboard-packets.js`
+- Updated parent dashboard rendering to use packet context fallback in:
+  - schedule list cards
+  - calendar day modal
+- Bumped module import cache key to ensure clients pull updated resolver:
+  - `parent-dashboard.html` imports `parent-dashboard-packets.js?v=2`
 
-## Code Changes
-- Added `leagueUrl` field in team editor form and save/load flow:
-  - `edit-team.html`
-- Added standalone standings module:
-  - `js/league-standings.js`
-  - Parses TeamSideline standings table with W/L/T/PCT/PF/PA/PD extraction.
-  - Provides matching helper and resilient fetch strategy (direct + proxy fallback).
-- Integrated standings display into team page:
-  - `team.html`
-  - Adds league link badge in header.
-  - Adds "League Standings" season overview card.
+## Tests Updated
+- `tests/unit/parent-dashboard-packets.test.js`
+  - added fallback-by-team/date case
+  - added cross-team safety case
 
-## Tests Added
-- `tests/unit/league-standings.test.js`
-  - parser extraction of W/L/T row values
-  - normalization/matching behavior
-  - no-table fallback behavior
-
-## Success Criteria
-- Team settings persist `leagueUrl`.
-- Team page shows league standings when URL is configured.
-- Unit tests pass for parser/matching logic.
+## Firebase / Rules
+- Verified `firestore.rules` already permits required reads/writes for parent packet flows:
+  - `practiceSessions`
+  - `practiceSessions/{sessionId}/packetCompletions`
+- No rules changes required for this feature fix.

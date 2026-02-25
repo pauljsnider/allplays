@@ -1,30 +1,24 @@
-# Requirements Role Notes (League Link + Standings)
+# Requirements Role Notes (Parent Take-Home Packet Visibility)
 
 ## Objective
-Enable coaches to save an external league URL and show league W/L/T standings on the team page.
+Ensure parents can reliably open a generated take-home packet from the parent dashboard schedule experience.
 
 ## Current State
-- `edit-team.html` has no `leagueUrl` field.
-- Team page season record uses only local completed game scores from Firestore.
-- `edit-schedule.html` calendar links are designed for ICS ingestion, not standings pages.
+- `Open Packet` in schedule list/calendar only appears when `practiceHomePacket` is attached directly to the rendered event.
+- Event->session linkage can miss in some recurring/calendar cases even when a valid practice session packet exists.
+- Result: packet exists in session data, but no `Open Packet` CTA appears in schedule.
 
 ## Proposed State
-- Add `leagueUrl` to team settings in `edit-team.html`.
-- Persist `leagueUrl` in team document through existing `createTeam/updateTeam` flow.
-- Fetch and parse TeamSideline standings table on `team.html` and display a league card with record metrics.
+- Keep existing direct linkage path.
+- Add a safe fallback lookup so schedule views can resolve packet context from known practice sessions when direct event linkage is missing.
+- Preserve tenant/team boundaries and avoid cross-team packet exposure.
 
-## Risk Surface / Blast Radius
-- UI + read-only fetch changes limited to:
-  - `edit-team.html`
-  - `team.html`
-  - `js/league-standings.js`
-- No auth rules, write paths, or tenant-access controls changed.
-- External dependency risk: third-party markup changes can degrade standings parsing.
+## User-Facing Acceptance Criteria
+1. Parent sees `Open Packet` on practice schedule cards when a packet exists for the matched session.
+2. Parent sees `Open Packet` in calendar day modal under the same conditions.
+3. If no packet exists, no CTA is shown (existing behavior).
+4. Fallback never maps to another team’s session.
 
 ## Assumptions
-- TeamSideline standings pages keep `Team/W/L/T/PCT/PF/PA/PD` table structure.
-- `leagueUrl` may be absent for many teams and should degrade gracefully.
-- Matching team name to standings row is best-effort and may fall back to first row.
-
-## Recommendation
-Ship with defensive parsing + graceful fallback. This gives immediate W/L visibility with low schema/operational overhead and preserves current controls.
+- Practice session docs remain the source of truth for packet content.
+- Team/date proximity is a valid fallback key when event IDs are absent or mismatched.
