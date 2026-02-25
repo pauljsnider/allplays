@@ -2269,11 +2269,13 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     }
 
     // Best effort: write denormalized summary if caller is allowed to update game doc.
+    // For recurring-occurrence IDs (masterId__instanceDate) the virtual game doc may not
+    // exist, so we also suppress 'not-found' rather than crashing the submission.
     if (summary) {
         try {
             await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
         } catch (err) {
-            if (err?.code !== 'permission-denied') throw err;
+            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
         }
     }
 
