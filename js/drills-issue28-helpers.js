@@ -7,11 +7,56 @@ export function mergeUniqueDrills(communityDrills = [], publishedDrills = []) {
     return [...byId.values()].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
 }
 
+const URL_CANDIDATE_RE = /\bhttps?:\/\/[^\s<>"']+/gi;
+
+function isValidHostname(hostname) {
+    if (!hostname) return false;
+    const lower = hostname.toLowerCase();
+    if (lower === 'localhost') return true;
+    if (hostname.includes(':')) return true;
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return true;
+    if (hostname.startsWith('.') || hostname.endsWith('.') || hostname.includes('..')) return false;
+    const labels = hostname.split('.');
+    return labels.every((label) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
+}
+
+function isValidHttpUrl(value) {
+    try {
+        const parsed = new URL(value);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+        return isValidHostname(parsed.hostname);
+    } catch {
+        return false;
+    }
+}
+
+function splitTrailingPunctuation(match) {
+    const trailingChars = [];
+    let candidate = match;
+
+    while (candidate.length > 0 && /[),.;!?]$/.test(candidate)) {
+        const trimmed = candidate.slice(0, -1);
+        if (!isValidHttpUrl(trimmed)) break;
+        trailingChars.unshift(candidate.slice(-1));
+        candidate = trimmed;
+    }
+
+    return { candidate, trailing: trailingChars.join('') };
+}
+
+function linkifyEscapedText(escapedText, linkClass) {
+    return escapedText.replace(URL_CANDIDATE_RE, (match) => {
+        const { candidate, trailing } = splitTrailingPunctuation(match);
+        if (!isValidHttpUrl(candidate)) return match;
+        return `<a href="${candidate}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${candidate}</a>${trailing}`;
+    });
+}
+
 export function linkifySafeText(text, escapeFn) {
     const escaped = escapeFn ? escapeFn(text || '') : String(text || '');
-    return escaped.replace(
-        /(https?:\/\/[^\s<]+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-primary-600 underline break-all">$1</a>'
+    return linkifyEscapedText(
+        escaped,
+        'text-primary-600 underline break-all'
     );
 }
 
@@ -24,10 +69,7 @@ function applyInlineMd(text) {
     // Inline code: `code`
     text = text.replace(/`([^`]+)`/g, '<code class="font-mono text-xs opacity-80">$1</code>');
     // URLs
-    text = text.replace(
-        /(https?:\/\/[^\s<]+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer" class="underline opacity-80 hover:opacity-100 break-all">$1</a>'
-    );
+    text = linkifyEscapedText(text, 'underline opacity-80 hover:opacity-100 break-all');
     return text;
 }
 
@@ -88,4 +130,3 @@ export function parseMarkdown(text, escapeFn) {
 
     return out.join('');
 }
-

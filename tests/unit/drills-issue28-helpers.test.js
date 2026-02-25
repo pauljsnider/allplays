@@ -34,5 +34,34 @@ describe('issue 28 drill helpers', () => {
         expect(rendered).toContain('href="https://kinoli.com/a/AnVCZ6BneIVx"');
         expect(rendered).not.toContain('<script>');
     });
-});
 
+    it('linkifySafeText does not link malformed urls', () => {
+        const escaped = (value) =>
+            value
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+
+        const rendered = linkifySafeText('Bad link https://example..com/path', escaped);
+
+        expect(rendered).toContain('https://example..com/path');
+        expect(rendered).not.toContain('<a href=');
+    });
+
+    it('linkifySafeText keeps sentence punctuation outside links', () => {
+        const escaped = (value) =>
+            value
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+
+        const rendered = linkifySafeText('Watch https://kinoli.com/a/AnVCZ6BneIVx.', escaped);
+
+        expect(rendered).toContain('href="https://kinoli.com/a/AnVCZ6BneIVx"');
+        expect(rendered).toContain('</a>.');
+    });
+});
