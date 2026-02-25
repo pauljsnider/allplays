@@ -71,4 +71,63 @@ if ! rg -q '\[REDACTED\]|\[REDACTED_SLACK_TOKEN\]|\[REDACTED_SLACK_BOT_TOKEN\]' 
   exit 1
 fi
 
-echo "nightly-playwright-smoke slack curl failure redaction test passed"
+set +e
+env \
+  PATH="$mock_bin:$PATH" \
+  WORKDIR="$workdir" \
+  STATE_DIR="$state_dir" \
+  TEST_CMD="true" \
+  SLACK_NOTIFY_ENABLED="true" \
+  SLACK_NOTIFY_ON_SUCCESS="false" \
+  SLACK_BOT_TOKEN="xoxb-your-token-here" \
+  SLACK_NOTIFY_CHANNEL="C1234567890" \
+  bash "$SCRIPT_PATH" >"$output_file" 2>&1
+script_exit=$?
+set -e
+
+if [[ "$script_exit" -eq 0 ]]; then
+  echo "expected script to fail when placeholder Slack token is configured"
+  cat "$output_file"
+  exit 1
+fi
+
+if ! rg -q 'invalid SLACK_BOT_TOKEN' "$output_file"; then
+  echo "expected invalid placeholder token validation message"
+  cat "$output_file"
+  exit 1
+fi
+
+set +e
+env \
+  PATH="$mock_bin:$PATH" \
+  WORKDIR="$workdir" \
+  STATE_DIR="$state_dir" \
+  TEST_CMD='echo smoke; exit 9' \
+  SLACK_NOTIFY_ENABLED="false" \
+  bash "$SCRIPT_PATH" >"$output_file" 2>&1
+script_exit=$?
+set -e
+
+if [[ "$script_exit" -ne 0 ]]; then
+  echo "expected script to pass because TEST_CMD is executed directly (no shell eval)"
+  cat "$output_file"
+  exit 1
+fi
+
+if ! rg -q 'smoke; exit 9' "$state_dir"/nightly-playwright-smoke-logs/nightly-playwright-smoke-*.log; then
+  echo "expected literal semicolon argument in command output"
+  cat "$output_file"
+  exit 1
+fi
+
+if ! rg -q "trap 'exec 9>&-' EXIT" "$SCRIPT_PATH"; then
+  echo "expected fd 9 EXIT trap in script"
+  exit 1
+fi
+
+if rg -q 'bash[[:space:]]+-lc' "$SCRIPT_PATH"; then
+  echo "unexpected bash -lc usage in script"
+  exit 1
+fi
+
+echo "nightly-playwright-smoke script hardening tests passed"
