@@ -287,6 +287,7 @@ service cloud.firestore {
                            request.resource.data.seatCountConfirmed is int &&
                            request.resource.data.seatCountConfirmed >= 0 &&
                            request.resource.data.seatCountConfirmed <= request.resource.data.seatCapacity &&
+                           math.abs(request.resource.data.seatCountConfirmed - resource.data.seatCountConfirmed) <= 1 &&
                            request.resource.data.status in ['open', 'closed', 'cancelled'];
           allow delete: if isSignedIn() && (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid);
 
