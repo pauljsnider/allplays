@@ -241,6 +241,60 @@ service cloud.firestore {
           allow delete: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
                            isSignedIn() && rsvpId == request.auth.uid;
         }
+
+        // Rideshare offers for games/practices.
+        match /rideOffers/{offerId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+          allow create: if isSignedIn() &&
+                           (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
+                           request.resource.data.driverUserId == request.auth.uid &&
+                           request.resource.data.seatCapacity is int &&
+                           request.resource.data.seatCapacity > 0 &&
+                           request.resource.data.seatCountConfirmed == 0 &&
+                           request.resource.data.status == 'open' &&
+                           request.resource.data.direction in ['to', 'from', 'round-trip'];
+          allow update: if isSignedIn() &&
+                           (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid) &&
+                           request.resource.data.driverUserId == resource.data.driverUserId &&
+                           request.resource.data.createdAt == resource.data.createdAt &&
+                           request.resource.data.seatCountConfirmed is int &&
+                           request.resource.data.seatCountConfirmed >= 0 &&
+                           request.resource.data.seatCountConfirmed <= request.resource.data.seatCapacity &&
+                           request.resource.data.status in ['open', 'closed', 'cancelled'];
+          allow delete: if isSignedIn() && (isTeamOwnerOrAdmin(teamId) || resource.data.driverUserId == request.auth.uid);
+
+          match /requests/{requestId} {
+            allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+
+            allow create: if isSignedIn() &&
+                             requestId == request.auth.uid + "__" + request.resource.data.childId &&
+                             request.resource.data.parentUserId == request.auth.uid &&
+                             isParentForPlayer(teamId, request.resource.data.childId) &&
+                             request.resource.data.status == 'pending';
+
+            allow update: if isSignedIn() &&
+                             (
+                               // Driver/coach/admin can decide status.
+                               (
+                                 (isTeamOwnerOrAdmin(teamId) || get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid) &&
+                                 request.resource.data.parentUserId == resource.data.parentUserId &&
+                                 request.resource.data.childId == resource.data.childId &&
+                                 request.resource.data.status in ['confirmed', 'waitlisted', 'declined']
+                               ) ||
+                               // Request owner can reset to pending or update childName only.
+                               (
+                                 resource.data.parentUserId == request.auth.uid &&
+                                 request.resource.data.parentUserId == resource.data.parentUserId &&
+                                 request.resource.data.childId == resource.data.childId &&
+                                 request.resource.data.status == 'pending'
+                               )
+                             );
+            allow delete: if isSignedIn() &&
+                             (isTeamOwnerOrAdmin(teamId) ||
+                              resource.data.parentUserId == request.auth.uid ||
+                              get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.driverUserId == request.auth.uid);
+          }
+        }
       }
 
       // Stat tracker configs subcollection
