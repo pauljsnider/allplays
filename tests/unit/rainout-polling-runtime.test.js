@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { executeRainoutPollingRun } from '../../js/rainout-polling-runtime.js';
 
 function createHarness({
@@ -218,5 +218,47 @@ describe('rainout polling runtime integration', () => {
         expect(harness.stateWrites).toHaveLength(0);
         expect(harness.stateStore.get('t1::ev-1')).toBeUndefined();
         expect(harness.idempotencyKeys.size).toBe(0);
+    });
+
+    it('uses nowMs-based durations for deterministic audit logging', async () => {
+        const nowMs = Date.UTC(2026, 1, 25, 7, 0, 0);
+        const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(nowMs + 123456);
+        try {
+            const subscriptions = [{ id: 's1', tenantId: 't1', userId: 'u1', zip: '20176' }];
+
+            const successHarness = createHarness({
+                fetchByTarget: {
+                    't1::20176': []
+                }
+            });
+            const successResult = await executeRainoutPollingRun({
+                nowMs,
+                subscriptions,
+                ...successHarness.deps
+            });
+
+            const errorHarness = createHarness({
+                fetchErrorsByTarget: {
+                    't1::20176': new Error('upstream-timeout')
+                }
+            });
+            const errorResult = await executeRainoutPollingRun({
+                nowMs,
+                subscriptions,
+                ...errorHarness.deps
+            });
+
+            expect(successResult.processedTargets).toBe(1);
+            expect(successHarness.auditLogs).toHaveLength(1);
+            expect(successHarness.auditLogs[0].status).toBe('ok');
+            expect(successHarness.auditLogs[0].durationMs).toBe(0);
+
+            expect(errorResult.failedTargets).toBe(1);
+            expect(errorHarness.auditLogs).toHaveLength(1);
+            expect(errorHarness.auditLogs[0].status).toBe('error');
+            expect(errorHarness.auditLogs[0].durationMs).toBe(0);
+        } finally {
+            dateNowSpy.mockRestore();
+        }
     });
 });
