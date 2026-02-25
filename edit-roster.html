@@ -652,7 +652,7 @@
         function setupCopyLinkButton(buttonId, codeId) {
             document.getElementById(buttonId).addEventListener('click', async () => {
                 const code = document.getElementById(codeId).textContent;
-                const signupUrl = `${window.location.origin}/login.html?code=${code}`;
+                const signupUrl = `${window.location.origin}/login.html?code=${code}&type=parent`;
                 try {
                     await navigator.clipboard.writeText(signupUrl);
                     const btn = document.getElementById(buttonId);

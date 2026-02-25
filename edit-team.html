@@ -423,7 +423,7 @@
         // Copy admin signup link button
         document.getElementById('copy-admin-link-btn').addEventListener('click', async () => {
             const code = document.getElementById('admin-code-text').textContent;
-            const signupUrl = `${window.location.origin}/login.html?code=${code}`;
+            const signupUrl = `${window.location.origin}/login.html?code=${code}&type=admin`;
             try {
                 await navigator.clipboard.writeText(signupUrl);
                 const btn = document.getElementById('copy-admin-link-btn');

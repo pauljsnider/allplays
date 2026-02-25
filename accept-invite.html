@@ -366,7 +366,7 @@
             checkAuth(async (user) => {
                 if (!user) {
                     // Not logged in - redirect to login with the code
-                    window.location.href = `login.html?code=${code}`;
+                    window.location.href = `login.html?code=${code}&type=${encodeURIComponent(inviteType)}`;
                     return;
                 }
 

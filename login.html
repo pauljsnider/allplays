@@ -98,11 +98,23 @@
         import { login, signup, checkAuth, loginWithGoogle, handleGoogleRedirectResult, resetPassword, getRedirectUrl } from './js/auth.js?v=9';
         import { getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
+        import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
         let isLogin = true;
         let isProcessingAuth = false; // Flag to prevent auto-redirect during login/signup
+
+        // Read invite-related URL params once for redirect decisions.
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlCodeParam = urlParams.get('code');
+        const urlInviteType = urlParams.get('type');
+        const shouldRedeemInviteFromLogin = urlInviteType === 'parent' || urlInviteType === 'admin';
+
+        function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
+            const defaultRedirect = getRedirectUrl(userWithRoles);
+            return getPostAuthRedirectUrl(defaultRedirect, urlCodeParam, shouldRedeemInvite);
+        }
 
         // Handle Google redirect result on page load
         (async () => {
@@ -121,7 +133,10 @@
                     const profile = await getUserProfile(result.user.uid);
                     console.log('[Login Page] Profile fetched:', profile);
                     const userWithRoles = { ...result.user, ...profile };
-                    const redirectUrl = getRedirectUrl(userWithRoles);
+                    const googleAuthMode = window.sessionStorage.getItem('postGoogleAuthMode');
+                    window.sessionStorage.removeItem('postGoogleAuthMode');
+                    const shouldRedeemInvite = shouldRedeemInviteFromLogin && googleAuthMode === 'login';
+                    const redirectUrl = getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
                     console.log('[Login Page] Redirecting to:', redirectUrl);
                     window.location.href = redirectUrl;
                     return; // Prevent further initialization
@@ -142,7 +157,6 @@
         })();
 
         // Auto-fill activation code from URL parameter
-        const urlCodeParam = new URLSearchParams(window.location.search).get('code');
         if (urlCodeParam && urlCodeParam.length === 8) {
             // Switch to signup mode
             isLogin = false;
@@ -184,7 +198,7 @@
         checkAuth((user) => {
             // Only auto-redirect if not currently processing login/signup
             if (user && !isProcessingAuth) {
-                window.location.href = getRedirectUrl(user);
+                window.location.href = getPostAuthRedirect(user, shouldRedeemInviteFromLogin);
             }
             renderHeader(document.getElementById('header-container'), user);
         });
@@ -237,7 +251,7 @@
                     // Fetch profile to determine redirect
                     const profile = await getUserProfile(userCredential.user.uid);
                     const userWithRoles = { ...userCredential.user, ...profile };
-                    window.location.href = getRedirectUrl(userWithRoles);
+                    window.location.href = getPostAuthRedirect(userWithRoles, shouldRedeemInviteFromLogin);
                 } else {
                     // Signup mode - validate password confirmation
                     const confirmPassword = document.getElementById('confirm-password').value;
@@ -267,6 +281,7 @@
             errorDiv.classList.add('hidden');
 
             try {
+                window.sessionStorage.setItem('postGoogleAuthMode', isLogin ? 'login' : 'signup');
                 // If in signup mode, validate activation code before starting auth
                 let activationCode = null;
                 if (!isLogin) {
@@ -284,10 +299,12 @@
                     console.log('[Login Page] Popup succeeded, redirecting...');
                     const profile = await getUserProfile(result.user.uid);
                     const userWithRoles = { ...result.user, ...profile };
-                    window.location.href = getRedirectUrl(userWithRoles);
+                    const shouldRedeemInvite = shouldRedeemInviteFromLogin && isLogin;
+                    window.location.href = getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
                 }
                 // If result is null, redirect flow was triggered - page will reload
             } catch (error) {
+                window.sessionStorage.removeItem('postGoogleAuthMode');
                 errorDiv.textContent = error.message;
                 errorDiv.classList.remove('hidden');
                 console.error(error);
