@@ -73,6 +73,11 @@ service cloud.firestore {
       return /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId);
     }
 
+    function isRideshareOfferOpen(teamId, gameId, offerId) {
+      let offerPath = rideshareOfferPath(teamId, gameId, offerId);
+      return exists(offerPath) && get(offerPath).data.status == 'open';
+    }
+
     // Require request status decisions/deletes to keep parent offer seat counters consistent.
     function isRideshareSeatCountUpdateValid(teamId, gameId, offerId, previousStatus, nextStatus) {
       let offerPath = rideshareOfferPath(teamId, gameId, offerId);
@@ -298,7 +303,7 @@ service cloud.firestore {
                              requestId == request.auth.uid + "__" + request.resource.data.childId &&
                              request.resource.data.parentUserId == request.auth.uid &&
                              isParentForPlayer(teamId, request.resource.data.childId) &&
-                             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.status == 'open' &&
+                             isRideshareOfferOpen(teamId, gameId, offerId) &&
                              request.resource.data.status == 'pending';
 
             allow update: if isSignedIn() &&
