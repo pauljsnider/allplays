@@ -88,12 +88,34 @@
 
             <!-- Composer -->
             <div class="p-4 border-t border-gray-200 bg-gray-50">
-                <div class="flex gap-2">
+                <div class="flex gap-2 items-start">
                     <div class="relative flex-1">
-                        <input type="text" id="message-input"
-                            placeholder="Type a message..."
-                            class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                            maxlength="2000">
+                        <div class="flex items-center gap-1 w-full rounded-lg border border-gray-300 bg-white px-2 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500">
+                            <button id="voice-btn" type="button"
+                                class="shrink-0 p-2 rounded-md text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
+                                title="Voice to text">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 10v2a7 7 0 01-14 0v-2"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19v4"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 23h8"></path>
+                                </svg>
+                            </button>
+                            <input type="text" id="message-input"
+                                placeholder="Type a message..."
+                                class="w-full px-2 py-2.5 border-0 focus:outline-none focus:ring-0"
+                                maxlength="2000">
+                            <input id="chat-image-input" type="file" accept="image/*" class="hidden">
+                            <button id="image-btn" type="button"
+                                class="shrink-0 p-2 rounded-md text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
+                                title="Attach image">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.5 11.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15l-4-4L6 22"></path>
+                                </svg>
+                            </button>
+                        </div>
                         <div id="mention-menu"
                             class="hidden absolute bottom-full left-0 mb-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
                             <button type="button" id="mention-allplays"
@@ -107,6 +129,21 @@
                         class="px-5 py-2.5 bg-primary-600 text-white rounded-lg font-medium hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed transition">
                         Send
                     </button>
+                </div>
+                <div id="voice-hint" class="hidden mt-2 text-xs text-primary-700 bg-primary-50 border border-primary-100 rounded-lg px-3 py-2">
+                    Listening... tap mic again to stop.
+                </div>
+                <div id="chat-image-preview" class="hidden mt-2 p-2 border border-gray-200 rounded-lg bg-white">
+                    <div class="flex items-center gap-3">
+                        <img id="chat-image-preview-img" alt="Image preview" class="w-14 h-14 rounded-md object-cover border border-gray-200">
+                        <div class="min-w-0 flex-1">
+                            <p id="chat-image-preview-name" class="text-sm font-medium text-gray-800 truncate"></p>
+                            <p id="chat-image-preview-size" class="text-xs text-gray-500"></p>
+                        </div>
+                        <button id="chat-image-remove-btn" type="button" class="text-sm text-red-600 hover:text-red-700 font-medium">
+                            Remove
+                        </button>
+                    </div>
                 </div>
                 <div id="ai-thinking" class="hidden mt-2 text-sm text-indigo-600 flex items-center gap-2">
                     <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
@@ -145,7 +182,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages } from './js/db.js';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=20';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -280,7 +317,29 @@
         const AI_GAMES_CONTEXT_LIMIT = 20;
         const AI_EVENTS_GAMES_LIMIT = 3;
         const AI_EVENTS_PER_GAME_LIMIT = 25;
+        const MAX_CHAT_IMAGE_SIZE = 5 * 1024 * 1024;
+        const CHAT_REACTIONS = [
+            { key: 'thumbs_up', emoji: '👍' },
+            { key: 'heart', emoji: '❤️' },
+            { key: 'joy', emoji: '😂' },
+            { key: 'wow', emoji: '😮' },
+            { key: 'sad', emoji: '😢' },
+            { key: 'clap', emoji: '👏' }
+        ];
+        const CHAT_REACTION_BY_KEY = new Map(CHAT_REACTIONS.map(r => [r.key, r.emoji]));
         let aiModelCache = null;
+        let activeVoiceRecognition = null;
+        let voiceListening = false;
+        let pendingImageFile = null;
+        let activeReactionPickerMessageId = null;
+        let activeReactionInfo = null;
+        const pendingReactionOps = new Set();
+        const reactionUserNameCache = new Map();
+        const reactionLongPress = {
+            timer: null,
+            key: null,
+            suppressUntil: 0
+        };
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
@@ -383,6 +442,7 @@
                 if (olderBatch.length > 0) {
                     olderMessages = [...olderBatch, ...olderMessages];
                     await hydrateSenderPhotos(olderBatch);
+                    await hydrateReactionUserNames(olderBatch);
                     messages = [...olderMessages, ...liveMessages];
                 }
 
@@ -422,6 +482,7 @@
                 }
 
                 await hydrateSenderPhotos(liveMessages);
+                await hydrateReactionUserNames(liveMessages);
                 messages = [...olderMessages, ...liveMessages];
                 renderMessages();
                 updateLoadMoreButton();
@@ -508,6 +569,118 @@
             });
         }
 
+        async function hydrateReactionUserNames(messageList) {
+            const missing = new Set();
+            messageList.forEach((msg) => {
+                const reactions = normalizeMessageReactions(msg);
+                Object.values(reactions).forEach((users) => {
+                    users.forEach((uid) => {
+                        if (uid && uid !== currentUser.uid && !reactionUserNameCache.has(uid)) {
+                            missing.add(uid);
+                        }
+                    });
+                });
+            });
+
+            if (missing.size === 0) return;
+
+            await Promise.all(Array.from(missing).map(async (uid) => {
+                try {
+                    const profile = await getUserProfile(uid);
+                    const name = profile?.fullName || profile?.displayName || profile?.email || `User ${uid.slice(0, 6)}`;
+                    reactionUserNameCache.set(uid, name);
+                } catch (_) {
+                    reactionUserNameCache.set(uid, `User ${uid.slice(0, 6)}`);
+                }
+            }));
+        }
+
+        function getReactionNames(users) {
+            const names = users.map((uid) => (uid === currentUser.uid ? 'You' : (reactionUserNameCache.get(uid) || `User ${uid.slice(0, 6)}`)));
+            if (names.length <= 4) return names.join(', ');
+            return `${names.slice(0, 4).join(', ')} +${names.length - 4} more`;
+        }
+
+        function normalizeMessageReactions(msg) {
+            const source = (msg && typeof msg.reactions === 'object' && msg.reactions) ? msg.reactions : {};
+            const normalized = {};
+
+            CHAT_REACTIONS.forEach(({ key, emoji }) => {
+                const byKey = Array.isArray(source[key]) ? source[key] : [];
+                const legacyByEmoji = Array.isArray(source[emoji]) ? source[emoji] : [];
+                const users = Array.from(new Set([...byKey, ...legacyByEmoji])).filter(Boolean);
+                if (users.length > 0) {
+                    normalized[key] = users;
+                }
+            });
+
+            return normalized;
+        }
+
+        function renderReactionControls(msg, { isOwn }) {
+            const reactions = normalizeMessageReactions(msg);
+            const pills = CHAT_REACTIONS
+                .map(({ key, emoji }) => {
+                    const users = reactions[key] || [];
+                    const count = users.length;
+                    if (count === 0) return '';
+                    const active = users.includes(currentUser.uid);
+                    const tooltipActive = activeReactionInfo?.messageId === msg.id && activeReactionInfo?.reactionKey === key;
+                    const tooltipText = escapeHtml(getReactionNames(users));
+                    return `
+                        <div class="relative" data-reaction-ui="true">
+                            <button type="button"
+                                onclick="window.reactToMessage('${msg.id}', '${key}')"
+                                onmouseenter="window.showReactionInfo('${msg.id}', '${key}')"
+                                onmouseleave="window.hideReactionInfo('${msg.id}', '${key}')"
+                                onfocus="window.showReactionInfo('${msg.id}', '${key}')"
+                                onblur="window.hideReactionInfo('${msg.id}', '${key}')"
+                                ontouchstart="window.startReactionLongPress(event, '${msg.id}', '${key}')"
+                                ontouchend="window.endReactionLongPress()"
+                                ontouchcancel="window.endReactionLongPress()"
+                                class="inline-flex items-center gap-1 px-2 py-1 rounded-full border text-xs transition ${active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}">
+                                <span>${emoji}</span>
+                                <span class="font-semibold">${count}</span>
+                            </button>
+                            ${tooltipActive ? `
+                                <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-30 px-2 py-1 rounded-md bg-gray-900 text-white text-xs whitespace-nowrap shadow-lg" data-reaction-ui="true">
+                                    ${tooltipText}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                })
+                .filter(Boolean)
+                .join('');
+
+            const pickerOpen = activeReactionPickerMessageId === msg.id;
+            const picker = pickerOpen ? `
+                <div class="absolute bottom-full ${isOwn ? 'right-0' : 'left-0'} mb-2 inline-flex items-center gap-1.5 px-2 py-1.5 rounded-full border border-gray-200 bg-white shadow-lg z-20" data-reaction-ui="true">
+                    ${CHAT_REACTIONS.map(({ key, emoji }) => `
+                        <button type="button" onclick="window.reactToMessage('${msg.id}', '${key}')"
+                            class="w-8 h-8 rounded-full border border-gray-200 bg-white hover:bg-gray-50 text-sm" data-reaction-ui="true">
+                            ${emoji}
+                        </button>
+                    `).join('')}
+                </div>
+            ` : '';
+
+            const alignClass = isOwn ? 'justify-end' : 'justify-start';
+            const addBtnState = pickerOpen ? 'opacity-100' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100';
+            return `
+                <div class="mt-1 flex ${alignClass} gap-1.5 flex-wrap" data-reaction-ui="true">
+                    <div class="relative inline-flex items-center gap-1.5" data-reaction-ui="true">
+                        ${pills}
+                        <button type="button" onclick="window.toggleReactionPicker('${msg.id}')" data-reaction-ui="true"
+                            class="inline-flex items-center justify-center w-7 h-7 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-primary-600 hover:border-primary-200 transition ${addBtnState}">
+                            <span class="text-sm">😊</span>
+                        </button>
+                        ${picker}
+                    </div>
+                </div>
+            `;
+        }
+
         function renderMessage(msg) {
             const isAi = msg.ai === true;
             const isOwn = !isAi && msg.senderId === currentUser.uid;
@@ -536,8 +709,16 @@
                          <span class="text-xs font-bold text-gray-600">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>
                        </div>`;
 
-            const canEdit = isOwn;
+            const canEdit = isOwn && !!msg.text;
             const canDelete = !isAi && (isOwn || canModerate);
+            const hasImage = msg.imageUrl && isSafeUrl(msg.imageUrl);
+            const messageImage = hasImage ? `
+                <a href="${escapeHtml(msg.imageUrl)}" target="_blank" rel="noopener noreferrer" class="block mb-2">
+                    <img src="${escapeHtml(msg.imageUrl)}" alt="${escapeHtml(msg.imageName || 'Chat image')}" class="max-w-full max-h-72 rounded-lg border border-gray-200 object-cover">
+                </a>
+            ` : '';
+            const messageText = msg.text ? `<p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>` : '';
+            const reactionControls = renderReactionControls(msg, { isOwn });
 
             const actions = [];
             if (canEdit) {
@@ -555,14 +736,15 @@
 
             if (isOwn) {
                 return `
-                    <div class="flex justify-end gap-2">
+                    <div class="group flex justify-end gap-2">
                         <div class="max-w-[75%]">
                             <div class="text-xs text-gray-500 text-right mb-1">
                                 ${msg.editedAt ? '<span class="italic">(edited)</span> ' : ''}${timestamp}
                             </div>
                             <div class="${bubbleClass} rounded-lg px-4 py-2 rounded-br-sm">
-                                <p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>
+                                ${messageImage}${messageText}
                             </div>
+                            ${reactionControls}
                             ${actions.length > 0 ? `
                                 <div class="flex justify-end gap-2 mt-1">
                                     ${actions.join(' ')}
@@ -574,7 +756,7 @@
                 `;
             } else {
                 return `
-                    <div class="flex justify-start gap-2">
+                    <div class="group flex justify-start gap-2">
                         ${avatar}
                         <div class="max-w-[75%]">
                             <div class="text-xs text-gray-500 mb-1">
@@ -583,8 +765,9 @@
                                 <span class="ml-1">${timestamp}</span>
                             </div>
                             <div class="${bubbleClass} rounded-lg px-4 py-2 rounded-bl-sm">
-                                <p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>
+                                ${messageImage}${messageText}
                             </div>
+                            ${reactionControls}
                             ${actions.length > 0 ? `
                                 <div class="flex gap-2 mt-1">
                                     ${actions.join(' ')}
@@ -657,6 +840,140 @@
                 await new Promise(resolve => setTimeout(resolve, minMs - elapsed));
             }
             showAiThinking(false);
+        }
+
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) return '';
+            if (bytes < 1024) return `${bytes} B`;
+            if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        }
+
+        function updateComposerState() {
+            const input = document.getElementById('message-input');
+            const sendBtn = document.getElementById('send-btn');
+            sendBtn.disabled = !input.value.trim() && !pendingImageFile;
+        }
+
+        function setVoiceButtonState(isListening) {
+            const voiceBtn = document.getElementById('voice-btn');
+            const hint = document.getElementById('voice-hint');
+            voiceBtn.classList.toggle('text-red-600', isListening);
+            voiceBtn.classList.toggle('bg-red-50', isListening);
+            hint.classList.toggle('hidden', !isListening);
+        }
+
+        function stopVoiceCapture() {
+            if (activeVoiceRecognition && voiceListening) {
+                try {
+                    activeVoiceRecognition.stop();
+                } catch (_) {}
+            }
+            voiceListening = false;
+            activeVoiceRecognition = null;
+            setVoiceButtonState(false);
+        }
+
+        function appendTranscriptToInput(transcript) {
+            const input = document.getElementById('message-input');
+            const clean = String(transcript || '').trim();
+            if (!clean) return;
+            const spacer = input.value.trim().length > 0 ? ' ' : '';
+            input.value = `${input.value}${spacer}${clean}`.trimStart();
+            input.focus();
+            updateComposerState();
+        }
+
+        function toggleVoiceCapture() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                showError('Voice input is not supported in this browser.');
+                return;
+            }
+
+            if (voiceListening && activeVoiceRecognition) {
+                stopVoiceCapture();
+                return;
+            }
+
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SR();
+            recognition.lang = 'en-US';
+            recognition.interimResults = false;
+            recognition.continuous = false;
+
+            activeVoiceRecognition = recognition;
+            voiceListening = true;
+            setVoiceButtonState(true);
+
+            recognition.onresult = (e) => {
+                const transcript = e.results?.[0]?.[0]?.transcript || '';
+                appendTranscriptToInput(transcript);
+            };
+            recognition.onerror = (event) => {
+                if (event?.error !== 'no-speech' && event?.error !== 'aborted') {
+                    showError('Voice recognition failed. Try again.');
+                }
+            };
+            recognition.onend = () => {
+                voiceListening = false;
+                activeVoiceRecognition = null;
+                setVoiceButtonState(false);
+            };
+
+            recognition.start();
+        }
+
+        function clearSelectedImage() {
+            pendingImageFile = null;
+            const input = document.getElementById('chat-image-input');
+            const preview = document.getElementById('chat-image-preview');
+            const previewImg = document.getElementById('chat-image-preview-img');
+            const previewName = document.getElementById('chat-image-preview-name');
+            const previewSize = document.getElementById('chat-image-preview-size');
+            input.value = '';
+            previewImg.src = '';
+            previewName.textContent = '';
+            previewSize.textContent = '';
+            preview.classList.add('hidden');
+            updateComposerState();
+        }
+
+        function setSelectedImage(file) {
+            pendingImageFile = file;
+            const preview = document.getElementById('chat-image-preview');
+            const previewImg = document.getElementById('chat-image-preview-img');
+            const previewName = document.getElementById('chat-image-preview-name');
+            const previewSize = document.getElementById('chat-image-preview-size');
+
+            previewName.textContent = file.name;
+            previewSize.textContent = formatBytes(file.size);
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target?.result || '';
+            };
+            reader.readAsDataURL(file);
+            preview.classList.remove('hidden');
+            updateComposerState();
+        }
+
+        function handleImageSelection(event) {
+            const file = event.target.files?.[0];
+            if (!file) {
+                clearSelectedImage();
+                return;
+            }
+            if (!file.type.startsWith('image/')) {
+                showError('Please select an image file.');
+                clearSelectedImage();
+                return;
+            }
+            if (file.size > MAX_CHAT_IMAGE_SIZE) {
+                showError('Image must be 5MB or smaller.');
+                clearSelectedImage();
+                return;
+            }
+            setSelectedImage(file);
         }
 
         function hideMentionMenu() {
@@ -792,18 +1109,19 @@
             const playersById = new Map(players.map(p => [p.id, p]));
 
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const gamesWithDates = games
                 .map(g => ({ ...g, _date: toDate(g.date) }))
                 .filter(g => g._date);
 
             const upcomingGames = gamesWithDates
-                .filter(g => g._date >= now)
+                .filter(g => g._date >= cutoff)
                 .sort((a, b) => a._date - b._date)
                 .slice(0, 10)
                 .map(serializeGame);
 
             const recentGames = gamesWithDates
-                .filter(g => g._date < now)
+                .filter(g => g._date < cutoff)
                 .sort((a, b) => b._date - a._date)
                 .slice(0, AI_GAMES_CONTEXT_LIMIT)
                 .map(serializeGame);
@@ -996,9 +1314,78 @@
             }
         }
 
+        window.toggleReactionPicker = function(messageId) {
+            activeReactionPickerMessageId = activeReactionPickerMessageId === messageId ? null : messageId;
+            activeReactionInfo = null;
+            renderMessages();
+        };
+
+        window.showReactionInfo = function(messageId, reactionKey) {
+            if (activeReactionInfo?.messageId === messageId && activeReactionInfo?.reactionKey === reactionKey) return;
+            activeReactionInfo = { messageId, reactionKey };
+            renderMessages();
+        };
+
+        window.hideReactionInfo = function(messageId, reactionKey) {
+            if (!activeReactionInfo) return;
+            if (activeReactionInfo.messageId !== messageId || activeReactionInfo.reactionKey !== reactionKey) return;
+            activeReactionInfo = null;
+            renderMessages();
+        };
+
+        window.startReactionLongPress = function(event, messageId, reactionKey) {
+            if (!event?.touches || event.touches.length !== 1) return;
+            if (reactionLongPress.timer) {
+                clearTimeout(reactionLongPress.timer);
+                reactionLongPress.timer = null;
+            }
+            const opKey = `${messageId}:${reactionKey}`;
+            reactionLongPress.key = opKey;
+            reactionLongPress.timer = setTimeout(() => {
+                reactionLongPress.suppressUntil = Date.now() + 650;
+                activeReactionInfo = { messageId, reactionKey };
+                renderMessages();
+            }, 450);
+        };
+
+        window.endReactionLongPress = function() {
+            if (reactionLongPress.timer) {
+                clearTimeout(reactionLongPress.timer);
+                reactionLongPress.timer = null;
+            }
+        };
+
+        window.reactToMessage = async function(messageId, reactionKey) {
+            const msg = messages.find(m => m.id === messageId);
+            if (!msg || msg.deleted) return;
+            if (!CHAT_REACTION_BY_KEY.has(reactionKey)) return;
+
+            const opKey = `${messageId}:${reactionKey}`;
+            if (reactionLongPress.key === opKey && Date.now() < reactionLongPress.suppressUntil) return;
+            if (pendingReactionOps.has(opKey)) return;
+            pendingReactionOps.add(opKey);
+
+            try {
+                await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid);
+                activeReactionPickerMessageId = null;
+                activeReactionInfo = null;
+            } catch (error) {
+                console.error('Error toggling reaction:', error);
+                showError('Failed to update reaction. Please try again.');
+            } finally {
+                pendingReactionOps.delete(opKey);
+            }
+        };
+
         function setupEventListeners() {
             // Send button
             document.getElementById('send-btn').addEventListener('click', triggerSend);
+            document.getElementById('voice-btn').addEventListener('click', toggleVoiceCapture);
+            document.getElementById('image-btn').addEventListener('click', () => {
+                document.getElementById('chat-image-input').click();
+            });
+            document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
+            document.getElementById('chat-image-remove-btn').addEventListener('click', clearSelectedImage);
 
             // Enter key to send
             document.getElementById('message-input').addEventListener('keypress', (e) => {
@@ -1023,6 +1410,8 @@
                 liveMessages = [];
                 liveOldestDoc = null;
                 hasMoreMessages = true;
+                activeReactionPickerMessageId = null;
+                activeReactionInfo = null;
                 startRealtimeUpdates();
                 btn.disabled = false;
             });
@@ -1069,7 +1458,7 @@
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
             input.addEventListener('input', () => {
-                sendBtn.disabled = !input.value.trim();
+                updateComposerState();
                 updateMentionMenu();
             });
             input.addEventListener('keydown', (e) => {
@@ -1095,8 +1484,20 @@
                 if (!menu.contains(e.target) && e.target !== input) {
                     hideMentionMenu();
                 }
+                if (!e.target.closest('[data-reaction-ui="true"]')) {
+                    const hadPicker = activeReactionPickerMessageId !== null;
+                    const hadInfo = activeReactionInfo !== null;
+                    activeReactionPickerMessageId = null;
+                    activeReactionInfo = null;
+                    if (hadPicker || hadInfo) {
+                        renderMessages();
+                    }
+                }
             });
+            document.addEventListener('touchend', () => window.endReactionLongPress(), { passive: true });
+            window.addEventListener('beforeunload', stopVoiceCapture);
             sendBtn.disabled = true;
+            updateComposerState();
         }
 
         function triggerSend() {
@@ -1114,25 +1515,41 @@
         async function sendMessage() {
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
+            const voiceBtn = document.getElementById('voice-btn');
+            const imageBtn = document.getElementById('image-btn');
             const text = input.value.trim();
+            const imageFile = pendingImageFile;
             const wantsAi = /@all\s*plays/i.test(text);
 
-            if (!text) return;
+            if (!text && !imageFile) return;
 
             sendBtn.disabled = true;
-            sendBtn.textContent = 'Sending...';
+            sendBtn.textContent = imageFile ? 'Uploading...' : 'Sending...';
+            voiceBtn.disabled = true;
+            imageBtn.disabled = true;
+            stopVoiceCapture();
 
             try {
+                let imagePayload = null;
+                if (imageFile) {
+                    imagePayload = await uploadChatImage(teamId, imageFile);
+                }
                 pendingScrollToBottom = true;
                 await postChatMessage(teamId, {
                     text,
                     senderId: currentUser.uid,
                     senderName: currentUserProfile?.fullName || null,
                     senderEmail: currentUser.email,
-                    senderPhotoUrl: currentUserProfile?.photoUrl || null
+                    senderPhotoUrl: currentUserProfile?.photoUrl || null,
+                    imageUrl: imagePayload?.url || null,
+                    imagePath: imagePayload?.path || null,
+                    imageName: imagePayload?.name || null,
+                    imageType: imagePayload?.type || null,
+                    imageSize: imagePayload?.size || null
                 });
 
                 input.value = '';
+                clearSelectedImage();
                 document.getElementById('send-error').classList.add('hidden');
                 scrollToBottom();
                 hideMentionMenu();
@@ -1146,8 +1563,10 @@
                 showError('Failed to send message. Please try again.');
                 pendingScrollToBottom = false;
             } finally {
-                sendBtn.disabled = !input.value.trim();
+                voiceBtn.disabled = false;
+                imageBtn.disabled = false;
                 sendBtn.textContent = 'Send';
+                updateComposerState();
             }
         }
 
@@ -1156,7 +1575,7 @@
 
         window.editMessage = function(messageId) {
             const msg = messages.find(m => m.id === messageId);
-            if (!msg || msg.deleted) return;
+            if (!msg || msg.deleted || !msg.text) return;
 
             editingMessageId = messageId;
             document.getElementById('edit-textarea').value = msg.text;

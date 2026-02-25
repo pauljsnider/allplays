@@ -133,6 +133,17 @@
       <div id="live-players" class="grid grid-cols-2 gap-2"></div>
       <button id="toggle-bench-mobile" class="w-full text-xs font-semibold pill px-3 py-2 bg-white border border-slate/10">Bench / Add starters</button>
       <div id="bench-mobile" class="grid grid-cols-2 gap-2"></div>
+      <div class="rounded-xl border border-slate/10 bg-sand/60 p-2 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-[11px] uppercase tracking-[0.18em] text-slate/60 font-semibold">Live Notes</p>
+          <button id="voice-note-btn" class="pill px-2 py-1 bg-white border border-slate/20 text-[11px] font-semibold text-slate-700">Start voice note</button>
+        </div>
+        <p id="voice-note-hint" class="text-[11px] text-slate-500">Tap Start voice note, speak, then tap Stop voice note.</p>
+        <div class="flex gap-2">
+          <input id="live-note-input" class="flex-1 px-3 py-2 rounded-lg border border-slate/10 text-xs" placeholder="Quick note for this game...">
+          <button id="live-note-add" class="pill px-3 py-2 bg-slate text-white text-[11px] font-semibold">Add</button>
+        </div>
+      </div>
     </section>
 
     <!-- Opponents -->

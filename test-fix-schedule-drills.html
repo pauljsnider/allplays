@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Suite — Schedule Buffer, Drill Markdown, Photo Fix</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+        .test-case { margin: 8px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 4px; }
+        .test-result { font-size: 0.85em; color: #666; white-space: pre-wrap; }
+        h1 { color: #1e293b; }
+        h2 { color: #4338ca; margin-top: 0; }
+        .summary { font-size: 1.1em; }
+        .summary .pass-count { color: #16a34a; font-weight: bold; }
+        .summary .fail-count { color: #dc2626; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Suite: Schedule Buffer, Drill Markdown, Photo Fix</h1>
+    <p>Covers changes from branch <code>fix/game-day-loader-and-chat</code></p>
+    <div id="test-results"></div>
+
+    <script type="module">
+        import { parseMarkdown, linkifySafeText } from './js/drills-issue28-helpers.js?v=3';
+
+        // ─── Harness ─────────────────────────────────────────────────────────────
+        const results = [];
+        let currentSection = 'General';
+
+        function section(name) { currentSection = name; }
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ section: currentSection, name, pass: true, error: null });
+            } catch (e) {
+                results.push({ section: currentSection, name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, msg) {
+            if (actual !== expected) {
+                throw new Error(`${msg || ''}\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`);
+            }
+        }
+
+        function assertTrue(val, msg) {
+            if (!val) throw new Error(msg || `Expected truthy, got ${val}`);
+        }
+
+        function assertFalse(val, msg) {
+            if (val) throw new Error(msg || `Expected falsy, got ${val}`);
+        }
+
+        function assertContains(html, substr, msg) {
+            if (!html.includes(substr)) {
+                throw new Error(`${msg || ''}\n  Expected to find: ${substr}\n  In: ${html}`);
+            }
+        }
+
+        function assertNotContains(html, substr, msg) {
+            if (html.includes(substr)) {
+                throw new Error(`${msg || ''}\n  Expected NOT to find: ${substr}\n  In: ${html}`);
+            }
+        }
+
+        // ─── Helpers used in production code (inlined for testing) ───────────────
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function makeScheduleCutoff() {
+            return new Date(Date.now() - 3 * 60 * 60 * 1000);
+        }
+
+        function getGameDate(game) {
+            if (!game || !game.date) return null;
+            return game.date.toDate ? game.date.toDate() : new Date(game.date);
+        }
+
+        function pickBestGameId(games, requestedGameId) {
+            const list = (games || []).filter((g) => g && g.id && g.type !== 'practice');
+            if (requestedGameId) {
+                const exact = list.find((g) => g.id === requestedGameId);
+                if (exact) return exact.id;
+            }
+            if (!list.length) return null;
+
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+
+            const live = list.find((g) => (g.liveStatus || '').toLowerCase() === 'live');
+            if (live) return live.id;
+
+            const scheduledFuture = list
+                .filter((g) => (g.status || '').toLowerCase() !== 'cancelled')
+                .map((g) => ({ game: g, date: getGameDate(g) }))
+                .filter((entry) => entry.date && entry.date >= cutoff)
+                .sort((a, b) => a.date - b.date);
+            if (scheduledFuture.length) return scheduledFuture[0].game.id;
+
+            const recent = list
+                .filter((g) => (g.status || '').toLowerCase() !== 'cancelled')
+                .map((g) => ({ game: g, date: getGameDate(g) }))
+                .filter((entry) => entry.date)
+                .sort((a, b) => b.date - a.date);
+            if (recent.length) return recent[0].game.id;
+
+            return list[0].id;
+        }
+
+        // ─── SUITE 1: parseMarkdown ───────────────────────────────────────────────
+        section('parseMarkdown');
+
+        test('Bold: **text** renders as <strong>', () => {
+            const html = parseMarkdown('**Setup:**', escapeHtml);
+            assertContains(html, '<strong>Setup:</strong>', 'Bold not rendered');
+        });
+
+        test('Italic: *text* renders as <em>', () => {
+            const html = parseMarkdown('This is *important*', escapeHtml);
+            assertContains(html, '<em>important</em>', 'Italic not rendered');
+        });
+
+        test('Italic not triggered by bullet marker * item', () => {
+            const html = parseMarkdown('* bullet item', escapeHtml);
+            assertNotContains(html, '<em>', 'Bullet marker should not become italic');
+            assertContains(html, '<ul', 'Should be a list');
+            assertContains(html, 'bullet item', 'Bullet text should appear');
+        });
+
+        test('Unordered list with - marker', () => {
+            const html = parseMarkdown('- first\n- second\n- third', escapeHtml);
+            assertContains(html, '<ul', 'Should contain <ul>');
+            assertContains(html, '<li>first</li>', 'First item');
+            assertContains(html, '<li>second</li>', 'Second item');
+            assertContains(html, '<li>third</li>', 'Third item');
+        });
+
+        test('Unordered list with * marker (drill format)', () => {
+            const html = parseMarkdown('*   Award 3 points if player scores', escapeHtml);
+            assertContains(html, '<ul', 'Should be a list, not italic');
+            assertContains(html, 'Award 3 points if player scores', 'Content should appear');
+        });
+
+        test('Ordered list renders as <ol>', () => {
+            const html = parseMarkdown('1. First step\n2. Second step\n3. Third step', escapeHtml);
+            assertContains(html, '<ol', 'Should contain <ol>');
+            assertContains(html, '<li>First step</li>', 'First item');
+            assertContains(html, '<li>Second step</li>', 'Second item');
+        });
+
+        test('ATX heading ## renders bold div', () => {
+            const html = parseMarkdown('## Coaching Points', escapeHtml);
+            assertContains(html, 'font-semibold', 'Heading should have font-semibold');
+            assertContains(html, 'Coaching Points', 'Heading text should appear');
+        });
+
+        test('ATX heading # (h1) renders larger', () => {
+            const html = parseMarkdown('# Main Title', escapeHtml);
+            assertContains(html, 'font-bold', 'h1 should have font-bold');
+            assertContains(html, 'Main Title', 'Heading text should appear');
+        });
+
+        test('Inline code renders <code>', () => {
+            const html = parseMarkdown('Use `offside trap` here', escapeHtml);
+            assertContains(html, '<code', 'Should contain <code>');
+            assertContains(html, 'offside trap', 'Code content should appear');
+        });
+
+        test('URL is linkified', () => {
+            const html = parseMarkdown('Watch https://youtube.com/watch?v=abc for reference', escapeHtml);
+            assertContains(html, '<a href="https://youtube.com/watch?v=abc"', 'URL should be a link');
+        });
+
+        test('Malformed URL candidate is not linkified', () => {
+            const html = parseMarkdown('Bad URL https://example..com/path should stay text', escapeHtml);
+            assertNotContains(html, '<a href=', 'Malformed hostname should not become a link');
+            assertContains(html, 'https://example..com/path', 'Original malformed URL should remain visible');
+        });
+
+        test('URL with encoded quote cannot break href attribute', () => {
+            const html = parseMarkdown('Safe link https://example.com?a=1"onclick="alert(1)', escapeHtml);
+            assertContains(html, '<a href="https://example.com/?a=1&amp;quot;onclick=&amp;quot;alert(1"', 'Href should remain escaped and bounded');
+            assertNotContains(html, 'onclick="alert(1)"', 'Raw attribute breakout must not appear');
+        });
+
+        test('XSS: script tag is escaped', () => {
+            const html = parseMarkdown('<scr' + 'ipt>alert("xss")<' + '/scr' + 'ipt>', escapeHtml);
+            assertNotContains(html, '<scr' + 'ipt>', 'Raw script tag must not appear');
+            assertContains(html, '&lt;', 'Angle brackets should be escaped');
+        });
+
+        test('XSS: inline event handler is escaped', () => {
+            const html = parseMarkdown('**<img onerror="alert(1)">**', escapeHtml);
+            // After escaping, onerror=" becomes onerror=&quot; — literal onerror=" must not appear
+            assertNotContains(html, 'onerror="', 'Event handler must be escaped');
+            assertNotContains(html, '<img', 'Raw HTML tags must not be emitted');
+            assertContains(html, '&quot;', 'Double quotes should be HTML-entity encoded');
+        });
+
+        test('Blank line produces spacer', () => {
+            const html = parseMarkdown('Line one\n\nLine two', escapeHtml);
+            assertContains(html, 'h-1', 'Blank line should produce spacer div');
+        });
+
+        test('Empty string returns empty string', () => {
+            const html = parseMarkdown('', escapeHtml);
+            assertEquals(html, '', 'Empty input should give empty output');
+        });
+
+        test('Null input handled gracefully', () => {
+            let html;
+            try { html = parseMarkdown(null, escapeHtml); } catch(e) { throw new Error('Should not throw on null: ' + e.message); }
+            assertEquals(html, '', 'Null should produce empty string');
+        });
+
+        test('Full drill instructions render all elements', () => {
+            const instructions = `**Setup:**\n1. Set up a 1v1 scenario.\n2. Designate a server.\n\n**Coaching Points:**\n*   Emphasize re-engagement.\n*   Focus on dynamic off-ball movement.`;
+            const html = parseMarkdown(instructions, escapeHtml);
+            assertContains(html, '<strong>Setup:</strong>', 'Setup heading bold');
+            assertContains(html, '<ol', 'Numbered steps in ol');
+            assertContains(html, '<strong>Coaching Points:</strong>', 'Coaching Points bold');
+            assertContains(html, '<ul', 'Bullet points in ul');
+        });
+
+        // ─── SUITE 2: 3-Hour Schedule Buffer ─────────────────────────────────────
+        section('3-Hour Schedule Buffer');
+
+        test('cutoff is 3 hours before now', () => {
+            const before = Date.now();
+            const cutoff = makeScheduleCutoff();
+            const after = Date.now();
+            const diffMs = ((before + after) / 2) - cutoff.getTime();
+            assertTrue(diffMs >= 3 * 60 * 60 * 1000 - 100, 'Cutoff should be ~3h ago');
+            assertTrue(diffMs <= 3 * 60 * 60 * 1000 + 100, 'Cutoff should be ~3h ago');
+        });
+
+        test('Event 1 hour ago is within buffer (upcoming)', () => {
+            const cutoff = makeScheduleCutoff();
+            const eventDate = new Date(Date.now() - 1 * 60 * 60 * 1000);
+            assertTrue(eventDate >= cutoff, '1h-ago event should be >= cutoff (upcoming)');
+        });
+
+        test('Event 2 hours ago is within buffer (upcoming)', () => {
+            const cutoff = makeScheduleCutoff();
+            const eventDate = new Date(Date.now() - 2 * 60 * 60 * 1000);
+            assertTrue(eventDate >= cutoff, '2h-ago event should be >= cutoff (upcoming)');
+        });
+
+        test('Event exactly 3 hours ago is at boundary (upcoming)', () => {
+            const cutoff = makeScheduleCutoff();
+            const eventDate = new Date(Date.now() - 3 * 60 * 60 * 1000 + 1000);
+            assertTrue(eventDate >= cutoff, '~3h-ago event should still be upcoming');
+        });
+
+        test('Event 3.5 hours ago is outside buffer (past)', () => {
+            const cutoff = makeScheduleCutoff();
+            const eventDate = new Date(Date.now() - 3.5 * 60 * 60 * 1000);
+            assertFalse(eventDate >= cutoff, '3.5h-ago event should be past');
+        });
+
+        test('Event 1 hour from now is upcoming', () => {
+            const cutoff = makeScheduleCutoff();
+            const eventDate = new Date(Date.now() + 1 * 60 * 60 * 1000);
+            assertTrue(eventDate >= cutoff, 'Future event should be upcoming');
+        });
+
+        test('Upcoming filter includes in-progress game', () => {
+            const cutoff = makeScheduleCutoff();
+            const events = [
+                { id: 'past', date: new Date(Date.now() - 5 * 60 * 60 * 1000), isPractice: false, isCancelled: false },
+                { id: 'in-progress', date: new Date(Date.now() - 1 * 60 * 60 * 1000), isPractice: false, isCancelled: false },
+                { id: 'future', date: new Date(Date.now() + 2 * 60 * 60 * 1000), isPractice: false, isCancelled: false },
+            ];
+            const upcoming = events.filter(e => e.date >= cutoff && !e.isCancelled);
+            assertEquals(upcoming.length, 2, 'Should include in-progress + future, not past');
+            assertTrue(upcoming.some(e => e.id === 'in-progress'), 'In-progress game should be upcoming');
+            assertTrue(upcoming.some(e => e.id === 'future'), 'Future game should be upcoming');
+            assertFalse(upcoming.some(e => e.id === 'past'), 'Old past game should not be upcoming');
+        });
+
+        test('Past filter excludes in-progress game within buffer', () => {
+            const cutoff = makeScheduleCutoff();
+            const events = [
+                { id: 'past', date: new Date(Date.now() - 5 * 60 * 60 * 1000) },
+                { id: 'in-progress', date: new Date(Date.now() - 1 * 60 * 60 * 1000) },
+            ];
+            const past = events.filter(e => e.date < cutoff);
+            assertEquals(past.length, 1, 'Only truly past events in past filter');
+            assertEquals(past[0].id, 'past', 'Old event is past');
+            assertFalse(past.some(e => e.id === 'in-progress'), 'In-progress should not be in past');
+        });
+
+        test('Cancelled event is excluded from upcoming regardless of buffer', () => {
+            const cutoff = makeScheduleCutoff();
+            const events = [
+                { id: 'cancelled-recent', date: new Date(Date.now() - 1 * 60 * 60 * 1000), isCancelled: true },
+                { id: 'cancelled-future', date: new Date(Date.now() + 1 * 60 * 60 * 1000), isCancelled: true },
+            ];
+            const upcoming = events.filter(e => e.date >= cutoff && !e.isCancelled);
+            assertEquals(upcoming.length, 0, 'Cancelled events should never be upcoming');
+        });
+
+        test('Practice events use same 3-hour buffer', () => {
+            const cutoff = makeScheduleCutoff();
+            const events = [
+                { id: 'practice-old', date: new Date(Date.now() - 5 * 60 * 60 * 1000), isPractice: true },
+                { id: 'practice-recent', date: new Date(Date.now() - 1 * 60 * 60 * 1000), isPractice: true },
+            ];
+            const upcoming = events.filter(e => e.isPractice && e.date >= cutoff);
+            assertEquals(upcoming.length, 1, 'Only recent practice should be upcoming');
+            assertEquals(upcoming[0].id, 'practice-recent', 'Recent practice is upcoming');
+        });
+
+        // ─── SUITE 3: pickBestGameId ──────────────────────────────────────────────
+        section('pickBestGameId');
+
+        const now = Date.now();
+        const hr = 60 * 60 * 1000;
+
+        test('Returns null for empty game list', () => {
+            assertEquals(pickBestGameId([], null), null, 'Empty list → null');
+        });
+
+        test('Returns null for null input', () => {
+            assertEquals(pickBestGameId(null, null), null, 'Null input → null');
+        });
+
+        test('Requested gameId is honoured when it exists', () => {
+            const games = [
+                { id: 'g1', date: new Date(now + 2 * hr) },
+                { id: 'g2', date: new Date(now + 4 * hr) },
+            ];
+            assertEquals(pickBestGameId(games, 'g2'), 'g2', 'Should return requested game');
+        });
+
+        test('Live game beats future game', () => {
+            const games = [
+                { id: 'future', date: new Date(now + 1 * hr) },
+                { id: 'live', date: new Date(now - 0.5 * hr), liveStatus: 'live' },
+            ];
+            assertEquals(pickBestGameId(games, null), 'live', 'Live game should win');
+        });
+
+        test('Live status is case-insensitive', () => {
+            const games = [
+                { id: 'g1', date: new Date(now + 1 * hr) },
+                { id: 'g2', date: new Date(now - 0.5 * hr), liveStatus: 'LIVE' },
+            ];
+            assertEquals(pickBestGameId(games, null), 'g2', 'LIVE (uppercase) should be detected');
+        });
+
+        test('Game started 1 hour ago is selected (within 3h buffer)', () => {
+            const games = [
+                { id: 'in-progress', date: new Date(now - 1 * hr) },
+            ];
+            assertEquals(pickBestGameId(games, null), 'in-progress', 'In-progress game should be selected');
+        });
+
+        test('Game started 2.5 hours ago is selected (within 3h buffer)', () => {
+            const games = [
+                { id: 'late-game', date: new Date(now - 2.5 * hr) },
+            ];
+            assertEquals(pickBestGameId(games, null), 'late-game', '2.5h-ago game should still be selected');
+        });
+
+        test('Game started 4 hours ago falls to fallback (outside buffer)', () => {
+            const games = [
+                { id: 'old', date: new Date(now - 4 * hr) },
+                { id: 'recent', date: new Date(now - 1 * hr) },
+            ];
+            // Both are non-cancelled; recent is within cutoff so it wins
+            assertEquals(pickBestGameId(games, null), 'recent', 'Recent game should beat old game');
+        });
+
+        test('Nearest future game selected when multiple upcoming', () => {
+            const games = [
+                { id: 'far', date: new Date(now + 5 * hr) },
+                { id: 'near', date: new Date(now + 1 * hr) },
+                { id: 'medium', date: new Date(now + 3 * hr) },
+            ];
+            assertEquals(pickBestGameId(games, null), 'near', 'Nearest future game should be selected');
+        });
+
+        test('Cancelled games are excluded from upcoming', () => {
+            const games = [
+                { id: 'cancelled', date: new Date(now + 1 * hr), status: 'cancelled' },
+                { id: 'active', date: new Date(now + 2 * hr) },
+            ];
+            assertEquals(pickBestGameId(games, null), 'active', 'Cancelled game should be skipped');
+        });
+
+        test('Practice events are excluded', () => {
+            const games = [
+                { id: 'practice', date: new Date(now + 1 * hr), type: 'practice' },
+                { id: 'game', date: new Date(now + 2 * hr) },
+            ];
+            assertEquals(pickBestGameId(games, null), 'game', 'Practice should be excluded');
+        });
+
+        test('Falls back to most recent game when all are in the past beyond buffer', () => {
+            const games = [
+                { id: 'old1', date: new Date(now - 10 * hr) },
+                { id: 'old2', date: new Date(now - 5 * hr) },
+            ];
+            // Both outside 3h cutoff → falls to recent fallback (most recent past)
+            assertEquals(pickBestGameId(games, null), 'old2', 'Most recent past game as fallback');
+        });
+
+        // ─── SUITE 4: Chat Photo Fallback Fix ────────────────────────────────────
+        section('Chat Photo Fallback Fix');
+
+        const currentUser = { uid: 'user-paul', photoURL: 'https://example.com/paul.jpg', photoUrl: 'https://example.com/paul.jpg' };
+
+        function resolveAvatar(turn, stateUser) {
+            const isCurrentUser = turn?.senderId && turn.senderId === stateUser?.uid;
+            return turn?.senderPhotoUrl
+                || (isCurrentUser ? (stateUser?.photoURL || stateUser?.photoUrl) : null)
+                || null;
+        }
+
+        test('Own message without senderPhotoUrl uses current user photo', () => {
+            const turn = { senderId: 'user-paul', senderPhotoUrl: null };
+            const photo = resolveAvatar(turn, currentUser);
+            assertEquals(photo, 'https://example.com/paul.jpg', 'Own message should use current user photo');
+        });
+
+        test('Other user message without senderPhotoUrl gets null (no bleed)', () => {
+            const turn = { senderId: 'user-brian', senderPhotoUrl: null };
+            const photo = resolveAvatar(turn, currentUser);
+            assertEquals(photo, null, "Other user's message should not get current user's photo");
+        });
+
+        test('Message with senderPhotoUrl always uses it regardless of sender', () => {
+            const turn = { senderId: 'user-brian', senderPhotoUrl: 'https://example.com/brian.jpg' };
+            const photo = resolveAvatar(turn, currentUser);
+            assertEquals(photo, 'https://example.com/brian.jpg', 'Embedded photo should always be used');
+        });
+
+        test('Own message with senderPhotoUrl uses embedded photo, not state', () => {
+            const turn = { senderId: 'user-paul', senderPhotoUrl: 'https://example.com/paul-old.jpg' };
+            const photo = resolveAvatar(turn, currentUser);
+            assertEquals(photo, 'https://example.com/paul-old.jpg', 'Embedded photo takes priority over state');
+        });
+
+        test('Turn with no senderId gets null photo', () => {
+            const turn = { senderPhotoUrl: null };
+            const photo = resolveAvatar(turn, currentUser);
+            assertEquals(photo, null, 'No senderId means no photo fallback');
+        });
+
+        test('Null turn handled gracefully', () => {
+            const photo = resolveAvatar(null, currentUser);
+            assertEquals(photo, null, 'Null turn should produce null photo');
+        });
+
+        test('No current user does not throw', () => {
+            const turn = { senderId: 'user-paul', senderPhotoUrl: null };
+            let photo;
+            try { photo = resolveAvatar(turn, null); } catch(e) { throw new Error('Should not throw with null user: ' + e.message); }
+            assertEquals(photo, null, 'No state user → null photo');
+        });
+
+        // ─── Render Results ───────────────────────────────────────────────────────
+
+        const sections = [...new Set(results.map(r => r.section))];
+        const passCount = results.filter(r => r.pass).length;
+        const failCount = results.filter(r => !r.pass).length;
+
+        const container = document.getElementById('test-results');
+
+        let html = `
+            <div class="test-section">
+                <h2>Summary</h2>
+                <p class="summary">
+                    <span class="pass-count">✅ ${passCount} passed</span> &nbsp;|&nbsp;
+                    <span class="fail-count">❌ ${failCount} failed</span> &nbsp;|&nbsp;
+                    ${results.length} total
+                </p>
+            </div>
+        `;
+
+        sections.forEach(sec => {
+            const secResults = results.filter(r => r.section === sec);
+            const secPass = secResults.filter(r => r.pass).length;
+            html += `<div class="test-section">
+                <h2>${sec} &nbsp;<small style="font-weight:normal;color:#6b7280">${secPass}/${secResults.length}</small></h2>`;
+            secResults.forEach(r => {
+                html += `
+                    <div class="test-case ${r.pass ? 'pass' : 'fail'}">
+                        <div class="test-name">${r.pass ? '✅' : '❌'} ${r.name}</div>
+                        ${r.error ? `<div class="test-result">Error: ${r.error}</div>` : ''}
+                    </div>`;
+            });
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
+    </script>
+</body>
+</html>

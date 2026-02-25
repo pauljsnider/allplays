@@ -53,7 +53,9 @@ serviceAccountKey*.json
 *.private
 
 # Migration and admin utility scripts
-_migration/
+_migration/*
+!_migration/
+!_migration/migrate-player-private-profile.js
 migrate_admin.js
 verify_admin.js
 check-admin-status.html

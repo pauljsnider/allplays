@@ -45,8 +45,17 @@
     <main class="container mx-auto px-4 py-8 md:py-12">
         <!-- Page Header -->
         <div class="mb-8 md:mb-12">
-            <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">Parent Dashboard</h1>
-            <p class="text-gray-600 text-sm md:text-base">Track your athletes' schedules and stats.</p>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                    <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">Parent Dashboard</h1>
+                    <p class="text-gray-600 text-sm md:text-base">Track your athletes' schedules and stats.</p>
+                </div>
+                <a href="calendar.html"
+                    class="inline-flex items-center gap-2 bg-white text-primary-600 px-4 py-3 rounded-xl border border-primary-200 hover:bg-primary-50 transition font-semibold text-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    Calendar
+                </a>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -89,8 +98,12 @@
             <div class="lg:col-span-2">
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden min-h-[500px]">
                     <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3">
-                        <h2 class="text-xl font-bold text-gray-900">Upcoming Schedule</h2>
+                        <h2 class="text-xl font-bold text-gray-900">Schedule</h2>
                         <div class="flex items-center gap-2">
+                            <div class="flex rounded-lg border border-gray-200 overflow-hidden">
+                                <button id="schedule-view-list" onclick="setScheduleView('list')" class="px-2.5 py-1 text-xs font-semibold bg-primary-600 text-white">List</button>
+                                <button id="schedule-view-calendar" onclick="setScheduleView('calendar')" class="px-2.5 py-1 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-100">Calendar</button>
+                            </div>
                             <select id="player-filter" class="text-xs font-medium bg-white px-2 py-1 rounded border border-gray-200 text-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500">
                                 <option value="">All Players</option>
                             </select>
@@ -102,33 +115,182 @@
                             </button>
                         </div>
                     </div>
+                    <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button id="schedule-filter-upcoming-all" onclick="setScheduleFilter('upcoming-all')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">All Upcoming</button>
+                            <button id="schedule-filter-upcoming-games" onclick="setScheduleFilter('upcoming-games')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Games</button>
+                            <button id="schedule-filter-upcoming-practices" onclick="setScheduleFilter('upcoming-practices')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Practices</button>
+                            <button id="schedule-filter-past-all" onclick="setScheduleFilter('past-all')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
+                        </div>
+                    </div>
+                    <div id="schedule-calendar-nav" class="hidden px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-center gap-4">
+                        <button onclick="navScheduleMonth(-1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
+                        <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
+                        <button onclick="navScheduleMonth(1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Next &rarr;</button>
+                    </div>
                     <div id="schedule-list" class="divide-y divide-gray-100">
                         <div class="text-center py-12">
                             <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
                             <p class="text-sm text-gray-500">Loading schedule...</p>
                         </div>
                     </div>
+                    <div id="schedule-calendar-grid" class="hidden"></div>
+                </div>
+                <div id="practice-packets-card" class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden mt-6">
+                    <div class="p-6 border-b border-gray-100 bg-gray-50">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-xl font-bold text-gray-900">Practice Attendance & Home Packet</h2>
+                                <p class="text-xs text-gray-500 mt-1">Session-based view for families</p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button id="packet-filter-recent" onclick="setPracticePacketFilter('recent_upcoming')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">Recent + Upcoming</button>
+                                <button id="packet-filter-past" onclick="setPracticePacketFilter('past')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="practice-packets-list" class="divide-y divide-gray-100"></div>
                 </div>
             </div>
         </div>
     </main>
 
     <div id="footer-container"></div>
+    <div id="packet-preview-modal" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="closePracticePacketPreview()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <h3 class="text-lg font-bold text-gray-900">Home Packet</h3>
+                <button onclick="closePracticePacketPreview()" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="packet-preview-content" class="px-6 py-5"></div>
+        </div>
+    </div>
+    <div id="schedule-day-modal" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="closeScheduleDayModal()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <h3 id="schedule-day-modal-title" class="text-lg font-bold text-gray-900"></h3>
+                <button onclick="closeScheduleDayModal()" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="schedule-day-modal-content" class="px-6 py-5"></div>
+        </div>
+    </div>
 
     <script type="module">
-        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts } from './js/db.js?v=2';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
+        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=22';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
+        import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
         let allScheduleEvents = [];
         let currentUserId = null;
+        let currentUser = null;
+        let allPracticePacketSessions = [];
+        let practicePacketFilter = 'recent_upcoming';
+        let scheduleViewFilter = 'upcoming-all';
+        let scheduleViewMode = 'list';
+        let scheduleCalendarMonth = new Date().getMonth();
+        let scheduleCalendarYear = new Date().getFullYear();
+        const practicePacketSessionMap = new Map();
+        window.setPracticePacketFilter = setPracticePacketFilter;
+        window.setScheduleFilter = setScheduleFilter;
+        window.setScheduleView = setScheduleView;
+        window.navScheduleMonth = navScheduleMonth;
+        window.openScheduleDayModal = openScheduleDayModal;
+        window.closeScheduleDayModal = closeScheduleDayModal;
+        window.openPracticePacketPreview = openPracticePacketPreview;
+        window.closePracticePacketPreview = closePracticePacketPreview;
+        window.markPracticePacketComplete = markPracticePacketComplete;
+        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
+
+        function escapeAttr(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function formatRsvpSummary(summary) {
+            if (!summary) return 'No RSVPs yet.';
+            return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
+        }
+
+        window.submitGameRsvp = async function(teamId, gameId, response) {
+            try {
+                const playerIds = allScheduleEvents
+                    .filter(e => e.teamId === teamId)
+                    .map(e => e.childId || e.playerId)
+                    .filter(Boolean);
+                const summary = await submitRsvp(teamId, gameId, currentUserId, {
+                    displayName: currentUser?.displayName || currentUser?.email,
+                    playerIds: [...new Set(playerIds)],
+                    response
+                });
+                // Update local state and re-render
+                const game = allScheduleEvents.find(e => e.teamId === teamId && e.id === gameId);
+                if (game) {
+                    game.myRsvp = response;
+                    if (summary) game.rsvpSummary = summary;
+                    else if (!game.rsvpSummary) game.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+                }
+                renderScheduleFromControls();
+            } catch (err) {
+                console.error('RSVP error:', err);
+                alert('Failed to submit RSVP: ' + err.message);
+            }
+        };
+
+        function submitGameRsvpFromButton(btn, response) {
+            const teamId = btn?.dataset?.teamId || '';
+            const gameId = btn?.dataset?.gameId || '';
+            if (!teamId || !gameId) return;
+            window.submitGameRsvp(teamId, gameId, response);
+        }
+
+        function hasRecordedAttendance(attendance) {
+            if (!attendance || !Array.isArray(attendance.players) || attendance.players.length === 0) return false;
+            if (attendance.editedAt) return true;
+            if ((attendance.checkedInCount ?? attendance.players.length) !== attendance.players.length) return true;
+            return attendance.players.some(p => (p.status && p.status !== 'present') || (typeof p.note === 'string' && p.note.trim()));
+        }
+
+        function hasHomePacket(session) {
+            const blocks = session?.homePacketContent?.blocks;
+            return !!(session?.homePacketGenerated && Array.isArray(blocks) && blocks.length > 0);
+        }
+
+        function toDateSafe(value) {
+            if (!value) return null;
+            const d = value?.toDate ? value.toDate() : new Date(value);
+            return Number.isNaN(d?.getTime?.()) ? null : d;
+        }
+
+        function resolvePracticePacketSessionIdForEvent(event) {
+            return resolvePracticePacketSessionIdForEventBase(event, allPracticePacketSessions);
+        }
+
+        function resolvePracticePacketContextForEvent(event) {
+            return resolvePracticePacketContextForEventBase(event, allPracticePacketSessions);
+        }
 
         async function init() {
             try {
                 const user = await requireAuth();
                 currentUserId = user.uid;
+                currentUser = user;
 
                 // Allow checkAuth to populate user object fully
                 checkAuth((updatedUser) => {
@@ -140,12 +302,37 @@
 
                 // Get unique team IDs and fetch unread counts
                 const teamIds = [...new Set(data.children.map(c => c.teamId).filter(Boolean))];
+                await ensureParentTeamAccess(user.uid, teamIds);
                 const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
                 renderTeamChats(data.children, unreadCounts);
                 const combinedSchedule = await buildCombinedSchedule(data.children);
                 allScheduleEvents = combinedSchedule;
+
+                // Fetch my RSVPs for tracked DB events (games + practices).
+                const uniqueGameKeys = [...new Set(
+                    allScheduleEvents
+                        .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
+                        .map((event) => `${event.teamId}::${event.id}`)
+                )];
+                await Promise.all(uniqueGameKeys.map(async (key) => {
+                    const [teamId, gameId] = key.split('::');
+                    try {
+                        const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
+                        allScheduleEvents.forEach((event) => {
+                            if (event.teamId === teamId && event.id === gameId) {
+                                event.myRsvp = myRsvp ? myRsvp.response : null;
+                            }
+                        });
+                    } catch (e) {
+                        // Ignore per-game RSVP read failures.
+                    }
+                }));
+
+                allPracticePacketSessions = await buildPracticePacketSessions(data.children);
                 initPlayerFilter(data.children);
-                renderSchedule(allScheduleEvents);
+                setScheduleFilter('upcoming-all');
+                renderScheduleFromControls();
+                renderPracticePackets();
 
                 // Redeem Code Logic
                 document.getElementById('redeem-code-btn').addEventListener('click', async () => {
@@ -176,6 +363,31 @@
             }
         }
 
+        async function ensureParentTeamAccess(userId, teamIds) {
+            if (!userId || !Array.isArray(teamIds) || teamIds.length === 0) return;
+            try {
+                const profile = await getUserProfile(userId);
+                const existing = Array.isArray(profile?.parentTeamIds) ? profile.parentTeamIds : [];
+                const merged = [...new Set([...existing, ...teamIds])];
+                const expectedParentPlayerKeys = [...new Set(
+                    (Array.isArray(profile?.parentOf) ? profile.parentOf : [])
+                        .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
+                        .filter(Boolean)
+                )];
+                const currentParentPlayerKeys = Array.isArray(profile?.parentPlayerKeys) ? profile.parentPlayerKeys : [];
+                const needsUpdate = merged.length !== existing.length ||
+                    JSON.stringify(expectedParentPlayerKeys.slice().sort()) !== JSON.stringify(currentParentPlayerKeys.slice().sort());
+                if (needsUpdate) {
+                    await updateUserProfile(userId, {
+                        parentTeamIds: merged,
+                        parentPlayerKeys: expectedParentPlayerKeys
+                    });
+                }
+            } catch (err) {
+                console.warn('Failed to ensure parent team access:', err);
+            }
+        }
+
         async function buildCombinedSchedule(children) {
             if (!children || children.length === 0) return [];
 
@@ -189,8 +401,6 @@
             }
 
             const allEvents = [];
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
 
             for (const [teamId, teamChildren] of byTeam.entries()) {
                 const team = await getTeam(teamId);
@@ -198,28 +408,117 @@
 
                 const dbGames = await getGames(teamId);
                 const trackedUids = await getTrackedCalendarEventUids(teamId);
+                const practiceSessions = await getPracticeSessions(teamId);
+                const sessionsByEventId = new Map();
+                const sessions = [];
+                const matchedSessionIds = new Set();
+                practiceSessions.forEach((session) => {
+                    if (!session?.eventId) return;
+                    sessionsByEventId.set(session.eventId, session);
+                    sessions.push({
+                        ...session,
+                        _parsedDate: toDateSafe(session.date)
+                    });
+                });
+
+                const resolvePracticeSession = (event, eventDate) => {
+                    const candidates = [
+                        event?.id,
+                        event?.eventId,
+                        event?.calendarEventUid,
+                        event?.uid
+                    ].filter(Boolean);
+                    for (const key of candidates) {
+                        if (sessionsByEventId.has(key)) {
+                            const found = sessionsByEventId.get(key);
+                            if (found?.id) matchedSessionIds.add(found.id);
+                            return found;
+                        }
+                    }
+                    // Recurring instance fallback: session eventId may be `${masterId}__YYYY-MM-DD`
+                    const masterId = event?.id || event?.eventId;
+                    if (!masterId) return null;
+                    const recurringMatches = sessions.filter(s => typeof s.eventId === 'string' && s.eventId.startsWith(`${masterId}__`));
+                    if (!recurringMatches.length) return null;
+                    if (!eventDate) return recurringMatches[0];
+                    const target = eventDate.getTime();
+                    recurringMatches.sort((a, b) => {
+                        const at = a._parsedDate?.getTime?.() || 0;
+                        const bt = b._parsedDate?.getTime?.() || 0;
+                        return Math.abs(at - target) - Math.abs(bt - target);
+                    });
+                    if (recurringMatches[0]?.id) matchedSessionIds.add(recurringMatches[0].id);
+                    return recurringMatches[0];
+                };
 
                 // DB games for this team
                 for (const game of dbGames) {
-                    const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-                    if (date < today) continue;
                     const isPractice = game.type === 'practice';
                     const type = isPractice ? 'practice' : 'game';
-                    const location = game.location || 'TBD';
-                    const opponent = game.opponent || 'TBD';
-                    const id = game.id || game.gameId;
+                    const isCancelled = game.status === 'cancelled';
 
-                    for (const child of teamChildren) {
-                        allEvents.push({
-                            type,
-                            date,
-                            location,
-                            opponent,
-                            teamId,
-                            id,
-                            childId: child.playerId,
-                            childName: child.playerName
-                        });
+                    if (isPractice && game.isSeriesMaster && game.recurrence) {
+                        // Expand recurring practice series — each occurrence gets its own
+                        // RSVP path (masterId__instanceDate) so availability is per-date.
+                        for (const occ of expandRecurrence(game)) {
+                            const occDate = occ.date instanceof Date ? occ.date : new Date(occ.date);
+                            const occId = `${occ.masterId}__${occ.instanceDate}`;
+                            const session = resolvePracticeSession({ id: occId }, occDate);
+                            for (const child of teamChildren) {
+                                allEvents.push({
+                                    type: 'practice',
+                                    date: occDate,
+                                    location: occ.location || 'TBD',
+                                    opponent: 'TBD',
+                                    teamId,
+                                    id: occId,
+                                    isDbGame: true,
+                                    childId: child.playerId,
+                                    childName: child.playerName,
+                                    title: occ.title || null,
+                                    status: game.status || 'scheduled',
+                                    isCancelled,
+                                    isHome: null,
+                                    kitColor: null,
+                                    arrivalTime: game.arrivalTime || null,
+                                    notes: occ.notes || null,
+                                    assignments: [],
+                                    rsvpSummary: null,
+                                    practiceAttendance: hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                    practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
+                                    practiceSessionId: session?.id || null
+                                });
+                            }
+                        }
+                    } else {
+                        const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+                        const id = game.id || game.gameId;
+                        const session = isPractice ? resolvePracticeSession(game, date) : null;
+                        for (const child of teamChildren) {
+                            allEvents.push({
+                                type,
+                                date,
+                                location: game.location || 'TBD',
+                                opponent: game.opponent || 'TBD',
+                                teamId,
+                                id,
+                                isDbGame: true,
+                                childId: child.playerId,
+                                childName: child.playerName,
+                                title: game.title || null,
+                                status: game.status || 'scheduled',
+                                isCancelled,
+                                isHome: game.isHome ?? null,
+                                kitColor: game.kitColor || null,
+                                arrivalTime: game.arrivalTime || null,
+                                notes: game.notes || null,
+                                assignments: Array.isArray(game.assignments) ? game.assignments : [],
+                                rsvpSummary: game.rsvpSummary || null,
+                                practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
+                                practiceSessionId: isPractice ? (session?.id || null) : null
+                            });
+                        }
                     }
                 }
 
@@ -240,7 +539,7 @@
                                     event.summary?.includes('[CANCELED]');
 
                                 const eventDate = event.dtstart;
-                                if (!eventDate || eventDate < today) return;
+                                if (!eventDate) return;
 
                                 // Skip if a DB game already occupies this slot (within 1 minute)
                                 const hasConflict = dbGames.some(dbGame => {
@@ -255,6 +554,7 @@
                                 const opponent = extractOpponent(cleanSummary, team.name);
                                 const location = event.location || 'TBD';
                                 const type = isPractice ? 'practice' : 'game';
+                                const session = isPractice ? resolvePracticeSession(event, eventDate) : null;
 
                                 for (const child of teamChildren) {
                                     allEvents.push({
@@ -264,9 +564,13 @@
                                         opponent,
                                         teamId,
                                         id: event.uid || null,
+                                        isDbGame: false,
                                         childId: child.playerId,
                                         childName: child.playerName,
-                                        isCancelled
+                                        isCancelled,
+                                        practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                        practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
+                                        practiceSessionId: isPractice ? (session?.id || null) : null
                                     });
                                 }
                             });
@@ -275,6 +579,34 @@
                         }
                     }
                 }
+
+                // Include upcoming draft/planned sessions that don't currently map to a schedule event.
+                sessions
+                    .filter((session) => {
+                        const d = session._parsedDate;
+                        if (!d) return false;
+                        if (session.id && matchedSessionIds.has(session.id)) return false;
+                        return true;
+                    })
+                    .forEach((session) => {
+                        for (const child of teamChildren) {
+                            allEvents.push({
+                                type: 'practice',
+                                date: session._parsedDate,
+                                location: session.location || 'TBD',
+                                opponent: null,
+                                teamId,
+                                id: session.eventId || session.id,
+                                isDbGame: false,
+                                childId: child.playerId,
+                                childName: child.playerName,
+                                title: session.title || 'Practice',
+                                practiceAttendance: hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
+                                practiceSessionId: session.id || null
+                            });
+                        }
+                    });
             }
 
             allEvents.sort((a, b) => a.date - b.date);
@@ -295,11 +627,458 @@
 
             select.addEventListener('change', (e) => {
                 const playerId = e.target.value || '';
-                const filtered = playerId
-                    ? allScheduleEvents.filter(ev => ev.childId === playerId)
-                    : allScheduleEvents;
-                renderSchedule(filtered);
+                renderScheduleFromControls(playerId);
+                renderPracticePackets(playerId);
             });
+        }
+
+        function getFilteredScheduleEvents(selectedPlayerId = '') {
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            let events = selectedPlayerId
+                ? allScheduleEvents.filter(ev => ev.childId === selectedPlayerId)
+                : [...allScheduleEvents];
+            if (scheduleViewFilter === 'upcoming-all') {
+                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
+                events.sort((a, b) => a.date - b.date);
+            } else if (scheduleViewFilter === 'upcoming-games') {
+                events = events.filter(ev => ev.type === 'game' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
+                events.sort((a, b) => a.date - b.date);
+            } else if (scheduleViewFilter === 'upcoming-practices') {
+                events = events.filter(ev => ev.type === 'practice' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
+                events.sort((a, b) => a.date - b.date);
+            } else if (scheduleViewFilter === 'past-all') {
+                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) < cutoff);
+                events.sort((a, b) => b.date - a.date);
+            }
+            return events;
+        }
+
+        function renderScheduleFromControls(selectedPlayerId = '') {
+            const playerId = selectedPlayerId || (document.getElementById('player-filter')?.value || '');
+            const events = getFilteredScheduleEvents(playerId);
+            const listEl = document.getElementById('schedule-list');
+            const calEl = document.getElementById('schedule-calendar-grid');
+            const navEl = document.getElementById('schedule-calendar-nav');
+            if (!listEl || !calEl || !navEl) {
+                renderSchedule(events);
+                return;
+            }
+            if (scheduleViewMode === 'calendar') {
+                listEl.classList.add('hidden');
+                calEl.classList.remove('hidden');
+                navEl.classList.remove('hidden');
+                renderScheduleCalendar(events);
+            } else {
+                calEl.classList.add('hidden');
+                navEl.classList.add('hidden');
+                listEl.classList.remove('hidden');
+                renderSchedule(events);
+            }
+        }
+
+        function getCalendarEntries(events) {
+            const byKey = new Map();
+            (events || []).forEach((event) => {
+                const d = event.date?.toDate ? event.date.toDate() : new Date(event.date);
+                if (!d || Number.isNaN(d.getTime())) return;
+                const key = `${event.teamId || ''}::${event.id || ''}::${d.toISOString()}::${event.type || ''}`;
+                if (!byKey.has(key)) {
+                    byKey.set(key, { ...event, date: d, childNames: [] });
+                }
+                const item = byKey.get(key);
+                if (event.childName) item.childNames.push(event.childName);
+            });
+            return Array.from(byKey.values()).map((item) => ({
+                ...item,
+                childNames: [...new Set(item.childNames)]
+            }));
+        }
+
+        function renderScheduleCalendar(events) {
+            const container = document.getElementById('schedule-calendar-grid');
+            const label = document.getElementById('schedule-calendar-month-label');
+            if (!container || !label) return;
+
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            label.textContent = `${monthNames[scheduleCalendarMonth]} ${scheduleCalendarYear}`;
+
+            const monthStart = new Date(scheduleCalendarYear, scheduleCalendarMonth, 1);
+            const monthEnd = new Date(scheduleCalendarYear, scheduleCalendarMonth + 1, 0, 23, 59, 59);
+            const firstDay = new Date(scheduleCalendarYear, scheduleCalendarMonth, 1);
+            const startDow = firstDay.getDay();
+            const daysInMonth = monthEnd.getDate();
+
+            const calendarEvents = getCalendarEntries(events).filter((ev) => ev.date >= monthStart && ev.date <= monthEnd);
+            const eventsByDay = {};
+            calendarEvents.forEach((ev) => {
+                const day = ev.date.getDate();
+                if (!eventsByDay[day]) eventsByDay[day] = [];
+                eventsByDay[day].push(ev);
+            });
+
+            const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+            const today = new Date();
+            const isCurrentMonth = today.getMonth() === scheduleCalendarMonth && today.getFullYear() === scheduleCalendarYear;
+
+            let html = `
+                <div class="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+                    ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => `<div class="text-center text-xs font-bold text-gray-500 py-2">${d}</div>`).join('')}
+                </div>
+                <div class="grid grid-cols-7">
+            `;
+
+            for (let i = 0; i < totalCells; i++) {
+                const dayNum = i - startDow + 1;
+                const inMonth = dayNum >= 1 && dayNum <= daysInMonth;
+                const dayEvents = inMonth ? (eventsByDay[dayNum] || []) : [];
+                const isToday = isCurrentMonth && inMonth && dayNum === today.getDate();
+                html += `
+                    <div class="min-h-[96px] border border-gray-100 p-1.5 ${inMonth ? 'bg-white' : 'bg-gray-50 text-gray-300'} ${isToday ? 'ring-1 ring-primary-300' : ''} ${inMonth && dayEvents.length ? 'cursor-pointer hover:bg-gray-50' : ''}"
+                        ${inMonth && dayEvents.length ? `onclick="openScheduleDayModal(${scheduleCalendarYear}, ${scheduleCalendarMonth}, ${dayNum})"` : ''}>
+                        ${inMonth ? `<div class="text-xs font-semibold ${isToday ? 'text-primary-700' : 'text-gray-700'}">${dayNum}</div>` : ''}
+                        ${inMonth && dayEvents.length ? `
+                            <div class="mt-1 space-y-1">
+                                ${dayEvents.slice(0, 3).map((ev) => `
+                                    <div class="text-[10px] px-1 py-0.5 rounded truncate ${ev.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}">
+                                        ${escapeHtml(ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`)}
+                                        ${ev.type === 'game' ? `<span class="ml-1 text-[9px] opacity-70">(${ev.rsvpSummary?.going || 0}/${ev.rsvpSummary?.maybe || 0}/${ev.rsvpSummary?.notGoing || 0}/${ev.rsvpSummary?.notResponded || 0})</span>` : ''}
+                                    </div>
+                                `).join('')}
+                                ${dayEvents.length > 3 ? `<div class="text-[10px] text-gray-400">+${dayEvents.length - 3} more</div>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function openScheduleDayModal(year, month, day) {
+            const titleEl = document.getElementById('schedule-day-modal-title');
+            const contentEl = document.getElementById('schedule-day-modal-content');
+            const modalEl = document.getElementById('schedule-day-modal');
+            if (!titleEl || !contentEl || !modalEl) return;
+
+            const dayStart = new Date(year, month, day);
+            const dayEnd = new Date(year, month, day, 23, 59, 59);
+            const playerId = document.getElementById('player-filter')?.value || '';
+            const events = getCalendarEntries(getFilteredScheduleEvents(playerId))
+                .filter((ev) => ev.date >= dayStart && ev.date <= dayEnd)
+                .sort((a, b) => a.date - b.date);
+
+            titleEl.textContent = dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+            if (!events.length) {
+                contentEl.innerHTML = '<p class="text-gray-500 text-center py-8">No events on this day.</p>';
+            } else {
+                contentEl.innerHTML = events.map((ev) => {
+                    const timeStr = ev.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                    const title = ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`;
+                    const packetContext = ev.type === 'practice'
+                        ? resolvePracticePacketContextForEvent(ev)
+                        : { sessionId: null, homePacket: null };
+                    const homePacket = ev.practiceHomePacket || packetContext.homePacket || null;
+                    const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
+                    const homePacketReady = ev.type === 'practice' && homePacketBlocks.length > 0;
+                    const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+                    const packetSessionId = homePacketReady ? (packetContext.sessionId || resolvePracticePacketSessionIdForEvent(ev)) : null;
+                    return `
+                        <div class="mb-4 p-4 rounded-lg border border-gray-200 ${ev.isCancelled ? 'opacity-60' : ''}">
+                            <div class="text-xs font-semibold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'}">${ev.type}</div>
+                            <div class="font-bold text-gray-900 ${ev.isCancelled ? 'line-through' : ''}">${escapeHtml(title)}</div>
+                            <div class="text-sm text-gray-600 mt-1">${timeStr} · ${escapeHtml(ev.location || 'TBD')}</div>
+                            ${ev.type === 'game' && ev.isHome === true ? '<span class="inline-block text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">HOME</span>' : ''}
+                            ${ev.type === 'game' && ev.isHome === false ? '<span class="inline-block text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">AWAY</span>' : ''}
+                            ${ev.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(ev.kitColor)}</div>` : ''}
+                            ${ev.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = ev.arrivalTime?.toDate ? ev.arrivalTime.toDate() : new Date(ev.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
+                            ${ev.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(ev.notes)}</div>` : ''}
+                            ${ev.assignments && ev.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${ev.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                            ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>` : ''}
+                            ${ev.childNames?.length ? `<div class="text-xs text-gray-500 mt-1">For ${escapeHtml(ev.childNames.join(', '))}</div>` : ''}
+                            ${homePacketReady ? `
+                                <div class="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-blue-800">Home Packet</div>
+                                    <div class="text-sm text-blue-900">${homePacketBlocks.length} drill${homePacketBlocks.length === 1 ? '' : 's'} · ${homePacketMinutes} min</div>
+                                    ${packetSessionId
+                                        ? `<button onclick="openPracticePacketPreview('${escapeAttr(packetSessionId)}')" class="mt-2 text-xs font-semibold text-primary-700 bg-white border border-primary-200 px-2 py-1 rounded hover:bg-primary-50">Open Packet</button>`
+                                        : `<div class="text-xs text-gray-600 mt-1">Packet is ready, but this event is not linked to a session yet.</div>`
+                                    }
+                                </div>
+                            ` : ''}
+                            ${!ev.isCancelled && (ev.type === 'game' || ev.type === 'practice') ? `
+                                <div class="mt-3 border-t border-gray-100 pt-3">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
+                                    ${ev.isDbGame ? `
+                                        <div class="flex gap-2">
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                        </div>
+                                    ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
+                                    <div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>
+                                </div>
+                            ` : ''}
+                            ${ev.isCancelled ? '<div class="text-xs text-red-700 mt-1 font-semibold">Cancelled</div>' : ''}
+                        </div>
+                    `;
+                }).join('');
+            }
+            modalEl.classList.remove('hidden');
+        }
+
+        function closeScheduleDayModal() {
+            document.getElementById('schedule-day-modal')?.classList.add('hidden');
+        }
+
+        function setScheduleView(mode) {
+            scheduleViewMode = mode === 'calendar' ? 'calendar' : 'list';
+            const listBtn = document.getElementById('schedule-view-list');
+            const calBtn = document.getElementById('schedule-view-calendar');
+            if (scheduleViewMode === 'calendar') {
+                const playerId = document.getElementById('player-filter')?.value || '';
+                const events = getCalendarEntries(getFilteredScheduleEvents(playerId));
+                if (events.length > 0) {
+                    const hasCurrentMonthEvents = events.some((ev) =>
+                        ev.date.getMonth() === scheduleCalendarMonth && ev.date.getFullYear() === scheduleCalendarYear
+                    );
+                    if (!hasCurrentMonthEvents) {
+                        scheduleCalendarMonth = events[0].date.getMonth();
+                        scheduleCalendarYear = events[0].date.getFullYear();
+                    }
+                }
+            }
+            if (listBtn && calBtn) {
+                const listActive = scheduleViewMode === 'list';
+                listBtn.className = `px-2.5 py-1 text-xs font-semibold ${listActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`;
+                calBtn.className = `px-2.5 py-1 text-xs font-semibold ${!listActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`;
+            }
+            renderScheduleFromControls();
+        }
+
+        function navScheduleMonth(delta) {
+            scheduleCalendarMonth += delta;
+            if (scheduleCalendarMonth > 11) {
+                scheduleCalendarMonth = 0;
+                scheduleCalendarYear += 1;
+            } else if (scheduleCalendarMonth < 0) {
+                scheduleCalendarMonth = 11;
+                scheduleCalendarYear -= 1;
+            }
+            if (scheduleViewMode === 'calendar') renderScheduleFromControls();
+        }
+
+        function setScheduleFilter(next) {
+            scheduleViewFilter = next || 'upcoming-all';
+            const ids = ['upcoming-all', 'upcoming-games', 'upcoming-practices', 'past-all'];
+            ids.forEach((id) => {
+                const btn = document.getElementById(`schedule-filter-${id}`);
+                if (!btn) return;
+                const active = id === scheduleViewFilter;
+                btn.className = `px-2.5 py-1 text-xs font-semibold rounded-full border ${active ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`;
+            });
+            renderScheduleFromControls();
+        }
+
+        async function buildPracticePacketSessions(children) {
+            const rows = [];
+            const byTeam = new Map();
+            (children || []).forEach((child) => {
+                if (!child?.teamId) return;
+                if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
+                byTeam.get(child.teamId).push(child);
+            });
+            for (const [teamId, teamChildren] of byTeam.entries()) {
+                const sessions = await getPracticeSessions(teamId);
+                const completionsBySessionId = new Map();
+                await Promise.all((sessions || []).map(async (session) => {
+                    try {
+                        const completions = await getPracticePacketCompletions(teamId, session.id);
+                        completionsBySessionId.set(session.id, completions || []);
+                    } catch (err) {
+                        completionsBySessionId.set(session.id, []);
+                    }
+                }));
+                (sessions || []).forEach((session) => {
+                    const d = session?.date?.toDate ? session.date.toDate() : new Date(session?.date);
+                    if (!d || Number.isNaN(d.getTime())) return;
+                    const hasAttendance = hasRecordedAttendance(session?.attendance);
+                    const hasPacket = hasHomePacket(session);
+                    if (!hasAttendance && !hasPacket) return;
+                    rows.push({
+                        sessionId: session.id,
+                        teamId,
+                        eventId: session.eventId || session.id,
+                        title: session.title || 'Practice',
+                        date: d,
+                        location: session.location || 'TBD',
+                        attendance: hasAttendance ? session.attendance : null,
+                        homePacket: hasPacket ? session.homePacketContent : null,
+                        completions: completionsBySessionId.get(session.id) || [],
+                        childNames: teamChildren.map(c => c.playerName).filter(Boolean),
+                        childIds: teamChildren.map(c => c.playerId).filter(Boolean),
+                        children: teamChildren.map(c => ({ id: c.playerId, name: c.playerName }))
+                    });
+                });
+            }
+            rows.sort((a, b) => a.date - b.date);
+            return rows;
+        }
+
+        function renderPracticePackets(selectedPlayerId = '') {
+            const card = document.getElementById('practice-packets-card');
+            const list = document.getElementById('practice-packets-list');
+            if (!card || !list) return;
+            const now = new Date();
+            const recentCutoff = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+            let rows = (allPracticePacketSessions || []).filter(row => !selectedPlayerId || row.childIds.includes(selectedPlayerId));
+            if (practicePacketFilter === 'recent_upcoming') {
+                rows = rows.filter(row => row.date >= recentCutoff);
+                rows.sort((a, b) => a.date - b.date);
+            } else {
+                rows = rows.filter(row => row.date < recentCutoff);
+                rows.sort((a, b) => b.date - a.date);
+            }
+            if (!rows.length) {
+                card.classList.remove('hidden');
+                list.innerHTML = `<div class="p-6 text-sm text-gray-500">No ${practicePacketFilter === 'past' ? 'past' : 'recent/upcoming'} practice attendance or home packet records.</div>`;
+                return;
+            }
+            card.classList.remove('hidden');
+            practicePacketSessionMap.clear();
+            list.innerHTML = rows.map((row) => {
+                const dateStr = row.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                const timeStr = row.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                const blocks = Array.isArray(row.homePacket?.blocks) ? row.homePacket.blocks : [];
+                const homePacketReady = blocks.length > 0;
+                const totalMinutes = row.homePacket?.totalMinutes || blocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+                const preview = blocks.slice(0, 3).map(b => b?.drillTitle || b?.title).filter(Boolean);
+                const names = [...row.childNames];
+                const att = row.attendance;
+                const attendanceReady = !!(att && Array.isArray(att.players) && att.players.length > 0);
+                const attSummary = attendanceReady
+                    ? `${att.players.filter(p => p.status === 'present' || p.status === 'late').length}/${att.players.length} present`
+                    : null;
+                const completionChildIds = new Set((row.completions || []).filter(c => c.status === 'completed').map(c => c.childId));
+                const completedCount = (row.children || []).filter(c => completionChildIds.has(c.id)).length;
+                practicePacketSessionMap.set(row.sessionId, row);
+                return `
+                    <div class="p-5">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide">${dateStr} · ${timeStr}</p>
+                                <p class="text-sm font-bold text-gray-900">${escapeHtml(row.title)}</p>
+                                <p class="text-xs text-gray-500 mt-0.5">${escapeHtml(row.location)}</p>
+                            </div>
+                            ${homePacketReady
+                                ? `<button onclick="openPracticePacketPreview('${row.sessionId}')" class="text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2 py-1 rounded hover:bg-primary-100">Open Packet</button>`
+                                : ''
+                            }
+                        </div>
+                        <div class="mt-2 text-xs ${homePacketReady ? 'text-blue-800 bg-blue-50 border-blue-100' : 'text-gray-600 bg-gray-50 border-gray-200'} border rounded px-2 py-1 inline-block">
+                            ${homePacketReady ? `Home Packet: ${blocks.length} drill${blocks.length === 1 ? '' : 's'} · ${totalMinutes} min` : 'Home Packet: Not ready yet'}
+                        </div>
+                        <div class="mt-2 text-xs ${attendanceReady ? 'text-amber-800 bg-amber-50 border-amber-100' : 'text-gray-600 bg-gray-50 border-gray-200'} border rounded px-2 py-1 inline-block">
+                            ${attendanceReady ? `Attendance: ${attSummary}` : 'Attendance: Not recorded yet'}
+                        </div>
+                        ${homePacketReady ? `<div class="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded px-2 py-1 inline-block">Packet Completed: ${completedCount}/${(row.children || []).length}</div>` : ''}
+                        ${preview.length ? `<p class="mt-2 text-xs text-gray-700">${escapeHtml(preview.join(' • '))}</p>` : ''}
+                        ${names.length ? `<p class="mt-2 text-[11px] text-gray-500">Applies to: ${escapeHtml(names.join(', '))}</p>` : ''}
+                        ${homePacketReady && (row.children || []).length ? `
+                            <div class="mt-2 flex flex-wrap gap-2">
+                                ${(row.children || []).map(child => {
+                                    const done = completionChildIds.has(child.id);
+                                    return `<button onclick="markPracticePacketComplete('${row.sessionId}', '${child.id}')" class="text-[11px] px-2 py-1 rounded border ${done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}">${done ? 'Completed' : 'Mark Complete'}: ${escapeHtml(child.name || 'Child')}</button>`;
+                                }).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function markPracticePacketComplete(sessionId, childId) {
+            const row = practicePacketSessionMap.get(sessionId);
+            if (!row || !childId) return;
+            const child = (row.children || []).find(c => c.id === childId) || null;
+            try {
+                await ensureParentTeamAccess(currentUserId, [row.teamId]);
+                await upsertPracticePacketCompletion(row.teamId, sessionId, {
+                    parentUserId: currentUserId,
+                    parentName: currentUser?.displayName || currentUser?.email || 'Parent',
+                    childId,
+                    childName: child?.name || null
+                });
+                const existing = Array.isArray(row.completions) ? row.completions : [];
+                const next = existing.filter(c => !(c.childId === childId && c.parentUserId === currentUserId));
+                next.push({
+                    parentUserId: currentUserId,
+                    parentName: currentUser?.displayName || currentUser?.email || 'Parent',
+                    childId,
+                    childName: child?.name || null,
+                    status: 'completed'
+                });
+                row.completions = next;
+                const idx = allPracticePacketSessions.findIndex(s => s.sessionId === sessionId);
+                if (idx >= 0) allPracticePacketSessions[idx].completions = next;
+                const selectedPlayerId = document.getElementById('player-filter')?.value || '';
+                renderPracticePackets(selectedPlayerId);
+            } catch (err) {
+                console.error('Failed to mark packet complete:', err);
+                alert(`Could not mark packet complete: ${err?.message || err?.code || 'permission or network issue'}`);
+            }
+        }
+
+        function setPracticePacketFilter(next) {
+            practicePacketFilter = next === 'past' ? 'past' : 'recent_upcoming';
+            const recentBtn = document.getElementById('packet-filter-recent');
+            const pastBtn = document.getElementById('packet-filter-past');
+            if (recentBtn && pastBtn) {
+                const recentActive = practicePacketFilter === 'recent_upcoming';
+                recentBtn.className = `px-2.5 py-1 text-xs font-semibold rounded-full border ${recentActive ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`;
+                pastBtn.className = `px-2.5 py-1 text-xs font-semibold rounded-full border ${!recentActive ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`;
+            }
+            const selectedPlayerId = document.getElementById('player-filter')?.value || '';
+            renderPracticePackets(selectedPlayerId);
+        }
+
+        function openPracticePacketPreview(sessionId) {
+            let row = practicePacketSessionMap.get(sessionId);
+            if (!row) {
+                row = (allPracticePacketSessions || []).find((candidate) =>
+                    candidate?.sessionId === sessionId || candidate?.eventId === sessionId
+                ) || null;
+                if (row?.sessionId) practicePacketSessionMap.set(row.sessionId, row);
+            }
+            if (!row || !row.homePacket || !Array.isArray(row.homePacket.blocks)) return;
+            const content = document.getElementById('packet-preview-content');
+            if (!content) return;
+            const blocks = row.homePacket.blocks;
+            const total = row.homePacket.totalMinutes || blocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+            const completionChildIds = new Set((row.completions || []).filter(c => c.status === 'completed').map(c => c.childId));
+            const completionControls = (row.children || []).map(child => {
+                const done = completionChildIds.has(child.id);
+                return `<button onclick="markPracticePacketComplete('${row.sessionId}', '${child.id}')" class="text-[11px] px-2 py-1 rounded border ${done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}">${done ? 'Completed' : 'Mark Complete'}: ${escapeHtml(child.name || 'Child')}</button>`;
+            }).join('');
+            content.innerHTML = `
+                <p class="text-sm text-gray-700 mb-3">${escapeHtml(row.title || 'Practice')} · ${escapeHtml(row.date.toLocaleDateString('en-US'))}</p>
+                <div class="text-xs text-blue-800 bg-blue-50 border border-blue-100 rounded px-2 py-1 inline-block mb-4">Total: ${total} min</div>
+                ${completionControls ? `<div class="mb-4 flex flex-wrap gap-2">${completionControls}</div>` : ''}
+                <div class="space-y-2">
+                    ${blocks.map((b, idx) => `
+                        <div class="rounded-lg border border-gray-200 p-3 bg-gray-50">
+                            <p class="text-xs text-gray-500 font-semibold uppercase tracking-wide">${escapeHtml(b.type || 'Drill')} · ${parseInt(b.duration, 10) || 0} min</p>
+                            <p class="text-sm font-semibold text-gray-900">${escapeHtml(b.drillTitle || b.title || `Drill ${idx + 1}`)}</p>
+                            ${b.description ? `<p class="text-xs text-gray-600 mt-1">${escapeHtml(b.description)}</p>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            document.getElementById('packet-preview-modal')?.classList.remove('hidden');
+        }
+
+        function closePracticePacketPreview() {
+            document.getElementById('packet-preview-modal')?.classList.add('hidden');
         }
 
         function renderPlayers(children) {
@@ -400,13 +1179,11 @@
                         <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                         </svg>
-                        <p class="text-gray-500">No upcoming games scheduled.</p>
+                        <p class="text-gray-500">No events in this filter.</p>
                     </div>
                 `;
                 return;
             }
-
-            const now = new Date(); // To highlight today/tomorrow
 
             container.innerHTML = games.map(game => {
                 const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
@@ -415,6 +1192,27 @@
                 const typeLabel = game.type === 'practice' ? 'Practice' : 'Game';
                 const typeColor = game.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800';
                 const isCancelled = game.isCancelled;
+                const attendance = game.practiceAttendance || null;
+                const attendanceRecorded = game.type === 'practice' && hasRecordedAttendance(attendance);
+                const packetContext = game.type === 'practice'
+                    ? resolvePracticePacketContextForEvent(game)
+                    : { sessionId: null, homePacket: null };
+                const homePacket = game.practiceHomePacket || packetContext.homePacket || null;
+                const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
+                const homePacketReady = game.type === 'practice' && homePacketBlocks.length > 0;
+                const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+                const homePacketPreview = homePacketBlocks.slice(0, 2).map(b => b?.drillTitle || b?.title).filter(Boolean);
+                const packetSessionId = homePacketReady ? (packetContext.sessionId || resolvePracticePacketSessionIdForEvent(game)) : null;
+                const presentCount = attendanceRecorded
+                    ? attendance.players.filter(p => p.status === 'present' || p.status === 'late').length
+                    : 0;
+                const lateCount = attendanceRecorded
+                    ? attendance.players.filter(p => p.status === 'late').length
+                    : 0;
+                const absentCount = attendanceRecorded
+                    ? attendance.players.filter(p => p.status === 'absent').length
+                    : 0;
+                const rosterSize = attendanceRecorded ? attendance.players.length : 0;
 
                 return `
                 <div class="p-6 hover:bg-gray-50 transition flex flex-col sm:flex-row gap-4 sm:items-center ${isCancelled ? 'opacity-60' : ''}">
@@ -442,8 +1240,48 @@
                             </svg>
                             ${escapeHtml(game.location || 'TBD')}
                         </div>
+                        ${game.type !== 'practice' && game.isHome === true ? '<span class="inline-block text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">HOME</span>' : ''}
+                        ${game.type !== 'practice' && game.isHome === false ? '<span class="inline-block text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">AWAY</span>' : ''}
+                        ${game.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(game.kitColor)}</div>` : ''}
+                        ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = game.arrivalTime?.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
+                        ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
+                        ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                        ${attendanceRecorded ? `
+                            <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                                <div class="text-[11px] font-bold uppercase tracking-wide text-amber-800">Practice Attendance</div>
+                                <div class="text-sm text-amber-900">
+                                    ${presentCount}/${rosterSize} present
+                                    ${lateCount > 0 ? `, ${lateCount} late` : ''}
+                                    ${absentCount > 0 ? `, ${absentCount} absent` : ''}
+                                </div>
+                            </div>
+                        ` : ''}
+                        ${homePacketReady ? `
+                            <div class="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                                <div class="text-[11px] font-bold uppercase tracking-wide text-blue-800">Home Packet</div>
+                                <div class="text-sm text-blue-900">${homePacketBlocks.length} drill${homePacketBlocks.length === 1 ? '' : 's'} · ${homePacketMinutes} min</div>
+                                ${homePacketPreview.length ? `<div class="text-xs text-blue-700 mt-1">${escapeHtml(homePacketPreview.join(' • '))}</div>` : ''}
+                                ${packetSessionId
+                                    ? `<button onclick="openPracticePacketPreview('${escapeAttr(packetSessionId)}')" class="mt-2 text-xs font-semibold text-primary-700 bg-white border border-primary-200 px-2 py-1 rounded hover:bg-primary-50">Open Packet</button>`
+                                    : `<div class="text-xs text-gray-600 mt-1">Packet is ready, but this event is not linked to a session yet.</div>`
+                                }
+                            </div>
+                        ` : ''}
                     </div>
-                    ${!isCancelled ? `
+                    ${!isCancelled && (game.type === 'game' || game.type === 'practice') ? `
+                        <div class="mt-3 border-t border-gray-100 pt-3">
+                            <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
+                            ${game.isDbGame ? `
+                                <div class="flex gap-2">
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                </div>
+                            ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
+                            <div class="text-[10px] text-gray-400 mt-1">${formatRsvpSummary(game.rsvpSummary)}</div>
+                        </div>
+                    ` : ''}
+                    ${!isCancelled && game.isDbGame ? `
                     <div class="flex-shrink-0 text-right">
                          <a href="game.html?teamId=${game.teamId}&gameId=${game.id}"
                             class="inline-flex items-center gap-1 text-sm font-medium text-primary-600 hover:text-primary-700">
@@ -466,6 +1304,11 @@
 
         function buildIcs(events) {
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
+            const escapeIcsText = (value) => String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/;/g, '\\;')
+                .replace(/,/g, '\\,')
+                .replace(/\r?\n/g, '\\n');
 
             // Dedupe events by id to avoid duplicates for multiple kids on same team
             const seen = new Set();
@@ -488,9 +1331,9 @@
                     `DTSTAMP:${formatIcsDate(new Date())}`,
                     `DTSTART:${start}`,
                     `DTEND:${end}`,
-                    `SUMMARY:${summary}`,
-                    `LOCATION:${(event.location || 'TBD').replace(/,/g, '\\,')}`,
-                    `DESCRIPTION:For ${event.childName}`,
+                    `SUMMARY:${escapeIcsText(summary)}`,
+                    `LOCATION:${escapeIcsText(event.location || 'TBD')}`,
+                    `DESCRIPTION:${escapeIcsText(`For ${event.childName}`)}`,
                     'END:VEVENT'
                 );
             });

@@ -35,7 +35,11 @@
 - Add player: optional parent email field on the single-player form; store as pending parent entry (no invite required). If provided, coach can still send/trigger an invite later.
 - Bulk AI/image upload: allow optional parent email in parsed rows (e.g. `#12 Sarah Jones G parent:sarah@example.com` or `Sarah Jones - 12 (parent sarah@example.com)`); if missing, leave blank.
 - Signup/Login: `login.html` surfaces code role/team/player; parent signup requires code; on success go to parent dashboard.
-- Parent dashboard (new `parent-dashboard.html` + `js/parent.js`): list linked players with photo/number/team; quick links to latest game recap, player stats, team schedule; all read-only.
+- Parent dashboard (`parent-dashboard.html`):
+  - Linked players list and team chats
+  - Schedule filters: `All Upcoming`, `Upcoming Games`, `Upcoming Practices`, `Past Events`
+  - Practice Attendance & Home Packet tile (shown when session data exists)
+  - Parent action to mark per-player packet completion for each practice session
 - My Teams (`dashboard.html`): parent-linked teams show a single "View" action; all other actions hidden.
 - Existing pages (`player.html`, `team.html`, `game.html`): hide edit controls for parent-only; ensure data fetch works with new read rules.
 - Admin: `admin.html` users table shows `roles` and parent link counts; coach dashboard may flag players with active parent connections.

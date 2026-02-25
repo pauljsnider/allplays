@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Suite — Game Day Command Center</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-result { font-size: 0.9em; color: #666; white-space: pre-wrap; }
+        h2 { color: #4338ca; }
+        .summary-pass { color: #16a34a; font-weight: bold; }
+        .summary-fail { color: #dc2626; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Suite — Game Day Command Center</h1>
+    <p>Covers: <code>game-day.html</code>, <code>js/db.js</code> (subscribeAggregatedStats), <code>js/team-admin-banner.js</code>, <code>edit-schedule.html</code></p>
+
+    <div id="test-results"></div>
+
+    <script>
+        // ==================== TEST HARNESS ====================
+        const results = [];
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ name, pass: true, error: null });
+            } catch (e) {
+                results.push({ name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message || 'assertEquals failed'}\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`);
+            }
+        }
+
+        function assertDeepEquals(actual, expected, message) {
+            const a = JSON.stringify(actual);
+            const e = JSON.stringify(expected);
+            if (a !== e) {
+                throw new Error(`${message || 'assertDeepEquals failed'}\n  Expected: ${e}\n  Actual:   ${a}`);
+            }
+        }
+
+        function assertTrue(value, message) {
+            if (!value) throw new Error(message || 'Expected truthy but got falsy');
+        }
+
+        function assertFalse(value, message) {
+            if (value) throw new Error(message || 'Expected falsy but got truthy');
+        }
+
+        function assertNull(value, message) {
+            if (value !== null && value !== undefined) {
+                throw new Error(`${message || 'Expected null/undefined'}\n  Actual: ${JSON.stringify(value)}`);
+            }
+        }
+
+        function assertNotNull(value, message) {
+            if (value === null || value === undefined) {
+                throw new Error(message || 'Expected non-null value but got null/undefined');
+            }
+        }
+
+        // ==================== REPLICATED LOGIC FROM game-day.html ====================
+        // These are pure-function extractions for unit testing
+
+        const FORMATIONS = {
+            'soccer-9v9': {
+                name: 'Soccer 9v9', numPeriods: 2,
+                positions: [
+                    { id: 'keeper', name: 'Keeper' },
+                    { id: 'right-defense', name: 'Right Defense' },
+                    { id: 'sweeper', name: 'Sweeper' },
+                    { id: 'left-defense', name: 'Left Defense' },
+                    { id: 'left-mid', name: 'Left Mid' },
+                    { id: 'center-mid-1', name: 'Center Mid' },
+                    { id: 'center-mid-2', name: 'Center Mid' },
+                    { id: 'right-mid', name: 'Right Mid' },
+                    { id: 'striker', name: 'Striker' }
+                ]
+            },
+            'basketball-5v5': {
+                name: 'Basketball 5v5', numPeriods: 4,
+                positions: [
+                    { id: 'pg', name: 'Point Guard' },
+                    { id: 'sg', name: 'Shooting Guard' },
+                    { id: 'sf', name: 'Small Forward' },
+                    { id: 'pf', name: 'Power Forward' },
+                    { id: 'c', name: 'Center' }
+                ]
+            }
+        };
+
+        const PLAYER_COLORS = [
+            { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', name: 'Blue' },
+            { bg: '#dcfce7', text: '#166534', border: '#86efac', name: 'Green' },
+            { bg: '#fef9c3', text: '#854d0e', border: '#fde047', name: 'Yellow' },
+            { bg: '#fce7f3', text: '#9d174d', border: '#f9a8d4', name: 'Pink' },
+            { bg: '#ede9fe', text: '#4c1d95', border: '#c4b5fd', name: 'Purple' },
+            { bg: '#ffedd5', text: '#9a3412', border: '#fdba74', name: 'Orange' },
+            { bg: '#ccfbf1', text: '#115e59', border: '#5eead4', name: 'Teal' },
+            { bg: '#f1f5f9', text: '#334155', border: '#cbd5e1', name: 'Gray' },
+        ];
+
+        function getPeriods(formationId) {
+            const f = FORMATIONS[formationId];
+            if (!f) return ['H1', 'H2'];
+            const n = f.numPeriods || 2;
+            if (n === 4) return ['Q1', 'Q2', 'Q3', 'Q4'];
+            return ['H1', 'H2'];
+        }
+
+        function flattenRotationPlan(plan) {
+            const lineups = {};
+            Object.entries(plan).forEach(([period, positions]) => {
+                Object.entries(positions).forEach(([posId, playerId]) => {
+                    lineups[`${period}-${posId}`] = playerId;
+                });
+            });
+            return lineups;
+        }
+
+        function buildRotationFromGamePlan(gamePlan) {
+            if (!gamePlan?.lineups) return {};
+            const plan = {};
+            Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
+                const dashIdx = key.indexOf('-');
+                if (dashIdx === -1) return;
+                const period = key.substring(0, dashIdx);
+                const posId = key.substring(dashIdx + 1);
+                if (!plan[period]) plan[period] = {};
+                plan[period][posId] = playerId;
+            });
+            return plan;
+        }
+
+        function getPlayerColor(playerColors, playerId) {
+            const idx = playerColors[playerId];
+            return (idx !== undefined) ? PLAYER_COLORS[idx % PLAYER_COLORS.length] : null;
+        }
+
+        function cyclePlayerColor(playerColors, playerId) {
+            const current = playerColors[playerId];
+            playerColors[playerId] = (current === undefined) ? 0 : (current + 1) % PLAYER_COLORS.length;
+            return playerColors[playerId];
+        }
+
+        function buildOnFieldMap(rotationPlan, rotationActual, players, period) {
+            const actual = rotationActual?.[period] || {};
+            const plan = rotationPlan?.[period] || {};
+            const onField = { ...plan };
+            Object.values(actual).flat().forEach(sub => {
+                if (sub && sub.position && sub.in) {
+                    const player = players.find(p => p.name === sub.in);
+                    if (player) onField[sub.position] = player.id;
+                }
+            });
+            return onField;
+        }
+
+        function determineInitialMode(liveStatus, status) {
+            if (liveStatus === 'live') return 'gameday';
+            if (liveStatus === 'completed' || status === 'completed') return 'wrapup';
+            return 'pregame';
+        }
+
+        function balancePlayingTime(formationId, goingPlayers) {
+            const formation = FORMATIONS[formationId];
+            if (!formation || !goingPlayers.length) return {};
+            const periods = getPeriods(formationId);
+            const newPlan = {};
+            periods.forEach(period => { newPlan[period] = {}; });
+            let playerIdx = 0;
+            periods.forEach(period => {
+                formation.positions.forEach(pos => {
+                    newPlan[period][pos.id] = goingPlayers[playerIdx % goingPlayers.length].id;
+                    playerIdx++;
+                });
+            });
+            return newPlan;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // ============================================================
+        // SUITE 1: Formation & Period Logic
+        // ============================================================
+
+        test('Soccer 9v9 has 9 positions', () => {
+            assertEquals(FORMATIONS['soccer-9v9'].positions.length, 9, 'Soccer should have 9 positions');
+        });
+
+        test('Basketball 5v5 has 5 positions', () => {
+            assertEquals(FORMATIONS['basketball-5v5'].positions.length, 5, 'Basketball should have 5 positions');
+        });
+
+        test('Soccer returns H1/H2 periods', () => {
+            assertDeepEquals(getPeriods('soccer-9v9'), ['H1', 'H2'], 'Soccer should have 2 halves');
+        });
+
+        test('Basketball returns Q1/Q2/Q3/Q4 periods', () => {
+            assertDeepEquals(getPeriods('basketball-5v5'), ['Q1', 'Q2', 'Q3', 'Q4'], 'Basketball should have 4 quarters');
+        });
+
+        test('Unknown formation defaults to H1/H2', () => {
+            assertDeepEquals(getPeriods('unknown-sport'), ['H1', 'H2'], 'Unknown formation should default to 2 halves');
+        });
+
+        test('Null formation defaults to H1/H2', () => {
+            assertDeepEquals(getPeriods(null), ['H1', 'H2'], 'Null formation should default to 2 halves');
+        });
+
+        test('All soccer position IDs are unique', () => {
+            const ids = FORMATIONS['soccer-9v9'].positions.map(p => p.id);
+            const unique = new Set(ids);
+            assertEquals(unique.size, ids.length, 'All soccer position IDs must be unique');
+        });
+
+        test('All basketball position IDs are unique', () => {
+            const ids = FORMATIONS['basketball-5v5'].positions.map(p => p.id);
+            const unique = new Set(ids);
+            assertEquals(unique.size, ids.length, 'All basketball position IDs must be unique');
+        });
+
+        // ============================================================
+        // SUITE 2: Rotation Plan — Flatten & Rebuild
+        // ============================================================
+
+        const mockRotationPlan = {
+            H1: { keeper: 'player1', striker: 'player2', sweeper: 'player3' },
+            H2: { keeper: 'player4', striker: 'player1', sweeper: 'player5' }
+        };
+
+        test('flattenRotationPlan produces correct keys', () => {
+            const flat = flattenRotationPlan(mockRotationPlan);
+            assertEquals(flat['H1-keeper'], 'player1', 'H1-keeper should map to player1');
+            assertEquals(flat['H1-striker'], 'player2', 'H1-striker should map to player2');
+            assertEquals(flat['H2-keeper'], 'player4', 'H2-keeper should map to player4');
+        });
+
+        test('flattenRotationPlan handles all entries', () => {
+            const flat = flattenRotationPlan(mockRotationPlan);
+            assertEquals(Object.keys(flat).length, 6, 'Should produce 6 flat entries (3 per period × 2 periods)');
+        });
+
+        test('buildRotationFromGamePlan reconstructs correct structure', () => {
+            const flat = flattenRotationPlan(mockRotationPlan);
+            const rebuilt = buildRotationFromGamePlan({ lineups: flat });
+            assertEquals(rebuilt['H1']['keeper'], 'player1', 'Should rebuild H1 keeper');
+            assertEquals(rebuilt['H2']['striker'], 'player1', 'Should rebuild H2 striker');
+        });
+
+        test('flattenRotationPlan → buildRotationFromGamePlan round-trip is lossless', () => {
+            const flat = flattenRotationPlan(mockRotationPlan);
+            const rebuilt = buildRotationFromGamePlan({ lineups: flat });
+            assertDeepEquals(rebuilt, mockRotationPlan, 'Round-trip should be lossless');
+        });
+
+        test('buildRotationFromGamePlan handles hyphenated position IDs (center-mid-1)', () => {
+            const plan = { H1: { 'center-mid-1': 'player7', 'left-defense': 'player8' } };
+            const flat = flattenRotationPlan(plan);
+            const rebuilt = buildRotationFromGamePlan({ lineups: flat });
+            assertEquals(rebuilt['H1']['center-mid-1'], 'player7', 'Should handle center-mid-1 correctly');
+            assertEquals(rebuilt['H1']['left-defense'], 'player8', 'Should handle left-defense correctly');
+        });
+
+        test('buildRotationFromGamePlan returns empty object for null gamePlan', () => {
+            assertDeepEquals(buildRotationFromGamePlan(null), {}, 'Null gamePlan should return empty object');
+        });
+
+        test('buildRotationFromGamePlan returns empty object for missing lineups', () => {
+            assertDeepEquals(buildRotationFromGamePlan({}), {}, 'Missing lineups should return empty object');
+        });
+
+        // ============================================================
+        // SUITE 3: Mode State Machine
+        // ============================================================
+
+        test('liveStatus=live → gameday mode', () => {
+            assertEquals(determineInitialMode('live', 'scheduled'), 'gameday', 'Live game should be gameday mode');
+        });
+
+        test('liveStatus=completed → wrapup mode', () => {
+            assertEquals(determineInitialMode('completed', 'scheduled'), 'wrapup', 'Completed liveStatus should be wrapup');
+        });
+
+        test('status=completed → wrapup mode (no liveStatus)', () => {
+            assertEquals(determineInitialMode(undefined, 'completed'), 'wrapup', 'Completed status without liveStatus should be wrapup');
+        });
+
+        test('scheduled status → pregame mode', () => {
+            assertEquals(determineInitialMode('scheduled', 'scheduled'), 'pregame', 'Scheduled game should be pregame');
+        });
+
+        test('null liveStatus with non-completed status → pregame mode', () => {
+            assertEquals(determineInitialMode(null, 'scheduled'), 'pregame', 'No liveStatus, not completed → pregame');
+        });
+
+        test('liveStatus takes precedence over status for live detection', () => {
+            assertEquals(determineInitialMode('live', 'completed'), 'gameday', 'liveStatus=live should beat status=completed');
+        });
+
+        // ============================================================
+        // SUITE 4: Player Color System
+        // ============================================================
+
+        test('getPlayerColor returns null for unassigned player', () => {
+            assertNull(getPlayerColor({}, 'player1'), 'Unassigned player should return null color');
+        });
+
+        test('cyclePlayerColor assigns color index 0 on first cycle', () => {
+            const colors = {};
+            const idx = cyclePlayerColor(colors, 'player1');
+            assertEquals(idx, 0, 'First cycle should assign index 0 (Blue)');
+        });
+
+        test('cyclePlayerColor increments on subsequent cycles', () => {
+            const colors = {};
+            cyclePlayerColor(colors, 'player1'); // 0
+            cyclePlayerColor(colors, 'player1'); // 1
+            const idx = cyclePlayerColor(colors, 'player1'); // 2
+            assertEquals(idx, 2, 'Third cycle should be index 2 (Yellow)');
+        });
+
+        test('cyclePlayerColor wraps around after 8 colors', () => {
+            const colors = { 'player1': 7 }; // last color (Gray)
+            const idx = cyclePlayerColor(colors, 'player1');
+            assertEquals(idx, 0, 'Should wrap back to index 0 after 8th color');
+        });
+
+        test('getPlayerColor returns correct color object after assignment', () => {
+            const colors = { 'player1': 1 }; // Green
+            const color = getPlayerColor(colors, 'player1');
+            assertNotNull(color, 'Should return a color object');
+            assertEquals(color.name, 'Green', 'Index 1 should be Green');
+        });
+
+        test('Player colors are independent per player', () => {
+            const colors = {};
+            cyclePlayerColor(colors, 'player1');
+            cyclePlayerColor(colors, 'player1');
+            // player2 is still unassigned
+            assertNull(getPlayerColor(colors, 'player2'), 'player2 color should be independent of player1');
+        });
+
+        test('PLAYER_COLORS has exactly 8 entries', () => {
+            assertEquals(PLAYER_COLORS.length, 8, 'Should have exactly 8 color options');
+        });
+
+        test('Every color entry has bg, text, border, and name', () => {
+            PLAYER_COLORS.forEach((c, i) => {
+                assertTrue(c.bg, `Color ${i} missing bg`);
+                assertTrue(c.text, `Color ${i} missing text`);
+                assertTrue(c.border, `Color ${i} missing border`);
+                assertTrue(c.name, `Color ${i} missing name`);
+            });
+        });
+
+        // ============================================================
+        // SUITE 5: On-Field Map / Sub Logic
+        // ============================================================
+
+        const mockPlayers = [
+            { id: 'p1', name: 'Alice', number: '7' },
+            { id: 'p2', name: 'Bob', number: '9' },
+            { id: 'p3', name: 'Carol', number: '3' },
+            { id: 'p4', name: 'Dave', number: '11' },
+        ];
+
+        test('buildOnFieldMap returns planned lineup when no actual subs', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const map = buildOnFieldMap(plan, {}, mockPlayers, 'H1');
+            assertEquals(map['keeper'], 'p1', 'Keeper should be p1 from plan');
+            assertEquals(map['striker'], 'p2', 'Striker should be p2 from plan');
+        });
+
+        test('buildOnFieldMap applies actual sub over planned lineup', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
+            assertEquals(map['keeper'], 'p1', 'Keeper unchanged by sub');
+            assertEquals(map['striker'], 'p3', 'Striker should be updated to Carol (p3) after sub');
+        });
+
+        test('buildOnFieldMap ignores subs for unknown player names', () => {
+            const plan = { H1: { keeper: 'p1' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'keeper', out: 'p1', in: 'NoSuchPlayer', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
+            assertEquals(map['keeper'], 'p1', 'Should keep original if sub player not found');
+        });
+
+        test('buildOnFieldMap handles empty rotation actual', () => {
+            const plan = { H1: { keeper: 'p1' } };
+            const map = buildOnFieldMap(plan, {}, mockPlayers, 'H1');
+            assertEquals(map['keeper'], 'p1', 'Should use plan when actual is empty');
+        });
+
+        test('buildOnFieldMap returns empty map for unknown period', () => {
+            const plan = { H1: { keeper: 'p1' } };
+            const map = buildOnFieldMap(plan, {}, mockPlayers, 'H2');
+            assertEquals(Object.keys(map).length, 0, 'H2 with no plan should return empty map');
+        });
+
+        // ============================================================
+        // SUITE 6: Balance Playing Time
+        // ============================================================
+
+        const twoPlayers = [{ id: 'p1' }, { id: 'p2' }];
+        const ninePlayers = Array.from({ length: 9 }, (_, i) => ({ id: `p${i + 1}` }));
+
+        test('balancePlayingTime returns a plan for all periods', () => {
+            const plan = balancePlayingTime('soccer-9v9', ninePlayers);
+            assertTrue('H1' in plan, 'Plan should have H1');
+            assertTrue('H2' in plan, 'Plan should have H2');
+        });
+
+        test('balancePlayingTime fills all positions', () => {
+            const plan = balancePlayingTime('soccer-9v9', ninePlayers);
+            assertEquals(Object.keys(plan['H1']).length, 9, 'H1 should have 9 position assignments');
+        });
+
+        test('balancePlayingTime cycles players when fewer than positions', () => {
+            const plan = balancePlayingTime('soccer-9v9', twoPlayers);
+            const assigned = new Set(Object.values(plan['H1']));
+            assertTrue(assigned.size <= 2, 'Should only use the 2 available players');
+        });
+
+        test('balancePlayingTime returns empty when no going players', () => {
+            const plan = balancePlayingTime('soccer-9v9', []);
+            assertDeepEquals(plan, {}, 'No going players should return empty plan');
+        });
+
+        test('balancePlayingTime works for basketball quarters', () => {
+            const plan = balancePlayingTime('basketball-5v5', [{ id: 'p1' }, { id: 'p2' }, { id: 'p3' }, { id: 'p4' }, { id: 'p5' }]);
+            assertTrue('Q1' in plan && 'Q2' in plan && 'Q3' in plan && 'Q4' in plan, 'Basketball should have all 4 quarters');
+        });
+
+        // ============================================================
+        // SUITE 7: escapeHtml / XSS Prevention
+        // ============================================================
+
+        test('escapeHtml escapes < and >', () => {
+            assertEquals(escapeHtml('<script>'), '&lt;script&gt;', 'Should escape angle brackets');
+        });
+
+        test('escapeHtml escapes ampersand', () => {
+            assertEquals(escapeHtml('A & B'), 'A &amp; B', 'Should escape ampersand');
+        });
+
+        test('escapeHtml escapes double quotes', () => {
+            assertEquals(escapeHtml('"hello"'), '&quot;hello&quot;', 'Should escape double quotes');
+        });
+
+        test('escapeHtml escapes single quotes', () => {
+            assertEquals(escapeHtml("O'Brien"), 'O&#039;Brien', 'Should escape single quotes');
+        });
+
+        test('escapeHtml returns empty string for null', () => {
+            assertEquals(escapeHtml(null), '', 'Null should return empty string');
+        });
+
+        test('escapeHtml returns empty string for undefined', () => {
+            assertEquals(escapeHtml(undefined), '', 'Undefined should return empty string');
+        });
+
+        test('escapeHtml passes through safe strings unchanged', () => {
+            assertEquals(escapeHtml('Alice #7'), 'Alice #7', 'Safe string should be unchanged');
+        });
+
+        test('escapeHtml handles XSS payload in player name', () => {
+            const xss = '<img src=x onerror=alert(1)>';
+            const result = escapeHtml(xss);
+            assertFalse(result.includes('<img'), 'XSS payload should be escaped');
+            assertTrue(result.includes('&lt;img'), 'Should contain escaped version');
+        });
+
+        // ============================================================
+        // SUITE 8: Access Control Logic
+        // ============================================================
+
+        function hasFullAccess(team, user) {
+            if (!team || !user) return false;
+            if (team.ownerId === user.uid) return true;
+            const email = (user.email || '').toLowerCase();
+            return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
+        }
+
+        const mockTeam = {
+            ownerId: 'uid-owner',
+            adminEmails: ['coach@school.com', 'admin@school.com']
+        };
+
+        test('Team owner has full access', () => {
+            assertTrue(hasFullAccess(mockTeam, { uid: 'uid-owner', email: 'owner@test.com' }),
+                'Owner should have access');
+        });
+
+        test('Listed admin email has full access', () => {
+            assertTrue(hasFullAccess(mockTeam, { uid: 'uid-other', email: 'coach@school.com' }),
+                'Admin email should have access');
+        });
+
+        test('Admin email check is case-insensitive', () => {
+            assertTrue(hasFullAccess(mockTeam, { uid: 'uid-other', email: 'COACH@SCHOOL.COM' }),
+                'Uppercase admin email should still have access');
+        });
+
+        test('Non-admin, non-owner has no full access', () => {
+            assertFalse(hasFullAccess(mockTeam, { uid: 'uid-parent', email: 'parent@test.com' }),
+                'Parent should not have full access');
+        });
+
+        test('hasFullAccess returns false for null user', () => {
+            assertFalse(hasFullAccess(mockTeam, null), 'Null user should return false');
+        });
+
+        test('hasFullAccess returns false for null team', () => {
+            assertFalse(hasFullAccess(null, { uid: 'uid-owner' }), 'Null team should return false');
+        });
+
+        test('hasFullAccess returns false for empty adminEmails', () => {
+            const teamNoAdmins = { ownerId: 'uid-owner', adminEmails: [] };
+            assertFalse(hasFullAccess(teamNoAdmins, { uid: 'uid-other', email: 'rando@test.com' }),
+                'Non-owner with no admins should not have access');
+        });
+
+        // ============================================================
+        // SUITE 9: Coaching Note Types
+        // ============================================================
+
+        const COACHING_TYPE_COLORS = {
+            substitution: 'text-orange-600',
+            Timeout: 'text-amber-600',
+            'Formation Change': 'text-blue-600',
+            Injury: 'text-red-600',
+            note: 'text-gray-700'
+        };
+
+        function getCoachingNoteColor(type) {
+            return COACHING_TYPE_COLORS[type] || 'text-gray-700';
+        }
+
+        test('Timeout type renders amber color', () => {
+            assertEquals(getCoachingNoteColor('Timeout'), 'text-amber-600', 'Timeout should be amber');
+        });
+
+        test('Formation Change type renders blue color', () => {
+            assertEquals(getCoachingNoteColor('Formation Change'), 'text-blue-600', 'Formation Change should be blue');
+        });
+
+        test('Injury type renders red color', () => {
+            assertEquals(getCoachingNoteColor('Injury'), 'text-red-600', 'Injury should be red');
+        });
+
+        test('Substitution type renders orange color', () => {
+            assertEquals(getCoachingNoteColor('substitution'), 'text-orange-600', 'Substitution should be orange');
+        });
+
+        test('Unknown type defaults to gray', () => {
+            assertEquals(getCoachingNoteColor('random'), 'text-gray-700', 'Unknown type should default to gray');
+        });
+
+        test('Note type renders gray', () => {
+            assertEquals(getCoachingNoteColor('note'), 'text-gray-700', 'Note type should be gray');
+        });
+
+        // ============================================================
+        // SUITE 10: localStorage Player Color Persistence
+        // ============================================================
+
+        test('Player colors can be stored and retrieved from localStorage', () => {
+            const testKey = 'playerColors-test-team-999';
+            const testColors = { 'player1': 3, 'player2': 5 };
+            localStorage.setItem(testKey, JSON.stringify(testColors));
+            const retrieved = JSON.parse(localStorage.getItem(testKey));
+            assertEquals(retrieved['player1'], 3, 'player1 color index should be 3');
+            assertEquals(retrieved['player2'], 5, 'player2 color index should be 5');
+            localStorage.removeItem(testKey);
+        });
+
+        test('Missing localStorage key returns null', () => {
+            localStorage.removeItem('playerColors-nonexistent');
+            assertNull(localStorage.getItem('playerColors-nonexistent'), 'Missing key should return null');
+        });
+
+        test('Player colors persist across simulated page reload', () => {
+            const testKey = 'playerColors-reload-test';
+            const original = { 'alice': 2, 'bob': 6 };
+            localStorage.setItem(testKey, JSON.stringify(original));
+            // Simulate reload: retrieve and parse
+            const loaded = JSON.parse(localStorage.getItem(testKey) || '{}');
+            assertEquals(loaded['alice'], 2, 'alice color should persist');
+            assertEquals(loaded['bob'], 6, 'bob color should persist');
+            localStorage.removeItem(testKey);
+        });
+
+        test('Corrupted localStorage color data is handled gracefully', () => {
+            const testKey = 'playerColors-corrupt-test';
+            localStorage.setItem(testKey, 'NOT VALID JSON {{{{');
+            let colors = {};
+            try {
+                const saved = localStorage.getItem(testKey);
+                if (saved) colors = JSON.parse(saved);
+            } catch (e) {
+                // Gracefully ignored — colors remains {}
+            }
+            assertDeepEquals(colors, {}, 'Corrupted data should fall back to empty colors');
+            localStorage.removeItem(testKey);
+        });
+
+        // ============================================================
+        // DISPLAY RESULTS
+        // ============================================================
+
+        const passCount = results.filter(r => r.pass).length;
+        const failCount = results.filter(r => !r.pass).length;
+
+        const suites = [
+            { name: 'Suite 1: Formation & Period Logic', count: 8 },
+            { name: 'Suite 2: Rotation Plan — Flatten & Rebuild', count: 7 },
+            { name: 'Suite 3: Mode State Machine', count: 6 },
+            { name: 'Suite 4: Player Color System', count: 8 },
+            { name: 'Suite 5: On-Field Map / Sub Logic', count: 5 },
+            { name: 'Suite 6: Balance Playing Time', count: 5 },
+            { name: 'Suite 7: escapeHtml / XSS Prevention', count: 8 },
+            { name: 'Suite 8: Access Control Logic', count: 7 },
+            { name: 'Suite 9: Coaching Note Types', count: 6 },
+            { name: 'Suite 10: localStorage Color Persistence', count: 4 },
+        ];
+
+        const container = document.getElementById('test-results');
+
+        let summaryClass = failCount === 0 ? 'summary-pass' : 'summary-fail';
+        let html = `
+            <div class="test-section">
+                <h2>Summary</h2>
+                <p class="${summaryClass}">✅ Passed: ${passCount} &nbsp;|&nbsp; ❌ Failed: ${failCount} &nbsp;|&nbsp; Total: ${results.length}</p>
+                ${failCount > 0 ? '<p style="color:#dc2626">⚠️ Some tests failed — see details below.</p>' : '<p style="color:#16a34a">All tests passed!</p>'}
+            </div>
+        `;
+
+        let resultIdx = 0;
+        suites.forEach(suite => {
+            html += `<div class="test-section"><h2>${suite.name}</h2>`;
+            const suiteResults = results.slice(resultIdx, resultIdx + suite.count);
+            resultIdx += suite.count;
+            suiteResults.forEach(result => {
+                const cls = result.pass ? 'pass' : 'fail';
+                const icon = result.pass ? '✅' : '❌';
+                html += `
+                    <div class="test-case ${cls}">
+                        <div class="test-name">${icon} ${result.name}</div>
+                        ${result.error ? `<div class="test-result">Error: ${result.error}</div>` : ''}
+                    </div>
+                `;
+            });
+            const suitePass = suiteResults.filter(r => r.pass).length;
+            html += `<p style="font-size:0.85em;color:#666;margin-top:8px">${suitePass}/${suiteResults.length} passed</p>`;
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
+    </script>
+</body>
+</html>

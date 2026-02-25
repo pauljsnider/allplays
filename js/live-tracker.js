@@ -1,11 +1,13 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js';
+import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=14';
 import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=9';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
+import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
+import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -48,7 +50,10 @@ let state = {
   pendingIn: null,
   subQueue: [],
   queueMode: false,
-  history: []
+  history: [],
+  scoreLogIsComplete: true,
+  voiceListening: false,
+  activeVoiceRecognition: null
 };
 
 let liveState = {
@@ -66,8 +71,11 @@ let liveState = {
   lastChatSentAt: 0,
   scoreSyncTimeout: null,
   lastSyncedHome: null,
-  lastSyncedAway: null
+  lastSyncedAway: null,
+  lastClockSyncAt: 0
 };
+
+const LIVE_CLOCK_SYNC_INTERVAL_MS = 5000;
 
 let liveSync = {
   playerTimeouts: new Map(),
@@ -223,6 +231,10 @@ const els = {
   oppInput: q('#opp-input-mobile'),
   oppAdd: q('#opp-add-mobile'),
   oppCards: q('#opp-cards-mobile'),
+  voiceNoteBtn: q('#voice-note-btn'),
+  voiceNoteHint: q('#voice-note-hint'),
+  liveNoteInput: q('#live-note-input'),
+  liveNoteAdd: q('#live-note-add'),
   homeFinal: q('#home-final'),
   awayFinal: q('#away-final'),
   notesFinal: q('#notes-final'),
@@ -272,6 +284,9 @@ async function safeGetDocs(ref, label = 'collection') {
 }
 
 function setTab(tab) {
+  if (tab !== 'live') {
+    stopActiveVoiceRecognition();
+  }
   els.panelLineup.classList.toggle('hidden', tab !== 'lineup');
   els.panelLive.classList.toggle('hidden', tab !== 'live');
   els.panelOpp.classList.toggle('hidden', tab !== 'opp');
@@ -429,10 +444,10 @@ function renderOpponents() {
 
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 min-w-0">
           ${o.photoUrl || o.name ? avatarHtml({ name: o.name, photoUrl: o.photoUrl }, 'h-6 w-6', 'text-[10px]') : ''}
-          ${o.number ? `<span class="text-[10px] font-bold text-slate-500">#${escapeHtml(o.number)}</span>` : ''}
-          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 text-xs px-2 py-1 rounded border border-slate/10 font-semibold" placeholder="Player name">
+          ${o.number ? `<span class="text-[10px] font-bold text-slate-500 shrink-0">#${escapeHtml(o.number)}</span>` : ''}
+          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-slate/10 font-semibold" placeholder="Player name">
         </div>
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
@@ -778,7 +793,8 @@ function saveHistory(action) {
     bench: [...state.bench],
     stats: JSON.parse(JSON.stringify(state.stats)),
     log: [...state.log],
-    opp: JSON.parse(JSON.stringify(state.opp))
+    opp: JSON.parse(JSON.stringify(state.opp)),
+    scoreLogIsComplete: state.scoreLogIsComplete
   };
   state.history.push(snapshot);
   // Keep only last 50 actions
@@ -801,6 +817,7 @@ function undo() {
   state.stats = prev.stats;
   state.log = prev.log;
   state.opp = prev.opp;
+  state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;
   renderAll();
   addLog(`Undid: ${prev.action}`);
   if (lastLog?.undoData?.type === 'stat' && isPointsColumn(lastLog.undoData.statKey)) {
@@ -841,6 +858,106 @@ function safeDecrement(currentValue, delta) {
 function addLog(text, undoData = null) {
   state.log.unshift({ text, ts: Date.now(), period: state.period, clock: formatClock(state.clock), undoData });
   renderLog();
+}
+
+function setVoiceNoteButtonLabel(isListening) {
+  if (!els.voiceNoteBtn) return;
+  els.voiceNoteBtn.textContent = isListening ? 'Stop voice note' : 'Start voice note';
+}
+
+function setVoiceNoteHint(isListening) {
+  if (!els.voiceNoteHint) return;
+  els.voiceNoteHint.textContent = isListening
+    ? 'Recording... tap Stop voice note when finished.'
+    : 'Tap Start voice note, speak, then tap Stop voice note.';
+}
+
+function stopActiveVoiceRecognition() {
+  if (state.activeVoiceRecognition && state.voiceListening) {
+    try { state.activeVoiceRecognition.stop(); } catch (_) {}
+  }
+  state.voiceListening = false;
+  state.activeVoiceRecognition = null;
+  setVoiceNoteButtonLabel(false);
+  setVoiceNoteHint(false);
+}
+
+function appendGameNote(text, type = 'text') {
+  const clean = normalizeGameNoteText(text);
+  if (!clean) return false;
+  if (els.notesFinal) {
+    els.notesFinal.value = appendGameSummaryLine(els.notesFinal.value, clean);
+  }
+  const logText = buildGameNoteLogText(clean, type);
+  if (logText) {
+    addLog(logText);
+    if (liveState.isLive) {
+      broadcastEvent(baseLiveEvent({
+        type: 'note',
+        description: logText,
+        note: clean,
+        noteType: type
+      }));
+    }
+  }
+  return true;
+}
+
+function addManualGameNote() {
+  if (!els.liveNoteInput) return;
+  const text = normalizeGameNoteText(els.liveNoteInput.value);
+  if (!text) return;
+  if (appendGameNote(text, 'text')) {
+    els.liveNoteInput.value = '';
+  }
+}
+
+function startVoiceNote() {
+  if (!isVoiceRecognitionSupported(window)) {
+    addLog('Voice notes not supported in this browser');
+    return;
+  }
+
+  if (state.voiceListening && state.activeVoiceRecognition) {
+    try {
+      state.activeVoiceRecognition.stop();
+    } catch (err) {
+      console.warn('Voice stop failed:', err);
+    }
+    return;
+  }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SR();
+  state.activeVoiceRecognition = recognition;
+  state.voiceListening = true;
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+  recognition.continuous = false;
+
+  setVoiceNoteButtonLabel(true);
+  setVoiceNoteHint(true);
+
+  recognition.onresult = (e) => {
+    const transcript = e.results?.[0]?.[0]?.transcript || '';
+    if (!appendGameNote(transcript, 'voice')) {
+      addLog('No speech detected');
+    }
+  };
+  recognition.onerror = (event) => {
+    console.warn('Voice recognition error:', event);
+    if (event?.error !== 'no-speech' && event?.error !== 'aborted') {
+      addLog('Voice recognition failed');
+    }
+  };
+  recognition.onend = () => {
+    state.voiceListening = false;
+    state.activeVoiceRecognition = null;
+    setVoiceNoteButtonLabel(false);
+    setVoiceNoteHint(false);
+  };
+
+  recognition.start();
 }
 
 async function broadcastEvent(eventData) {
@@ -1051,6 +1168,7 @@ function initViewerCount() {
 async function startLiveBroadcast() {
   if (liveState.isLive) return;
   liveState.isLive = true;
+  liveState.lastClockSyncAt = 0;
   try {
     await setGameLiveStatus(currentTeamId, currentGameId, 'live');
   } catch (error) {
@@ -1071,6 +1189,7 @@ async function endLiveBroadcast() {
 
   if (liveState.isLive) {
     liveState.isLive = false;
+    liveState.lastClockSyncAt = 0;
     if (liveState.unsubscribeChat) liveState.unsubscribeChat();
     if (liveState.unsubscribeViewers) liveState.unsubscribeViewers();
   }
@@ -1269,8 +1388,25 @@ function generateEmailRecap() {
 }
 
 async function saveAndComplete() {
-  const finalHome = parseInt(els.homeFinal.value) || state.home;
-  const finalAway = parseInt(els.awayFinal.value) || state.away;
+  const rawFinalHome = parseInt(els.homeFinal.value, 10);
+  const rawFinalAway = parseInt(els.awayFinal.value, 10);
+  const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
+  const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
+  let finalHome = requestedHome;
+  let finalAway = requestedAway;
+
+  if (state.scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
+    const reconciledScore = reconcileFinalScoreFromLog({
+      requestedHome,
+      requestedAway,
+      log: state.log
+    });
+    if (reconciledScore.mismatch) {
+      addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${reconciledScore.home}-${reconciledScore.away} based on scoring events`);
+    }
+    finalHome = reconciledScore.home;
+    finalAway = reconciledScore.away;
+  }
   const summary = els.notesFinal.value.trim();
   const sendEmail = els.finishSendEmail?.checked;
 
@@ -1433,6 +1569,20 @@ function tick() {
   updateClockUI();
   updatePlayerTimes();
   renderFairness();
+
+  const wallNow = Date.now();
+  if (
+    liveState.isLive &&
+    currentTeamId &&
+    currentGameId &&
+    (wallNow - liveState.lastClockSyncAt >= LIVE_CLOCK_SYNC_INTERVAL_MS)
+  ) {
+    liveState.lastClockSyncAt = wallNow;
+    broadcastEvent(baseLiveEvent({
+      type: 'clock_sync',
+      description: 'Clock sync'
+    }));
+  }
 }
 
 function updatePlayerTimes() {
@@ -1611,6 +1761,11 @@ function attachEvents() {
     const btn = e.target.closest('[data-sub-in]');
     if (!btn) return;
     state.pendingIn = btn.dataset.subIn;
+    if (!canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
+      renderSubPlayers();
+      updateSubButton();
+      return;
+    }
 
     if (state.pendingOut && state.pendingIn) {
       if (state.queueMode) {
@@ -1633,7 +1788,7 @@ function attachEvents() {
   els.subConfirm.addEventListener('click', () => {
     if (state.queueMode) {
       // Add pending swap to queue if exists
-      if (state.pendingOut && state.pendingIn) {
+      if (canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
         state.subQueue.push({ out: state.pendingOut, in: state.pendingIn });
         state.pendingOut = null;
         state.pendingIn = null;
@@ -1641,7 +1796,7 @@ function attachEvents() {
       applyQueue();
     } else {
       // Quick mode: apply single swap
-      if (state.pendingOut && state.pendingIn) {
+      if (canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
         saveHistory(`Sub: #${getNum(state.pendingOut)} → #${getNum(state.pendingIn)}`);
         applySub(state.pendingOut, state.pendingIn);
         state.pendingOut = null;
@@ -1750,7 +1905,25 @@ function attachEvents() {
   els.closeAiSummary.addEventListener('click', () => els.aiSummaryOutput.classList.add('hidden'));
   els.closeEmail.addEventListener('click', () => els.emailOutput.classList.add('hidden'));
   els.copyEmail.addEventListener('click', copyEmailToClipboard);
-  els.clearLog.addEventListener('click', () => { state.log = []; renderLog(); });
+  els.clearLog.addEventListener('click', () => {
+    state.log = [];
+    state.scoreLogIsComplete = false;
+    renderLog();
+  });
+  if (els.voiceNoteBtn) {
+    els.voiceNoteBtn.addEventListener('click', startVoiceNote);
+  }
+  if (els.liveNoteAdd) {
+    els.liveNoteAdd.addEventListener('click', addManualGameNote);
+  }
+  if (els.liveNoteInput) {
+    els.liveNoteInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addManualGameNote();
+      }
+    });
+  }
   if (els.chatToggle) {
     els.chatToggle.addEventListener('click', toggleChat);
   }
@@ -1872,9 +2045,10 @@ function updateSubHint() {
 }
 
 function updateSubButton() {
+  const pendingValid = canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn);
   if (state.queueMode) {
     const hasQueue = state.subQueue.length > 0;
-    els.subConfirm.disabled = !hasQueue && !(state.pendingOut && state.pendingIn);
+    els.subConfirm.disabled = !hasQueue && !pendingValid;
     els.subConfirm.textContent = hasQueue ? `Apply ${state.subQueue.length} Swap${state.subQueue.length > 1 ? 's' : ''}` : 'Make Swap';
 
     // Show "Save for Later" button if there's a queue
@@ -1886,7 +2060,7 @@ function updateSubButton() {
       els.subConfirm.classList.add('w-full');
     }
   } else {
-    els.subConfirm.disabled = !(state.pendingOut && state.pendingIn);
+    els.subConfirm.disabled = !pendingValid;
     els.subConfirm.textContent = 'Make Swap';
     els.saveQueueLater.classList.add('hidden');
     els.subConfirm.classList.add('w-full');
@@ -1925,9 +2099,12 @@ function renderSubPlayers() {
   // Render bench players
   els.subIn.innerHTML = state.bench.map(id => {
     const selected = state.pendingIn === id;
-    const cls = selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
+    const disabled = state.onCourt.includes(id);
+    const cls = disabled
+      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+      : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
     const p = roster.find(r => r.id === id);
-    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-in="${id}">
+    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-in="${id}" ${disabled ? 'disabled aria-disabled="true"' : ''}>
       ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
       <span class="truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</span>
     </button>`;
@@ -1942,11 +2119,10 @@ function closeSubModal() {
 }
 
 function applySub(outId, inId) {
-  const idx = state.onCourt.indexOf(outId);
-  if (idx === -1) return;
-  state.onCourt[idx] = inId;
-  state.bench = state.bench.filter(id => id !== inId);
-  state.bench.push(outId);
+  const result = applySubstitution(state.onCourt, state.bench, outId, inId);
+  if (!result.applied) return;
+  state.onCourt = result.onCourt;
+  state.bench = result.bench;
   state.subs.push({ out: outId, in: inId, period: state.period, clock: formatClock(state.clock) });
   const logText = `Sub: #${getNum(outId)} ${playerName(outId)} → #${getNum(inId)} ${playerName(inId)}`;
   addLog(logText);
@@ -1969,11 +2145,10 @@ function applyQueue(closeModal = true) {
 
   // Log each individual swap for clarity
   state.subQueue.forEach(pair => {
-    const idx = state.onCourt.indexOf(pair.out);
-    if (idx !== -1) {
-      state.onCourt[idx] = pair.in;
-      state.bench = state.bench.filter(id => id !== pair.in);
-      state.bench.push(pair.out);
+    const result = applySubstitution(state.onCourt, state.bench, pair.out, pair.in);
+    if (result.applied) {
+      state.onCourt = result.onCourt;
+      state.bench = result.bench;
       state.subs.push({ out: pair.out, in: pair.in, period: state.period, clock: formatClock(state.clock) });
       // Log each swap individually
       const logText = `Sub: #${getNum(pair.out)} ${playerName(pair.out)} → #${getNum(pair.in)} ${playerName(pair.in)}`;
@@ -2159,6 +2334,11 @@ async function init() {
     state.history = [];
     state.subQueue = [];
     state.queueMode = false;
+    state.scoreLogIsComplete = true;
+    state.voiceListening = false;
+    state.activeVoiceRecognition = null;
+    setVoiceNoteButtonLabel(false);
+    setVoiceNoteHint(false);
 
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
@@ -2220,6 +2400,8 @@ async function init() {
           const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
           liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         }
+        const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
+        state.scoreLogIsComplete = !resumedFromPersistedData;
 
         // Load existing aggregated stats
         statsSnapshot.forEach(d => {

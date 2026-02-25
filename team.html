@@ -146,31 +146,49 @@
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Schedule Section -->
             <section class="lg:col-span-2">
-                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
-                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900 flex items-center gap-2">
-                        Schedule
-                        <button id="download-ics"
-                            class="text-sm px-3 py-1.5 rounded-md border border-gray-200 text-gray-600 hover:text-primary-700 hover:border-primary-300 transition flex items-center gap-1">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                    d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
-                                </path>
-                            </svg>
-                            Download .ics
-                        </button>
-                    </h2>
-                    <div class="flex gap-3 w-full sm:w-auto flex-wrap">
-                        <label
-                            class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer bg-white px-4 py-2 rounded-lg border border-gray-200 hover:border-primary-300 transition">
-                            <input type="checkbox" id="show-practices"
-                                class="rounded text-primary-600 focus:ring-primary-500">
-                            <span class="font-medium">Show Practices</span>
-                        </label>
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                    <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3 flex-wrap">
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Schedule</h2>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <div class="flex rounded-lg border border-gray-200 overflow-hidden">
+                                <button id="schedule-view-list" class="px-2.5 py-1 text-xs font-semibold bg-primary-600 text-white">List</button>
+                                <button id="schedule-view-calendar" class="px-2.5 py-1 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-100">Calendar</button>
+                            </div>
+                            <label
+                                class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-gray-200 hover:border-primary-300 transition">
+                                <input type="checkbox" id="show-practices"
+                                    class="rounded text-primary-600 focus:ring-primary-500">
+                                <span class="font-medium">Show Practices</span>
+                            </label>
+                            <button id="download-ics"
+                                class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition border border-primary-200">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
+                                    </path>
+                                </svg>
+                                .ics
+                            </button>
+                        </div>
                     </div>
-                </div>
-
-                <div id="schedule-list" class="space-y-4">
-                    <!-- Games will be displayed here -->
+                    <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button id="schedule-filter-recent-results" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">Recent Results</button>
+                            <button id="schedule-filter-upcoming-games" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Games</button>
+                            <button id="schedule-filter-upcoming-practices" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Practices</button>
+                            <button id="schedule-filter-all-upcoming" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">All Upcoming</button>
+                            <button id="schedule-filter-past-events" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
+                        </div>
+                    </div>
+                    <div id="schedule-calendar-nav" class="hidden px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-center gap-4">
+                        <button id="schedule-calendar-prev" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
+                        <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
+                        <button id="schedule-calendar-next" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">Next &rarr;</button>
+                    </div>
+                    <div id="schedule-list" class="p-4 space-y-4">
+                        <!-- Games will be displayed here -->
+                    </div>
+                    <div id="schedule-calendar-grid" class="hidden"></div>
                 </div>
             </section>
 
@@ -195,10 +213,25 @@
     </main>
 
     <div id="footer-container"></div>
+    <div id="schedule-day-modal" class="hidden fixed inset-0 z-50">
+        <div id="schedule-day-modal-backdrop" class="absolute inset-0 bg-black/50"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <h3 id="schedule-day-modal-title" class="text-lg font-bold text-gray-900"></h3>
+                <button id="schedule-day-modal-close" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="schedule-day-modal-content" class="px-6 py-5"></div>
+        </div>
+    </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=9';
+        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -229,12 +262,86 @@
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
+        let countdownIntervalId = null;
         let teamGames = [];
         let gamesById = {};
+        let allScheduleEvents = [];
+        let scheduleViewFilter = 'recent-results';
+        let scheduleViewMode = 'list';
+        let scheduleCalendarMonth = new Date().getMonth();
+        let scheduleCalendarYear = new Date().getFullYear();
+
+        window.setScheduleFilter = setScheduleFilter;
+        window.setScheduleView = setScheduleView;
+        window.navScheduleMonth = navScheduleMonth;
+        window.openScheduleDayModal = openScheduleDayModal;
+        window.closeScheduleDayModal = closeScheduleDayModal;
+
+        function renderNextGameBody(nextGame) {
+            if (!nextGame) return '<p class="text-sm text-gray-500">No upcoming games</p>';
+            return `
+                <div id="next-game-countdown" class="mb-2"></div>
+                <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
+                <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>
+            `;
+        }
+
+        function renderLeagueOverviewBody(leagueSnapshot, team) {
+            const sourceUrl = team?.leagueUrl ? escapeHtml(team.leagueUrl) : '';
+            if (!sourceUrl) {
+                return '<p class="text-sm text-gray-500">No league link configured</p>';
+            }
+
+            if (!leagueSnapshot || !leagueSnapshot.ok) {
+                return `
+                    <p class="text-sm text-amber-700">Could not load standings</p>
+                    <a class="text-xs text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+                `;
+            }
+
+            const row = leagueSnapshot.match || leagueSnapshot.rows[0];
+            if (!row) {
+                return `
+                    <p class="text-sm text-amber-700">No W/L rows found</p>
+                    <a class="text-xs text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+                `;
+            }
+
+            return `
+                <div class="mb-2">
+                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
+                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • PCT ${escapeHtml(row.pct || 'N/A')}</div>
+                </div>
+                <div class="text-xs text-gray-500">PF ${row.pf} · PA ${row.pa} · PD ${row.pd}</div>
+                <a class="text-xs text-primary-600 hover:underline mt-2 inline-block" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+            `;
+        }
+
+        function ensureCountdownTimer() {
+            if (countdownIntervalId) return;
+            countdownIntervalId = setInterval(updateCountdown, 60000);
+        }
+
+        function refreshSeasonOverviewNextGame() {
+            const bodyEl = document.getElementById('season-overview-next-game-body');
+            if (!bodyEl) return;
+            nextGameCountdown = getNextGame(allScheduleEvents || []);
+            bodyEl.innerHTML = renderNextGameBody(nextGameCountdown);
+            if (nextGameCountdown) {
+                updateCountdown();
+                ensureCountdownTimer();
+            }
+        }
 
         function mapLink(locationText) {
             if (!locationText) return null;
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
+        }
+
+        function toDateSafe(value) {
+            if (!value) return null;
+            const d = value?.toDate ? value.toDate() : new Date(value);
+            return Number.isNaN(d?.getTime?.()) ? null : d;
         }
 
         function calculateSeasonRecord(games) {
@@ -406,11 +513,12 @@
 
         function getNextGame(allEvents) {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const upcomingEvents = allEvents
                 .filter(event => {
                     if (event.type === 'db' && event.status === 'completed') return false;
                     if (event.isPractice && !showPractices) return false;
-                    return event.date > now;
+                    return event.date > cutoff;
                 })
                 .sort((a, b) => a.date - b.date);
 
@@ -553,6 +661,15 @@
                                     </a>`
                         : ''
                     }
+                                ${team.leagueUrl
+                        ? `<a class="inline-flex items-center gap-1 text-sm text-primary-700 hover:text-primary-800 transition" target="_blank" rel="noopener noreferrer" href="${escapeHtml(team.leagueUrl)}">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 000 5.656m-3.656-9.192l-3.536 3.536a4 4 0 000 5.656 4 4 0 005.656 0l1.414-1.414m-3.536-3.536l1.414-1.414a4 4 0 015.656 0 4 4 0 010 5.656l-3.536 3.536"></path>
+                                        </svg>
+                                        League Page
+                                    </a>`
+                        : ''
+                    }
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
                         </div>
@@ -562,20 +679,18 @@
                 // Render Season Overview Cards
                 const totalGames = dbGames.filter(g => g.status === 'completed').length;
                 const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+                const leagueSnapshot = team.leagueUrl
+                    ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
+                    : { ok: false, reason: 'missing-url', rows: [], match: null };
 
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
 
                 // After schedule is rendered, update season overview with next game info
-                let nextGame = null;
-                try {
-                    const allEventsForOverview = await getAllEvents(team, dbGames);
+                const nextGame = getNextGame(allScheduleEvents);
+                nextGameCountdown = nextGame;
 
-                    nextGame = getNextGame(allEventsForOverview);
-
-                    nextGameCountdown = nextGame;
-
-                    document.getElementById('season-overview').innerHTML = `
+                document.getElementById('season-overview').innerHTML = `
                     <!-- Season Record -->
                     <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
                         <div class="flex items-center justify-between mb-3">
@@ -605,12 +720,7 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                             </svg>
                         </div>
-                        ${nextGame
-                            ? `<div id="next-game-countdown" class="mb-2"></div>
-                               <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
-                               <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>`
-                            : `<p class="text-sm text-gray-500">No upcoming games</p>`
-                        }
+                        <div id="season-overview-next-game-body">${renderNextGameBody(nextGame)}</div>
                     </div>
 
                     <!-- Total Players -->
@@ -624,15 +734,23 @@
                         <div class="text-3xl md:text-4xl font-bold text-gray-900">${players.length}</div>
                         <p class="text-xs text-gray-500 mt-2">Active player${players.length === 1 ? '' : 's'}</p>
                     </div>
+
+                    <!-- League Standings -->
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">League Standings</h3>
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-5m3 5V7m3 10v-3m4 8H5a2 2 0 01-2-2V4a2 2 0 012-2h14a2 2 0 012 2v16a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                        ${renderLeagueOverviewBody(leagueSnapshot, team)}
+                    </div>
                 `;
-                } catch (err) {
-                    console.error('Error updating season overview:', err);
-                }
 
                 // Start countdown updates
                 if (nextGame) {
                     updateCountdown();
-                    setInterval(updateCountdown, 60000); // Update every minute
+                    ensureCountdownTimer();
                 }
 
                 await renderPlayingTimeInsights(teamId, team, players, dbGames);
@@ -905,31 +1023,94 @@
         }
 
         async function renderSchedule(team, dbGames) {
-            const allEvents = await getAllEvents(team, dbGames);
-            renderScheduleList(allEvents);
+            allScheduleEvents = await getAllEvents(team, dbGames);
+            setScheduleFilter('recent-results');
+        }
+
+        function getFilteredScheduleEvents() {
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            const events = (allScheduleEvents || []).filter((event) => {
+                if (!showPractices && event.isPractice) return false;
+                return true;
+            });
+
+            let filtered = events;
+            if (scheduleViewFilter === 'recent-results') {
+                filtered = events
+                    .filter((event) => event.type === 'db' && !event.isPractice && event.status === 'completed')
+                    .sort((a, b) => b.date - a.date)
+                    .slice(0, 5);
+                return filtered;
+            }
+            if (scheduleViewFilter === 'upcoming-games') {
+                filtered = events.filter((event) => !event.isPractice && event.date >= cutoff && !event.isCancelled);
+                return filtered.sort((a, b) => a.date - b.date);
+            }
+            if (scheduleViewFilter === 'upcoming-practices') {
+                filtered = events.filter((event) => event.isPractice && event.date >= cutoff && !event.isCancelled);
+                return filtered.sort((a, b) => a.date - b.date);
+            }
+            if (scheduleViewFilter === 'all-upcoming') {
+                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled);
+                return filtered.sort((a, b) => a.date - b.date);
+            }
+            if (scheduleViewFilter === 'past-events') {
+                filtered = events.filter((event) => event.date < cutoff || event.isCancelled);
+                return filtered.sort((a, b) => b.date - a.date);
+            }
+
+            return events.sort((a, b) => a.date - b.date);
+        }
+
+        function renderScheduleFromControls() {
+            const events = getFilteredScheduleEvents();
+            const scheduleList = document.getElementById('schedule-list');
+            const calEl = document.getElementById('schedule-calendar-grid');
+            const navEl = document.getElementById('schedule-calendar-nav');
+
+            if (!scheduleList || !calEl || !navEl) return;
+
+            if (scheduleViewMode === 'calendar') {
+                scheduleList.classList.add('hidden');
+                calEl.classList.remove('hidden');
+                navEl.classList.remove('hidden');
+                renderScheduleCalendar(events);
+                return;
+            }
+
+            scheduleList.classList.remove('hidden');
+            calEl.classList.add('hidden');
+            navEl.classList.add('hidden');
+            renderScheduleList(events);
         }
 
         function renderScheduleList(events) {
             const scheduleList = document.getElementById('schedule-list');
+            if (!scheduleList) return;
 
-            const filteredEvents = events.filter(event => {
-                if (event.isPractice && !showPractices) return false;
-                return true;
-            });
-
-            if (filteredEvents.length === 0) {
+            if (!events || events.length === 0) {
+                const filterLabel = scheduleViewFilter === 'recent-results'
+                    ? 'recent completed games'
+                    : scheduleViewFilter === 'upcoming-games'
+                        ? 'upcoming games'
+                        : scheduleViewFilter === 'upcoming-practices'
+                            ? 'upcoming practices'
+                            : scheduleViewFilter === 'all-upcoming'
+                                ? 'upcoming events'
+                                : 'events';
                 scheduleList.innerHTML = `
                     <div class="bg-white p-8 rounded-2xl shadow-md text-center border border-gray-200">
                         <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                         </svg>
-                        <p class="text-gray-500">No games scheduled</p>
+                        <p class="text-gray-500">No ${filterLabel} right now.</p>
                     </div>
                 `;
                 return;
             }
 
-            scheduleList.innerHTML = filteredEvents.map(event => {
+            scheduleList.innerHTML = events.map(event => {
                 if (event.type === 'calendar') {
                     return renderCalendarEvent(event);
                 } else {
@@ -938,10 +1119,166 @@
             }).join('');
         }
 
+        function getCalendarEntries(events) {
+            return (events || []).map((event) => ({
+                ...event,
+                date: toDateSafe(event.date),
+            })).filter((event) => event.date);
+        }
+
+        function renderScheduleCalendar(events) {
+            const container = document.getElementById('schedule-calendar-grid');
+            const label = document.getElementById('schedule-calendar-month-label');
+            if (!container || !label) return;
+
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            label.textContent = `${monthNames[scheduleCalendarMonth]} ${scheduleCalendarYear}`;
+
+            const monthStart = new Date(scheduleCalendarYear, scheduleCalendarMonth, 1);
+            const monthEnd = new Date(scheduleCalendarYear, scheduleCalendarMonth + 1, 0, 23, 59, 59);
+            const firstDay = new Date(scheduleCalendarYear, scheduleCalendarMonth, 1);
+            const startOffset = firstDay.getDay();
+            const daysInMonth = new Date(scheduleCalendarYear, scheduleCalendarMonth + 1, 0).getDate();
+            const prevMonthDays = new Date(scheduleCalendarYear, scheduleCalendarMonth, 0).getDate();
+
+            const calendarEvents = getCalendarEntries(events).filter((ev) => ev.date >= monthStart && ev.date <= monthEnd);
+            const dayMap = {};
+            calendarEvents.forEach((ev) => {
+                const day = ev.date.getDate();
+                if (!dayMap[day]) dayMap[day] = [];
+                dayMap[day].push(ev);
+            });
+
+            const today = new Date();
+            const isCurrentMonth = today.getMonth() === scheduleCalendarMonth && today.getFullYear() === scheduleCalendarYear;
+
+            let html = `
+                <div class="grid grid-cols-7 text-xs font-semibold text-gray-500 border-b border-gray-200 bg-gray-50">
+                    <div class="px-2 py-2 text-center">Sun</div>
+                    <div class="px-2 py-2 text-center">Mon</div>
+                    <div class="px-2 py-2 text-center">Tue</div>
+                    <div class="px-2 py-2 text-center">Wed</div>
+                    <div class="px-2 py-2 text-center">Thu</div>
+                    <div class="px-2 py-2 text-center">Fri</div>
+                    <div class="px-2 py-2 text-center">Sat</div>
+                </div>
+                <div class="grid grid-cols-7 auto-rows-[110px]">
+            `;
+
+            for (let i = 0; i < 42; i++) {
+                const dayNum = i - startOffset + 1;
+                const inMonth = dayNum >= 1 && dayNum <= daysInMonth;
+                const dayEvents = inMonth ? (dayMap[dayNum] || []) : [];
+                const isToday = inMonth && isCurrentMonth && dayNum === today.getDate();
+                const displayNum = inMonth ? dayNum : (dayNum <= 0 ? prevMonthDays + dayNum : dayNum - daysInMonth);
+                html += `
+                    <div class="border-b border-r border-gray-100 p-1.5 ${inMonth ? 'bg-white' : 'bg-gray-50 text-gray-400'} ${isToday ? 'ring-2 ring-primary-400 ring-inset' : ''} ${inMonth && dayEvents.length ? 'cursor-pointer hover:bg-primary-50' : ''}"
+                        ${inMonth && dayEvents.length ? `data-schedule-year="${scheduleCalendarYear}" data-schedule-month="${scheduleCalendarMonth}" data-schedule-day="${dayNum}"` : ''}>
+                        <div class="text-[11px] font-semibold ${isToday ? 'text-primary-700' : 'text-gray-600'}">${displayNum}</div>
+                        <div class="mt-1 space-y-1">
+                            ${dayEvents.slice(0, 2).map((ev) => `
+                                <div class="truncate text-[10px] px-1 py-0.5 rounded ${ev.isPractice ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}">
+                                    ${ev.isPractice ? 'Practice' : `vs ${escapeHtml(ev.opponent || 'Opponent')}`}
+                                </div>
+                            `).join('')}
+                            ${dayEvents.length > 2 ? `<div class="text-[10px] text-gray-500 px-1">+${dayEvents.length - 2} more</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderModalEvent(event) {
+            return `
+                <div class="border border-gray-200 rounded-xl p-4 mb-3 ${event.isCancelled ? 'opacity-60' : ''}">
+                    <div class="flex items-center gap-2 mb-2 flex-wrap">
+                        <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${event.isPractice ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}">${event.isPractice ? 'Practice' : 'Game'}</span>
+                        ${event.status === 'completed' && !event.isPractice ? '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">Final</span>' : ''}
+                        ${event.isCancelled ? '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelled</span>' : ''}
+                    </div>
+                    <div class="text-sm text-gray-500">${formatDate(event.date)} • ${formatTime(event.date)}</div>
+                    <div class="font-bold text-gray-900 mt-1">${event.isPractice ? escapeHtml(event.opponent || 'Practice') : `vs. ${escapeHtml(event.opponent || 'Opponent')}`}</div>
+                    <div class="text-sm text-gray-600 mt-1">${escapeHtml(event.location || 'TBD')}</div>
+                    ${event.status === 'completed' && !event.isPractice && typeof event.homeScore === 'number' && typeof event.awayScore === 'number'
+                        ? `<div class="mt-2 text-sm font-semibold text-gray-800">Score: ${event.homeScore} - ${event.awayScore}</div>`
+                        : ''}
+                </div>
+            `;
+        }
+
+        function openScheduleDayModal(year, month, day) {
+            const titleEl = document.getElementById('schedule-day-modal-title');
+            const contentEl = document.getElementById('schedule-day-modal-content');
+            const modalEl = document.getElementById('schedule-day-modal');
+            if (!titleEl || !contentEl || !modalEl) return;
+
+            const dayStart = new Date(year, month, day, 0, 0, 0);
+            const dayEnd = new Date(year, month, day, 23, 59, 59);
+            const events = getFilteredScheduleEvents().filter((ev) => ev.date >= dayStart && ev.date <= dayEnd);
+
+            titleEl.textContent = dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            contentEl.innerHTML = events.length
+                ? events.map((ev) => renderModalEvent(ev)).join('')
+                : '<div class="text-sm text-gray-500">No events on this day.</div>';
+            modalEl.classList.remove('hidden');
+        }
+
+        function closeScheduleDayModal() {
+            document.getElementById('schedule-day-modal')?.classList.add('hidden');
+        }
+
+        function setScheduleView(mode) {
+            scheduleViewMode = mode === 'calendar' ? 'calendar' : 'list';
+            const listBtn = document.getElementById('schedule-view-list');
+            const calBtn = document.getElementById('schedule-view-calendar');
+            const listActive = scheduleViewMode === 'list';
+            if (listBtn && calBtn) {
+                listBtn.className = `px-2.5 py-1 text-xs font-semibold ${listActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`;
+                calBtn.className = `px-2.5 py-1 text-xs font-semibold ${!listActive ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`;
+            }
+            if (scheduleViewMode === 'calendar') {
+                const events = getFilteredScheduleEvents();
+                if (events.length > 0) {
+                    const ref = events[0].date;
+                    if (ref instanceof Date && !Number.isNaN(ref.getTime())) {
+                        scheduleCalendarMonth = ref.getMonth();
+                        scheduleCalendarYear = ref.getFullYear();
+                    }
+                }
+            }
+            renderScheduleFromControls();
+        }
+
+        function navScheduleMonth(delta) {
+            scheduleCalendarMonth += delta;
+            if (scheduleCalendarMonth > 11) {
+                scheduleCalendarMonth = 0;
+                scheduleCalendarYear += 1;
+            } else if (scheduleCalendarMonth < 0) {
+                scheduleCalendarMonth = 11;
+                scheduleCalendarYear -= 1;
+            }
+            if (scheduleViewMode === 'calendar') renderScheduleFromControls();
+        }
+
+        function setScheduleFilter(next) {
+            scheduleViewFilter = next || 'recent-results';
+            const ids = ['recent-results', 'upcoming-games', 'upcoming-practices', 'all-upcoming', 'past-events'];
+            ids.forEach((id) => {
+                const btn = document.getElementById(`schedule-filter-${id}`);
+                if (!btn) return;
+                const active = id === scheduleViewFilter;
+                btn.className = `px-2.5 py-1 text-xs font-semibold rounded-full border ${active ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-100'}`;
+            });
+            renderScheduleFromControls();
+        }
+
         function renderCalendarEvent(event) {
             const isPractice = event.isPractice;
             const isCancelled = event.isCancelled;
-            const isUpcoming = !isCancelled && event.date > new Date();
+            const isUpcoming = !isCancelled && event.date > new Date(Date.now() - 3 * 60 * 60 * 1000);
 
             // Determine border color: cancelled = gray, practice = yellow, upcoming = primary, past = gray
             const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-400' : (isUpcoming ? 'border-primary-500' : 'border-gray-300'));
@@ -1021,6 +1358,16 @@
                     : `<span class="truncate">${escapeHtml(game.location)}</span>`
                 }
                                 </div>
+                                <div class="flex flex-wrap gap-1 mt-2">
+                                    ${game.isHome === true ? '<span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
+                                    ${game.isHome === false ? '<span class="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
+                                    ${game.kitColor ? `<span class="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
+                                    ${game.status === 'cancelled' ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-semibold">CANCELLED</span>' : ''}
+                                </div>
+                                ${game.arrivalTime ? `<div class="text-xs text-amber-600 mt-1">Arrive by ${formatTime(game.arrivalTime)}</div>` : ''}
+                                ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
+                                ${game.assignments && game.assignments.length > 0 ? `<div class="mt-2 flex flex-wrap gap-1">${game.assignments.map(a => `<span class="text-xs bg-gray-100 rounded px-2 py-0.5"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                                ${game.rsvpSummary ? `<div class="mt-2 flex items-center gap-3 text-xs"><span class="text-green-600 font-semibold">${game.rsvpSummary.going || 0} going</span><span class="text-yellow-600">${game.rsvpSummary.maybe || 0} maybe</span><span class="text-red-600">${game.rsvpSummary.notGoing || 0} can't go</span></div>` : ''}
                             </div>
                             <div class="flex flex-col items-end gap-2">
                                 ${(isLive || isUpcoming) ? `
@@ -1143,7 +1490,27 @@
         // Practice filter
         document.getElementById('show-practices').addEventListener('change', (e) => {
             showPractices = e.target.checked;
-            loadTeam();
+            renderScheduleFromControls();
+            refreshSeasonOverviewNextGame();
+        });
+
+        document.getElementById('schedule-view-list')?.addEventListener('click', () => setScheduleView('list'));
+        document.getElementById('schedule-view-calendar')?.addEventListener('click', () => setScheduleView('calendar'));
+        document.getElementById('schedule-calendar-prev')?.addEventListener('click', () => navScheduleMonth(-1));
+        document.getElementById('schedule-calendar-next')?.addEventListener('click', () => navScheduleMonth(1));
+        document.getElementById('schedule-day-modal-backdrop')?.addEventListener('click', closeScheduleDayModal);
+        document.getElementById('schedule-day-modal-close')?.addEventListener('click', closeScheduleDayModal);
+        document.getElementById('schedule-calendar-grid')?.addEventListener('click', (event) => {
+            const dayCell = event.target.closest('[data-schedule-day]');
+            if (!dayCell) return;
+            const year = Number(dayCell.dataset.scheduleYear);
+            const month = Number(dayCell.dataset.scheduleMonth);
+            const day = Number(dayCell.dataset.scheduleDay);
+            if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return;
+            openScheduleDayModal(year, month, day);
+        });
+        ['recent-results', 'upcoming-games', 'upcoming-practices', 'all-upcoming', 'past-events'].forEach((id) => {
+            document.getElementById(`schedule-filter-${id}`)?.addEventListener('click', () => setScheduleFilter(id));
         });
 
         function showToast(message) {

@@ -191,6 +191,20 @@ export function renderHeader(container, user) {
 
   updateNav('desktop');
   updateNav('mobile');
+
+  // Global search: injected into the shared header in one place.
+  // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
+  try {
+    import('./global-search.js?v=7')
+      .then(({ setupHeaderSearch }) => {
+        if (typeof setupHeaderSearch === 'function') {
+          setupHeaderSearch({ user, headerContainer: container });
+        }
+      })
+      .catch((e) => console.warn('[GlobalSearch] Failed to load:', e));
+  } catch (e) {
+    console.warn('[GlobalSearch] Failed to initialize:', e);
+  }
 }
 
 export function renderFooter(container) {
