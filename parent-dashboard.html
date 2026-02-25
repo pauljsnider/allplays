@@ -186,8 +186,8 @@
     </div>
 
     <script type="module">
-        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=20';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
+        import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=22';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
 
         renderFooter(document.getElementById('footer-container'));
@@ -444,38 +444,70 @@
 
                 // DB games for this team
                 for (const game of dbGames) {
-                    const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
                     const isPractice = game.type === 'practice';
                     const type = isPractice ? 'practice' : 'game';
-                    const location = game.location || 'TBD';
-                    const opponent = game.opponent || 'TBD';
-                    const id = game.id || game.gameId;
                     const isCancelled = game.status === 'cancelled';
-                    const session = isPractice ? resolvePracticeSession(game, date) : null;
 
-                    for (const child of teamChildren) {
-                        allEvents.push({
-                            type,
-                            date,
-                            location,
-                            opponent,
-                            teamId,
-                            id,
-                            isDbGame: true,
-                            childId: child.playerId,
-                            childName: child.playerName,
-                            title: game.title || null,
-                            status: game.status || 'scheduled',
-                            isCancelled,
-                            isHome: game.isHome ?? null,
-                            kitColor: game.kitColor || null,
-                            arrivalTime: game.arrivalTime || null,
-                            notes: game.notes || null,
-                            assignments: Array.isArray(game.assignments) ? game.assignments : [],
-                            rsvpSummary: game.rsvpSummary || null,
-                            practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
-                            practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null
-                        });
+                    if (isPractice && game.isSeriesMaster && game.recurrence) {
+                        // Expand recurring practice series — each occurrence gets its own
+                        // RSVP path (masterId__instanceDate) so availability is per-date.
+                        for (const occ of expandRecurrence(game)) {
+                            const occDate = occ.date instanceof Date ? occ.date : new Date(occ.date);
+                            const occId = `${occ.masterId}__${occ.instanceDate}`;
+                            const session = resolvePracticeSession({ id: occId }, occDate);
+                            for (const child of teamChildren) {
+                                allEvents.push({
+                                    type: 'practice',
+                                    date: occDate,
+                                    location: occ.location || 'TBD',
+                                    opponent: 'TBD',
+                                    teamId,
+                                    id: occId,
+                                    isDbGame: true,
+                                    childId: child.playerId,
+                                    childName: child.playerName,
+                                    title: occ.title || null,
+                                    status: game.status || 'scheduled',
+                                    isCancelled,
+                                    isHome: null,
+                                    kitColor: null,
+                                    arrivalTime: game.arrivalTime || null,
+                                    notes: occ.notes || null,
+                                    assignments: [],
+                                    rsvpSummary: null,
+                                    practiceAttendance: hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                    practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null
+                                });
+                            }
+                        }
+                    } else {
+                        const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+                        const id = game.id || game.gameId;
+                        const session = isPractice ? resolvePracticeSession(game, date) : null;
+                        for (const child of teamChildren) {
+                            allEvents.push({
+                                type,
+                                date,
+                                location: game.location || 'TBD',
+                                opponent: game.opponent || 'TBD',
+                                teamId,
+                                id,
+                                isDbGame: true,
+                                childId: child.playerId,
+                                childName: child.playerName,
+                                title: game.title || null,
+                                status: game.status || 'scheduled',
+                                isCancelled,
+                                isHome: game.isHome ?? null,
+                                kitColor: game.kitColor || null,
+                                arrivalTime: game.arrivalTime || null,
+                                notes: game.notes || null,
+                                assignments: Array.isArray(game.assignments) ? game.assignments : [],
+                                rsvpSummary: game.rsvpSummary || null,
+                                practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null
+                            });
+                        }
                     }
                 }
 
@@ -589,20 +621,21 @@
 
         function getFilteredScheduleEvents(selectedPlayerId = '') {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             let events = selectedPlayerId
                 ? allScheduleEvents.filter(ev => ev.childId === selectedPlayerId)
                 : [...allScheduleEvents];
             if (scheduleViewFilter === 'upcoming-all') {
-                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= now);
+                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
                 events.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-games') {
-                events = events.filter(ev => ev.type === 'game' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= now);
+                events = events.filter(ev => ev.type === 'game' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
                 events.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-practices') {
-                events = events.filter(ev => ev.type === 'practice' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= now);
+                events = events.filter(ev => ev.type === 'practice' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
                 events.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'past-all') {
-                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) < now);
+                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) < cutoff);
                 events.sort((a, b) => b.date - a.date);
             }
             return events;
