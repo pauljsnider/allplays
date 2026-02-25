@@ -9,6 +9,22 @@ export function mergeUniqueDrills(communityDrills = [], publishedDrills = []) {
 
 const URL_CANDIDATE_RE = /\bhttps?:\/\/[^\s<>"']+/gi;
 
+function sanitizeInlineCapture(value) {
+    return String(value)
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function escapeHtmlAttr(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function isValidHostname(hostname) {
     if (!hostname) return false;
     const lower = hostname.toLowerCase();
@@ -20,13 +36,14 @@ function isValidHostname(hostname) {
     return labels.every((label) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label));
 }
 
-function isValidHttpUrl(value) {
+function normalizeSafeHttpUrl(value) {
     try {
         const parsed = new URL(value);
-        if (!['http:', 'https:'].includes(parsed.protocol)) return false;
-        return isValidHostname(parsed.hostname);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+        if (!isValidHostname(parsed.hostname)) return null;
+        return parsed.toString();
     } catch {
-        return false;
+        return null;
     }
 }
 
@@ -36,7 +53,7 @@ function splitTrailingPunctuation(match) {
 
     while (candidate.length > 0 && /[),.;!?]$/.test(candidate)) {
         const trimmed = candidate.slice(0, -1);
-        if (!isValidHttpUrl(trimmed)) break;
+        if (!normalizeSafeHttpUrl(trimmed)) break;
         trailingChars.unshift(candidate.slice(-1));
         candidate = trimmed;
     }
@@ -47,8 +64,11 @@ function splitTrailingPunctuation(match) {
 function linkifyEscapedText(escapedText, linkClass) {
     return escapedText.replace(URL_CANDIDATE_RE, (match) => {
         const { candidate, trailing } = splitTrailingPunctuation(match);
-        if (!isValidHttpUrl(candidate)) return match;
-        return `<a href="${candidate}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${candidate}</a>${trailing}`;
+        const normalizedUrl = normalizeSafeHttpUrl(candidate);
+        if (!normalizedUrl) return match;
+        const safeHref = escapeHtmlAttr(normalizedUrl);
+        const safeLabel = sanitizeInlineCapture(candidate);
+        return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer" class="${linkClass}">${safeLabel}</a>${trailing}`;
     });
 }
 
@@ -63,11 +83,11 @@ export function linkifySafeText(text, escapeFn) {
 // Inline markdown: bold, italic, code, links. Operates on already-HTML-escaped text.
 function applyInlineMd(text) {
     // Bold: **text**
-    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/\*\*(.+?)\*\*/g, (_, content) => `<strong>${sanitizeInlineCapture(content)}</strong>`);
     // Italic: *text* (not list bullets — requires non-space after opening *)
-    text = text.replace(/\*([^\s*][^*]*?)\*/g, '<em>$1</em>');
+    text = text.replace(/\*([^\s*][^*]*?)\*/g, (_, content) => `<em>${sanitizeInlineCapture(content)}</em>`);
     // Inline code: `code`
-    text = text.replace(/`([^`]+)`/g, '<code class="font-mono text-xs opacity-80">$1</code>');
+    text = text.replace(/`([^`]+)`/g, (_, content) => `<code class="font-mono text-xs opacity-80">${sanitizeInlineCapture(content)}</code>`);
     // URLs
     text = linkifyEscapedText(text, 'underline opacity-80 hover:opacity-100 break-all');
     return text;

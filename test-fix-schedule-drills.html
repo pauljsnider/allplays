@@ -183,6 +183,18 @@
             assertContains(html, '<a href="https://youtube.com/watch?v=abc"', 'URL should be a link');
         });
 
+        test('Malformed URL candidate is not linkified', () => {
+            const html = parseMarkdown('Bad URL https://example..com/path should stay text', escapeHtml);
+            assertNotContains(html, '<a href=', 'Malformed hostname should not become a link');
+            assertContains(html, 'https://example..com/path', 'Original malformed URL should remain visible');
+        });
+
+        test('URL with encoded quote cannot break href attribute', () => {
+            const html = parseMarkdown('Safe link https://example.com?a=1"onclick="alert(1)', escapeHtml);
+            assertContains(html, '<a href="https://example.com/?a=1&amp;quot;onclick=&amp;quot;alert(1"', 'Href should remain escaped and bounded');
+            assertNotContains(html, 'onclick="alert(1)"', 'Raw attribute breakout must not appear');
+        });
+
         test('XSS: script tag is escaped', () => {
             const html = parseMarkdown('<scr' + 'ipt>alert("xss")<' + '/scr' + 'ipt>', escapeHtml);
             assertNotContains(html, '<scr' + 'ipt>', 'Raw script tag must not appear');
@@ -193,6 +205,7 @@
             const html = parseMarkdown('**<img onerror="alert(1)">**', escapeHtml);
             // After escaping, onerror=" becomes onerror=&quot; — literal onerror=" must not appear
             assertNotContains(html, 'onerror="', 'Event handler must be escaped');
+            assertNotContains(html, '<img', 'Raw HTML tags must not be emitted');
             assertContains(html, '&quot;', 'Double quotes should be HTML-entity encoded');
         });
 
