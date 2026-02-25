@@ -189,7 +189,7 @@
         import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=22';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
-        import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase } from './js/parent-dashboard-packets.js?v=1';
+        import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -280,6 +280,10 @@
 
         function resolvePracticePacketSessionIdForEvent(event) {
             return resolvePracticePacketSessionIdForEventBase(event, allPracticePacketSessions);
+        }
+
+        function resolvePracticePacketContextForEvent(event) {
+            return resolvePracticePacketContextForEventBase(event, allPracticePacketSessions);
         }
 
         async function init() {
@@ -771,11 +775,14 @@
                 contentEl.innerHTML = events.map((ev) => {
                     const timeStr = ev.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                     const title = ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`;
-                    const homePacket = ev.practiceHomePacket || null;
+                    const packetContext = ev.type === 'practice'
+                        ? resolvePracticePacketContextForEvent(ev)
+                        : { sessionId: null, homePacket: null };
+                    const homePacket = ev.practiceHomePacket || packetContext.homePacket || null;
                     const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
                     const homePacketReady = ev.type === 'practice' && homePacketBlocks.length > 0;
                     const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
-                    const packetSessionId = homePacketReady ? resolvePracticePacketSessionIdForEvent(ev) : null;
+                    const packetSessionId = homePacketReady ? (packetContext.sessionId || resolvePracticePacketSessionIdForEvent(ev)) : null;
                     return `
                         <div class="mb-4 p-4 rounded-lg border border-gray-200 ${ev.isCancelled ? 'opacity-60' : ''}">
                             <div class="text-xs font-semibold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'}">${ev.type}</div>
@@ -1187,12 +1194,15 @@
                 const isCancelled = game.isCancelled;
                 const attendance = game.practiceAttendance || null;
                 const attendanceRecorded = game.type === 'practice' && hasRecordedAttendance(attendance);
-                const homePacket = game.practiceHomePacket || null;
+                const packetContext = game.type === 'practice'
+                    ? resolvePracticePacketContextForEvent(game)
+                    : { sessionId: null, homePacket: null };
+                const homePacket = game.practiceHomePacket || packetContext.homePacket || null;
                 const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
                 const homePacketReady = game.type === 'practice' && homePacketBlocks.length > 0;
                 const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
                 const homePacketPreview = homePacketBlocks.slice(0, 2).map(b => b?.drillTitle || b?.title).filter(Boolean);
-                const packetSessionId = homePacketReady ? resolvePracticePacketSessionIdForEvent(game) : null;
+                const packetSessionId = homePacketReady ? (packetContext.sessionId || resolvePracticePacketSessionIdForEvent(game)) : null;
                 const presentCount = attendanceRecorded
                     ? attendance.players.filter(p => p.status === 'present' || p.status === 'late').length
                     : 0;

@@ -1,21 +1,26 @@
-# QA Role Notes (League Link + Standings)
+# QA Role Notes (Parent Take-Home Packet Visibility)
 
-## Objective
-Validate that league URL persistence and standings extraction work and do not regress core team page behavior.
+## Test Objective
+Validate that packet CTA visibility is robust across schedule render paths and safe in fallback mode.
 
 ## Automated Validation
-- `./node_modules/.bin/vitest run tests/unit/league-standings.test.js`
-- `./node_modules/.bin/vitest run tests/unit/live-tracker-notes.test.js tests/unit/drills-issue28-helpers.test.js`
-- `./node_modules/.bin/vitest run tests/unit/*.test.js` (14 tests passed)
-- `node --check js/league-standings.js`
+- `./node_modules/.bin/vitest run tests/unit/parent-dashboard-packets.test.js`
+- `./node_modules/.bin/vitest run tests/unit`
+- `node --check js/parent-dashboard-packets.js`
+- `node --check` on extracted module from `parent-dashboard.html`
 
-## Manual Validation Checklist
-1. Open `edit-team.html` for an existing team, set `League Link`, save, reload, and confirm field persists.
-2. Open `team.html` for that team and confirm:
-   - header shows `League Page` link.
-   - season overview shows `League Standings` card with W/L-based record.
-3. Remove league link and confirm graceful fallback (`No league link configured`).
+## Added Coverage
+- fallback resolves packet context by same-team + same-day nearest session
+- fallback does not cross team boundaries
+- existing direct and recurring resolution behaviors remain covered
+
+## Manual Verification Checklist
+1. Parent Dashboard -> Schedule list: practice with packet shows `Open Packet`.
+2. Parent Dashboard -> Calendar -> day modal: same practice shows `Open Packet`.
+3. Click `Open Packet`: side modal loads expected packet blocks.
+4. Practice without packet: no packet CTA appears.
+5. Multi-team parent account: packet CTA never leaks across teams.
 
 ## Residual Risk
-- Third-party markup changes in TeamSideline can break parser assumptions.
-- Browser CORS/proxy variability may occasionally block standings fetch.
+- If multiple same-team practices occur on the same day at similar times with missing linkage, nearest-time fallback may pick the wrong session.
+- This is bounded and still safer than current hidden-CTA behavior.

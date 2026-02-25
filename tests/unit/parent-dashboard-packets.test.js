@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePracticePacketSessionIdForEvent } from '../../js/parent-dashboard-packets.js';
+import { resolvePracticePacketSessionIdForEvent, resolvePracticePacketContextForEvent } from '../../js/parent-dashboard-packets.js';
 
 describe('parent dashboard packet session resolver', () => {
   it('returns event practiceSessionId when present', () => {
@@ -37,5 +37,59 @@ describe('parent dashboard packet session resolver', () => {
       [{ sessionId: 'session-x', eventId: 'different-event' }]
     );
     expect(result).toBeNull();
+  });
+
+  it('resolves packet context by same-team same-day fallback when event linkage is missing', () => {
+    const result = resolvePracticePacketContextForEvent(
+      {
+        id: 'calendar-uid-no-link',
+        teamId: 'team-1',
+        title: 'Practice',
+        date: new Date('2026-03-11T18:05:00Z')
+      },
+      [
+        {
+          sessionId: 'session-t1-a',
+          teamId: 'team-1',
+          eventId: 'different-event',
+          title: 'Practice',
+          date: new Date('2026-03-11T18:00:00Z'),
+          homePacket: { blocks: [{ title: 'Ball Mastery' }] }
+        },
+        {
+          sessionId: 'session-t1-b',
+          teamId: 'team-1',
+          eventId: 'different-event-2',
+          title: 'Practice',
+          date: new Date('2026-03-11T20:00:00Z'),
+          homePacket: { blocks: [{ title: 'Passing' }] }
+        }
+      ]
+    );
+    expect(result.sessionId).toBe('session-t1-a');
+    expect(result.homePacket?.blocks?.[0]?.title).toBe('Ball Mastery');
+  });
+
+  it('never falls back to another team session', () => {
+    const result = resolvePracticePacketContextForEvent(
+      {
+        id: 'calendar-uid-no-link',
+        teamId: 'team-1',
+        title: 'Practice',
+        date: new Date('2026-03-11T18:05:00Z')
+      },
+      [
+        {
+          sessionId: 'session-other-team',
+          teamId: 'team-2',
+          eventId: 'different-event',
+          title: 'Practice',
+          date: new Date('2026-03-11T18:00:00Z'),
+          homePacket: { blocks: [{ title: 'Wrong Team Packet' }] }
+        }
+      ]
+    );
+    expect(result.sessionId).toBeNull();
+    expect(result.homePacket).toBeNull();
   });
 });
