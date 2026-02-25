@@ -445,9 +445,9 @@ function renderOpponents() {
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
         <div class="flex items-center gap-2 min-w-0">
-          ${avatarHtml({ name: o.name, photoUrl: o.photoUrl }, 'h-6 w-6', 'text-[10px]')}
-          <span class="text-[10px] font-bold text-slate-500 shrink-0">${o.number ? `#${escapeHtml(o.number)}` : '#--'}</span>
-          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
+          ${o.photoUrl || o.name ? avatarHtml({ name: o.name, photoUrl: o.photoUrl }, 'h-6 w-6', 'text-[10px]') : ''}
+          ${o.number ? `<span class="text-[10px] font-bold text-slate-500 shrink-0">#${escapeHtml(o.number)}</span>` : ''}
+          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-slate/10 font-semibold" placeholder="Player name">
         </div>
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
@@ -635,7 +635,7 @@ function renderOpponentRoster() {
     <label class="flex items-center gap-2 border border-slate/10 rounded-lg px-2 py-1 bg-sand/40">
       <input type="checkbox" class="rounded text-red-600" data-opp-roster="${player.id}" ${opponentRosterSelected.has(player.id) ? 'checked' : ''}>
       ${avatarHtml(player, 'h-5 w-5', 'text-[9px]')}
-      <span class="text-[10px] font-semibold text-slate-500">${player.number ? `#${escapeHtml(player.number)}` : '#--'}</span>
+      ${player.number ? `<span class="text-[10px] font-semibold text-slate-500">#${escapeHtml(player.number)}</span>` : ''}
       <span class="text-[10px] text-slate-700 truncate">${escapeHtml(player.name || 'Player')}</span>
     </label>
   `).join('');
