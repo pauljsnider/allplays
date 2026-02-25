@@ -513,11 +513,12 @@
 
         function getNextGame(allEvents) {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const upcomingEvents = allEvents
                 .filter(event => {
                     if (event.type === 'db' && event.status === 'completed') return false;
                     if (event.isPractice && !showPractices) return false;
-                    return event.date > now;
+                    return event.date > cutoff;
                 })
                 .sort((a, b) => a.date - b.date);
 
@@ -1028,6 +1029,7 @@
 
         function getFilteredScheduleEvents() {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const events = (allScheduleEvents || []).filter((event) => {
                 if (!showPractices && event.isPractice) return false;
                 return true;
@@ -1042,19 +1044,19 @@
                 return filtered;
             }
             if (scheduleViewFilter === 'upcoming-games') {
-                filtered = events.filter((event) => !event.isPractice && event.date >= now && !event.isCancelled);
+                filtered = events.filter((event) => !event.isPractice && event.date >= cutoff && !event.isCancelled);
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'upcoming-practices') {
-                filtered = events.filter((event) => event.isPractice && event.date >= now && !event.isCancelled);
+                filtered = events.filter((event) => event.isPractice && event.date >= cutoff && !event.isCancelled);
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'all-upcoming') {
-                filtered = events.filter((event) => event.date >= now && !event.isCancelled);
+                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled);
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'past-events') {
-                filtered = events.filter((event) => event.date < now || event.isCancelled);
+                filtered = events.filter((event) => event.date < cutoff || event.isCancelled);
                 return filtered.sort((a, b) => b.date - a.date);
             }
 
@@ -1276,7 +1278,7 @@
         function renderCalendarEvent(event) {
             const isPractice = event.isPractice;
             const isCancelled = event.isCancelled;
-            const isUpcoming = !isCancelled && event.date > new Date();
+            const isUpcoming = !isCancelled && event.date > new Date(Date.now() - 3 * 60 * 60 * 1000);
 
             // Determine border color: cancelled = gray, practice = yellow, upcoming = primary, past = gray
             const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-400' : (isUpcoming ? 'border-primary-500' : 'border-gray-300'));

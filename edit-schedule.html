@@ -925,6 +925,7 @@
             console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
 
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
 
             // Filter by practice checkbox + schedule view
             const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
@@ -933,16 +934,16 @@
                 return true;
             });
             if (scheduleViewFilter === 'upcoming-all') {
-                filteredEvents = filteredEvents.filter(event => event.date >= now);
+                filteredEvents = filteredEvents.filter(event => event.date >= cutoff);
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-games') {
-                filteredEvents = filteredEvents.filter(event => !event.isPractice && event.date >= now);
+                filteredEvents = filteredEvents.filter(event => !event.isPractice && event.date >= cutoff);
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-practices') {
-                filteredEvents = filteredEvents.filter(event => event.isPractice && event.date >= now);
+                filteredEvents = filteredEvents.filter(event => event.isPractice && event.date >= cutoff);
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'past-all') {
-                filteredEvents = filteredEvents.filter(event => event.date < now);
+                filteredEvents = filteredEvents.filter(event => event.date < cutoff);
                 filteredEvents.sort((a, b) => b.date - a.date);
             }
 
@@ -957,7 +958,7 @@
                 return;
             }
 
-            const nextUpcomingIndex = filteredEvents.findIndex(event => event.date >= now);
+            const nextUpcomingIndex = filteredEvents.findIndex(event => event.date >= cutoff);
             container.innerHTML = practiceNotice + filteredEvents.map((event, index) => {
                 const cardHtml = (() => {
                 if (event.source === 'calendar') {

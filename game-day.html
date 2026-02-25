@@ -180,7 +180,7 @@
                             class="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300"
                             placeholder="Message your AI coach…"
                             onkeydown="if(event.key==='Enter')sendChatMessage()">
-                        <button onclick="sendChatMessage()"
+                        <button id="chat-send-btn" onclick="sendChatMessage()"
                             class="px-4 py-2 bg-primary-600 text-white rounded-full text-sm font-semibold hover:bg-primary-700">Send</button>
                     </div>
                 </div>
@@ -563,6 +563,11 @@
             playerColors: {}, // { playerId: colorIndex (0-7) }
             // AI chat
             chatHistory: [], chatMode: 'ask',
+            aiChatContext: null,
+            aiChatContextDirty: true,
+            chatPersistTimer: null,
+            chatPersistInFlight: false,
+            lastPersistedChatSignature: '',
             // Rotation
             formationId: null,
             activePeriod: 'H1',
@@ -579,11 +584,256 @@
             lastStatEvent: null,
             // AI model
             aiModel: null,
-            aiChatSession: null,
             // Unsubs
             unsubscribers: []
         };
         let pageInitialized = false;
+
+        function getChatStorageKey() {
+            if (!state.teamId || !state.gameId) return null;
+            return `gameDayChat-${state.teamId}-${state.gameId}`;
+        }
+
+        function normalizeChatMode(mode) {
+            return mode === 'lineup' ? 'lineup' : 'ask';
+        }
+
+        function sanitizeChatHistory(history) {
+            return (Array.isArray(history) ? history : [])
+                .filter((turn) =>
+                    turn &&
+                    (turn.role === 'user' || turn.role === 'assistant') &&
+                    typeof turn.text === 'string')
+                .map((turn) => ({
+                    role: turn.role,
+                    text: turn.text.trim()
+                }))
+                .filter((turn) => turn.text.length > 0)
+                .slice(-40);
+        }
+
+        function getChatStateSignature(mode = state.chatMode, history = state.chatHistory) {
+            return JSON.stringify({
+                mode: normalizeChatMode(mode),
+                history: sanitizeChatHistory(history)
+            });
+        }
+
+        function extractChatStateFromGameDoc(game) {
+            if (!game || typeof game !== 'object') return null;
+            const hasMode = game.gameDayChatMode === 'ask' || game.gameDayChatMode === 'lineup';
+            const safeHistory = sanitizeChatHistory(game.gameDayChatHistory);
+            if (!hasMode && safeHistory.length === 0) return null;
+            return {
+                chatMode: normalizeChatMode(game.gameDayChatMode),
+                chatHistory: safeHistory
+            };
+        }
+
+        function applyChatState(chatState = {}, { overwriteWhenDifferent = true } = {}) {
+            if (!chatState || typeof chatState !== 'object') return false;
+            const nextMode = normalizeChatMode(chatState.chatMode);
+            const nextHistory = sanitizeChatHistory(chatState.chatHistory);
+            const nextSignature = getChatStateSignature(nextMode, nextHistory);
+            const currentSignature = getChatStateSignature();
+            if (!overwriteWhenDifferent && currentSignature !== getChatStateSignature('ask', [])) return false;
+            if (nextSignature === currentSignature) return false;
+            state.chatMode = nextMode;
+            state.chatHistory = nextHistory;
+            return true;
+        }
+
+        function persistLocalChatState() {
+            try {
+                const key = getChatStorageKey();
+                if (!key) return;
+                localStorage.setItem(key, JSON.stringify({
+                    chatMode: normalizeChatMode(state.chatMode),
+                    chatHistory: sanitizeChatHistory(state.chatHistory)
+                }));
+            } catch (e) {}
+        }
+
+        function loadLocalChatState() {
+            try {
+                const key = getChatStorageKey();
+                if (!key) return false;
+                const raw = localStorage.getItem(key);
+                if (!raw) return false;
+                const parsed = JSON.parse(raw);
+                return applyChatState(parsed);
+            } catch (e) {}
+            return false;
+        }
+
+        async function persistFirestoreChatStateNow() {
+            if (!state.teamId || !state.gameId) return;
+            const mode = normalizeChatMode(state.chatMode);
+            const history = sanitizeChatHistory(state.chatHistory);
+            const signature = getChatStateSignature(mode, history);
+            if (signature === state.lastPersistedChatSignature) return;
+            state.chatPersistInFlight = true;
+            try {
+                await updateGame(state.teamId, state.gameId, {
+                    gameDayChatMode: mode,
+                    gameDayChatHistory: history,
+                    gameDayChatUpdatedAt: new Date()
+                });
+                state.lastPersistedChatSignature = signature;
+            } catch (err) {
+                console.warn('Failed to persist game day chat state:', err);
+            } finally {
+                state.chatPersistInFlight = false;
+            }
+        }
+
+        function schedulePersistFirestoreChatState(delayMs = 450) {
+            if (!state.teamId || !state.gameId) return;
+            if (state.chatPersistTimer) clearTimeout(state.chatPersistTimer);
+            state.chatPersistTimer = setTimeout(() => {
+                state.chatPersistTimer = null;
+                persistFirestoreChatStateNow();
+            }, delayMs);
+        }
+
+        function hydrateChatState(game) {
+            const fromGameDoc = extractChatStateFromGameDoc(game);
+            const didApplyRemote = fromGameDoc ? applyChatState(fromGameDoc) : false;
+            if (!didApplyRemote) {
+                loadLocalChatState();
+                if (state.chatHistory.length) schedulePersistFirestoreChatState(250);
+            }
+            persistLocalChatState();
+            state.lastPersistedChatSignature = fromGameDoc
+                ? getChatStateSignature(fromGameDoc.chatMode, fromGameDoc.chatHistory)
+                : getChatStateSignature();
+        }
+
+        function renderChatHistory() {
+            const list = document.getElementById('chat-bubble-list');
+            if (!list) return;
+            if (!state.chatHistory.length) {
+                list.innerHTML = '<div class="text-xs text-center text-gray-400 py-4">Start a conversation with your AI coach</div>';
+                return;
+            }
+            list.innerHTML = '';
+            state.chatHistory.forEach((turn) => {
+                appendChatBubble(turn.text, turn.role === 'assistant' ? 'ai' : 'user');
+            });
+        }
+
+        function markAiChatContextDirty() {
+            state.aiChatContextDirty = true;
+        }
+
+        function summarizeRsvp() {
+            const b = state.rsvpBreakdown || {};
+            const going = Array.isArray(b.going) ? b.going : [];
+            const maybe = Array.isArray(b.maybe) ? b.maybe : [];
+            const notGoing = Array.isArray(b.not_going) ? b.not_going : [];
+            const noResponse = Array.isArray(b.not_responded) ? b.not_responded : [];
+            return {
+                counts: {
+                    going: going.length,
+                    maybe: maybe.length,
+                    notGoing: notGoing.length,
+                    noResponse: noResponse.length
+                },
+                goingPlayers: going.slice(0, 20).map((p) => ({
+                    id: p.playerId || null,
+                    name: p.playerName || '',
+                    number: p.playerNumber || null
+                }))
+            };
+        }
+
+        function normalizeForAiPayload(value, depth = 0) {
+            if (value === null || value === undefined) return null;
+            if (depth > 4) return '[max-depth]';
+            if (value instanceof Date) return value.toISOString();
+            if (typeof value?.toDate === 'function') {
+                const d = value.toDate();
+                return Number.isNaN(d?.getTime?.()) ? null : d.toISOString();
+            }
+            if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+            if (Array.isArray(value)) return value.slice(0, 50).map((v) => normalizeForAiPayload(v, depth + 1));
+            if (typeof value === 'object') {
+                const out = {};
+                Object.keys(value).slice(0, 60).forEach((k) => {
+                    const v = value[k];
+                    if (typeof v === 'function') return;
+                    out[k] = normalizeForAiPayload(v, depth + 1);
+                });
+                return out;
+            }
+            return String(value);
+        }
+
+        function ensureAiChatContext() {
+            if (state.aiChatContext && !state.aiChatContextDirty) return state.aiChatContext;
+
+            const formation = state.formationId ? FORMATIONS[state.formationId] : null;
+            const recentGames = (state.recentGames || []).slice(0, 3).map((g) => ({
+                id: g.id || null,
+                opponent: g.opponent || 'Opponent',
+                date: normalizeForAiPayload(g.date, 0),
+                status: g.status || g.liveStatus || '',
+                homeScore: g.homeScore ?? null,
+                awayScore: g.awayScore ?? null
+            }));
+
+            state.aiChatContext = {
+                team: {
+                    id: state.teamId,
+                    name: state.team?.name || '',
+                    sport: state.team?.sport || ''
+                },
+                game: {
+                    id: state.gameId,
+                    opponent: state.game?.opponent || 'Opponent',
+                    date: normalizeForAiPayload(state.game?.date, 0),
+                    location: state.game?.location || '',
+                    scoutingNotes: state.game?.scoutingNotes || '',
+                    status: state.game?.status || '',
+                    liveStatus: state.game?.liveStatus || '',
+                    score: {
+                        home: state.score.home ?? 0,
+                        away: state.score.away ?? 0
+                    }
+                },
+                mode: state.mode,
+                rsvp: summarizeRsvp(),
+                roster: (state.players || []).slice(0, 30).map((p) => ({
+                    id: p.id,
+                    name: p.name || '',
+                    number: p.number || null
+                })),
+                formation: formation ? {
+                    id: state.formationId,
+                    positions: formation.positions.map((p) => p.id)
+                } : null,
+                rotationPlan: normalizeForAiPayload(state.rotationPlan, 0),
+                recentGames,
+                aggregatedStats: normalizeForAiPayload(state.aggregatedStats, 0),
+                recentLiveEvents: normalizeForAiPayload((state.liveEvents || []).slice(0, 30), 0)
+            };
+            state.aiChatContextDirty = false;
+            return state.aiChatContext;
+        }
+
+        function formatAiErrorSummary(err) {
+            if (!err) return 'unknown error';
+            const details = err?.customErrorData?.errorDetails;
+            const errorInfo = Array.isArray(details)
+                ? details.find((d) => d && typeof d === 'object' && d.reason)
+                : null;
+            const reason = errorInfo?.reason || '';
+            const status = err?.customErrorData?.status ? `HTTP ${err.customErrorData.status}` : '';
+            const code = typeof err?.code === 'string' ? err.code : '';
+            const parts = [reason, status, code].filter(Boolean);
+            if (parts.length) return parts.join(' | ');
+            return (err?.message || 'unknown error').toString().slice(0, 160);
+        }
 
         // ==================== PLAYER COLOR UTILITIES ====================
         function loadPlayerColors() {
@@ -641,16 +891,17 @@
             if (!list.length) return null;
 
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
 
             // Highest priority: currently live game
             const live = list.find((g) => (g.liveStatus || '').toLowerCase() === 'live');
             if (live) return live.id;
 
-            // Next: nearest scheduled future game
+            // Next: nearest scheduled future game (include up to 3 hours after start time)
             const scheduledFuture = list
                 .filter((g) => (g.status || '').toLowerCase() !== 'cancelled')
                 .map((g) => ({ game: g, date: getGameDate(g) }))
-                .filter((entry) => entry.date && entry.date >= now)
+                .filter((entry) => entry.date && entry.date >= cutoff)
                 .sort((a, b) => a.date - b.date);
             if (scheduledFuture.length) return scheduledFuture[0].game.id;
 
@@ -722,6 +973,7 @@
                     return;
                 }
                 state.game = game;
+                hydrateChatState(game);
 
                 // Render banner
                 renderTeamAdminBanner(document.getElementById('banner-container'), {
@@ -774,6 +1026,17 @@
                     const prevLiveStatus = state.game?.liveStatus;
                     state.game = updatedGame;
                     state.score = { home: updatedGame.homeScore || 0, away: updatedGame.awayScore || 0 };
+                    const remoteChat = extractChatStateFromGameDoc(updatedGame);
+                    if (remoteChat && !state.chatPersistInFlight && !state.chatPersistTimer) {
+                        const changed = applyChatState(remoteChat);
+                        if (changed) {
+                            state.lastPersistedChatSignature = getChatStateSignature(remoteChat.chatMode, remoteChat.chatHistory);
+                            persistLocalChatState();
+                            renderChatHistory();
+                            setChatMode(state.chatMode);
+                        }
+                    }
+                    markAiChatContextDirty();
                     updateScoreDisplay();
                     // Detect transitions
                     if (updatedGame.liveStatus === 'live' && prevLiveStatus !== 'live' && state.mode !== 'gameday') {
@@ -790,12 +1053,10 @@
 
                 // Render the right view
                 renderCurrentMode();
+                renderChatHistory();
+                setChatMode(state.chatMode);
                 hideLoading();
 
-                // Auto-generate AI focus for pre-game
-                if (state.mode === 'pregame') {
-                    setTimeout(() => generateCoachFocus(), 800);
-                }
 
             } catch (err) {
                 console.error('initPage error', err);
@@ -807,12 +1068,14 @@
             const { teamId, gameId } = state;
             const unsubStats = subscribeAggregatedStats(teamId, gameId, (stats) => {
                 state.aggregatedStats = stats;
+                markAiChatContextDirty();
                 if (state.mode === 'gameday' && state.gameViewTab === 'stats') renderStatsView();
             }, (err) => console.error('subscribeAggregatedStats error', err));
             state.unsubscribers.push(unsubStats);
 
             const unsubLive = subscribeLiveEvents(teamId, gameId, (events) => {
                 state.liveEvents = events;
+                markAiChatContextDirty();
                 if (state.mode === 'gameday') renderLiveEventLog();
             }, (err) => console.error('subscribeLiveEvents error', err));
             state.unsubscribers.push(unsubLive);
@@ -845,6 +1108,7 @@
         // ==================== MODE SWITCHING ====================
         window.setMode = function(mode) {
             state.mode = mode;
+            markAiChatContextDirty();
             updateModeSwitcherUI();
             renderCurrentMode();
             if (mode === 'gameday' && state.unsubscribers.length <= 1) {
@@ -908,6 +1172,7 @@
             try {
                 const breakdown = await getRsvpBreakdownByPlayer(state.teamId, state.gameId);
                 state.rsvpBreakdown = breakdown;
+                markAiChatContextDirty();
                 renderRsvpPanel();
             } catch (err) {
                 console.error('loadRsvps error', err);
@@ -953,6 +1218,7 @@
                     status.textContent = 'Saving…';
                     await updateGame(state.teamId, state.gameId, { scoutingNotes: text });
                     state.game = { ...state.game, scoutingNotes: text };
+                    markAiChatContextDirty();
                     status.textContent = 'Saved';
                     setTimeout(() => { status.textContent = ''; }, 2000);
                 } catch (err) {
@@ -974,6 +1240,7 @@
                     return;
                 }
                 state.recentGames = completed.slice(0, 3);
+                markAiChatContextDirty();
                 const lastGame = completed[0];
                 const stats = await getAggregatedStatsForGames(state.teamId, [lastGame.id]);
 
@@ -1002,6 +1269,12 @@
         }
 
         // ==================== AI COACH FOCUS ====================
+        function buildFallbackCoachFocus() {
+            const counts = summarizeRsvp().counts;
+            const opponent = state.game?.opponent || 'opponent';
+            return `Focus on a disciplined start against ${opponent}: keep shape compact, move the ball quickly, and communicate early on transitions. With ${counts.going} going (${counts.maybe} maybe), plan substitutions ahead of time to protect energy and decision quality.`;
+        }
+
         window.generateCoachFocus = async function() {
             const el = document.getElementById('ai-focus-text');
             el.textContent = 'Generating…';
@@ -1024,24 +1297,26 @@ Respond with ONLY the directive text, no markdown.`;
                 el.textContent = result.response.text().trim();
             } catch (err) {
                 console.error('generateCoachFocus error', err);
-                el.textContent = 'Could not generate focus. Check your connection.';
+                el.textContent = buildFallbackCoachFocus();
             }
         };
 
         // ==================== AI CHAT ====================
         window.setChatMode = function(mode) {
-            state.chatMode = mode;
+            state.chatMode = normalizeChatMode(mode);
             document.getElementById('chat-mode-ask').className =
-                mode === 'ask'
+                state.chatMode === 'ask'
                     ? 'px-4 py-1.5 rounded-full text-sm font-semibold transition bg-white text-primary-700 shadow-sm'
                     : 'px-4 py-1.5 rounded-full text-sm font-semibold transition text-gray-500';
             document.getElementById('chat-mode-lineup').className =
-                mode === 'lineup'
+                state.chatMode === 'lineup'
                     ? 'px-4 py-1.5 rounded-full text-sm font-semibold transition bg-white text-primary-700 shadow-sm'
                     : 'px-4 py-1.5 rounded-full text-sm font-semibold transition text-gray-500';
             const hint = document.getElementById('chat-mode-hint');
-            hint.textContent = mode === 'ask' ? 'Ask anything about your game' : 'Get AI lineup suggestions';
+            hint.textContent = state.chatMode === 'ask' ? 'Ask anything about your game' : 'Get AI lineup suggestions';
             renderChatStarters();
+            persistLocalChatState();
+            schedulePersistFirestoreChatState();
         };
 
         function renderChatStarters() {
@@ -1072,28 +1347,39 @@ Respond with ONLY the directive text, no markdown.`;
 
         window.sendChatMessage = async function(text) {
             const input = document.getElementById('chat-input');
+            const sendBtn = document.getElementById('chat-send-btn');
             const msg = text || input.value.trim();
             if (!msg) return;
             input.value = '';
+            input.disabled = true;
+            if (sendBtn) sendBtn.disabled = true;
 
             appendChatBubble(msg, 'user');
             state.chatHistory.push({ role: 'user', text: msg });
+            persistLocalChatState();
+            schedulePersistFirestoreChatState();
 
+            let thinkingEl = null;
             try {
                 const model = getAIModel();
 
-                const thinkingEl = appendChatBubble('…', 'ai');
+                thinkingEl = appendChatBubble('…', 'ai');
                 const response = await model.generateContent(buildChatPrompt(msg));
                 const aiText = response.response.text().trim();
                 thinkingEl.textContent = '';
                 state.chatHistory.push({ role: 'assistant', text: aiText });
+                persistLocalChatState();
+                schedulePersistFirestoreChatState();
 
                 // Check if response is a lineup JSON
-                if (state.chatMode === 'lineup' && aiText.includes('"H1"')) {
+                if (state.chatMode === 'lineup') {
                     try {
                         const jsonMatch = aiText.match(/\{[\s\S]*\}/);
                         if (jsonMatch) {
                             const parsed = JSON.parse(jsonMatch[0]);
+                            const periods = state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
+                            const hasAnyPeriod = periods.some((p) => parsed && typeof parsed === 'object' && parsed[p] && typeof parsed[p] === 'object');
+                            if (!hasAnyPeriod) throw new Error('No lineup periods found');
                             const aiMsg = document.createElement('div');
                             aiMsg.className = 'ai-bubble-ai px-3 py-2 text-sm self-start max-w-xs';
                             aiMsg.textContent = "Here's a suggested lineup:";
@@ -1104,15 +1390,36 @@ Respond with ONLY the directive text, no markdown.`;
                             acceptBtn.textContent = '✓ Accept to Canvas';
                             acceptBtn.onclick = () => acceptLineupProposal(parsed);
                             thinkingEl.appendChild(acceptBtn);
+                            input.disabled = false;
+                            if (sendBtn) sendBtn.disabled = false;
+                            input.focus();
                             return;
                         }
-                    } catch (e) { /* not JSON, show as text */ }
+                    } catch (e) { /* not lineup JSON, show as text */ }
                 }
 
                 thinkingEl.textContent = aiText;
             } catch (err) {
                 console.error('sendChatMessage error', err);
-                appendChatBubble('Sorry, could not reach AI. Try again.', 'ai');
+                const summary = formatAiErrorSummary(err);
+                const fallback = state.chatMode === 'lineup'
+                    ? buildFallbackLineupReply()
+                    : buildFallbackAskReply(msg);
+                if (typeof showToast === 'function') {
+                    showToast(`AI unavailable (${summary}). Using local fallback.`, 'error');
+                }
+                if (thinkingEl) {
+                    thinkingEl.textContent = fallback;
+                } else {
+                    appendChatBubble(fallback, 'ai');
+                }
+                state.chatHistory.push({ role: 'assistant', text: fallback });
+                persistLocalChatState();
+                schedulePersistFirestoreChatState();
+            } finally {
+                input.disabled = false;
+                if (sendBtn) sendBtn.disabled = false;
+                input.focus();
             }
         };
 
@@ -1143,10 +1450,14 @@ Otherwise answer concisely in 2-4 sentences.`;
 
         function buildChatPrompt(currentUserMessage) {
             const systemPrompt = buildChatSystemPrompt();
-            const history = state.chatHistory.slice(-10)
+            const context = ensureAiChatContext();
+            const history = state.chatHistory.slice(-8)
                 .map((turn) => `${turn.role === 'assistant' ? 'Assistant' : 'User'}: ${turn.text}`)
                 .join('\n');
             return `${systemPrompt}
+
+Context JSON:
+${JSON.stringify(context)}
 
 Conversation:
 ${history}
@@ -1154,13 +1465,72 @@ User: ${currentUserMessage}
 Assistant:`;
         }
 
+        function getGoingPlayerPool() {
+            const goingIds = (state.rsvpBreakdown?.going || [])
+                .map((r) => r.playerId)
+                .filter(Boolean);
+            if (!goingIds.length) return [...(state.players || [])];
+            return (state.players || []).filter((p) => goingIds.includes(p.id));
+        }
+
+        function buildRoundRobinLineupByName() {
+            if (!state.formationId) return null;
+            const formation = FORMATIONS[state.formationId];
+            if (!formation?.positions?.length) return null;
+            const periods = getPeriods(state.formationId);
+            const playerPool = getGoingPlayerPool().filter((p) => p && p.name);
+            if (!playerPool.length) return null;
+
+            const proposal = {};
+            let idx = 0;
+            periods.forEach((period) => {
+                proposal[period] = {};
+                formation.positions.forEach((pos) => {
+                    proposal[period][pos.id] = playerPool[idx % playerPool.length].name;
+                    idx += 1;
+                });
+            });
+            return proposal;
+        }
+
+        function buildFallbackAskReply(userMessage = '') {
+            const rsvp = summarizeRsvp().counts;
+            const rosterCount = Array.isArray(state.players) ? state.players.length : 0;
+            const opponent = state.game?.opponent || 'opponent';
+            const text = (userMessage || '').toLowerCase();
+
+            if (text.includes('strength')) {
+                return `Current strength is availability and role clarity: ${rsvp.going} going, ${rsvp.maybe} maybe, ${rsvp.notGoing} out. Start compact and high-tempo against ${opponent}.`;
+            }
+            if (text.includes('start')) {
+                return `Open with low-risk possession and clear defensive shape. With ${rsvp.going} available players, script early substitutions so energy stays high.`;
+            }
+            if (text.includes('keeper')) {
+                return 'Choose keeper based on communication and distribution first, then shot-stopping. Lock in a backup now to avoid late rotation confusion.';
+            }
+            return `AI is temporarily unavailable. Quick snapshot: ${rsvp.going}/${rosterCount} going, ${rsvp.maybe} maybe, ${rsvp.notGoing} out, ${rsvp.noResponse} no response. Switch to Lineup mode for a local auto-generated rotation.`;
+        }
+
+        function buildFallbackLineupReply() {
+            if (!state.formationId) {
+                return 'AI is temporarily unavailable. Select a formation first, then request lineup again.';
+            }
+            const proposal = buildRoundRobinLineupByName();
+            if (!proposal) {
+                return 'AI is temporarily unavailable and there are not enough available players to build a local lineup yet.';
+            }
+            return `AI is temporarily unavailable, so here is a local balanced lineup suggestion:\n${JSON.stringify(proposal, null, 2)}`;
+        }
+
         function acceptLineupProposal(proposal) {
             // Map proposal player names to player IDs
             const nameToId = {};
             state.players.forEach(p => { nameToId[p.name] = p.id; });
 
-            const newPlan = { H1: {}, H2: {} };
-            ['H1', 'H2'].forEach(period => {
+            const periods = state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
+            const newPlan = {};
+            periods.forEach((period) => { newPlan[period] = {}; });
+            periods.forEach(period => {
                 if (!proposal[period]) return;
                 Object.entries(proposal[period]).forEach(([posId, playerName]) => {
                     const playerId = nameToId[playerName];
@@ -1169,7 +1539,11 @@ Assistant:`;
             });
 
             state.rotationPlan = newPlan;
+            markAiChatContextDirty();
             appendChatBubble('Lineup applied to canvas! Review and save.', 'ai');
+            state.chatHistory.push({ role: 'assistant', text: 'Lineup applied to canvas! Review and save.' });
+            persistLocalChatState();
+            schedulePersistFirestoreChatState();
             renderRotationCanvas();
             renderBenchPool();
             renderPlayingTimeBars();
@@ -1183,6 +1557,7 @@ Assistant:`;
 
         window.onFormationChange = function(formationId) {
             state.formationId = formationId || null;
+            markAiChatContextDirty();
             if (formationId) {
                 const f = FORMATIONS[formationId];
                 // Init empty plan for each period
@@ -1433,7 +1808,13 @@ Respond ONLY with valid JSON.`;
                 }
             } catch (err) {
                 console.error('aiOptimizeLineup error', err);
-                appendChatBubble('AI error. Try again.', 'ai');
+                const fallbackProposal = buildRoundRobinLineupByName();
+                if (fallbackProposal) {
+                    acceptLineupProposal(fallbackProposal);
+                    appendChatBubble('AI unavailable; applied a local balanced lineup.', 'ai');
+                } else {
+                    appendChatBubble('AI unavailable and no local lineup could be generated yet.', 'ai');
+                }
             }
             setChatMode('lineup');
             document.getElementById('pre-game-view').scrollIntoView({ behavior: 'smooth' });

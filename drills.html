@@ -617,7 +617,7 @@
         import { requireAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
-        import { mergeUniqueDrills, linkifySafeText } from './js/drills-issue28-helpers.js?v=1';
+        import { mergeUniqueDrills, linkifySafeText, parseMarkdown } from './js/drills-issue28-helpers.js?v=3';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
 
@@ -1748,9 +1748,9 @@ ${JSON.stringify({
             if (!panel || !content) return;
             const details = getPracticeBlockResourceSnapshot(block);
             const lines = [];
-            if (details.instructions) lines.push(`<div class="mb-2">${renderLinkedText(details.instructions)}</div>`);
-            if (details.customInstructions) lines.push(`<div class="mb-2 text-indigo-200">${renderLinkedText(details.customInstructions)}</div>`);
-            if (details.notes) lines.push(`<div class="mb-2 text-gray-300">${renderLinkedText(details.notes)}</div>`);
+            if (details.instructions) lines.push(`<div class="mb-2 space-y-1">${parseMarkdown(details.instructions, escapeHtml)}</div>`);
+            if (details.customInstructions) lines.push(`<div class="mb-2 text-indigo-200 space-y-1">${parseMarkdown(details.customInstructions, escapeHtml)}</div>`);
+            if (details.notes) lines.push(`<div class="mb-2 text-gray-300 space-y-1">${renderLinkedText(details.notes)}</div>`);
 
             const embedUrl = getYoutubeEmbedUrl(details.youtubeUrl);
             if (embedUrl) {
@@ -1838,7 +1838,7 @@ ${JSON.stringify({
                 </div>
                 <div class="mb-6">
                     <h3 class="text-sm font-semibold text-gray-700 mb-3">Instructions</h3>
-                    <div class="prose prose-sm text-gray-600 whitespace-pre-wrap">${renderLinkedText(drill.instructions || 'No instructions provided.')}</div>
+                    <div class="text-gray-600 text-sm space-y-1">${parseMarkdown(drill.instructions || 'No instructions provided.', escapeHtml)}</div>
                 </div>
                 ${drill.homeVariant ? `<div class="bg-blue-50 rounded-xl p-4 mb-6 border border-blue-100">
                     <div class="flex items-center gap-2 mb-2">
@@ -3227,9 +3227,10 @@ ${text}
             const isAssistant = role === 'assistant';
             const senderName = turn?.senderName
                 || (isAssistant ? 'ALL PLAYS COACH' : (state.user?.displayName || state.user?.email || 'Coach'));
+            const isCurrentUser = turn?.senderId && turn.senderId === state.user?.uid;
             const senderPhoto = isAssistant
                 ? null
-                : (turn?.senderPhotoUrl || state.user?.photoURL || state.user?.photoUrl || null);
+                : (turn?.senderPhotoUrl || (isCurrentUser ? (state.user?.photoURL || state.user?.photoUrl) : null) || null);
             const content = opts.thinking
                 ? '<p class="text-sm text-gray-500 italic">ALL PLAYS COACH is thinking...</p>'
                 : `<p class="text-sm text-gray-700">${escapeHtml(turn?.content || '')}</p>`;

@@ -589,20 +589,21 @@
 
         function getFilteredScheduleEvents(selectedPlayerId = '') {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             let events = selectedPlayerId
                 ? allScheduleEvents.filter(ev => ev.childId === selectedPlayerId)
                 : [...allScheduleEvents];
             if (scheduleViewFilter === 'upcoming-all') {
-                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= now);
+                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
                 events.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-games') {
-                events = events.filter(ev => ev.type === 'game' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= now);
+                events = events.filter(ev => ev.type === 'game' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
                 events.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-practices') {
-                events = events.filter(ev => ev.type === 'practice' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= now);
+                events = events.filter(ev => ev.type === 'practice' && (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) >= cutoff);
                 events.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'past-all') {
-                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) < now);
+                events = events.filter(ev => (ev.date?.toDate ? ev.date.toDate() : new Date(ev.date)) < cutoff);
                 events.sort((a, b) => b.date - a.date);
             }
             return events;
