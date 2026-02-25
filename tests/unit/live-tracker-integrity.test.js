@@ -24,6 +24,20 @@ describe('live tracker integrity helpers', () => {
     expect(result.onCourt).toEqual(['p6', 'p2', 'p3', 'p4', 'p5']);
   });
 
+  it('rejects substitution when outgoing player is not on court', () => {
+    const result = applySubstitution(['p1', 'p2', 'p3', 'p4', 'p5'], ['p6', 'p7'], 'p9', 'p6');
+    expect(result.applied).toBe(false);
+    expect(result.onCourt).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
+    expect(result.bench).toEqual(['p6', 'p7']);
+  });
+
+  it('moves outgoing player to bench and removes incoming player on valid substitution', () => {
+    const result = applySubstitution(['p1', 'p2', 'p3', 'p4', 'p5'], ['p6', 'p7'], 'p1', 'p6');
+    expect(result.applied).toBe(true);
+    expect(result.bench).toContain('p1');
+    expect(result.bench).not.toContain('p6');
+  });
+
   it('reconciles final score to event-derived score when mismatched', () => {
     const log = [
       { undoData: { type: 'stat', statKey: 'pts', value: 2, isOpponent: false } },
@@ -43,6 +57,23 @@ describe('live tracker integrity helpers', () => {
     expect(result.away).toBe(2);
     expect(result.derived.home).toBe(5);
     expect(result.derived.away).toBe(2);
+  });
+
+  it('keeps requested final score when already aligned to event-derived score', () => {
+    const log = [
+      { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },
+      { undoData: { type: 'stat', statKey: 'PTS', value: 1, isOpponent: true } }
+    ];
+
+    const result = reconcileFinalScoreFromLog({
+      requestedHome: 2,
+      requestedAway: 1,
+      log
+    });
+
+    expect(result.mismatch).toBe(false);
+    expect(result.home).toBe(2);
+    expect(result.away).toBe(1);
   });
 
   it('trusts score log when derived totals match live score and contains scoring events', () => {
