@@ -227,6 +227,7 @@
         const practicePacketSessionMap = new Map();
         const rideshareOffersByEvent = new Map();
         const teamChildrenByTeamId = new Map();
+        const selectedRideChildBySelector = new Map();
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -243,6 +244,7 @@
         window.updateRideRequestDecision = updateRideRequestDecision;
         window.toggleRideOfferClosed = toggleRideOfferClosed;
         window.cancelMyRideRequest = cancelMyRideRequest;
+        window.setRideChildSelection = setRideChildSelection;
 
         function escapeAttr(value) {
             return String(value ?? '')
@@ -273,6 +275,13 @@
                 childId: child.playerId,
                 childName: child.playerName || 'Player'
             }));
+        }
+
+        function setRideChildSelection(selectorId, childId) {
+            if (!selectorId) return;
+            if (!childId) selectedRideChildBySelector.delete(selectorId);
+            else selectedRideChildBySelector.set(selectorId, childId);
+            rerenderActiveDayModal();
         }
 
         function renderEventRideshare(event, { includeChildPicker = false } = {}) {
@@ -314,11 +323,16 @@
                         ? '<div class="text-xs text-gray-500 mt-2">No ride offers yet for this event.</div>'
                         : `<div class="mt-2 space-y-2">${offers.map((offer) => {
                             const seatInfo = getOfferSeatInfo(offer);
-                            const myRequest = findRequestForChild(offer, currentUserId, defaultChildId);
-                            const canRequest = canRequestRide(offer, currentUserId, defaultChildId);
                             const canManageOffer = offer.driverUserId === currentUserId;
-                            const requestableChildName = myRequest?.childName || defaultChildName;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+                            const selectedChildId = includeChildPicker
+                                ? (selectedRideChildBySelector.get(childSelectorId) || defaultChildId)
+                                : defaultChildId;
+                            const selectedChild = childChoices.find((child) => child.childId === selectedChildId);
+                            const selectedChildName = selectedChild?.childName || defaultChildName;
+                            const myRequest = findRequestForChild(offer, currentUserId, selectedChildId);
+                            const canRequest = canRequestRide(offer, currentUserId, selectedChildId);
+                            const requestableChildName = myRequest?.childName || selectedChildName;
                             return `
                                 <div class="rounded-lg border border-gray-200 bg-white p-2">
                                     <div class="flex items-center justify-between gap-2">
@@ -329,12 +343,12 @@
                                         </div>
                                         <div class="flex items-center gap-2">
                                             ${includeChildPicker && childChoices.length > 0 ? `
-                                                <select id="${escapeAttr(childSelectorId)}" class="px-2 py-1 text-xs border border-gray-300 rounded">
-                                                    ${childChoices.map((child) => `<option value="${escapeAttr(child.childId)}" ${child.childId === defaultChildId ? 'selected' : ''}>${escapeHtml(child.childName)}</option>`).join('')}
+                                                <select id="${escapeAttr(childSelectorId)}" onchange="setRideChildSelection('${escapeAttr(childSelectorId)}', this.value)" class="px-2 py-1 text-xs border border-gray-300 rounded">
+                                                    ${childChoices.map((child) => `<option value="${escapeAttr(child.childId)}" ${child.childId === selectedChildId ? 'selected' : ''}>${escapeHtml(child.childName)}</option>`).join('')}
                                                 </select>
                                             ` : ''}
                                             ${canRequest ? `
-                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(defaultChildId)}','${escapeAttr(defaultChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
+                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(selectedChildId)}','${escapeAttr(selectedChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
                                             ` : ''}
                                             ${myRequest ? `
                                                 <button onclick="cancelMyRideRequest('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(myRequest.id)}')" class="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 font-semibold hover:bg-gray-50">Cancel</button>

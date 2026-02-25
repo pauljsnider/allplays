@@ -298,6 +298,7 @@ service cloud.firestore {
                              requestId == request.auth.uid + "__" + request.resource.data.childId &&
                              request.resource.data.parentUserId == request.auth.uid &&
                              isParentForPlayer(teamId, request.resource.data.childId) &&
+                             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId)).data.status == 'open' &&
                              request.resource.data.status == 'pending';
 
             allow update: if isSignedIn() &&
