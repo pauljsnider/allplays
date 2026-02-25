@@ -189,6 +189,7 @@
         import { getParentDashboardData, redeemParentInvite, getTeam, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=20';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
+        import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase } from './js/parent-dashboard-packets.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -275,6 +276,10 @@
             if (!value) return null;
             const d = value?.toDate ? value.toDate() : new Date(value);
             return Number.isNaN(d?.getTime?.()) ? null : d;
+        }
+
+        function resolvePracticePacketSessionIdForEvent(event) {
+            return resolvePracticePacketSessionIdForEventBase(event, allPracticePacketSessions);
         }
 
         async function init() {
@@ -474,7 +479,8 @@
                             assignments: Array.isArray(game.assignments) ? game.assignments : [],
                             rsvpSummary: game.rsvpSummary || null,
                             practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
-                            practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null
+                            practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
+                            practiceSessionId: isPractice ? (session?.id || null) : null
                         });
                     }
                 }
@@ -526,7 +532,8 @@
                                         childName: child.playerName,
                                         isCancelled,
                                         practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
-                                        practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null
+                                        practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
+                                        practiceSessionId: isPractice ? (session?.id || null) : null
                                     });
                                 }
                             });
@@ -558,7 +565,8 @@
                                 childName: child.playerName,
                                 title: session.title || 'Practice',
                                 practiceAttendance: hasRecordedAttendance(session?.attendance) ? session.attendance : null,
-                                practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null
+                                practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
+                                practiceSessionId: session.id || null
                             });
                         }
                     });
@@ -729,6 +737,11 @@
                 contentEl.innerHTML = events.map((ev) => {
                     const timeStr = ev.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                     const title = ev.type === 'practice' ? (ev.title || 'Practice') : `vs. ${ev.opponent || 'TBD'}`;
+                    const homePacket = ev.practiceHomePacket || null;
+                    const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
+                    const homePacketReady = ev.type === 'practice' && homePacketBlocks.length > 0;
+                    const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
+                    const packetSessionId = homePacketReady ? resolvePracticePacketSessionIdForEvent(ev) : null;
                     return `
                         <div class="mb-4 p-4 rounded-lg border border-gray-200 ${ev.isCancelled ? 'opacity-60' : ''}">
                             <div class="text-xs font-semibold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'}">${ev.type}</div>
@@ -742,6 +755,16 @@
                             ${ev.assignments && ev.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${ev.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                             ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>` : ''}
                             ${ev.childNames?.length ? `<div class="text-xs text-gray-500 mt-1">For ${escapeHtml(ev.childNames.join(', '))}</div>` : ''}
+                            ${homePacketReady ? `
+                                <div class="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-blue-800">Home Packet</div>
+                                    <div class="text-sm text-blue-900">${homePacketBlocks.length} drill${homePacketBlocks.length === 1 ? '' : 's'} · ${homePacketMinutes} min</div>
+                                    ${packetSessionId
+                                        ? `<button onclick="openPracticePacketPreview('${escapeAttr(packetSessionId)}')" class="mt-2 text-xs font-semibold text-primary-700 bg-white border border-primary-200 px-2 py-1 rounded hover:bg-primary-50">Open Packet</button>`
+                                        : `<div class="text-xs text-gray-600 mt-1">Packet is ready, but this event is not linked to a session yet.</div>`
+                                    }
+                                </div>
+                            ` : ''}
                             ${!ev.isCancelled && (ev.type === 'game' || ev.type === 'practice') ? `
                                 <div class="mt-3 border-t border-gray-100 pt-3">
                                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
@@ -979,7 +1002,13 @@
         }
 
         function openPracticePacketPreview(sessionId) {
-            const row = practicePacketSessionMap.get(sessionId);
+            let row = practicePacketSessionMap.get(sessionId);
+            if (!row) {
+                row = (allPracticePacketSessions || []).find((candidate) =>
+                    candidate?.sessionId === sessionId || candidate?.eventId === sessionId
+                ) || null;
+                if (row?.sessionId) practicePacketSessionMap.set(row.sessionId, row);
+            }
             if (!row || !row.homePacket || !Array.isArray(row.homePacket.blocks)) return;
             const content = document.getElementById('packet-preview-content');
             if (!content) return;
@@ -1129,6 +1158,7 @@
                 const homePacketReady = game.type === 'practice' && homePacketBlocks.length > 0;
                 const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
                 const homePacketPreview = homePacketBlocks.slice(0, 2).map(b => b?.drillTitle || b?.title).filter(Boolean);
+                const packetSessionId = homePacketReady ? resolvePracticePacketSessionIdForEvent(game) : null;
                 const presentCount = attendanceRecorded
                     ? attendance.players.filter(p => p.status === 'present' || p.status === 'late').length
                     : 0;
@@ -1187,6 +1217,10 @@
                                 <div class="text-[11px] font-bold uppercase tracking-wide text-blue-800">Home Packet</div>
                                 <div class="text-sm text-blue-900">${homePacketBlocks.length} drill${homePacketBlocks.length === 1 ? '' : 's'} · ${homePacketMinutes} min</div>
                                 ${homePacketPreview.length ? `<div class="text-xs text-blue-700 mt-1">${escapeHtml(homePacketPreview.join(' • '))}</div>` : ''}
+                                ${packetSessionId
+                                    ? `<button onclick="openPracticePacketPreview('${escapeAttr(packetSessionId)}')" class="mt-2 text-xs font-semibold text-primary-700 bg-white border border-primary-200 px-2 py-1 rounded hover:bg-primary-50">Open Packet</button>`
+                                    : `<div class="text-xs text-gray-600 mt-1">Packet is ready, but this event is not linked to a session yet.</div>`
+                                }
                             </div>
                         ` : ''}
                     </div>
