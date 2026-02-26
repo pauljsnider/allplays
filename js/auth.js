@@ -15,8 +15,9 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail } from './db.js?v=14';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=1';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -165,6 +166,29 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 clearPendingActivationCode();
                 await cleanupFailedGoogleSignup(result.user, 'parent invite linking failure');
                 throw e;
+            }
+        } else if (validation.type === 'admin_invite') {
+            try {
+                await redeemAdminInviteAcceptance({
+                    userId,
+                    userEmail: result.user.email,
+                    teamId: validation.data.teamId,
+                    codeId: validation.codeId,
+                    markAccessCodeAsUsed,
+                    getTeam,
+                    addTeamAdminEmail,
+                    getUserProfile,
+                    updateUserProfile
+                });
+
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error linking admin invite:', e);
             }
         } else {
             try {
