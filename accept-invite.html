@@ -189,7 +189,7 @@
                 };
             } else if (validation.type === 'admin_invite') {
                 const profile = await getUserProfile(userId);
-                const userEmail = profile?.email || authEmail;
+                const userEmail = profile?.email || authEmail || validation?.data?.email;
                 const team = await redeemAdminInviteAcceptance({
                     userId,
                     userEmail,
