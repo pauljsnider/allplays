@@ -32,7 +32,7 @@ export function createInviteProcessor(deps) {
             }
 
             const profile = await getUserProfile(userId);
-            const userEmail = profile?.email || authEmail;
+            const userEmail = profile?.email || authEmail || validation?.data?.email;
             const adminEmails = Array.isArray(team.adminEmails) ? [...team.adminEmails] : [];
             const normalizedEmail = userEmail ? userEmail.toLowerCase() : null;
             const normalizedAdminEmails = adminEmails.map((email) => String(email || '').toLowerCase());
