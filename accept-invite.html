@@ -135,7 +135,8 @@
 
     <script type="module">
         import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=9';
-        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile } from './js/db.js?v=14';
+        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile, addTeamAdminEmail, markAccessCodeAsUsed } from './js/db.js?v=14';
+        import { redeemAdminInviteAcceptance } from './js/admin-invite.js?v=1';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
 
         renderFooter(document.getElementById('footer-container'));
@@ -187,32 +188,19 @@
                     redirectUrl: 'parent-dashboard.html'
                 };
             } else if (validation.type === 'admin_invite') {
-                // Process admin invite - add email to team's adminEmails
-                const team = await getTeam(validation.data.teamId);
-                if (!team) {
-                    throw new Error('Team not found');
-                }
-
-                // Get current user's email
                 const profile = await getUserProfile(userId);
                 const userEmail = profile?.email;
-
-                if (userEmail) {
-                    const adminEmails = team.adminEmails || [];
-                    if (!adminEmails.map(e => e.toLowerCase()).includes(userEmail.toLowerCase())) {
-                        adminEmails.push(userEmail.toLowerCase());
-                        // Note: We need to update the team, but we should use db.js
-                        // For now, we'll update user profile with coach role
-                    }
-                }
-
-                // Update user profile to add coachOf
-                await updateUserProfile(userId, {
-                    coachOf: [validation.data.teamId],
-                    roles: ['coach']
+                const team = await redeemAdminInviteAcceptance({
+                    userId,
+                    userEmail,
+                    teamId: validation.data.teamId,
+                    codeId: validation.codeId,
+                    markAccessCodeAsUsed,
+                    getTeam,
+                    addTeamAdminEmail,
+                    getUserProfile,
+                    updateUserProfile
                 });
-
-                // Mark code as used is handled by validateAccessCode flow
 
                 return {
                     success: true,

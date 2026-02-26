@@ -276,6 +276,19 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
+export async function addTeamAdminEmail(teamId, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Admin email is required');
+    }
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        adminEmails: arrayUnion(normalizedEmail),
+        updatedAt: Timestamp.now()
+    });
+}
+
 export async function deleteTeam(teamId) {
     // Delete games and their subcollections
     const gamesSnapshot = await getDocs(collection(db, `teams/${teamId}/games`));
