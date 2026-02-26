@@ -21,8 +21,6 @@ export async function redeemAdminInviteAcceptance({
         throw new Error('Missing user email');
     }
 
-    await addTeamAdminEmail(teamId, userEmail);
-
     const profile = await getUserProfile(userId);
     const existingCoachOf = Array.isArray(profile?.coachOf) ? profile.coachOf : [];
     const existingRoles = Array.isArray(profile?.roles) ? profile.roles : [];
@@ -34,6 +32,8 @@ export async function redeemAdminInviteAcceptance({
         coachOf,
         roles
     });
+
+    await addTeamAdminEmail(teamId, userEmail);
 
     if (codeId) {
         await markAccessCodeAsUsed(codeId, userId);
