@@ -27,6 +27,7 @@ describe('admin invite acceptance', () => {
             coachOf: ['team-0', 'team-1'],
             roles: ['parent', 'coach']
         });
+        expect(updateUserProfile.mock.invocationCallOrder[0]).toBeLessThan(addTeamAdminEmail.mock.invocationCallOrder[0]);
         expect(markAccessCodeAsUsed).toHaveBeenCalledWith('code-1', 'user-1');
     });
 
