@@ -33,6 +33,14 @@ export async function redeemAdminInviteAcceptance({
         roles
     });
 
+    // Verify membership persisted before writing the team doc, because
+    // team updates are authorized by owner/admin/coach checks in rules.
+    const updatedProfile = await getUserProfile(userId);
+    const updatedCoachOf = Array.isArray(updatedProfile?.coachOf) ? updatedProfile.coachOf : [];
+    if (!updatedCoachOf.includes(teamId)) {
+        throw new Error('Unable to grant team coach access before admin assignment');
+    }
+
     await addTeamAdminEmail(teamId, userEmail);
 
     if (codeId) {

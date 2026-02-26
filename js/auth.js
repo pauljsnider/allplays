@@ -16,7 +16,7 @@ import {
     updatePassword
 } from './firebase.js?v=9';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail } from './db.js?v=14';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=1';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=2';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);

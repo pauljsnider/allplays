@@ -63,4 +63,27 @@ describe('admin invite acceptance', () => {
 
         expect(markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
+
+    it('does not write team admin email when coach membership is not persisted', async () => {
+        const addTeamAdminEmail = vi.fn();
+
+        await expect(
+            redeemAdminInviteAcceptance({
+                userId: 'user-1',
+                userEmail: 'admin@example.com',
+                teamId: 'team-1',
+                codeId: 'code-1',
+                markAccessCodeAsUsed: vi.fn(),
+                getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Sharks' }),
+                addTeamAdminEmail,
+                getUserProfile: vi
+                    .fn()
+                    .mockResolvedValueOnce({ coachOf: [], roles: [] })
+                    .mockResolvedValueOnce({ coachOf: [], roles: ['coach'] }),
+                updateUserProfile: vi.fn().mockResolvedValue(undefined)
+            })
+        ).rejects.toThrow('Unable to grant team coach access before admin assignment');
+
+        expect(addTeamAdminEmail).not.toHaveBeenCalled();
+    });
 });
