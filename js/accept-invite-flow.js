@@ -9,7 +9,7 @@ export function createInviteProcessor(deps) {
         markAccessCodeAsUsed
     } = deps;
 
-    return async function processInvite(userId, code) {
+    return async function processInvite(userId, code, authEmail = null) {
         const validation = await validateAccessCode(code);
         if (!validation.valid) {
             throw new Error(validation.message || 'Invalid or expired invite code');
@@ -32,7 +32,7 @@ export function createInviteProcessor(deps) {
             }
 
             const profile = await getUserProfile(userId);
-            const userEmail = profile?.email;
+            const userEmail = profile?.email || authEmail;
             const adminEmails = Array.isArray(team.adminEmails) ? [...team.adminEmails] : [];
             const normalizedEmail = userEmail ? userEmail.toLowerCase() : null;
             const normalizedAdminEmails = adminEmails.map((email) => String(email || '').toLowerCase());
