@@ -54,4 +54,29 @@ describe('ICS timezone parsing', () => {
         expect(events[0].dtstart.getDate()).toBe(10);
         expect(events[0].dtstart.getHours()).toBe(18);
     });
+
+    it('resolves DST-gap TZID times deterministically to the post-gap local clock time', () => {
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'UID:dst-gap-event-1',
+            'SUMMARY:Gap Case',
+            'DTSTART;TZID=Australia/Sydney:20261004T023000',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+        expect(events).toHaveLength(1);
+        expect(events[0].dtstart.toISOString()).toBe('2026-10-03T16:30:00.000Z');
+
+        const localTime = new Intl.DateTimeFormat('en-AU', {
+            timeZone: 'Australia/Sydney',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).format(events[0].dtstart);
+
+        expect(localTime).toBe('03:30');
+    });
 });

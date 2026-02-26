@@ -441,13 +441,21 @@ function parseICSDate(icsDate, timeZone) {
 function createDateFromTimeZone(year, month, day, hour, minute, second, timeZone) {
   const wallClockUtcMs = Date.UTC(year, month, day, hour, minute, second);
   let timestamp = wallClockUtcMs;
+  const seen = new Set();
 
   // Run a small fixed-point adjustment to handle DST offsets correctly.
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 6; i++) {
+    seen.add(timestamp);
     const offsetMs = getTimeZoneOffsetMs(timestamp, timeZone);
     if (offsetMs === null) return null;
     const nextTimestamp = wallClockUtcMs - offsetMs;
-    if (nextTimestamp === timestamp) break;
+    if (nextTimestamp === timestamp) {
+      return new Date(timestamp);
+    }
+    if (seen.has(nextTimestamp)) {
+      // For DST spring-forward gaps, pick the later instant deterministically.
+      return new Date(Math.max(timestamp, nextTimestamp));
+    }
     timestamp = nextTimestamp;
   }
 
