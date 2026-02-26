@@ -5,6 +5,7 @@ export function createInviteProcessor(deps) {
         updateUserProfile,
         getTeam,
         getUserProfile,
+        updateTeam,
         markAccessCodeAsUsed
     } = deps;
 
@@ -32,17 +33,23 @@ export function createInviteProcessor(deps) {
 
             const profile = await getUserProfile(userId);
             const userEmail = profile?.email;
+            const adminEmails = team.adminEmails || [];
+            const normalizedEmail = userEmail ? userEmail.toLowerCase() : null;
 
-            if (userEmail) {
-                const adminEmails = team.adminEmails || [];
-                if (!adminEmails.map(e => e.toLowerCase()).includes(userEmail.toLowerCase())) {
-                    adminEmails.push(userEmail.toLowerCase());
-                }
+            if (normalizedEmail && !adminEmails.map((email) => email.toLowerCase()).includes(normalizedEmail)) {
+                await updateTeam(validation.data.teamId, {
+                    adminEmails: [...adminEmails, normalizedEmail]
+                });
             }
 
+            const existingCoachOf = Array.isArray(profile?.coachOf) ? profile.coachOf : [];
+            const mergedCoachOf = Array.from(new Set([...existingCoachOf, validation.data.teamId]));
+            const existingRoles = Array.isArray(profile?.roles) ? profile.roles : [];
+            const mergedRoles = existingRoles.includes('coach') ? existingRoles : [...existingRoles, 'coach'];
+
             await updateUserProfile(userId, {
-                coachOf: [validation.data.teamId],
-                roles: ['coach']
+                coachOf: mergedCoachOf,
+                roles: mergedRoles
             });
 
             if (!validation.codeId) {
