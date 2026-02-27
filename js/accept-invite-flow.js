@@ -3,6 +3,7 @@ export async function processInviteCode(userId, code, deps) {
         validateAccessCode,
         redeemParentInvite,
         updateUserProfile,
+        updateTeam,
         getTeam,
         getUserProfile,
         markAccessCodeAsUsed
@@ -34,8 +35,10 @@ export async function processInviteCode(userId, code, deps) {
 
         if (userEmail) {
             const adminEmails = team.adminEmails || [];
-            if (!adminEmails.map((email) => email.toLowerCase()).includes(userEmail.toLowerCase())) {
-                adminEmails.push(userEmail.toLowerCase());
+            const normalizedUserEmail = userEmail.toLowerCase();
+            if (!adminEmails.map((email) => email.toLowerCase()).includes(normalizedUserEmail)) {
+                adminEmails.push(normalizedUserEmail);
+                await updateTeam(validation.data.teamId, { adminEmails });
             }
         }
 
