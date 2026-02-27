@@ -21,20 +21,31 @@ export async function finalizeParentInviteSignup({
         inviteRedeemed = true;
         await updateUserProfileFn(userId, profileData);
     } catch (error) {
-        if (inviteRedeemed && typeof rollbackInviteRedemptionFn === 'function') {
-            try {
-                await rollbackInviteRedemptionFn(userId, inviteCode);
-            } catch (rollbackError) {
-                console.error('Failed to rollback invite redemption after parent invite error:', rollbackError);
+        let inviteRollbackSucceeded = false;
+        if (inviteRedeemed) {
+            if (typeof rollbackInviteRedemptionFn === 'function') {
+                try {
+                    await rollbackInviteRedemptionFn(userId, inviteCode);
+                    inviteRollbackSucceeded = true;
+                } catch (rollbackError) {
+                    console.error('Failed to rollback invite redemption after parent invite error:', rollbackError);
+                }
+            } else {
+                console.error('Invite was redeemed but no invite rollback function was provided.');
             }
         }
 
-        if (typeof rollbackAuthUserFn === 'function') {
+        // Only remove auth user if invite redemption never happened, or we successfully
+        // reverted invite redemption. This avoids consuming the invite with no recoverable user.
+        const shouldRollbackAuthUser = !inviteRedeemed || inviteRollbackSucceeded;
+        if (shouldRollbackAuthUser && typeof rollbackAuthUserFn === 'function') {
             try {
                 await rollbackAuthUserFn();
             } catch (rollbackError) {
                 console.error('Failed to rollback auth user after parent invite error:', rollbackError);
             }
+        } else if (!shouldRollbackAuthUser) {
+            console.error('Skipping auth user rollback to avoid permanent invite consumption after rollback failure.');
         }
 
         const wrapped = new Error(PARENT_INVITE_SIGNUP_ERROR);
