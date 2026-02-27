@@ -45,7 +45,7 @@ describe('parent invite signup finalization', () => {
         expect(updateUserProfileFn).not.toHaveBeenCalled();
     });
 
-    it('rolls back invite redemption before auth rollback when profile update fails', async () => {
+    it('attempts invite rollback but does not delete auth user when profile update fails', async () => {
         const redeemParentInviteFn = vi.fn().mockResolvedValue(undefined);
         const updateUserProfileFn = vi.fn().mockRejectedValue(new Error('Firestore unavailable'));
         const rollbackInviteRedemptionFn = vi.fn().mockResolvedValue(undefined);
@@ -62,9 +62,7 @@ describe('parent invite signup finalization', () => {
         })).rejects.toThrow(PARENT_INVITE_SIGNUP_ERROR);
 
         expect(rollbackInviteRedemptionFn).toHaveBeenCalledWith('user-1', 'CODE1234');
-        expect(rollbackInviteRedemptionFn.mock.invocationCallOrder[0])
-            .toBeLessThan(rollbackAuthUserFn.mock.invocationCallOrder[0]);
-        expect(rollbackAuthUserFn).toHaveBeenCalledTimes(1);
+        expect(rollbackAuthUserFn).not.toHaveBeenCalled();
     });
 
     it('does not delete auth user when invite rollback fails after invite redemption', async () => {
