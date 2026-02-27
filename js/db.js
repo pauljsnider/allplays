@@ -879,29 +879,59 @@ export async function redeemAdminInviteAtomicPersistence({
     const userRef = doc(db, "users", userId);
     const codeRef = doc(db, "accessCodes", codeId);
     try {
+        const [teamSnapshot, codeSnapshot] = await Promise.all([
+            getDoc(teamRef),
+            getDoc(codeRef)
+        ]);
+
+        if (!teamSnapshot.exists()) {
+            throw new Error('Team not found for admin invite persistence');
+        }
+        if (!codeSnapshot.exists()) {
+            throw new Error('Access code not found for admin invite persistence');
+        }
+
+        const codeData = codeSnapshot.data() || {};
+        if (codeData.type !== 'admin_invite') {
+            throw new Error('Access code is not an admin invite');
+        }
+
+        if ((codeData.teamId || null) !== teamId) {
+            throw new Error('Access code team does not match admin invite target');
+        }
+
+        if (codeData.used === true) {
+            throw new Error('Access code has already been used');
+        }
+
+        const userGrantTimestamp = Timestamp.now();
+        await setDoc(userRef, {
+            coachOf: arrayUnion(teamId),
+            roles: arrayUnion('coach'),
+            updatedAt: userGrantTimestamp
+        }, { merge: true });
+
         await runTransaction(db, async (transaction) => {
-            const [teamSnapshot, codeSnapshot] = await Promise.all([
+            const [teamSnapshotAfterGrant, codeSnapshotAfterGrant] = await Promise.all([
                 transaction.get(teamRef),
                 transaction.get(codeRef)
             ]);
 
-            if (!teamSnapshot.exists()) {
+            if (!teamSnapshotAfterGrant.exists()) {
                 throw new Error('Team not found for admin invite persistence');
             }
-            if (!codeSnapshot.exists()) {
+            if (!codeSnapshotAfterGrant.exists()) {
                 throw new Error('Access code not found for admin invite persistence');
             }
 
-            const codeData = codeSnapshot.data() || {};
-            if (codeData.type !== 'admin_invite') {
+            const latestCodeData = codeSnapshotAfterGrant.data() || {};
+            if (latestCodeData.type !== 'admin_invite') {
                 throw new Error('Access code is not an admin invite');
             }
-
-            if ((codeData.teamId || null) !== teamId) {
+            if ((latestCodeData.teamId || null) !== teamId) {
                 throw new Error('Access code team does not match admin invite target');
             }
-
-            if (codeData.used === true) {
+            if (latestCodeData.used === true) {
                 throw new Error('Access code has already been used');
             }
 
@@ -910,13 +940,6 @@ export async function redeemAdminInviteAtomicPersistence({
                 adminEmails: arrayUnion(normalizedEmail),
                 updatedAt: now
             });
-
-            transaction.set(userRef, {
-                coachOf: arrayUnion(teamId),
-                roles: arrayUnion('coach'),
-                updatedAt: now
-            }, { merge: true });
-
             transaction.update(codeRef, {
                 used: true,
                 usedBy: userId,
