@@ -192,6 +192,7 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { processPendingAdminInvites } from './js/edit-team-admin-invites.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -199,6 +200,7 @@
         let currentTeamId = null;
         let currentPhotoUrl = null;
         let adminEmails = [];
+        let pendingAdminInviteEmails = [];
 
         checkAuth((user) => {
             if (!user) {
@@ -227,6 +229,7 @@
                 btn.addEventListener('click', () => {
                     const email = btn.dataset.email;
                     adminEmails = adminEmails.filter(e => e !== email);
+                    pendingAdminInviteEmails = pendingAdminInviteEmails.filter(e => e !== email);
                     renderAdminList();
                 });
             });
@@ -366,6 +369,9 @@
                             showCode = true;
                         }
                     }
+                } else {
+                    pendingAdminInviteEmails.push(email);
+                    showAdminStatus(`Invite for ${email} will be sent when you save this new team.`, 'info');
                 }
 
                 // Add to local list and update UI
@@ -520,6 +526,17 @@
                         }
                     } else {
                         console.log('No template for sport:', sport);
+                    }
+
+                    const pendingInviteSummary = await processPendingAdminInvites({
+                        teamId: newTeamId,
+                        pendingEmails: pendingAdminInviteEmails,
+                        inviteAdmin,
+                        sendInviteEmail
+                    });
+
+                    if (pendingInviteSummary.fallbackCodeCount > 0 || pendingInviteSummary.failedCount > 0) {
+                        alert(`Team created. ${pendingInviteSummary.fallbackCodeCount + pendingInviteSummary.failedCount} admin invite(s) need manual follow-up. Open Edit Team to resend or share invite links.`);
                     }
                 }
 
