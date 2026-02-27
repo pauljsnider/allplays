@@ -370,6 +370,7 @@ export function parseICS(icsText) {
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
+            currentEvent.isPractice = isPracticeEvent(value);
             break;
           case 'DESCRIPTION':
             currentEvent.description = value;
