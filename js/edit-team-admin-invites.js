@@ -68,3 +68,42 @@ export async function processPendingAdminInvites({
 
     return summary;
 }
+
+export function buildAdminInviteFollowUp(summary, origin = '') {
+    const fallbackSummary = summary && typeof summary === 'object' ? summary : {};
+    const results = Array.isArray(fallbackSummary.results) ? fallbackSummary.results : [];
+    const normalizedOrigin = String(origin || '').replace(/\/$/, '');
+
+    const shareableInvites = [];
+    let unresolvedCount = 0;
+
+    for (const result of results) {
+        const status = typeof result?.status === 'string' ? result.status : '';
+        const code = typeof result?.code === 'string' ? result.code.trim() : '';
+        const email = typeof result?.email === 'string' ? result.email.trim().toLowerCase() : '';
+
+        const canShareCode = (status === 'existing_user' || status === 'fallback_code') && Boolean(code);
+        if (canShareCode) {
+            const acceptInviteUrl = normalizedOrigin
+                ? `${normalizedOrigin}/accept-invite.html?code=${encodeURIComponent(code)}`
+                : `accept-invite.html?code=${encodeURIComponent(code)}`;
+            shareableInvites.push({ email, code, acceptInviteUrl });
+            continue;
+        }
+
+        if (status === 'failed' || status === 'fallback_code' || status === 'existing_user') {
+            unresolvedCount += 1;
+        }
+    }
+
+    const shareableDetails = shareableInvites
+        .map((item) => `${item.email} | code: ${item.code} | ${item.acceptInviteUrl}`)
+        .join('\n');
+
+    return {
+        shareableInvites,
+        shareableCount: shareableInvites.length,
+        unresolvedCount,
+        shareableDetails
+    };
+}
