@@ -859,29 +859,61 @@ export async function redeemAdminInviteAtomicPersistence({
     userEmail,
     codeId
 }) {
-    const batch = writeBatch(db);
-    const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+    if (!teamId) {
+        throw new Error('Missing teamId for admin invite persistence');
+    }
+    if (!userId) {
+        throw new Error('Missing userId for admin invite persistence');
+    }
 
-    batch.update(doc(db, "teams", teamId), {
+    const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Missing user email for admin invite persistence');
+    }
+
+    const teamRef = doc(db, "teams", teamId);
+    const userRef = doc(db, "users", userId);
+    const codeRef = codeId ? doc(db, "accessCodes", codeId) : null;
+
+    const teamSnapshot = await getDoc(teamRef);
+    if (!teamSnapshot.exists()) {
+        throw new Error('Team not found for admin invite persistence');
+    }
+
+    if (codeRef) {
+        const codeSnapshot = await getDoc(codeRef);
+        if (!codeSnapshot.exists()) {
+            throw new Error('Access code not found for admin invite persistence');
+        }
+    }
+
+    const batch = writeBatch(db);
+    const now = Timestamp.now();
+
+    batch.update(teamRef, {
         adminEmails: arrayUnion(normalizedEmail),
-        updatedAt: Timestamp.now()
+        updatedAt: now
     });
 
-    batch.set(doc(db, "users", userId), {
+    batch.set(userRef, {
         coachOf: arrayUnion(teamId),
         roles: arrayUnion('coach'),
-        updatedAt: Timestamp.now()
+        updatedAt: now
     }, { merge: true });
 
-    if (codeId) {
-        batch.update(doc(db, "accessCodes", codeId), {
+    if (codeRef) {
+        batch.update(codeRef, {
             used: true,
             usedBy: userId,
-            usedAt: Timestamp.now()
+            usedAt: now
         });
     }
 
-    await batch.commit();
+    try {
+        await batch.commit();
+    } catch (error) {
+        throw new Error(`Admin invite atomic persistence failed: ${error?.message || error}`);
+    }
 }
 
 // ============================================
