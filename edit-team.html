@@ -349,24 +349,35 @@
                 let showCode = false;
                 if (currentTeamId) {
                     const result = await inviteAdmin(currentTeamId, email);
+                    const code = typeof result?.code === 'string'
+                        ? result.code.trim()
+                        : '';
 
                     if (result.existingUser) {
-                        // User exists - show code for them
-                        showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
-                        showAdminCode(result.code);
-                        showCode = true;
+                        // User exists - show code for them when available
+                        if (code) {
+                            showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
+                            showAdminCode(code);
+                            showCode = true;
+                        } else {
+                            showAdminStatus('No invite code generated. Please try sending the invite again.', 'warning');
+                        }
                     } else {
                         // New user - send email
-                        try {
-                            await sendInviteEmail(email, result.code, 'admin', {
-                                teamName: result.teamName
-                            });
-                            showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
-                        } catch (emailError) {
-                            console.error('Failed to send admin invite email:', emailError);
-                            showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
-                            showAdminCode(result.code);
-                            showCode = true;
+                        if (!code) {
+                            showAdminStatus('No invite code generated. Please try sending the invite again.', 'warning');
+                        } else {
+                            try {
+                                await sendInviteEmail(email, code, 'admin', {
+                                    teamName: result.teamName
+                                });
+                                showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
+                            } catch (emailError) {
+                                console.error('Failed to send admin invite email:', emailError);
+                                showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
+                                showAdminCode(code);
+                                showCode = true;
+                            }
                         }
                     }
                 } else {
