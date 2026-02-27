@@ -15,9 +15,8 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
-import { finalizeParentInviteSignup } from './parent-invite-signup.js?v=1';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=15';
+import { finalizeParentInviteSignup } from './parent-invite-signup.js?v=2';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -36,21 +35,80 @@ export async function login(email, password) {
 }
 
 export async function signup(email, password, activationCode) {
-    return executeEmailPasswordSignup({
-        email,
-        password,
-        activationCode,
-        auth,
-        dependencies: {
-            validateAccessCode,
-            createUserWithEmailAndPassword,
-            redeemParentInvite,
-            updateUserProfile,
-            markAccessCodeAsUsed,
-            sendEmailVerification,
-            signOut
+    // Validate activation code first
+    if (!activationCode) {
+        throw new Error('Activation code is required');
+    }
+
+    const validation = await validateAccessCode(activationCode);
+    if (!validation.valid) {
+        throw new Error(validation.message || 'Invalid activation code');
+    }
+
+    // Create user account
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const userId = userCredential.user.uid;
+
+    if (validation.type === 'parent_invite') {
+        // Parent Invite Flow
+        await finalizeParentInviteSignup({
+            userId,
+            inviteCode: validation.data.code,
+            profileData: {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true
+            },
+            redeemParentInviteFn: redeemParentInvite,
+            updateUserProfileFn: updateUserProfile,
+            rollbackInviteRedemptionFn: rollbackParentInviteRedemption,
+            rollbackAuthUserFn: async () => {
+                try {
+                    await userCredential.user.delete();
+                } finally {
+                    try {
+                        await signOut(auth);
+                    } catch (signOutError) {
+                        console.warn('Signup rollback sign-out failed:', signOutError);
+                    }
+                }
+            }
+        });
+    } else {
+        // Standard Flow (Coach/Admin)
+        // Create user profile in Firestore with emailVerificationRequired flag
+        try {
+            await updateUserProfile(userId, {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true  // Flag for new email/password signups
+            });
+        } catch (e) {
+            console.error('Error creating user profile:', e);
         }
-    });
+
+        // Mark the code as used
+        try {
+            await markAccessCodeAsUsed(validation.codeId, userId);
+        } catch (error) {
+            console.error('Error marking code as used:', error);
+        }
+    }
+
+    // Send verification email - use auth.currentUser exactly like resend does
+    try {
+        const user = auth.currentUser;
+        if (user) {
+            await user.reload();
+            console.log('SIGNUP: Sending verification email to:', user.email);
+            await sendEmailVerification(user);
+            console.log('SIGNUP: Verification email sent successfully');
+        }
+    } catch (e) {
+        console.error('SIGNUP ERROR:', e.code, e.message);
+    }
+
+    return userCredential;
 }
 
 export async function loginWithGoogle(activationCode = null) {
@@ -164,6 +222,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 },
                 redeemParentInviteFn: redeemParentInvite,
                 updateUserProfileFn: updateUserProfile,
+                rollbackInviteRedemptionFn: rollbackParentInviteRedemption,
                 rollbackAuthUserFn: async () => {
                     try {
                         await result.user.delete();

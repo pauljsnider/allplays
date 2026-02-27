@@ -11,12 +11,24 @@ export async function finalizeParentInviteSignup({
     profileData,
     redeemParentInviteFn,
     updateUserProfileFn,
+    rollbackInviteRedemptionFn,
     rollbackAuthUserFn
 }) {
+    let inviteRedeemed = false;
+
     try {
         await redeemParentInviteFn(userId, inviteCode);
+        inviteRedeemed = true;
         await updateUserProfileFn(userId, profileData);
     } catch (error) {
+        if (inviteRedeemed && typeof rollbackInviteRedemptionFn === 'function') {
+            try {
+                await rollbackInviteRedemptionFn(userId, inviteCode);
+            } catch (rollbackError) {
+                console.error('Failed to rollback invite redemption after parent invite error:', rollbackError);
+            }
+        }
+
         if (typeof rollbackAuthUserFn === 'function') {
             try {
                 await rollbackAuthUserFn();
