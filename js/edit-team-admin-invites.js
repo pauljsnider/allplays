@@ -24,11 +24,14 @@ export async function processPendingAdminInvites({
     for (const email of uniqueEmails) {
         try {
             const inviteResult = await inviteAdmin(teamId, email);
-            const code = typeof inviteResult?.code === 'string'
-                ? inviteResult.code.trim()
+            const parsedInviteResult = (inviteResult && typeof inviteResult === 'object')
+                ? inviteResult
+                : null;
+            const code = typeof parsedInviteResult?.code === 'string'
+                ? parsedInviteResult.code.trim()
                 : '';
 
-            if (inviteResult?.existingUser) {
+            if (parsedInviteResult?.existingUser) {
                 summary.existingUserCount += 1;
                 summary.results.push({ email, status: 'existing_user', code: code || null });
                 continue;
@@ -46,7 +49,7 @@ export async function processPendingAdminInvites({
             }
 
             try {
-                await sendInviteEmail(email, code, 'admin', { teamName: inviteResult?.teamName || null });
+                await sendInviteEmail(email, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
                 summary.sentCount += 1;
                 summary.results.push({ email, status: 'sent', code });
             } catch (_emailError) {

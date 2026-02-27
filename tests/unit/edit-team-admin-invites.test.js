@@ -49,6 +49,57 @@ describe('edit team admin invite processing', () => {
         ]);
     });
 
+    it('does not send invite email when code is missing', async () => {
+        const inviteAdmin = vi.fn().mockResolvedValue({ code: '   ', teamName: 'Lions', existingUser: false });
+        const sendInviteEmail = vi.fn();
+
+        const result = await processPendingAdminInvites({
+            teamId: 'team-789',
+            pendingEmails: ['coach@example.com'],
+            inviteAdmin,
+            sendInviteEmail
+        });
+
+        expect(sendInviteEmail).not.toHaveBeenCalled();
+        expect(result).toEqual({
+            sentCount: 0,
+            existingUserCount: 0,
+            fallbackCodeCount: 1,
+            failedCount: 0,
+            results: [
+                {
+                    email: 'coach@example.com',
+                    status: 'fallback_code',
+                    code: null,
+                    reason: 'missing_invite_code'
+                }
+            ]
+        });
+    });
+
+    it('handles malformed invite responses without throwing', async () => {
+        const inviteAdmin = vi.fn().mockResolvedValue(null);
+        const sendInviteEmail = vi.fn();
+
+        const result = await processPendingAdminInvites({
+            teamId: 'team-790',
+            pendingEmails: ['coach@example.com'],
+            inviteAdmin,
+            sendInviteEmail
+        });
+
+        expect(sendInviteEmail).not.toHaveBeenCalled();
+        expect(result.fallbackCodeCount).toBe(1);
+        expect(result.results).toEqual([
+            {
+                email: 'coach@example.com',
+                status: 'fallback_code',
+                code: null,
+                reason: 'missing_invite_code'
+            }
+        ]);
+    });
+
     it('returns empty summary when there are no pending invites', async () => {
         const inviteAdmin = vi.fn();
         const sendInviteEmail = vi.fn();
