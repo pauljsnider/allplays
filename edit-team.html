@@ -192,6 +192,7 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { processPendingAdminInvites, buildAdminInviteFollowUp } from './js/edit-team-admin-invites.js?v=3';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -199,6 +200,7 @@
         let currentTeamId = null;
         let currentPhotoUrl = null;
         let adminEmails = [];
+        let pendingAdminInviteEmails = [];
 
         checkAuth((user) => {
             if (!user) {
@@ -227,6 +229,7 @@
                 btn.addEventListener('click', () => {
                     const email = btn.dataset.email;
                     adminEmails = adminEmails.filter(e => e !== email);
+                    pendingAdminInviteEmails = pendingAdminInviteEmails.filter(e => e !== email);
                     renderAdminList();
                 });
             });
@@ -346,26 +349,40 @@
                 let showCode = false;
                 if (currentTeamId) {
                     const result = await inviteAdmin(currentTeamId, email);
+                    const code = typeof result?.code === 'string'
+                        ? result.code.trim()
+                        : '';
 
                     if (result.existingUser) {
-                        // User exists - show code for them
-                        showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
-                        showAdminCode(result.code);
-                        showCode = true;
+                        // User exists - show code for them when available
+                        if (code) {
+                            showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
+                            showAdminCode(code);
+                            showCode = true;
+                        } else {
+                            showAdminStatus('No invite code generated. Please try sending the invite again.', 'warning');
+                        }
                     } else {
                         // New user - send email
-                        try {
-                            await sendInviteEmail(email, result.code, 'admin', {
-                                teamName: result.teamName
-                            });
-                            showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
-                        } catch (emailError) {
-                            console.error('Failed to send admin invite email:', emailError);
-                            showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
-                            showAdminCode(result.code);
-                            showCode = true;
+                        if (!code) {
+                            showAdminStatus('No invite code generated. Please try sending the invite again.', 'warning');
+                        } else {
+                            try {
+                                await sendInviteEmail(email, code, 'admin', {
+                                    teamName: result.teamName
+                                });
+                                showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
+                            } catch (emailError) {
+                                console.error('Failed to send admin invite email:', emailError);
+                                showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
+                                showAdminCode(code);
+                                showCode = true;
+                            }
                         }
                     }
+                } else {
+                    pendingAdminInviteEmails.push(email);
+                    showAdminStatus(`Invite for ${email} will be sent when you save this new team.`, 'info');
                 }
 
                 // Add to local list and update UI
@@ -520,6 +537,32 @@
                         }
                     } else {
                         console.log('No template for sport:', sport);
+                    }
+
+                    let pendingInviteSummary = {
+                        fallbackCodeCount: 0,
+                        failedCount: 0
+                    };
+                    try {
+                        pendingInviteSummary = await processPendingAdminInvites({
+                            teamId: newTeamId,
+                            pendingEmails: pendingAdminInviteEmails,
+                            inviteAdmin,
+                            sendInviteEmail
+                        });
+                    } finally {
+                        pendingAdminInviteEmails = [];
+                    }
+
+                    const inviteFollowUp = buildAdminInviteFollowUp(pendingInviteSummary, window.location.origin);
+                    if (inviteFollowUp.shareableCount > 0) {
+                        window.prompt(
+                            'Team created. Copy these admin redemption links before continuing.',
+                            inviteFollowUp.shareableDetails
+                        );
+                    }
+                    if (inviteFollowUp.unresolvedCount > 0) {
+                        alert(`Team created. ${inviteFollowUp.unresolvedCount} admin invite(s) need manual follow-up. Open Edit Team to resend or share invite links.`);
                     }
                 }
 
