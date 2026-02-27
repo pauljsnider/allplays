@@ -5,6 +5,15 @@ import { checkAuth } from './auth.js?v=9';
 let allTeams = [];
 let allUsers = [];
 let currentUser = null; // Declare currentUser
+let showInactiveTeams = false;
+
+function isTeamActive(team) {
+    return team?.active !== false;
+}
+
+function getVisibleTeams() {
+    return showInactiveTeams ? allTeams : allTeams.filter(isTeamActive);
+}
 
 checkAuth(async (user) => {
     if (!user) {
@@ -28,7 +37,7 @@ checkAuth(async (user) => {
 
 async function loadData() {
     try {
-        const [teams, users] = await Promise.all([getTeams(), getAllUsers()]);
+        const [teams, users] = await Promise.all([getTeams({ includeInactive: true }), getAllUsers()]);
         allTeams = teams;
         allUsers = users;
 
@@ -36,7 +45,7 @@ async function loadData() {
         await loadGameStats();
 
         updateDashboard();
-        renderTeams(allTeams);
+        renderTeams(getVisibleTeams());
         renderUsers(allUsers);
     } catch (error) {
         console.error('Error loading admin data:', error);
@@ -62,13 +71,14 @@ async function loadGameStats() {
 }
 
 function updateDashboard() {
+    const visibleTeams = getVisibleTeams();
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     // Total teams with growth
-    const newTeamsLast30 = allTeams.filter(t => t.createdAt && t.createdAt.toDate() > thirtyDaysAgo).length;
-    document.getElementById('stat-total-teams').textContent = allTeams.length;
+    const newTeamsLast30 = visibleTeams.filter(t => t.createdAt && t.createdAt.toDate() > thirtyDaysAgo).length;
+    document.getElementById('stat-total-teams').textContent = visibleTeams.length;
     document.getElementById('stat-teams-growth').textContent = `+${newTeamsLast30} this month`;
 
     // Total users with growth
@@ -92,7 +102,7 @@ function updateDashboard() {
 
     // By Sport
     const sportCounts = {};
-    allTeams.forEach(t => {
+    visibleTeams.forEach(t => {
         const sport = t.sport || 'Unknown';
         sportCounts[sport] = (sportCounts[sport] || 0) + 1;
     });
@@ -106,8 +116,8 @@ function updateDashboard() {
         `).join('');
 
     // Team details
-    const publicTeams = allTeams.filter(t => t.isPublic !== false).length;
-    const privateTeams = allTeams.length - publicTeams;
+    const publicTeams = visibleTeams.filter(t => t.isPublic !== false).length;
+    const privateTeams = visibleTeams.length - publicTeams;
     const teamsWithGames = new Set(allGames.map(g => g.teamId)).size;
     document.getElementById('stat-team-details').innerHTML = `
         <div class="flex justify-between items-center">
@@ -125,7 +135,7 @@ function updateDashboard() {
     `;
 
     // Recent teams
-    const recentTeams = [...allTeams]
+    const recentTeams = [...visibleTeams]
         .sort((a, b) => {
             const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(0);
             const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(0);
@@ -191,9 +201,12 @@ function renderTeams(teams) {
                 ${escapeHtml(getTeamOwnerEmail(team))}
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                    ${escapeHtml(team.sport || 'Unknown')}
-                </span>
+                <div class="flex flex-col gap-1">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 w-fit">
+                        ${escapeHtml(team.sport || 'Unknown')}
+                    </span>
+                    ${team.active === false ? '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 w-fit">Inactive</span>' : ''}
+                </div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ${escapeHtml(team.zip || '-')}
@@ -245,14 +258,14 @@ function renderUsers(users) {
 }
 
 window.deleteTeamAdmin = async function (teamId, teamName) {
-    if (confirm(`ADMIN ACTION: Are you sure you want to delete team "${teamName}"? This cannot be undone.`)) {
+    if (confirm(`ADMIN ACTION: Deactivate team "${teamName}"? Team data will be retained.`)) {
         try {
             await deleteTeam(teamId);
-            alert('Team deleted.');
+            alert('Team deactivated.');
             await loadData(); // Reload
         } catch (e) {
             console.error(e);
-            alert('Error deleting team: ' + e.message);
+            alert('Error deactivating team: ' + e.message);
         }
     }
 };
@@ -280,9 +293,18 @@ function setupTabs() {
 }
 
 function setupSearch() {
+    const inactiveToggle = document.getElementById('filter-inactive-teams');
+    if (inactiveToggle) {
+        inactiveToggle.addEventListener('change', (e) => {
+            showInactiveTeams = !!e.target.checked;
+            updateDashboard();
+            renderTeams(getVisibleTeams());
+        });
+    }
+
     document.getElementById('search-teams').addEventListener('input', (e) => {
         const term = e.target.value.toLowerCase();
-        const filtered = allTeams.filter(t =>
+        const filtered = getVisibleTeams().filter(t =>
             (t.name || '').toLowerCase().includes(term) ||
             (t.sport || '').toLowerCase().includes(term)
         );
