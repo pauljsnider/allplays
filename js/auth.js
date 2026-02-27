@@ -17,6 +17,7 @@ import {
 } from './firebase.js?v=9';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
+import { finalizeParentInviteSignup } from './parent-invite-signup.js?v=1';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -152,20 +153,29 @@ async function processGoogleAuthResult(result, activationCode = null) {
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
-            try {
-                await redeemParentInvite(userId, validation.data.code);
-                await updateUserProfile(userId, {
+            await finalizeParentInviteSignup({
+                userId,
+                inviteCode: validation.data.code,
+                profileData: {
                     email: result.user.email,
                     fullName: result.user.displayName,
                     photoUrl: result.user.photoURL,
                     createdAt: new Date()
-                });
-            } catch (e) {
-                console.error('Error linking parent:', e);
-                clearPendingActivationCode();
-                await cleanupFailedGoogleSignup(result.user, 'parent invite linking failure');
-                throw e;
-            }
+                },
+                redeemParentInviteFn: redeemParentInvite,
+                updateUserProfileFn: updateUserProfile,
+                rollbackAuthUserFn: async () => {
+                    try {
+                        await result.user.delete();
+                    } finally {
+                        try {
+                            await signOut(auth);
+                        } catch (signOutError) {
+                            console.warn('Google signup rollback sign-out failed:', signOutError);
+                        }
+                    }
+                }
+            });
         } else {
             try {
                 await markAccessCodeAsUsed(validation.codeId, userId);
