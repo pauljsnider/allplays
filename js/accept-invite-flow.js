@@ -9,9 +9,9 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         validateAccessCode,
         redeemParentInvite,
         updateUserProfile,
+        updateTeam,
         getTeam,
         getUserProfile,
-        updateTeam,
         markAccessCodeAsUsed
     } = deps;
 

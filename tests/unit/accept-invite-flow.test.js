@@ -18,11 +18,11 @@ describe('accept invite flow', () => {
             updateUserProfile: vi.fn(async () => {
                 calls.push('profile');
             }),
-            getTeam: vi.fn(async () => ({ id: 'team-1', name: 'Tigers', adminEmails: [] })),
-            getUserProfile: vi.fn(async () => ({ email: 'coach@example.com' })),
             updateTeam: vi.fn(async () => {
                 calls.push('team');
             }),
+            getTeam: vi.fn(async () => ({ id: 'team-1', name: 'Tigers', adminEmails: [] })),
+            getUserProfile: vi.fn(async () => ({ email: 'coach@example.com' })),
             markAccessCodeAsUsed: vi.fn(async () => {
                 calls.push('mark');
             })
@@ -48,13 +48,13 @@ describe('accept invite flow', () => {
             })),
             redeemParentInvite: vi.fn(),
             updateUserProfile: vi.fn(),
+            updateTeam: vi.fn(),
             getTeam: vi.fn(async () => ({ id: 'team-2', name: 'Sharks', adminEmails: ['other@example.com'] })),
             getUserProfile: vi.fn(async () => ({
                 email: 'coach@example.com',
                 coachOf: ['team-0', 'team-1'],
                 roles: ['parent']
             })),
-            updateTeam: vi.fn(),
             markAccessCodeAsUsed: vi.fn()
         };
 
@@ -77,13 +77,13 @@ describe('accept invite flow', () => {
             })),
             redeemParentInvite: vi.fn(),
             updateUserProfile: vi.fn(),
+            updateTeam: vi.fn(),
             getTeam: vi.fn(async () => ({ id: 'team-3', name: 'Eagles', adminEmails: ['coach@example.com'] })),
             getUserProfile: vi.fn(async () => ({
                 email: 'Coach@Example.com',
                 coachOf: ['team-3'],
                 roles: ['coach']
             })),
-            updateTeam: vi.fn(),
             markAccessCodeAsUsed: vi.fn()
         };
 
@@ -102,9 +102,9 @@ describe('accept invite flow', () => {
             validateAccessCode: vi.fn(async () => ({ valid: false, message: 'Code already used' })),
             redeemParentInvite: vi.fn(),
             updateUserProfile: vi.fn(),
+            updateTeam: vi.fn(),
             getTeam: vi.fn(),
             getUserProfile: vi.fn(),
-            updateTeam: vi.fn(),
             markAccessCodeAsUsed: vi.fn()
         };
 
