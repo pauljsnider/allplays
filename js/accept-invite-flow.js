@@ -2,11 +2,8 @@ export async function processInviteCode(userId, code, deps) {
     const {
         validateAccessCode,
         redeemParentInvite,
-        updateUserProfile,
-        updateTeam,
         getTeam,
-        getUserProfile,
-        markAccessCodeAsUsed
+        redeemAdminInviteAtomically
     } = deps;
 
     const validation = await validateAccessCode(code);
@@ -25,33 +22,11 @@ export async function processInviteCode(userId, code, deps) {
     }
 
     if (validation.type === 'admin_invite') {
-        const team = await getTeam(validation.data.teamId);
-        if (!team) {
-            throw new Error('Team not found');
-        }
-
-        const profile = await getUserProfile(userId);
-        const userEmail = profile?.email;
-
-        if (userEmail) {
-            const adminEmails = team.adminEmails || [];
-            const normalizedUserEmail = userEmail.toLowerCase();
-            if (!adminEmails.map((email) => email.toLowerCase()).includes(normalizedUserEmail)) {
-                adminEmails.push(normalizedUserEmail);
-                await updateTeam(validation.data.teamId, { adminEmails });
-            }
-        }
-
-        await updateUserProfile(userId, {
-            coachOf: [validation.data.teamId],
-            roles: ['coach']
-        });
-
-        await markAccessCodeAsUsed(validation.codeId, userId);
+        const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId);
 
         return {
             success: true,
-            message: `You've been added as an admin of ${team?.name || 'the team'}!`,
+            message: `You've been added as an admin of ${redeemResult.teamName || 'the team'}!`,
             redirectUrl: 'dashboard.html'
         };
     }

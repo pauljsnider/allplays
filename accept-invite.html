@@ -135,7 +135,7 @@
 
     <script type="module">
         import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=9';
-        import { validateAccessCode, redeemParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=14';
+        import { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, getTeam, getUserProfile } from './js/db.js?v=14';
         import { processInviteCode } from './js/accept-invite-flow.js?v=1';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
 
@@ -175,11 +175,8 @@
             return processInviteCode(userId, code, {
                 validateAccessCode,
                 redeemParentInvite,
-                updateUserProfile,
-                updateTeam,
                 getTeam,
-                getUserProfile,
-                markAccessCodeAsUsed
+                redeemAdminInviteAtomically
             });
         }
 
