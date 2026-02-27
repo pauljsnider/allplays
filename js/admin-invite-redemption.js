@@ -3,9 +3,7 @@ export async function redeemAdminInviteAcceptance({
     validation,
     getTeam,
     getUserProfile,
-    updateTeam,
-    updateUserProfile,
-    markAccessCodeAsUsed
+    redeemAdminInviteAtomicPersistence
 }) {
     if (!validation || validation.type !== 'admin_invite') {
         throw new Error('Not an admin invite code');
@@ -27,28 +25,16 @@ export async function redeemAdminInviteAcceptance({
         throw new Error('Could not determine user email for admin invite');
     }
 
-    const adminEmails = (Array.isArray(team.adminEmails) ? team.adminEmails : [])
-        .map((email) => String(email || '').trim().toLowerCase())
-        .filter(Boolean);
-    if (!adminEmails.includes(userEmail)) {
-        adminEmails.push(userEmail);
+    if (typeof redeemAdminInviteAtomicPersistence !== 'function') {
+        throw new Error('Missing atomic persistence handler for admin invite');
     }
 
-    await updateTeam(teamId, { adminEmails });
-
-    const coachOf = Array.from(new Set([
-        ...(Array.isArray(profile?.coachOf) ? profile.coachOf : []),
-        teamId
-    ]));
-    const roles = Array.from(new Set([
-        ...(Array.isArray(profile?.roles) ? profile.roles : []),
-        'coach'
-    ]));
-    await updateUserProfile(userId, { coachOf, roles });
-
-    if (validation.codeId) {
-        await markAccessCodeAsUsed(validation.codeId, userId);
-    }
+    await redeemAdminInviteAtomicPersistence({
+        teamId,
+        userId,
+        userEmail,
+        codeId: validation.codeId
+    });
 
     return {
         success: true,

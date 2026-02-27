@@ -24,6 +24,7 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    writeBatch,
     ref,
     uploadBytes,
     getDownloadURL
@@ -850,6 +851,37 @@ export async function markAccessCodeAsUsed(codeId, userId) {
         usedBy: userId,
         usedAt: Timestamp.now()
     });
+}
+
+export async function redeemAdminInviteAtomicPersistence({
+    teamId,
+    userId,
+    userEmail,
+    codeId
+}) {
+    const batch = writeBatch(db);
+    const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+
+    batch.update(doc(db, "teams", teamId), {
+        adminEmails: arrayUnion(normalizedEmail),
+        updatedAt: Timestamp.now()
+    });
+
+    batch.set(doc(db, "users", userId), {
+        coachOf: arrayUnion(teamId),
+        roles: arrayUnion('coach'),
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+
+    if (codeId) {
+        batch.update(doc(db, "accessCodes", codeId), {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+    }
+
+    await batch.commit();
 }
 
 // ============================================
