@@ -1,6 +1,6 @@
 /**
  * Check whether a user has full team management access.
- * Full access means owner, team admin email, platform admin, or coach assignment.
+ * Full access means owner, team admin email, or platform admin.
  */
 export function hasFullTeamAccess(user, team) {
   if (!user || !team) return false;
