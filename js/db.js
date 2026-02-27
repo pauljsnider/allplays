@@ -1078,6 +1078,98 @@ export async function redeemParentInvite(userId, code) {
     return { success: true, teamId: codeData.teamId };
 }
 
+export async function rollbackParentInviteRedemption(userId, code) {
+    console.log('[rollbackParentInviteRedemption] start', { userId, code });
+
+    const normalizedCode = String(code || '').toUpperCase();
+    if (!userId || !normalizedCode) {
+        throw new Error('User and code are required to rollback parent invite redemption');
+    }
+
+    const q = query(
+        collection(db, "accessCodes"),
+        where("code", "==", normalizedCode)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+        throw new Error('Invite code not found for rollback');
+    }
+
+    const codeDoc = snapshot.docs.find(d => (d.data() || {}).type === 'parent_invite') || snapshot.docs[0];
+    const codeData = codeDoc.data() || {};
+    if (codeData.type !== 'parent_invite') {
+        throw new Error('Rollback target is not a parent invite code');
+    }
+
+    if (!codeData.used || codeData.usedBy !== userId) {
+        console.warn('[rollbackParentInviteRedemption] skipping rollback; code not used by user', {
+            codeId: codeDoc.id,
+            used: codeData.used,
+            usedBy: codeData.usedBy
+        });
+        return;
+    }
+
+    const teamId = codeData.teamId || null;
+    const playerId = codeData.playerId || null;
+
+    try {
+        const userRef = doc(db, "users", userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+            const userData = userSnap.data() || {};
+            const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+            const filteredParentOf = parentOf.filter(link =>
+                !(link?.teamId === teamId && link?.playerId === playerId)
+            );
+            const filteredParentTeamIds = [...new Set(
+                filteredParentOf.map(link => link?.teamId).filter(Boolean)
+            )];
+            const filteredParentPlayerKeys = [...new Set(
+                filteredParentOf
+                    .map(link => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : null))
+                    .filter(Boolean)
+            )];
+            const existingRoles = Array.isArray(userData.roles) ? userData.roles : [];
+            const filteredRoles = filteredParentOf.length === 0
+                ? existingRoles.filter(role => role !== 'parent')
+                : existingRoles;
+
+            await setDoc(userRef, {
+                parentOf: filteredParentOf,
+                parentTeamIds: filteredParentTeamIds,
+                parentPlayerKeys: filteredParentPlayerKeys,
+                roles: filteredRoles
+            }, { merge: true });
+        }
+    } catch (error) {
+        console.warn('[rollbackParentInviteRedemption] failed to rollback user profile links (non-fatal)', error);
+    }
+
+    if (teamId && playerId) {
+        try {
+            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
+            const playerSnap = await getDoc(playerRef);
+            if (playerSnap.exists()) {
+                const playerData = playerSnap.data() || {};
+                const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
+                const filteredParents = parents.filter(parent => parent?.userId !== userId);
+                await updateDoc(playerRef, { parents: filteredParents });
+            }
+        } catch (error) {
+            console.warn('[rollbackParentInviteRedemption] failed to rollback player parent link (non-fatal)', error);
+        }
+    }
+
+    await updateDoc(codeDoc.ref, {
+        used: false,
+        usedBy: null,
+        usedAt: null
+    });
+
+    console.log('[rollbackParentInviteRedemption] completed', { codeId: codeDoc.id });
+}
+
 export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {

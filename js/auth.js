@@ -15,8 +15,8 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
-import { finalizeParentInviteSignup } from './parent-invite-signup.js?v=1';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=15';
+import { finalizeParentInviteSignup } from './parent-invite-signup.js?v=2';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -61,6 +61,7 @@ export async function signup(email, password, activationCode) {
             },
             redeemParentInviteFn: redeemParentInvite,
             updateUserProfileFn: updateUserProfile,
+            rollbackInviteRedemptionFn: rollbackParentInviteRedemption,
             rollbackAuthUserFn: async () => {
                 try {
                     await userCredential.user.delete();
@@ -203,6 +204,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 },
                 redeemParentInviteFn: redeemParentInvite,
                 updateUserProfileFn: updateUserProfile,
+                rollbackInviteRedemptionFn: rollbackParentInviteRedemption,
                 rollbackAuthUserFn: async () => {
                     try {
                         await result.user.delete();
