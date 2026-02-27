@@ -539,13 +539,20 @@
                         console.log('No template for sport:', sport);
                     }
 
-                    const pendingInviteSummary = await processPendingAdminInvites({
-                        teamId: newTeamId,
-                        pendingEmails: pendingAdminInviteEmails,
-                        inviteAdmin,
-                        sendInviteEmail
-                    });
-                    pendingAdminInviteEmails = [];
+                    let pendingInviteSummary = {
+                        fallbackCodeCount: 0,
+                        failedCount: 0
+                    };
+                    try {
+                        pendingInviteSummary = await processPendingAdminInvites({
+                            teamId: newTeamId,
+                            pendingEmails: pendingAdminInviteEmails,
+                            inviteAdmin,
+                            sendInviteEmail
+                        });
+                    } finally {
+                        pendingAdminInviteEmails = [];
+                    }
 
                     if (pendingInviteSummary.fallbackCodeCount > 0 || pendingInviteSummary.failedCount > 0) {
                         alert(`Team created. ${pendingInviteSummary.fallbackCodeCount + pendingInviteSummary.failedCount} admin invite(s) need manual follow-up. Open Edit Team to resend or share invite links.`);
