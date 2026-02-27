@@ -84,4 +84,22 @@ describe('admin invite redemption', () => {
             })
         })).rejects.toThrow('Missing atomic persistence handler for admin invite');
     });
+
+    it('fails closed when admin invite code id is missing', async () => {
+        await expect(redeemAdminInviteAcceptance({
+            userId: 'user-1',
+            validation: {
+                type: 'admin_invite',
+                data: { teamId: 'team-1' }
+            },
+            getTeam: vi.fn().mockResolvedValue({
+                id: 'team-1',
+                name: 'Blue Rockets'
+            }),
+            getUserProfile: vi.fn().mockResolvedValue({
+                email: 'newadmin@example.com'
+            }),
+            redeemAdminInviteAtomicPersistence: vi.fn().mockResolvedValue(undefined)
+        })).rejects.toThrow('Missing code id for admin invite');
+    });
 });

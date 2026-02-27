@@ -25,6 +25,7 @@ import {
     serverTimestamp,
     collectionGroup,
     writeBatch,
+    runTransaction,
     ref,
     uploadBytes,
     getDownloadURL
@@ -865,6 +866,9 @@ export async function redeemAdminInviteAtomicPersistence({
     if (!userId) {
         throw new Error('Missing userId for admin invite persistence');
     }
+    if (!codeId) {
+        throw new Error('Missing codeId for admin invite persistence');
+    }
 
     const normalizedEmail = String(userEmail || '').trim().toLowerCase();
     if (!normalizedEmail) {
@@ -873,44 +877,52 @@ export async function redeemAdminInviteAtomicPersistence({
 
     const teamRef = doc(db, "teams", teamId);
     const userRef = doc(db, "users", userId);
-    const codeRef = codeId ? doc(db, "accessCodes", codeId) : null;
-
-    const teamSnapshot = await getDoc(teamRef);
-    if (!teamSnapshot.exists()) {
-        throw new Error('Team not found for admin invite persistence');
-    }
-
-    if (codeRef) {
-        const codeSnapshot = await getDoc(codeRef);
-        if (!codeSnapshot.exists()) {
-            throw new Error('Access code not found for admin invite persistence');
-        }
-    }
-
-    const batch = writeBatch(db);
-    const now = Timestamp.now();
-
-    batch.update(teamRef, {
-        adminEmails: arrayUnion(normalizedEmail),
-        updatedAt: now
-    });
-
-    batch.set(userRef, {
-        coachOf: arrayUnion(teamId),
-        roles: arrayUnion('coach'),
-        updatedAt: now
-    }, { merge: true });
-
-    if (codeRef) {
-        batch.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: now
-        });
-    }
-
+    const codeRef = doc(db, "accessCodes", codeId);
     try {
-        await batch.commit();
+        await runTransaction(db, async (transaction) => {
+            const [teamSnapshot, codeSnapshot] = await Promise.all([
+                transaction.get(teamRef),
+                transaction.get(codeRef)
+            ]);
+
+            if (!teamSnapshot.exists()) {
+                throw new Error('Team not found for admin invite persistence');
+            }
+            if (!codeSnapshot.exists()) {
+                throw new Error('Access code not found for admin invite persistence');
+            }
+
+            const codeData = codeSnapshot.data() || {};
+            if (codeData.type !== 'admin_invite') {
+                throw new Error('Access code is not an admin invite');
+            }
+
+            if ((codeData.teamId || null) !== teamId) {
+                throw new Error('Access code team does not match admin invite target');
+            }
+
+            if (codeData.used === true) {
+                throw new Error('Access code has already been used');
+            }
+
+            const now = Timestamp.now();
+            transaction.update(teamRef, {
+                adminEmails: arrayUnion(normalizedEmail),
+                updatedAt: now
+            });
+
+            transaction.set(userRef, {
+                coachOf: arrayUnion(teamId),
+                roles: arrayUnion('coach'),
+                updatedAt: now
+            }, { merge: true });
+
+            transaction.update(codeRef, {
+                used: true,
+                usedBy: userId,
+                usedAt: now
+            });
+        });
     } catch (error) {
         throw new Error(`Admin invite atomic persistence failed: ${error?.message || error}`);
     }

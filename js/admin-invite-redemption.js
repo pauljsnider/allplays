@@ -10,8 +10,12 @@ export async function redeemAdminInviteAcceptance({
     }
 
     const teamId = validation?.data?.teamId;
+    const codeId = validation?.codeId;
     if (!teamId) {
         throw new Error('Missing team for admin invite');
+    }
+    if (!codeId) {
+        throw new Error('Missing code id for admin invite');
     }
 
     const team = await getTeam(teamId);
@@ -33,7 +37,7 @@ export async function redeemAdminInviteAcceptance({
         teamId,
         userId,
         userEmail,
-        codeId: validation.codeId
+        codeId
     });
 
     return {
