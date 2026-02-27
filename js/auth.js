@@ -262,8 +262,14 @@ export async function handleGoogleRedirectResult() {
         return null;
     }
 
-    // Use shared processing function
-    return await processGoogleAuthResult(result);
+    try {
+        // Use shared processing function
+        return await processGoogleAuthResult(result);
+    } finally {
+        // Redirect errors do not pass through loginWithGoogle catch cleanup.
+        // Always clear pending activation state once redirect result is consumed.
+        window.sessionStorage.removeItem('pendingActivationCode');
+    }
 }
 
 export function logout() {
