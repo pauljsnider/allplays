@@ -618,6 +618,7 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
         import { mergeUniqueDrills, linkifySafeText, parseMarkdown } from './js/drills-issue28-helpers.js?v=3';
+        import { appendLivePracticeNote } from './js/drills-live-practice-notes.js?v=1';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
 
@@ -4714,16 +4715,8 @@ ${userPrompt}
 
         function appendPracticeNote(text, type = 'text') {
             const block = getPracticePlaybackBlocks()[state.practiceIndex]?._source;
-            if (!block) return false;
-            const clean = (text || '').trim();
-            if (!clean) return false;
-            if (!Array.isArray(block.notesLog)) block.notesLog = [];
-            block.notesLog.push({
-                type,
-                text: clean,
-                createdAt: new Date().toISOString()
-            });
-            block.notes = `${(block.notes || '').trim()}${block.notes ? '\n' : ''}${clean}`.trim();
+            const appended = appendLivePracticeNote(block, text, type);
+            if (!appended) return false;
             renderPracticeDrill();
             persistActiveBlockNotes().catch(err => console.warn('Failed to persist note:', err));
             return true;
