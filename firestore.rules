@@ -145,7 +145,8 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if isTeamOwnerOrAdmin(teamId);
+      allow update: if isTeamOwnerOrAdmin(teamId);
+      allow delete: if isGlobalAdmin();
 
 	      // Players subcollection
 	      match /players/{playerId} {
