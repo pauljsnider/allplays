@@ -8,11 +8,12 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
     const {
         validateAccessCode,
         redeemParentInvite,
-        updateUserProfile,
-        updateTeam,
         getTeam,
         getUserProfile,
-        markAccessCodeAsUsed
+        updateTeam,
+        updateUserProfile,
+        markAccessCodeAsUsed,
+        redeemAdminInviteAtomically
     } = deps;
 
     const validation = await validateAccessCode(code);
@@ -31,6 +32,15 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
     }
 
     if (validation.type === 'admin_invite') {
+        if (typeof redeemAdminInviteAtomically === 'function') {
+            const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId);
+            return {
+                success: true,
+                message: `You've been added as an admin of ${redeemResult.teamName || 'the team'}!`,
+                redirectUrl: 'dashboard.html'
+            };
+        }
+
         const team = await getTeam(validation.data.teamId);
         if (!team) {
             throw new Error('Team not found');
