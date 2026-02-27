@@ -1321,7 +1321,8 @@ async function init() {
   let team, game, players, configs;
   try {
     [team, game, players, configs] = await Promise.all([
-      getTeam(state.teamId),
+      // Replay/live links should still load team metadata for inactive teams.
+      getTeam(state.teamId, { includeInactive: true }),
       getGame(state.teamId, state.gameId),
       getPlayers(state.teamId),
       getConfigs(state.teamId)

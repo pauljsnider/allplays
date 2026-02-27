@@ -606,7 +606,8 @@ Write the match report now:`;
 
             try {
                 const [team, game, players] = await Promise.all([
-                    getTeam(teamId),
+                    // Reports are historical and must resolve soft-deleted teams.
+                    getTeam(teamId, { includeInactive: true }),
                     getGame(teamId, gameId),
                     getPlayers(teamId)
                 ]);
