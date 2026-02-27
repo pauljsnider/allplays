@@ -24,11 +24,24 @@ export async function processPendingAdminInvites({
     for (const email of uniqueEmails) {
         try {
             const inviteResult = await inviteAdmin(teamId, email);
-            const code = inviteResult?.code || null;
+            const code = typeof inviteResult?.code === 'string'
+                ? inviteResult.code.trim()
+                : '';
 
             if (inviteResult?.existingUser) {
                 summary.existingUserCount += 1;
-                summary.results.push({ email, status: 'existing_user', code });
+                summary.results.push({ email, status: 'existing_user', code: code || null });
+                continue;
+            }
+
+            if (!code) {
+                summary.fallbackCodeCount += 1;
+                summary.results.push({
+                    email,
+                    status: 'fallback_code',
+                    code: null,
+                    reason: 'missing_invite_code'
+                });
                 continue;
             }
 
