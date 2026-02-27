@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { processPendingAdminInvites } from '../../js/edit-team-admin-invites.js';
+import { processPendingAdminInvites, buildAdminInviteFollowUp } from '../../js/edit-team-admin-invites.js';
 
 describe('edit team admin invite processing', () => {
     it('processes each pending invite after team creation', async () => {
@@ -120,5 +120,46 @@ describe('edit team admin invite processing', () => {
             failedCount: 0,
             results: []
         });
+    });
+
+    it('builds shareable follow-up details for existing users and fallback codes', () => {
+        const followUp = buildAdminInviteFollowUp({
+            results: [
+                { email: 'coach1@example.com', status: 'existing_user', code: 'EXIST111' },
+                { email: 'coach2@example.com', status: 'fallback_code', code: 'FALL222' },
+                { email: 'coach3@example.com', status: 'sent', code: 'SENT333' }
+            ]
+        }, 'https://allplays.ai');
+
+        expect(followUp.shareableCount).toBe(2);
+        expect(followUp.unresolvedCount).toBe(0);
+        expect(followUp.shareableInvites).toEqual([
+            {
+                email: 'coach1@example.com',
+                code: 'EXIST111',
+                acceptInviteUrl: 'https://allplays.ai/accept-invite.html?code=EXIST111'
+            },
+            {
+                email: 'coach2@example.com',
+                code: 'FALL222',
+                acceptInviteUrl: 'https://allplays.ai/accept-invite.html?code=FALL222'
+            }
+        ]);
+        expect(followUp.shareableDetails).toContain('coach1@example.com | code: EXIST111 | https://allplays.ai/accept-invite.html?code=EXIST111');
+        expect(followUp.shareableDetails).toContain('coach2@example.com | code: FALL222 | https://allplays.ai/accept-invite.html?code=FALL222');
+    });
+
+    it('counts unresolved follow-up entries when no code is available or processing failed', () => {
+        const followUp = buildAdminInviteFollowUp({
+            results: [
+                { email: 'coach1@example.com', status: 'existing_user', code: null },
+                { email: 'coach2@example.com', status: 'fallback_code', code: '' },
+                { email: 'coach3@example.com', status: 'failed', error: 'invite error' }
+            ]
+        }, 'https://allplays.ai');
+
+        expect(followUp.shareableCount).toBe(0);
+        expect(followUp.unresolvedCount).toBe(3);
+        expect(followUp.shareableDetails).toBe('');
     });
 });
