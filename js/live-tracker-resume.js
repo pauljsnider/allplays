@@ -23,6 +23,26 @@ function periodOrder(period) {
     return 0;
 }
 
+function compareProgress(a, b) {
+    if (!a && !b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+
+    const periodDiff = periodOrder(a.period) - periodOrder(b.period);
+    if (periodDiff !== 0) return periodDiff;
+
+    const clockDiff = a.clock - b.clock;
+    if (clockDiff !== 0) return clockDiff;
+
+    return a.order - b.order;
+}
+
+function pickMostAdvanced(candidates) {
+    return candidates.reduce((best, item) => (
+        compareProgress(item, best) > 0 ? item : best
+    ), null);
+}
+
 export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }) {
     const fallbackPeriod = defaults?.period || 'Q1';
     const fallbackClock = Number.isFinite(defaults?.clock) ? defaults.clock : 0;
@@ -51,7 +71,7 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
     }
 
     const withTimestamp = candidates.filter(item => Number.isFinite(item.createdAtMs));
-    if (withTimestamp.length) {
+    if (withTimestamp.length && withTimestamp.length === candidates.length) {
         const latest = withTimestamp.reduce((best, item) => {
             if (!best) return item;
             if (item.createdAtMs > best.createdAtMs) return item;
@@ -61,14 +81,22 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         return { period: latest.period, clock: latest.clock, restored: true };
     }
 
-    const furthest = candidates.reduce((best, item) => {
+    if (!withTimestamp.length) {
+        const furthest = pickMostAdvanced(candidates);
+        return { period: furthest.period, clock: furthest.clock, restored: true };
+    }
+
+    const withoutTimestamp = candidates.filter(item => !Number.isFinite(item.createdAtMs));
+    const latestTimestamped = withTimestamp.reduce((best, item) => {
         if (!best) return item;
-        const bestPeriod = periodOrder(best.period);
-        const itemPeriod = periodOrder(item.period);
-        if (itemPeriod > bestPeriod) return item;
-        if (itemPeriod === bestPeriod && item.clock > best.clock) return item;
+        if (item.createdAtMs > best.createdAtMs) return item;
+        if (item.createdAtMs === best.createdAtMs && item.order > best.order) return item;
         return best;
     }, null);
+    const furthestUntimestamped = pickMostAdvanced(withoutTimestamp);
+    const chosen = compareProgress(furthestUntimestamped, latestTimestamped) > 0
+        ? furthestUntimestamped
+        : latestTimestamped;
 
-    return { period: furthest.period, clock: furthest.clock, restored: true };
+    return { period: chosen.period, clock: chosen.clock, restored: true };
 }
