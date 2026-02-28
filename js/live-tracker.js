@@ -8,7 +8,7 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
-import { deriveResumeClockState } from './live-tracker-resume.js?v=1';
+import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
 
 let currentTeamId = null;
 let currentGameId = null;

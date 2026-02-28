@@ -93,10 +93,19 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         if (item.createdAtMs === best.createdAtMs && item.order > best.order) return item;
         return best;
     }, null);
+    const untimestampedAfterLatestTimestamp = withoutTimestamp.filter(
+        item => item.order > latestTimestamped.order
+    );
+    if (untimestampedAfterLatestTimestamp.length) {
+        const latestUntimestamped = untimestampedAfterLatestTimestamp.reduce(
+            (best, item) => (item.order > best.order ? item : best),
+            untimestampedAfterLatestTimestamp[0]
+        );
+        return { period: latestUntimestamped.period, clock: latestUntimestamped.clock, restored: true };
+    }
+
     const furthestUntimestamped = pickMostAdvanced(withoutTimestamp);
-    const chosen = compareProgress(furthestUntimestamped, latestTimestamped) > 0
-        ? furthestUntimestamped
-        : latestTimestamped;
+    const chosen = compareProgress(furthestUntimestamped, latestTimestamped) > 0 ? furthestUntimestamped : latestTimestamped;
 
     return { period: chosen.period, clock: chosen.clock, restored: true };
 }
