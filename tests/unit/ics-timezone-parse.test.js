@@ -38,6 +38,21 @@ describe('ICS timezone parsing', () => {
         expect(event.dtstart.toISOString()).toBe('2026-03-10T23:00:00.000Z');
     });
 
+    it('parses positive numeric UTC offsets by subtracting from local time', () => {
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART:20260310T180000+0500',
+            'SUMMARY:Offset Plus Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const [event] = parseICS(ics);
+
+        expect(event.dtstart.toISOString()).toBe('2026-03-10T13:00:00.000Z');
+    });
+
     it('keeps UTC Z-suffixed datetime behavior unchanged', () => {
         const ics = [
             'BEGIN:VCALENDAR',

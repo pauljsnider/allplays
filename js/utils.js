@@ -576,6 +576,8 @@ function getTimeZoneOffsetMinutes(date, timeZone) {
     const offsetMatch = zonePart.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
     if (!offsetMatch) return null;
 
+    // Convention used throughout this module: offsetMinutes = local time minus UTC.
+    // Example: "GMT+5" => +300 because local time is 5 hours ahead of UTC.
     const sign = offsetMatch[1] === '+' ? 1 : -1;
     const hours = parseInt(offsetMatch[2], 10);
     const minutes = parseInt(offsetMatch[3] || '0', 10);
