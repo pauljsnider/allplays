@@ -567,10 +567,8 @@ export function expandRecurrence(master, windowDays = 180) {
       untilBoundary.getUTCSeconds() === 0 &&
       untilBoundary.getUTCMilliseconds() === 0;
 
-    // Date-only "until" values should include the full local end date.
-    if (isLocalMidnight) {
-      untilBoundary.setHours(23, 59, 59, 999);
-    } else if (isUtcMidnight) {
+    // Handle UTC date-only parsing first (new Date('YYYY-MM-DD') from date inputs).
+    if (isUtcMidnight) {
       untilBoundary = new Date(
         untilBoundary.getUTCFullYear(),
         untilBoundary.getUTCMonth(),
@@ -580,6 +578,9 @@ export function expandRecurrence(master, windowDays = 180) {
         59,
         999
       );
+    } else if (isLocalMidnight) {
+      // Local date-only values should include the full local end date.
+      untilBoundary.setHours(23, 59, 59, 999);
     }
   }
 
