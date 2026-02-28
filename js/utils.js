@@ -556,14 +556,30 @@ export function expandRecurrence(master, windowDays = 180) {
     const untilDate = until.toDate ? until.toDate() : new Date(until);
     untilBoundary = new Date(untilDate);
 
-    // Date-only "until" values are stored at midnight; include the full end date.
-    if (
+    const isLocalMidnight =
       untilBoundary.getHours() === 0 &&
       untilBoundary.getMinutes() === 0 &&
       untilBoundary.getSeconds() === 0 &&
-      untilBoundary.getMilliseconds() === 0
-    ) {
+      untilBoundary.getMilliseconds() === 0;
+    const isUtcMidnight =
+      untilBoundary.getUTCHours() === 0 &&
+      untilBoundary.getUTCMinutes() === 0 &&
+      untilBoundary.getUTCSeconds() === 0 &&
+      untilBoundary.getUTCMilliseconds() === 0;
+
+    // Date-only "until" values should include the full local end date.
+    if (isLocalMidnight) {
       untilBoundary.setHours(23, 59, 59, 999);
+    } else if (isUtcMidnight) {
+      untilBoundary = new Date(
+        untilBoundary.getUTCFullYear(),
+        untilBoundary.getUTCMonth(),
+        untilBoundary.getUTCDate(),
+        23,
+        59,
+        59,
+        999
+      );
     }
   }
 
