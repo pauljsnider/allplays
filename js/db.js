@@ -827,12 +827,8 @@ export async function validateAccessCode(code) {
         return { valid: false, message: "Code already used" };
     }
 
-    // Check expiration for codes that have expiresAt
-    if (data.expiresAt) {
-        const expiresAtMs = data.expiresAt.toMillis ? data.expiresAt.toMillis() : data.expiresAt;
-        if (Date.now() >= expiresAtMs) {
-            return { valid: false, message: "Code has expired" };
-        }
+    if (isAccessCodeExpired(data.expiresAt)) {
+        return { valid: false, message: "Code has expired" };
     }
 
     // Code exists, not used, and not expired
