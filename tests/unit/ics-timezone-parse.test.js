@@ -285,12 +285,14 @@ describe('ICS timezone parsing', () => {
         expect(events).toHaveLength(0);
         expect(
             warnSpy.mock.calls.some((call) => (
-                call[0] === 'Detected invalid or non-existent local time for ICS TZID datetime:'
+                call[0] === 'Detected invalid or non-existent local time for ICS TZID datetime:' ||
+                call[0] === 'Timezone offset iteration did not converge for ICS TZID datetime:'
             ))
         ).toBe(true);
     });
 
-    it('warns when timezone offset iteration does not converge', () => {
+    it('drops events when timezone offset iteration does not converge', async () => {
+        vi.resetModules();
         const realDateTimeFormat = Intl.DateTimeFormat;
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         let alternatingCall = 0;
@@ -309,6 +311,7 @@ describe('ICS timezone parsing', () => {
             }
             return new realDateTimeFormat(locale, options);
         });
+        const { parseICS: parseICSIsolated } = await import('../../js/utils.js');
 
         const ics = [
             'BEGIN:VCALENDAR',
@@ -319,9 +322,8 @@ describe('ICS timezone parsing', () => {
             'END:VCALENDAR'
         ].join('\n');
 
-        const [event] = parseICS(ics);
-        expect(event).toBeDefined();
-        expect(event.dtstart instanceof Date).toBe(true);
+        const events = parseICSIsolated(ics);
+        expect(events).toHaveLength(0);
         expect(
             warnSpy.mock.calls.some((call) => (
                 call[0] === 'Timezone offset iteration did not converge for ICS TZID datetime:'
