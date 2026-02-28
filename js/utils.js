@@ -359,14 +359,25 @@ export function parseICS(icsText) {
         const field = line.substring(0, colonIndex);
         const value = line.substring(colonIndex + 1);
 
-        const fieldName = field.split(';')[0]; // Handle fields like DTSTART;TZID=...
+        const fieldParts = field.split(';');
+        const fieldName = fieldParts[0];
+        const fieldParams = {};
+        for (let j = 1; j < fieldParts.length; j++) {
+          const param = fieldParts[j];
+          const equalsIndex = param.indexOf('=');
+          if (equalsIndex > 0) {
+            const key = param.substring(0, equalsIndex).toUpperCase();
+            const paramValue = param.substring(equalsIndex + 1);
+            fieldParams[key] = paramValue;
+          }
+        }
 
         switch (fieldName) {
           case 'DTSTART':
-            currentEvent.dtstart = parseICSDate(value);
+            currentEvent.dtstart = parseICSDate(value, fieldParams.TZID);
             break;
           case 'DTEND':
-            currentEvent.dtend = parseICSDate(value);
+            currentEvent.dtend = parseICSDate(value, fieldParams.TZID);
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
@@ -395,9 +406,10 @@ export function parseICS(icsText) {
 /**
  * Parse ICS date format to JavaScript Date
  * @param {string} icsDate - Date string from ICS file
+ * @param {string} [timeZone] - Optional IANA timezone from TZID
  * @returns {Date} JavaScript Date object
  */
-function parseICSDate(icsDate) {
+function parseICSDate(icsDate, timeZone) {
   // ICS dates are in format: 20251115T020000Z or 20251115
   const year = parseInt(icsDate.substring(0, 4));
   const month = parseInt(icsDate.substring(4, 6)) - 1; // JS months are 0-indexed
@@ -412,14 +424,80 @@ function parseICSDate(icsDate) {
     if (icsDate.endsWith('Z')) {
       // UTC time
       return new Date(Date.UTC(year, month, day, hour, minute, second));
-    } else {
-      // Local time
-      return new Date(year, month, day, hour, minute, second);
     }
+
+    if (timeZone) {
+      const zonedDate = createDateFromTimeZone(year, month, day, hour, minute, second, timeZone);
+      if (zonedDate) return zonedDate;
+    }
+
+    // Floating local time (no TZID or invalid TZID)
+    return new Date(year, month, day, hour, minute, second);
   } else {
     // Date only
     return new Date(year, month, day);
   }
+}
+
+function createDateFromTimeZone(year, month, day, hour, minute, second, timeZone) {
+  const wallClockUtcMs = Date.UTC(year, month, day, hour, minute, second);
+  let timestamp = wallClockUtcMs;
+  const seen = new Set();
+
+  // Run a small fixed-point adjustment to handle DST offsets correctly.
+  for (let i = 0; i < 6; i++) {
+    seen.add(timestamp);
+    const offsetMs = getTimeZoneOffsetMs(timestamp, timeZone);
+    if (offsetMs === null) return null;
+    const nextTimestamp = wallClockUtcMs - offsetMs;
+    if (nextTimestamp === timestamp) {
+      return new Date(timestamp);
+    }
+    if (seen.has(nextTimestamp)) {
+      // For DST spring-forward gaps, pick the later instant deterministically.
+      return new Date(Math.max(timestamp, nextTimestamp));
+    }
+    timestamp = nextTimestamp;
+  }
+
+  return new Date(timestamp);
+}
+
+function getTimeZoneOffsetMs(timestamp, timeZone) {
+  let formatter;
+  try {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  } catch (error) {
+    return null;
+  }
+
+  const parts = formatter.formatToParts(new Date(timestamp));
+  const map = {};
+  for (const part of parts) {
+    if (part.type !== 'literal') {
+      map[part.type] = part.value;
+    }
+  }
+
+  const asUtc = Date.UTC(
+    parseInt(map.year, 10),
+    parseInt(map.month, 10) - 1,
+    parseInt(map.day, 10),
+    parseInt(map.hour, 10),
+    parseInt(map.minute, 10),
+    parseInt(map.second, 10)
+  );
+
+  return asUtc - timestamp;
 }
 
 /**
