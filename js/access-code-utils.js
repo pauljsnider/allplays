@@ -11,5 +11,5 @@ export function isAccessCodeExpired(expiresAt, nowMs = Date.now()) {
     }
 
     if (!Number.isFinite(expiresAtMs)) return false;
-    return nowMs > expiresAtMs;
+    return nowMs >= expiresAtMs;
 }
