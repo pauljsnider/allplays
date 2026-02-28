@@ -527,6 +527,7 @@ export function generateSeriesId() {
  * Day code mapping for recurrence
  */
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Expand a recurring practice master into individual occurrences
@@ -555,6 +556,8 @@ export function expandRecurrence(master, windowDays = 180) {
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
   let current = new Date(seriesStart);
   let generated = 0;
+  const seriesStartUtc = Date.UTC(seriesStart.getFullYear(), seriesStart.getMonth(), seriesStart.getDate());
+  const seriesWeekStartUtc = seriesStartUtc - (seriesStart.getDay() * MS_PER_DAY);
 
   // For weekly recurrence, we need to check each day
   const maxIterations = windowDays * 2; // Safety limit
@@ -578,11 +581,13 @@ export function expandRecurrence(master, windowDays = 180) {
     const daysSinceSeriesStart = Math.floor(
       (
         Date.UTC(current.getFullYear(), current.getMonth(), current.getDate()) -
-        Date.UTC(seriesStart.getFullYear(), seriesStart.getMonth(), seriesStart.getDate())
-      ) / (24 * 60 * 60 * 1000)
+        seriesStartUtc
+      ) / MS_PER_DAY
     );
-    const weeksSinceSeriesStart = Math.floor(daysSinceSeriesStart / 7);
-    const matchesWeeklyInterval = daysSinceSeriesStart >= 0 && (weeksSinceSeriesStart % normalizedInterval === 0);
+    const currentUtc = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
+    const currentWeekStartUtc = currentUtc - (current.getDay() * MS_PER_DAY);
+    const weeksSinceSeriesWeekStart = Math.floor((currentWeekStartUtc - seriesWeekStartUtc) / (7 * MS_PER_DAY));
+    const matchesWeeklyInterval = daysSinceSeriesStart >= 0 && (weeksSinceSeriesWeekStart % normalizedInterval === 0);
 
     if (freq === 'weekly' && byDays.length > 0) {
       matches = byDays.includes(dayCode) && matchesWeeklyInterval;

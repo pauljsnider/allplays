@@ -34,6 +34,23 @@ function buildDailyMaster(interval = 2) {
     };
 }
 
+function buildMultiDayWeeklyMaster(interval = 2) {
+    return {
+        id: 'w2',
+        isSeriesMaster: true,
+        date: new Date('2026-03-04T18:00:00Z'),
+        startTime: '18:00',
+        endTime: '19:00',
+        recurrence: {
+            freq: 'weekly',
+            interval,
+            byDays: ['MO', 'WE']
+        },
+        exDates: [],
+        overrides: {}
+    };
+}
+
 describe('expandRecurrence weekly interval behavior', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -64,6 +81,19 @@ describe('expandRecurrence weekly interval behavior', () => {
             '2026-03-09',
             '2026-03-16',
             '2026-03-23'
+        ]);
+    });
+
+    it('uses calendar week boundaries for multi-day biweekly recurrences', () => {
+        const occurrences = expandRecurrence(buildMultiDayWeeklyMaster(2), 40);
+        const firstFive = occurrences.slice(0, 5).map((item) => item.instanceDate);
+
+        expect(firstFive).toEqual([
+            '2026-03-04',
+            '2026-03-16',
+            '2026-03-18',
+            '2026-03-30',
+            '2026-04-01'
         ]);
     });
 });
