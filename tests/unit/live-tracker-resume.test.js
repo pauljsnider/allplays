@@ -36,4 +36,16 @@ describe('live tracker resume clock state', () => {
     expect(result.period).toBe('Q2');
     expect(result.clock).toBe(10000);
   });
+
+  it('prefers untimestamped progress over stale timestamped state in mixed datasets', () => {
+    const result = deriveResumeClockState([
+      { period: 'Q2', gameClockMs: 20000, createdAt: { toMillis: () => 1000 } },
+      { period: 'Q2', gameClockMs: 25000, createdAt: { toMillis: () => 1100 } },
+      { period: 'Q3', gameClockMs: 5000, createdAt: null }
+    ]);
+
+    expect(result.restored).toBe(true);
+    expect(result.period).toBe('Q3');
+    expect(result.clock).toBe(5000);
+  });
 });
