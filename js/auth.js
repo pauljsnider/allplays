@@ -162,6 +162,14 @@ async function processGoogleAuthResult(result, activationCode = null) {
         if (validation.type === 'parent_invite') {
             try {
                 await redeemParentInvite(userId, validation.data.code);
+            } catch (e) {
+                console.error('Error linking parent:', e);
+                await cleanupFailedNewUser(result.user, 'parent invite link failure');
+                throw e;
+            }
+
+            // Best-effort profile write after invite redemption.
+            try {
                 await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
@@ -169,10 +177,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     createdAt: new Date()
                 });
             } catch (e) {
-                console.error('Error linking parent:', e);
-                clearPendingActivationCode();
-                await cleanupFailedNewUser(result.user, 'parent invite link failure');
-                throw e;
+                console.error('Error creating user profile after parent invite redeem:', e);
             }
         } else if (validation.type === 'admin_invite') {
             try {

@@ -52,15 +52,21 @@ export async function executeEmailPasswordSignup({
     if (validation.type === 'parent_invite') {
         try {
             await redeemParentInvite(userId, validation.data.code);
+        } catch (e) {
+            console.error('Error linking parent:', e);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw e;
+        }
+
+        // Best-effort profile write after invite redemption.
+        try {
             await updateUserProfile(userId, {
                 email: email,
                 createdAt: new Date(),
                 emailVerificationRequired: true
             });
         } catch (e) {
-            console.error('Error linking parent:', e);
-            await cleanupFailedParentInviteSignup(userCredential?.user);
-            throw e;
+            console.error('Error creating user profile after parent invite redeem:', e);
         }
     } else if (validation.type === 'admin_invite') {
         try {
