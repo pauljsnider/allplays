@@ -498,9 +498,11 @@ function parseDateTimeInTimeZone(args) {
 
   const initialUtcMs = Date.UTC(year, month, day, hour, minute, second);
   let resolvedUtcMs = initialUtcMs;
+  let didConverge = false;
+  const maxOffsetIterations = 8;
 
   // Iterate because timezone offsets can vary with DST near boundaries.
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < maxOffsetIterations; i++) {
     const offsetMinutes = getTimeZoneOffsetMinutes(new Date(resolvedUtcMs), timeZone);
     if (offsetMinutes == null) {
       console.warn('Unable to resolve timezone offset while parsing ICS TZID datetime:', timeZone);
@@ -508,8 +510,19 @@ function parseDateTimeInTimeZone(args) {
     }
 
     const nextUtcMs = Date.UTC(year, month, day, hour, minute, second) - (offsetMinutes * 60000);
-    if (nextUtcMs === resolvedUtcMs) break;
+    if (nextUtcMs === resolvedUtcMs) {
+      didConverge = true;
+      break;
+    }
     resolvedUtcMs = nextUtcMs;
+  }
+
+  if (!didConverge) {
+    console.warn(
+      'Timezone offset iteration did not converge for ICS TZID datetime:',
+      timeZone,
+      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+    );
   }
 
   const resolvedDate = new Date(resolvedUtcMs);

@@ -171,4 +171,43 @@ describe('ICS timezone parsing', () => {
             ))
         ).toBe(true);
     });
+
+    it('warns when timezone offset iteration does not converge', () => {
+        const realDateTimeFormat = Intl.DateTimeFormat;
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        let alternatingCall = 0;
+
+        vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+            if (options && options.timeZoneName === 'shortOffset') {
+                return {
+                    formatToParts() {
+                        alternatingCall += 1;
+                        return [{
+                            type: 'timeZoneName',
+                            value: alternatingCall % 2 === 0 ? 'GMT-4' : 'GMT-5'
+                        }];
+                    }
+                };
+            }
+            return new realDateTimeFormat(locale, options);
+        });
+
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART;TZID=America/New_York:20260310T180000',
+            'SUMMARY:Oscillating Offset Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const [event] = parseICS(ics);
+        expect(event).toBeDefined();
+        expect(event.dtstart instanceof Date).toBe(true);
+        expect(
+            warnSpy.mock.calls.some((call) => (
+                call[0] === 'Timezone offset iteration did not converge for ICS TZID datetime:'
+            ))
+        ).toBe(true);
+    });
 });
