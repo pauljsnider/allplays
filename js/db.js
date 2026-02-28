@@ -2216,6 +2216,36 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
     return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
 }
 
+async function computeRsvpSummary(teamId, gameId) {
+    const [rsvps, roster] = await Promise.all([
+        getRsvps(teamId, gameId),
+        getPlayers(teamId)
+    ]);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+    const activeRosterIds = new Set(roster.map((player) => player.id));
+    const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+
+    rsvps.forEach((rsvp) => {
+        const responseKey = normalizeRsvpResponse(rsvp.response);
+        if (responseKey === 'not_responded') return;
+
+        const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+            .filter((id) => activeRosterIds.has(id))
+            .length;
+        if (playerCount === 0) return;
+
+        if (responseKey === 'going') summary.going += playerCount;
+        else if (responseKey === 'maybe') summary.maybe += playerCount;
+        else if (responseKey === 'not_going') summary.notGoing += playerCount;
+    });
+
+    summary.total = summary.going + summary.maybe + summary.notGoing;
+    summary.notResponded = Math.max(0, roster.length - summary.total);
+    summary.total = roster.length;
+
+    return summary;
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
@@ -2241,29 +2271,7 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // depending on team linkage state in profile claims/data.
     let summary = null;
     try {
-        const [rsvps, roster] = await Promise.all([
-            getRsvps(teamId, gameId),
-            getPlayers(teamId)
-        ]);
-        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-        const activeRosterIds = new Set(roster.map((player) => player.id));
-        summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-        rsvps.forEach((rsvp) => {
-            const responseKey = normalizeRsvpResponse(rsvp.response);
-            if (responseKey === 'not_responded') return;
-
-            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
-                .filter((id) => activeRosterIds.has(id))
-                .length;
-            if (playerCount === 0) return;
-
-            if (responseKey === 'going') summary.going += playerCount;
-            else if (responseKey === 'maybe') summary.maybe += playerCount;
-            else if (responseKey === 'not_going') summary.notGoing += playerCount;
-        });
-        summary.total = summary.going + summary.maybe + summary.notGoing;
-        summary.notResponded = Math.max(0, roster.length - summary.total);
-        summary.total = roster.length;
+        summary = await computeRsvpSummary(teamId, gameId);
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
@@ -2292,6 +2300,10 @@ export async function getMyRsvp(teamId, gameId, userId) {
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
     const snap = await getDoc(rsvpRef);
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function getRsvpSummary(teamId, gameId) {
+    return computeRsvpSummary(teamId, gameId);
 }
 
 export async function getRsvpBreakdownByPlayer(teamId, gameId) {
