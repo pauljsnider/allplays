@@ -527,6 +527,7 @@ export function generateSeriesId() {
  * Day code mapping for recurrence
  */
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Expand a recurring practice master into individual occurrences
@@ -552,6 +553,7 @@ export function expandRecurrence(master, windowDays = 180) {
 
   // Start from series creation date
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
+  const seriesStartDayNumber = Math.floor(Date.UTC(seriesStart.getFullYear(), seriesStart.getMonth(), seriesStart.getDate()) / MS_PER_DAY);
   let current = new Date(seriesStart);
   let generated = 0;
 
@@ -571,16 +573,19 @@ export function expandRecurrence(master, windowDays = 180) {
 
     const isoDate = current.toISOString().split('T')[0];
     const dayCode = DAY_CODES[current.getDay()];
+    const currentDayNumber = Math.floor(Date.UTC(current.getFullYear(), current.getMonth(), current.getDate()) / MS_PER_DAY);
+    const weeksSinceSeriesStart = Math.floor((currentDayNumber - seriesStartDayNumber) / 7);
+    const weeklyIntervalMatch = interval <= 1 || (weeksSinceSeriesStart >= 0 && weeksSinceSeriesStart % interval === 0);
 
     // Check if this day matches the recurrence pattern
     let matches = false;
     if (freq === 'weekly' && byDays.length > 0) {
-      matches = byDays.includes(dayCode);
+      matches = byDays.includes(dayCode) && weeklyIntervalMatch;
     } else if (freq === 'daily') {
       matches = true;
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
-      matches = current.getDay() === seriesStart.getDay();
+      matches = current.getDay() === seriesStart.getDay() && weeklyIntervalMatch;
     }
 
     // Only process if within visible window and matches pattern
