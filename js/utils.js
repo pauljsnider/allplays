@@ -635,13 +635,8 @@ export function expandRecurrence(master, windowDays = 180) {
       generated++;
     }
 
-    // Advance to next day
+    // Advance by one day; interval matching is handled by daysSinceSeriesStart modulo checks
     current.setDate(current.getDate() + 1);
-
-    // For daily with interval > 1, skip days
-    if (freq === 'daily' && normalizedInterval > 1) {
-      current.setDate(current.getDate() + normalizedInterval - 1);
-    }
   }
 
   return occurrences;
