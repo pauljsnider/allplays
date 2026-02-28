@@ -621,6 +621,26 @@ function parseDateTimeInTimeZone(args) {
 
 let shortOffsetSupport;
 
+function parseShortOffsetZonePart(zonePart, options = {}) {
+  const { requireTwoDigitHours = false } = options;
+  if (!zonePart || zonePart === 'GMT' || zonePart === 'UTC') return 0;
+
+  const offsetMatch = zonePart.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!offsetMatch) return null;
+
+  const rawHours = offsetMatch[2];
+  if (requireTwoDigitHours && rawHours.length !== 2) return null;
+
+  const sign = offsetMatch[1] === '+' ? 1 : -1;
+  const hours = parseInt(rawHours, 10);
+  const minutes = parseInt(offsetMatch[3] || '0', 10);
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours > 23 || minutes > 59) {
+    return null;
+  }
+
+  return sign * ((hours * 60) + minutes);
+}
+
 function supportsShortOffsetTimeZoneName() {
   if (shortOffsetSupport != null) return shortOffsetSupport;
 
@@ -640,7 +660,7 @@ function supportsShortOffsetTimeZoneName() {
 
     const zonePart = probeFormatter.formatToParts(probeDate)
       .find((part) => part.type === 'timeZoneName')?.value || '';
-    shortOffsetSupport = /^GMT(?:[+-]\d{1,2}(?::?\d{2})?)?$/.test(zonePart) || zonePart === 'UTC';
+    shortOffsetSupport = parseShortOffsetZonePart(zonePart, { requireTwoDigitHours: true }) != null;
   } catch (_) {
     shortOffsetSupport = false;
   }
@@ -656,18 +676,9 @@ function supportsShortOffsetTimeZoneName() {
  */
 function getTimeZoneOffsetMinutes(date, timeZone) {
   const parseOffsetFromZonePart = (zonePart) => {
-    if (!zonePart || zonePart === 'GMT' || zonePart === 'UTC') return 0;
-
-    const offsetMatch = zonePart.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
-    if (!offsetMatch) return null;
-
     // Convention used throughout this module: offsetMinutes = local time minus UTC.
-    // Example: "GMT+5" => +300 because local time is 5 hours ahead of UTC.
-    const sign = offsetMatch[1] === '+' ? 1 : -1;
-    const hours = parseInt(offsetMatch[2], 10);
-    const minutes = parseInt(offsetMatch[3] || '0', 10);
-
-    return sign * ((hours * 60) + minutes);
+    // Example: "GMT+05" => +300 because local time is 5 hours ahead of UTC.
+    return parseShortOffsetZonePart(zonePart, { requireTwoDigitHours: true });
   };
 
   if (supportsShortOffsetTimeZoneName()) {
