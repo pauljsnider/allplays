@@ -455,7 +455,13 @@ function parseICSDate(icsDate, params = {}) {
       return new Date(utcMs);
     }
 
-    const tzid = params.TZID ? params.TZID.replace(/^\//, '') : '';
+    const rawTzid = typeof params.TZID === 'string' ? params.TZID : '';
+    const tzid = rawTzid ? rawTzid.replace(/^\//, '') : '';
+    if (rawTzid && !tzid) {
+      console.warn('Malformed ICS TZID value, dropping event date:', rawTzid, icsDate);
+      return null;
+    }
+
     if (tzid) {
       const tzDate = parseDateTimeInTimeZone({
         year,

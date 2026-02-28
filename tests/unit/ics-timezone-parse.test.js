@@ -152,6 +152,26 @@ describe('ICS timezone parsing', () => {
         );
     });
 
+    it('drops events when TZID is malformed and emits warning', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART;TZID=/:20260310T180000',
+            'SUMMARY:Malformed TZID Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+        expect(events).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith(
+            'Malformed ICS TZID value, dropping event date:',
+            '/',
+            '20260310T180000'
+        );
+    });
+
     it('drops non-existent DST spring-forward local times', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const ics = [
