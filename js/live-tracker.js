@@ -9,6 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
+import { deriveResumeClockState } from './live-tracker-resume.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -2406,14 +2407,15 @@ async function init() {
       if (shouldResume) {
         const statsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats');
         const hasAggregatedStats = statsSnapshot.size > 0;
-        let liveEvents = [];
-
-        if (!hasAggregatedStats || !hasOpponentStats) {
-          const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
-          liveEvents = liveEventsSnapshot.docs.map(d => d.data());
-        }
+        const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
+        const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
+        const resumeClockState = deriveResumeClockState(liveEvents, { period: state.period, clock: state.clock });
+        if (resumeClockState.restored) {
+          state.period = resumeClockState.period;
+          state.clock = resumeClockState.clock;
+        }
 
         // Load existing aggregated stats
         statsSnapshot.forEach(d => {
@@ -2517,7 +2519,7 @@ async function init() {
     updateSubtitle();
 
     setTab('live');
-    setPeriod('Q1');
+    setPeriod(state.period);
     renderAll();
     renderQueue();
     attachEvents();
