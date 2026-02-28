@@ -362,7 +362,11 @@ export async function updatePlayer(teamId, playerId, playerData) {
 }
 
 export async function deletePlayer(teamId, playerId) {
-    await deleteDoc(doc(db, `teams/${teamId}/players`, playerId));
+    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+        active: false,
+        deactivatedAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
 }
 
 export async function deactivatePlayer(teamId, playerId) {
