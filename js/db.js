@@ -830,7 +830,7 @@ export async function validateAccessCode(code) {
     // Check expiration for codes that have expiresAt
     if (data.expiresAt) {
         const expiresAtMs = data.expiresAt.toMillis ? data.expiresAt.toMillis() : data.expiresAt;
-        if (Date.now() > expiresAtMs) {
+        if (Date.now() >= expiresAtMs) {
             return { valid: false, message: "Code has expired" };
         }
     }
