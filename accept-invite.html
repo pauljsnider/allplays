@@ -135,7 +135,8 @@
 
     <script type="module">
         import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=9';
-        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile } from './js/db.js?v=14';
+        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile, addTeamAdminEmail, markAccessCodeAsUsed } from './js/db.js?v=14';
+        import { redeemAdminInviteAcceptance } from './js/admin-invite.js?v=2';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
 
         renderFooter(document.getElementById('footer-container'));
@@ -170,7 +171,7 @@
             }, 2000);
         }
 
-        async function processInvite(userId, code) {
+        async function processInvite(userId, code, authEmail = null) {
             // Validate the invite code
             const validation = await validateAccessCode(code);
             if (!validation.valid) {
@@ -187,32 +188,19 @@
                     redirectUrl: 'parent-dashboard.html'
                 };
             } else if (validation.type === 'admin_invite') {
-                // Process admin invite - add email to team's adminEmails
-                const team = await getTeam(validation.data.teamId);
-                if (!team) {
-                    throw new Error('Team not found');
-                }
-
-                // Get current user's email
                 const profile = await getUserProfile(userId);
-                const userEmail = profile?.email;
-
-                if (userEmail) {
-                    const adminEmails = team.adminEmails || [];
-                    if (!adminEmails.map(e => e.toLowerCase()).includes(userEmail.toLowerCase())) {
-                        adminEmails.push(userEmail.toLowerCase());
-                        // Note: We need to update the team, but we should use db.js
-                        // For now, we'll update user profile with coach role
-                    }
-                }
-
-                // Update user profile to add coachOf
-                await updateUserProfile(userId, {
-                    coachOf: [validation.data.teamId],
-                    roles: ['coach']
+                const userEmail = profile?.email || authEmail || validation?.data?.email;
+                const team = await redeemAdminInviteAcceptance({
+                    userId,
+                    userEmail,
+                    teamId: validation.data.teamId,
+                    codeId: validation.codeId,
+                    markAccessCodeAsUsed,
+                    getTeam,
+                    addTeamAdminEmail,
+                    getUserProfile,
+                    updateUserProfile
                 });
-
-                // Mark code as used is handled by validateAccessCode flow
 
                 return {
                     success: true,
@@ -252,7 +240,7 @@
 
                     // Process the invite code
                     if (inviteCode) {
-                        const inviteResult = await processInvite(userId, inviteCode);
+                        const inviteResult = await processInvite(userId, inviteCode, result?.user?.email || email);
                         showSuccess(inviteResult.message, inviteResult.redirectUrl);
                     } else {
                         // No invite code - just redirect to dashboard
@@ -278,7 +266,7 @@
                     if (user && inviteCode) {
                         // User is logged in and has an invite code - process it
                         try {
-                            const inviteResult = await processInvite(user.uid, inviteCode);
+                            const inviteResult = await processInvite(user.uid, inviteCode, user.email);
                             showSuccess(inviteResult.message, inviteResult.redirectUrl);
                         } catch (error) {
                             console.error('Error processing invite:', error);
@@ -323,7 +311,7 @@
 
                 // Process the invite code
                 if (inviteCode) {
-                    const inviteResult = await processInvite(userId, inviteCode);
+                    const inviteResult = await processInvite(userId, inviteCode, result?.user?.email || email);
                     showSuccess(inviteResult.message, inviteResult.redirectUrl);
                 } else {
                     const profile = await getUserProfile(userId);
@@ -371,7 +359,7 @@
                 }
 
                 try {
-                    const inviteResult = await processInvite(user.uid, code);
+                    const inviteResult = await processInvite(user.uid, code, user.email);
                     showSuccess(inviteResult.message, inviteResult.redirectUrl);
                 } catch (error) {
                     console.error('Error:', error);

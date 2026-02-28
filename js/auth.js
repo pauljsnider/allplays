@@ -15,7 +15,8 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail } from './db.js?v=14';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=2';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -61,6 +62,28 @@ export async function signup(email, password, activationCode) {
         } catch (e) {
             console.error('Error linking parent:', e);
             // Don't fail the whole signup, but log it
+        }
+    } else if (validation.type === 'admin_invite') {
+        try {
+            await redeemAdminInviteAcceptance({
+                userId,
+                userEmail: email,
+                teamId: validation.data.teamId,
+                codeId: validation.codeId,
+                markAccessCodeAsUsed,
+                getTeam,
+                addTeamAdminEmail,
+                getUserProfile,
+                updateUserProfile
+            });
+
+            await updateUserProfile(userId, {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true
+            });
+        } catch (e) {
+            console.error('Error linking admin invite:', e);
         }
     } else {
         // Standard Flow (Coach/Admin)
@@ -191,6 +214,29 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 });
             } catch (e) {
                 console.error('Error linking parent:', e);
+            }
+        } else if (validation.type === 'admin_invite') {
+            try {
+                await redeemAdminInviteAcceptance({
+                    userId,
+                    userEmail: result.user.email,
+                    teamId: validation.data.teamId,
+                    codeId: validation.codeId,
+                    markAccessCodeAsUsed,
+                    getTeam,
+                    addTeamAdminEmail,
+                    getUserProfile,
+                    updateUserProfile
+                });
+
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error linking admin invite:', e);
             }
         } else {
             try {
