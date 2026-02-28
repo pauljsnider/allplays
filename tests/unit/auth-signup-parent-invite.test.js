@@ -104,12 +104,63 @@ describe('signup parent invite flow', () => {
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
     });
 
+    it('does not fail signup when parent invite profile write fails after redeem', async () => {
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'parent_invite',
+            data: { code: 'PARENT1' }
+        });
+        firebaseMocks.createUserWithEmailAndPassword.mockResolvedValue({
+            user: { uid: 'user-3', delete: vi.fn().mockResolvedValue() }
+        });
+        dbMocks.redeemParentInvite.mockResolvedValue();
+        dbMocks.updateUserProfile.mockRejectedValue(new Error('Firestore unavailable'));
+
+        await expect(signup('parent2@example.com', 'password123', 'PARENT1')).resolves.toEqual({
+            user: { uid: 'user-3', delete: expect.any(Function) }
+        });
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-3', 'PARENT1');
+        expect(firebaseMocks.signOut).not.toHaveBeenCalled();
+    });
+
+    it('does not fail google signup when parent invite profile write fails after redeem', async () => {
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'parent_invite',
+            data: { code: 'PARENT1' }
+        });
+        const deleteMock = vi.fn().mockResolvedValue();
+        firebaseMocks.signInWithPopup.mockResolvedValue({
+            user: {
+                uid: 'google-user-2',
+                email: 'parent2@example.com',
+                displayName: 'Parent Two',
+                photoURL: 'https://example.com/photo2.png',
+                metadata: {
+                    creationTime: '2026-02-28T00:00:00.000Z',
+                    lastSignInTime: '2026-02-28T00:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+        dbMocks.redeemParentInvite.mockResolvedValue();
+        dbMocks.updateUserProfile.mockRejectedValue(new Error('Firestore unavailable'));
+
+        await expect(loginWithGoogle('PARENT1')).resolves.toMatchObject({
+            user: { uid: 'google-user-2' }
+        });
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-2', 'PARENT1');
+        expect(deleteMock).not.toHaveBeenCalled();
+        expect(firebaseMocks.signOut).not.toHaveBeenCalled();
+    });
+
     it('continues to support standard activation code signup', async () => {
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
             type: 'coach',
             codeId: 'code-1'
         });
+        dbMocks.updateUserProfile.mockResolvedValue();
         firebaseMocks.createUserWithEmailAndPassword.mockResolvedValue({
             user: { uid: 'user-2' }
         });
