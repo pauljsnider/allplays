@@ -15,7 +15,8 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, rollbackParentInviteRedemption, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=15';
+import { finalizeParentInviteSignup } from './parent-invite-signup.js?v=3';
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -50,18 +51,29 @@ export async function signup(email, password, activationCode) {
 
     if (validation.type === 'parent_invite') {
         // Parent Invite Flow
-        try {
-            await redeemParentInvite(userId, validation.data.code);
-            // Also create basic profile
-            await updateUserProfile(userId, {
+        await finalizeParentInviteSignup({
+            userId,
+            inviteCode: validation.data.code,
+            profileData: {
                 email: email,
                 createdAt: new Date(),
                 emailVerificationRequired: true
-            });
-        } catch (e) {
-            console.error('Error linking parent:', e);
-            // Don't fail the whole signup, but log it
-        }
+            },
+            redeemParentInviteFn: redeemParentInvite,
+            updateUserProfileFn: updateUserProfile,
+            rollbackInviteRedemptionFn: rollbackParentInviteRedemption,
+            rollbackAuthUserFn: async () => {
+                try {
+                    await userCredential.user.delete();
+                } finally {
+                    try {
+                        await signOut(auth);
+                    } catch (signOutError) {
+                        console.warn('Signup rollback sign-out failed:', signOutError);
+                    }
+                }
+            }
+        });
     } else {
         // Standard Flow (Coach/Admin)
         // Create user profile in Firestore with emailVerificationRequired flag
@@ -152,68 +164,84 @@ async function processGoogleAuthResult(result, activationCode = null) {
         const code = activationCode || window.sessionStorage.getItem('pendingActivationCode');
         console.log('[Google Auth] Activation code:', code || 'None');
 
-        // New user - require activation code
-        if (!code) {
-            console.log('[Google Auth] No activation code - deleting unauthorized user');
-            try {
-                await result.user.delete();
-                await signOut(auth);
-            } catch (deleteError) {
-                console.error('Error deleting unauthorized Google user:', deleteError);
-                await signOut(auth);
+        try {
+            // New user - require activation code
+            if (!code) {
+                console.log('[Google Auth] No activation code - deleting unauthorized user');
+                try {
+                    await result.user.delete();
+                    await signOut(auth);
+                } catch (deleteError) {
+                    console.error('Error deleting unauthorized Google user:', deleteError);
+                    await signOut(auth);
+                }
+                throw new Error('Activation code is required for new accounts');
             }
-            throw new Error('Activation code is required for new accounts');
-        }
 
-        // Validate activation code
-        const validation = await validateAccessCode(code);
-        if (!validation.valid) {
-            try {
-                await result.user.delete();
-                await signOut(auth);
-            } catch (deleteError) {
-                console.error('Error deleting user with invalid code:', deleteError);
-                await signOut(auth);
+            // Validate activation code
+            const validation = await validateAccessCode(code);
+            if (!validation.valid) {
+                try {
+                    await result.user.delete();
+                    await signOut(auth);
+                } catch (deleteError) {
+                    console.error('Error deleting user with invalid code:', deleteError);
+                    await signOut(auth);
+                }
+                throw new Error(validation.message || 'Invalid activation code');
             }
-            throw new Error(validation.message || 'Invalid activation code');
-        }
 
-        const userId = result.user.uid;
+            const userId = result.user.uid;
 
-        if (validation.type === 'parent_invite') {
-            try {
-                await redeemParentInvite(userId, validation.data.code);
-                await updateUserProfile(userId, {
-                    email: result.user.email,
-                    fullName: result.user.displayName,
-                    photoUrl: result.user.photoURL,
-                    createdAt: new Date()
+            if (validation.type === 'parent_invite') {
+                await finalizeParentInviteSignup({
+                    userId,
+                    inviteCode: validation.data.code,
+                    profileData: {
+                        email: result.user.email,
+                        fullName: result.user.displayName,
+                        photoUrl: result.user.photoURL,
+                        createdAt: new Date()
+                    },
+                    redeemParentInviteFn: redeemParentInvite,
+                    updateUserProfileFn: updateUserProfile,
+                    rollbackInviteRedemptionFn: rollbackParentInviteRedemption,
+                    rollbackAuthUserFn: async () => {
+                        try {
+                            await result.user.delete();
+                        } finally {
+                            try {
+                                await signOut(auth);
+                            } catch (signOutError) {
+                                console.warn('Google signup rollback sign-out failed:', signOutError);
+                            }
+                        }
+                    }
                 });
-            } catch (e) {
-                console.error('Error linking parent:', e);
-            }
-        } else {
-            try {
-                await markAccessCodeAsUsed(validation.codeId, userId);
-            } catch (error) {
-                console.error('Error marking code as used:', error);
+            } else {
+                try {
+                    await markAccessCodeAsUsed(validation.codeId, userId);
+                } catch (error) {
+                    console.error('Error marking code as used:', error);
+                }
+
+                try {
+                    await updateUserProfile(userId, {
+                        email: result.user.email,
+                        fullName: result.user.displayName,
+                        photoUrl: result.user.photoURL,
+                        createdAt: new Date()
+                    });
+                } catch (e) {
+                    console.error('Error creating user profile:', e);
+                }
             }
 
-            try {
-                await updateUserProfile(userId, {
-                    email: result.user.email,
-                    fullName: result.user.displayName,
-                    photoUrl: result.user.photoURL,
-                    createdAt: new Date()
-                });
-            } catch (e) {
-                console.error('Error creating user profile:', e);
-            }
+            console.log('[Google Auth] New user setup complete');
+        } finally {
+            // Prevent stale invite codes from being reused on subsequent signup attempts.
+            window.sessionStorage.removeItem('pendingActivationCode');
         }
-
-        // Clear the activation code from sessionStorage
-        window.sessionStorage.removeItem('pendingActivationCode');
-        console.log('[Google Auth] New user setup complete');
     } else {
         console.log('[Google Auth] Existing user - no setup needed');
     }
@@ -234,8 +262,14 @@ export async function handleGoogleRedirectResult() {
         return null;
     }
 
-    // Use shared processing function
-    return await processGoogleAuthResult(result);
+    try {
+        // Use shared processing function
+        return await processGoogleAuthResult(result);
+    } finally {
+        // Redirect errors do not pass through loginWithGoogle catch cleanup.
+        // Always clear pending activation state once redirect result is consumed.
+        window.sessionStorage.removeItem('pendingActivationCode');
+    }
 }
 
 export function logout() {
