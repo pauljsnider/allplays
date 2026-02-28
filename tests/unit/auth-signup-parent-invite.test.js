@@ -3,9 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const firebaseMocks = vi.hoisted(() => {
-    const auth = { currentUser: null };
     return {
-        auth,
+        auth: { currentUser: null },
         signInWithEmailAndPassword: vi.fn(),
         createUserWithEmailAndPassword: vi.fn(),
         signOut: vi.fn(),
@@ -38,20 +37,33 @@ const dbMocks = vi.hoisted(() => ({
 vi.mock('../../js/firebase.js?v=9', () => firebaseMocks);
 vi.mock('../../js/db.js?v=14', () => dbMocks);
 
-import { signup } from '../../js/auth.js';
+const { signup } = await import('../../js/auth.js');
 
 describe('auth signup parent invite failure handling', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         firebaseMocks.auth.currentUser = null;
+    });
+
+    it('rejects signup when parent invite linking fails', async () => {
+        const user = {
+            uid: 'user-1',
+            email: 'parent@example.com',
+            reload: vi.fn().mockResolvedValue(undefined),
+            delete: vi.fn().mockResolvedValue(undefined)
+        };
+        firebaseMocks.auth.currentUser = user;
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
             type: 'parent_invite',
             data: { code: 'PARENT01' }
         });
-        dbMocks.redeemParentInvite.mockResolvedValue({ success: true });
-        dbMocks.updateUserProfile.mockResolvedValue(undefined);
-        firebaseMocks.sendEmailVerification.mockResolvedValue(undefined);
+        firebaseMocks.createUserWithEmailAndPassword.mockResolvedValue({ user });
+        dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
+
+        await expect(signup('parent@example.com', 'password123', 'PARENT01')).rejects.toThrow('Team or Player not found');
+        expect(user.delete).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
     });
 
     it('delegates signup flow to executeEmailPasswordSignup with parent invite dependencies', () => {
@@ -103,5 +115,22 @@ describe('auth signup parent invite failure handling', () => {
 
         expect(user.delete).toHaveBeenCalledTimes(1);
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
+    });
+
+    it('continues to support standard activation code signup', async () => {
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'coach',
+            codeId: 'code-1'
+        });
+        firebaseMocks.createUserWithEmailAndPassword.mockResolvedValue({
+            user: { uid: 'user-2' }
+        });
+
+        await expect(signup('coach@example.com', 'password123', 'COACH1')).resolves.toEqual({
+            user: { uid: 'user-2' }
+        });
+
+        expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('code-1', 'user-2');
     });
 });
