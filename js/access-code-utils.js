@@ -1,5 +1,5 @@
 export function isAccessCodeExpired(expiresAt, nowMs = Date.now()) {
-    if (!expiresAt) return false;
+    if (expiresAt == null) return false;
 
     let expiresAtMs;
     if (typeof expiresAt?.toMillis === 'function') {

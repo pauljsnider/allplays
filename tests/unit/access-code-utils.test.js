@@ -35,4 +35,9 @@ describe('access code expiration helper', () => {
         const expiresAtMs = nowMs - 5000;
         expect(isAccessCodeExpired(expiresAtMs, nowMs)).toBe(true);
     });
+
+    it('treats zero-millis timestamps as valid expirations', () => {
+        expect(isAccessCodeExpired(0, 0)).toBe(true);
+        expect(isAccessCodeExpired(0, 1)).toBe(true);
+    });
 });
