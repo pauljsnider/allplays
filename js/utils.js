@@ -554,7 +554,8 @@ export function expandRecurrence(master, windowDays = 180) {
   // Start from series creation date
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
   const seriesStartDayNumber = Math.floor(seriesStart.getTime() / MS_PER_DAY);
-  const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStart.getDay();
+  const seriesStartUtcDayOfWeek = seriesStart.getUTCDay();
+  const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStartUtcDayOfWeek;
   let current = new Date(seriesStart);
   let generated = 0;
 
@@ -573,9 +574,10 @@ export function expandRecurrence(master, windowDays = 180) {
     if (count && generated >= count) break;
 
     const isoDate = current.toISOString().split('T')[0];
-    const dayCode = DAY_CODES[current.getDay()];
+    const currentUtcDayOfWeek = current.getUTCDay();
+    const dayCode = DAY_CODES[currentUtcDayOfWeek];
     const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
-    const currentWeekStartDayNumber = currentDayNumber - current.getDay();
+    const currentWeekStartDayNumber = currentDayNumber - currentUtcDayOfWeek;
     const weeksSinceSeriesStart = Math.floor((currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
     const weeklyIntervalMatch = interval <= 1 || (weeksSinceSeriesStart >= 0 && weeksSinceSeriesStart % interval === 0);
 
@@ -587,7 +589,7 @@ export function expandRecurrence(master, windowDays = 180) {
       matches = true;
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
-      matches = current.getDay() === seriesStart.getDay() && weeklyIntervalMatch;
+      matches = currentUtcDayOfWeek === seriesStartUtcDayOfWeek && weeklyIntervalMatch;
     }
 
     // Only process if within visible window and matches pattern
