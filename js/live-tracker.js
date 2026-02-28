@@ -8,6 +8,7 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
+import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -2486,11 +2487,7 @@ async function init() {
     // Initialize opponents from game or fresh
     if (shouldResume && hasOpponentStats) {
       state.opp = Object.entries(game.opponentStats).map(([id, data]) => {
-        const stats = statDefaults(currentConfig.columns);
-        (currentConfig.columns || []).forEach(col => {
-          const key = col.toLowerCase();
-          if (data[key] !== undefined) stats[key] = data[key];
-        });
+        const stats = hydrateOpponentStats(data, currentConfig.columns || []);
         return {
           id,
           playerId: data.playerId || null,
