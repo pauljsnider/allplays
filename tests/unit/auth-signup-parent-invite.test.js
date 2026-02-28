@@ -35,11 +35,23 @@ const dbMocks = vi.hoisted(() => {
 vi.mock('../../js/firebase.js?v=9', () => firebaseMocks);
 vi.mock('../../js/db.js?v=14', () => dbMocks);
 
-const { signup } = await import('../../js/auth.js');
+const { signup, loginWithGoogle } = await import('../../js/auth.js');
 
 describe('signup parent invite flow', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        const sessionStorageState = {};
+        vi.stubGlobal('window', {
+            sessionStorage: {
+                getItem: vi.fn((key) => sessionStorageState[key] ?? null),
+                setItem: vi.fn((key, value) => {
+                    sessionStorageState[key] = String(value);
+                }),
+                removeItem: vi.fn((key) => {
+                    delete sessionStorageState[key];
+                })
+            }
+        });
     });
 
     it('rejects when parent invite linking fails', async () => {
@@ -48,12 +60,44 @@ describe('signup parent invite flow', () => {
             type: 'parent_invite',
             data: { code: 'PARENT1' }
         });
+        const deleteMock = vi.fn().mockResolvedValue();
         firebaseMocks.createUserWithEmailAndPassword.mockResolvedValue({
-            user: { uid: 'user-1' }
+            user: { uid: 'user-1', delete: deleteMock }
         });
         dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
 
         await expect(signup('parent@example.com', 'password123', 'PARENT1')).rejects.toThrow('Team or Player not found');
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledTimes(1);
+        expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+    });
+
+    it('rejects google signup when parent invite linking fails', async () => {
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'parent_invite',
+            data: { code: 'PARENT1' }
+        });
+        const deleteMock = vi.fn().mockResolvedValue();
+        firebaseMocks.signInWithPopup.mockResolvedValue({
+            user: {
+                uid: 'google-user-1',
+                email: 'parent@example.com',
+                displayName: 'Parent',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-02-28T00:00:00.000Z',
+                    lastSignInTime: '2026-02-28T00:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+        dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
+
+        await expect(loginWithGoogle('PARENT1')).rejects.toThrow('Team or Player not found');
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledTimes(1);
+        expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
     });
 
     it('continues to support standard activation code signup', async () => {

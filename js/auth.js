@@ -17,6 +17,29 @@ import {
 } from './firebase.js?v=9';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
 
+async function cleanupFailedNewUser(user, context) {
+    if (!user) {
+        try {
+            await signOut(auth);
+        } catch (signOutError) {
+            console.error(`Error signing out after ${context}:`, signOutError);
+        }
+        return;
+    }
+
+    try {
+        await user.delete();
+    } catch (deleteError) {
+        console.error(`Error deleting user after ${context}:`, deleteError);
+    }
+
+    try {
+        await signOut(auth);
+    } catch (signOutError) {
+        console.error(`Error signing out after ${context}:`, signOutError);
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -60,6 +83,7 @@ export async function signup(email, password, activationCode) {
             });
         } catch (e) {
             console.error('Error linking parent:', e);
+            await cleanupFailedNewUser(userCredential.user, 'parent invite link failure');
             // Parent invite signup must fail closed if linking fails.
             throw e;
         }
@@ -192,6 +216,8 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 });
             } catch (e) {
                 console.error('Error linking parent:', e);
+                await cleanupFailedNewUser(result.user, 'parent invite link failure');
+                throw e;
             }
         } else {
             try {
