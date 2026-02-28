@@ -18,6 +18,22 @@ function buildMaster(interval = 2) {
     };
 }
 
+function buildDailyMaster(interval = 2) {
+    return {
+        id: 'd1',
+        isSeriesMaster: true,
+        date: new Date('2026-03-02T18:00:00Z'),
+        startTime: '18:00',
+        endTime: '19:00',
+        recurrence: {
+            freq: 'daily',
+            interval
+        },
+        exDates: [],
+        overrides: {}
+    };
+}
+
 describe('expandRecurrence weekly interval behavior', () => {
     beforeEach(() => {
         vi.useFakeTimers();
@@ -48,6 +64,42 @@ describe('expandRecurrence weekly interval behavior', () => {
             '2026-03-09',
             '2026-03-16',
             '2026-03-23'
+        ]);
+    });
+});
+
+describe('expandRecurrence daily interval behavior', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-03-01T00:00:00Z'));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('honors every-2-days interval for daily recurrences', () => {
+        const occurrences = expandRecurrence(buildDailyMaster(2), 8);
+        const firstFive = occurrences.slice(0, 5).map((item) => item.instanceDate);
+
+        expect(firstFive).toEqual([
+            '2026-03-02',
+            '2026-03-04',
+            '2026-03-06',
+            '2026-03-08'
+        ]);
+    });
+
+    it('keeps daily interval 1 behavior unchanged', () => {
+        const occurrences = expandRecurrence(buildDailyMaster(1), 5);
+        const firstFive = occurrences.slice(0, 5).map((item) => item.instanceDate);
+
+        expect(firstFive).toEqual([
+            '2026-03-02',
+            '2026-03-03',
+            '2026-03-04',
+            '2026-03-05',
+            '2026-03-06'
         ]);
     });
 });

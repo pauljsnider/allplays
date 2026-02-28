@@ -587,7 +587,7 @@ export function expandRecurrence(master, windowDays = 180) {
     if (freq === 'weekly' && byDays.length > 0) {
       matches = byDays.includes(dayCode) && matchesWeeklyInterval;
     } else if (freq === 'daily') {
-      matches = true;
+      matches = daysSinceSeriesStart >= 0 && (daysSinceSeriesStart % normalizedInterval === 0);
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
       matches = current.getDay() === seriesStart.getDay() && matchesWeeklyInterval;
