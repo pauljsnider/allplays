@@ -2,31 +2,48 @@ import { describe, it, expect } from 'vitest';
 import { shouldUpdateChatLastRead } from '../../js/team-chat-last-read.js';
 
 describe('team chat last-read snapshot policy', () => {
-    it('updates last-read on initial realtime snapshot when user and team are present', () => {
+    it('updates last-read when user/team context exists and chat is actively visible/focused', () => {
         expect(shouldUpdateChatLastRead({
             hasCurrentUser: true,
-            hasTeamId: true
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true
         })).toBe(true);
     });
 
-    it('updates last-read on subsequent realtime snapshots during active session', () => {
+    it('does not update when page is not visible', () => {
         expect(shouldUpdateChatLastRead({
             hasCurrentUser: true,
-            hasTeamId: true
-        })).toBe(true);
+            hasTeamId: true,
+            isPageVisible: false,
+            isWindowFocused: true
+        })).toBe(false);
+    });
+
+    it('does not update when window is not focused', () => {
+        expect(shouldUpdateChatLastRead({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: false
+        })).toBe(false);
     });
 
     it('does not update when user context is missing', () => {
         expect(shouldUpdateChatLastRead({
             hasCurrentUser: false,
-            hasTeamId: true
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true
         })).toBe(false);
     });
 
     it('does not update when team context is missing', () => {
         expect(shouldUpdateChatLastRead({
             hasCurrentUser: true,
-            hasTeamId: false
+            hasTeamId: false,
+            isPageVisible: true,
+            isWindowFocused: true
         })).toBe(false);
     });
 });

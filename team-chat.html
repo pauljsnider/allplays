@@ -497,7 +497,9 @@
 
                 if (shouldUpdateChatLastRead({
                     hasCurrentUser: Boolean(currentUser?.uid),
-                    hasTeamId: Boolean(teamId)
+                    hasTeamId: Boolean(teamId),
+                    isPageVisible: document.visibilityState === 'visible',
+                    isWindowFocused: document.hasFocus()
                 })) {
                     updateChatLastRead(currentUser.uid, teamId).catch(err =>
                         console.warn('Failed to update last read:', err)
