@@ -19,6 +19,29 @@ import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemPare
 import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=2';
 
+async function cleanupFailedNewUser(user, context) {
+    if (!user) {
+        try {
+            await signOut(auth);
+        } catch (signOutError) {
+            console.error(`Error signing out after ${context}:`, signOutError);
+        }
+        return;
+    }
+
+    try {
+        await user.delete();
+    } catch (deleteError) {
+        console.error(`Error deleting user after ${context}:`, deleteError);
+    }
+
+    try {
+        await signOut(auth);
+    } catch (signOutError) {
+        console.error(`Error signing out after ${context}:`, signOutError);
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -105,26 +128,6 @@ function clearPendingActivationCode() {
     }
 }
 
-async function cleanupFailedGoogleSignup(user, context) {
-    if (!user) {
-        return;
-    }
-
-    if (typeof user.delete === 'function') {
-        try {
-            await user.delete();
-        } catch (deleteError) {
-            console.error(`Error deleting auth user (${context}):`, deleteError);
-        }
-    }
-
-    try {
-        await signOut(auth);
-    } catch (signOutError) {
-        console.error(`Error signing out (${context}):`, signOutError);
-    }
-}
-
 // Shared function to process Google auth result (used by both popup and redirect flows)
 async function processGoogleAuthResult(result, activationCode = null) {
     console.log('[Google Auth] Processing result for user:', result.user.email);
@@ -142,7 +145,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         if (!code) {
             console.log('[Google Auth] No activation code - deleting unauthorized user');
             clearPendingActivationCode();
-            await cleanupFailedGoogleSignup(result.user, 'missing activation code');
+            await cleanupFailedNewUser(result.user, 'missing activation code');
             throw new Error('Activation code is required for new accounts');
         }
 
@@ -150,7 +153,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         const validation = await validateAccessCode(code);
         if (!validation.valid) {
             clearPendingActivationCode();
-            await cleanupFailedGoogleSignup(result.user, 'invalid activation code');
+            await cleanupFailedNewUser(result.user, 'invalid activation code');
             throw new Error(validation.message || 'Invalid activation code');
         }
 
@@ -168,7 +171,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
             } catch (e) {
                 console.error('Error linking parent:', e);
                 clearPendingActivationCode();
-                await cleanupFailedGoogleSignup(result.user, 'parent invite linking failure');
+                await cleanupFailedNewUser(result.user, 'parent invite link failure');
                 throw e;
             }
         } else if (validation.type === 'admin_invite') {
