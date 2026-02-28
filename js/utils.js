@@ -444,6 +444,12 @@ function parseICSDate(icsDate, params = {}) {
       const sign = offsetMatch[1] === '+' ? 1 : -1;
       const offsetHours = parseInt(offsetMatch[2], 10);
       const offsetMinutes = parseInt(offsetMatch[3], 10);
+
+      if (offsetHours > 23 || offsetMinutes > 59) {
+        console.warn('Invalid ICS numeric UTC offset:', icsDate);
+        return null;
+      }
+
       const totalOffsetMinutes = sign * ((offsetHours * 60) + offsetMinutes);
       const utcMs = Date.UTC(year, month, day, hour, minute, second) - (totalOffsetMinutes * 60000);
       return new Date(utcMs);
@@ -462,6 +468,8 @@ function parseICSDate(icsDate, params = {}) {
       });
 
       if (tzDate) return tzDate;
+      console.warn('Unable to resolve ICS TZID datetime, dropping event date:', tzid, icsDate);
+      return null;
     }
 
     // Floating/local ICS time: preserve existing local-browser behavior.
@@ -494,14 +502,36 @@ function parseDateTimeInTimeZone(args) {
   // Iterate because timezone offsets can vary with DST near boundaries.
   for (let i = 0; i < 4; i++) {
     const offsetMinutes = getTimeZoneOffsetMinutes(new Date(resolvedUtcMs), timeZone);
-    if (offsetMinutes == null) return null;
+    if (offsetMinutes == null) {
+      console.warn('Unable to resolve timezone offset while parsing ICS TZID datetime:', timeZone);
+      return null;
+    }
 
     const nextUtcMs = Date.UTC(year, month, day, hour, minute, second) - (offsetMinutes * 60000);
     if (nextUtcMs === resolvedUtcMs) break;
     resolvedUtcMs = nextUtcMs;
   }
 
-  return new Date(resolvedUtcMs);
+  const resolvedDate = new Date(resolvedUtcMs);
+  const roundTripped = getWallClockPartsInTimeZone(resolvedDate, timeZone);
+  if (
+    !roundTripped ||
+    roundTripped.year !== year ||
+    roundTripped.month !== month ||
+    roundTripped.day !== day ||
+    roundTripped.hour !== hour ||
+    roundTripped.minute !== minute ||
+    roundTripped.second !== second
+  ) {
+    console.warn(
+      'Detected invalid or non-existent local time for ICS TZID datetime:',
+      timeZone,
+      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+    );
+    return null;
+  }
+
+  return resolvedDate;
 }
 
 /**
@@ -511,6 +541,19 @@ function parseDateTimeInTimeZone(args) {
  * @returns {number|null} Offset in minutes, or null if unavailable
  */
 function getTimeZoneOffsetMinutes(date, timeZone) {
+  const parseOffsetFromZonePart = (zonePart) => {
+    if (!zonePart || zonePart === 'GMT' || zonePart === 'UTC') return 0;
+
+    const offsetMatch = zonePart.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+    if (!offsetMatch) return null;
+
+    const sign = offsetMatch[1] === '+' ? 1 : -1;
+    const hours = parseInt(offsetMatch[2], 10);
+    const minutes = parseInt(offsetMatch[3] || '0', 10);
+
+    return sign * ((hours * 60) + minutes);
+  };
+
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone,
@@ -526,19 +569,68 @@ function getTimeZoneOffsetMinutes(date, timeZone) {
 
     const parts = formatter.formatToParts(date);
     const zonePart = parts.find((part) => part.type === 'timeZoneName')?.value || '';
-
-    if (!zonePart || zonePart === 'GMT' || zonePart === 'UTC') return 0;
-
-    const offsetMatch = zonePart.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
-    if (!offsetMatch) return null;
-
-    const sign = offsetMatch[1] === '+' ? 1 : -1;
-    const hours = parseInt(offsetMatch[2], 10);
-    const minutes = parseInt(offsetMatch[3] || '0', 10);
-
-    return sign * ((hours * 60) + minutes);
+    const parsedOffset = parseOffsetFromZonePart(zonePart);
+    if (parsedOffset != null) return parsedOffset;
   } catch (error) {
-    console.warn('Unable to resolve timezone offset for ICS TZID:', timeZone, error);
+    // Browser may not support timeZoneName: 'shortOffset'. Fall through to component-diff fallback.
+    if (!(error instanceof RangeError)) {
+      console.warn('Unable to resolve timezone offset via shortOffset for ICS TZID:', timeZone, error);
+    }
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, timeZone);
+  if (!wallClock) {
+    console.warn('Unable to resolve timezone offset for ICS TZID:', timeZone);
+    return null;
+  }
+
+  const asUtcWallClock = Date.UTC(
+    wallClock.year,
+    wallClock.month,
+    wallClock.day,
+    wallClock.hour,
+    wallClock.minute,
+    wallClock.second
+  );
+
+  return Math.round((asUtcWallClock - date.getTime()) / 60000);
+}
+
+/**
+ * Resolve wall-clock parts in a timezone for a given Date.
+ * @param {Date} date - Instant to represent in target timezone
+ * @param {string} timeZone - IANA timezone name
+ * @returns {{year:number,month:number,day:number,hour:number,minute:number,second:number}|null}
+ */
+function getWallClockPartsInTimeZone(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    const parts = formatter.formatToParts(date);
+    const getPart = (type) => parseInt(parts.find((part) => part.type === type)?.value || '', 10);
+    const year = getPart('year');
+    const month = getPart('month') - 1;
+    const day = getPart('day');
+    const hour = getPart('hour');
+    const minute = getPart('minute');
+    const second = getPart('second');
+
+    if ([year, month, day, hour, minute, second].some((value) => Number.isNaN(value))) {
+      return null;
+    }
+
+    return { year, month, day, hour, minute, second };
+  } catch (error) {
+    console.warn('Unable to resolve timezone wall-clock parts for ICS TZID:', timeZone, error);
     return null;
   }
 }
