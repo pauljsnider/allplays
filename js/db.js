@@ -30,6 +30,7 @@ import {
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
+import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -971,8 +972,9 @@ export async function redeemParentInvite(userId, code) {
         playerId: codeData.playerId,
         generatedBy: codeData.generatedBy
     });
-    
+
     if (codeData.type !== 'parent_invite') throw new Error("Not a parent invite code");
+    if (isAccessCodeExpired(codeData.expiresAt)) throw new Error("Code has expired");
 
     // 2. Get Team & Player details for caching
     console.log('[redeemParentInvite] fetching team & player', {
