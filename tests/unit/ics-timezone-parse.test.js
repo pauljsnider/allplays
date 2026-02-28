@@ -132,6 +132,38 @@ describe('ICS timezone parsing', () => {
         expect(warnSpy).toHaveBeenCalledWith('Invalid ICS numeric UTC offset:', '20260310T180000+2460');
     });
 
+    it('drops events with out-of-range numeric UTC offset hours and emits warning', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART:20260310T180000-9999',
+            'SUMMARY:Bad Offset Hour Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+        expect(events).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith('Invalid ICS numeric UTC offset:', '20260310T180000-9999');
+    });
+
+    it('drops events when numeric UTC offset hour exceeds +/-14 and emits warning', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART:20260310T180000+2599',
+            'SUMMARY:Bad Offset Range Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+        expect(events).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith('Invalid ICS numeric UTC offset:', '20260310T180000+2599');
+    });
+
     it('drops events when TZID cannot be resolved and emits warning', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const ics = [

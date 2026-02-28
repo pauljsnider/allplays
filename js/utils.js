@@ -445,7 +445,7 @@ function parseICSDate(icsDate, params = {}) {
       const offsetHours = parseInt(offsetMatch[2], 10);
       const offsetMinutes = parseInt(offsetMatch[3], 10);
 
-      if (offsetHours > 23 || offsetMinutes > 59) {
+      if (offsetHours > 14 || offsetMinutes > 59) {
         console.warn('Invalid ICS numeric UTC offset:', icsDate);
         return null;
       }
