@@ -553,7 +553,7 @@ export function expandRecurrence(master, windowDays = 180) {
 
   // Start from series creation date
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
-  const seriesStartDayNumber = Math.floor(Date.UTC(seriesStart.getFullYear(), seriesStart.getMonth(), seriesStart.getDate()) / MS_PER_DAY);
+  const seriesStartDayNumber = Math.floor(seriesStart.getTime() / MS_PER_DAY);
   const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStart.getDay();
   let current = new Date(seriesStart);
   let generated = 0;
@@ -574,7 +574,7 @@ export function expandRecurrence(master, windowDays = 180) {
 
     const isoDate = current.toISOString().split('T')[0];
     const dayCode = DAY_CODES[current.getDay()];
-    const currentDayNumber = Math.floor(Date.UTC(current.getFullYear(), current.getMonth(), current.getDate()) / MS_PER_DAY);
+    const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
     const currentWeekStartDayNumber = currentDayNumber - current.getDay();
     const weeksSinceSeriesStart = Math.floor((currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
     const weeklyIntervalMatch = interval <= 1 || (weeksSinceSeriesStart >= 0 && weeksSinceSeriesStart % interval === 0);
