@@ -1,0 +1,53 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { expandRecurrence } from '../../js/utils.js';
+
+function buildMaster(interval = 2) {
+    return {
+        id: 'm1',
+        isSeriesMaster: true,
+        date: new Date('2026-03-02T18:00:00Z'),
+        startTime: '18:00',
+        endTime: '19:00',
+        recurrence: {
+            freq: 'weekly',
+            interval,
+            byDays: ['MO']
+        },
+        exDates: [],
+        overrides: {}
+    };
+}
+
+describe('expandRecurrence weekly interval behavior', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-03-01T00:00:00Z'));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('honors biweekly interval for weekly recurrences', () => {
+        const occurrences = expandRecurrence(buildMaster(2), 40);
+        const firstFive = occurrences.slice(0, 5).map((item) => item.instanceDate);
+
+        expect(firstFive).toEqual([
+            '2026-03-02',
+            '2026-03-16',
+            '2026-03-30'
+        ]);
+    });
+
+    it('keeps weekly interval 1 behavior unchanged', () => {
+        const occurrences = expandRecurrence(buildMaster(1), 28);
+        const firstFour = occurrences.slice(0, 4).map((item) => item.instanceDate);
+
+        expect(firstFour).toEqual([
+            '2026-03-02',
+            '2026-03-09',
+            '2026-03-16',
+            '2026-03-23'
+        ]);
+    });
+});
