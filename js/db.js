@@ -23,6 +23,7 @@ import {
     getCountFromServer,
     onSnapshot,
     serverTimestamp,
+    runTransaction,
     collectionGroup,
     ref,
     uploadBytes,
@@ -849,6 +850,73 @@ export async function markAccessCodeAsUsed(codeId, userId) {
         used: true,
         usedBy: userId,
         usedAt: Timestamp.now()
+    });
+}
+
+export async function redeemAdminInviteAtomically(codeId, userId) {
+    return runTransaction(db, async (transaction) => {
+        const codeRef = doc(db, "accessCodes", codeId);
+        const codeSnap = await transaction.get(codeRef);
+
+        if (!codeSnap.exists()) {
+            throw new Error("Invalid access code");
+        }
+
+        const codeData = codeSnap.data() || {};
+        if (codeData.used) {
+            throw new Error("Code already used");
+        }
+
+        if (codeData.type !== 'admin_invite') {
+            throw new Error("Not an admin invite code");
+        }
+
+        if (codeData.expiresAt) {
+            const expiresAtMs = codeData.expiresAt.toMillis ? codeData.expiresAt.toMillis() : codeData.expiresAt;
+            if (Date.now() > expiresAtMs) {
+                throw new Error("Code has expired");
+            }
+        }
+
+        const teamId = codeData.teamId;
+        const teamRef = doc(db, "teams", teamId);
+        const userRef = doc(db, "users", userId);
+
+        const [teamSnap, userSnap] = await Promise.all([
+            transaction.get(teamRef),
+            transaction.get(userRef)
+        ]);
+
+        if (!teamSnap.exists()) {
+            throw new Error("Team not found");
+        }
+
+        const teamData = teamSnap.data() || {};
+        const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+        const userEmail = (userData.email || '').toLowerCase().trim();
+
+        if (userEmail) {
+            transaction.set(teamRef, {
+                adminEmails: arrayUnion(userEmail)
+            }, { merge: true });
+        }
+
+        transaction.set(userRef, {
+            coachOf: arrayUnion(teamId),
+            roles: arrayUnion('coach')
+        }, { merge: true });
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        return {
+            success: true,
+            teamId,
+            teamName: teamData.name || null
+        };
     });
 }
 
