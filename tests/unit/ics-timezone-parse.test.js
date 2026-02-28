@@ -79,6 +79,28 @@ describe('ICS timezone parsing', () => {
         expect(event.dtstart.toISOString()).toBe('2026-03-10T22:00:00.000Z');
     });
 
+    it('falls back when shortOffset throws RangeError in unsupported browsers', () => {
+        const realDateTimeFormat = Intl.DateTimeFormat;
+        vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+            if (options && options.timeZoneName === 'shortOffset') {
+                throw new RangeError('Unsupported timeZoneName value');
+            }
+            return new realDateTimeFormat(locale, options);
+        });
+
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART;TZID=America/New_York:20260310T180000',
+            'SUMMARY:Compatibility Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const [event] = parseICS(ics);
+        expect(event.dtstart.toISOString()).toBe('2026-03-10T22:00:00.000Z');
+    });
+
     it('drops events with invalid numeric UTC offsets and emits warning', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const ics = [

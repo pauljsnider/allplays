@@ -534,6 +534,35 @@ function parseDateTimeInTimeZone(args) {
   return resolvedDate;
 }
 
+let shortOffsetSupport;
+
+function supportsShortOffsetTimeZoneName() {
+  if (shortOffsetSupport != null) return shortOffsetSupport;
+
+  try {
+    const probeDate = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
+    const probeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      timeZoneName: 'shortOffset',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    const zonePart = probeFormatter.formatToParts(probeDate)
+      .find((part) => part.type === 'timeZoneName')?.value || '';
+    shortOffsetSupport = /^GMT(?:[+-]\d{1,2}(?::?\d{2})?)?$/.test(zonePart) || zonePart === 'UTC';
+  } catch (_) {
+    shortOffsetSupport = false;
+  }
+
+  return shortOffsetSupport;
+}
+
 /**
  * Resolve timezone offset (minutes from UTC) for a Date in a given IANA timezone.
  * @param {Date} date - Reference date
@@ -554,27 +583,29 @@ function getTimeZoneOffsetMinutes(date, timeZone) {
     return sign * ((hours * 60) + minutes);
   };
 
-  try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      timeZoneName: 'shortOffset',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    });
+  if (supportsShortOffsetTimeZoneName()) {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'shortOffset',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
 
-    const parts = formatter.formatToParts(date);
-    const zonePart = parts.find((part) => part.type === 'timeZoneName')?.value || '';
-    const parsedOffset = parseOffsetFromZonePart(zonePart);
-    if (parsedOffset != null) return parsedOffset;
-  } catch (error) {
-    // Browser may not support timeZoneName: 'shortOffset'. Fall through to component-diff fallback.
-    if (!(error instanceof RangeError)) {
-      console.warn('Unable to resolve timezone offset via shortOffset for ICS TZID:', timeZone, error);
+      const parts = formatter.formatToParts(date);
+      const zonePart = parts.find((part) => part.type === 'timeZoneName')?.value || '';
+      const parsedOffset = parseOffsetFromZonePart(zonePart);
+      if (parsedOffset != null) return parsedOffset;
+    } catch (error) {
+      // Browser may partially support shortOffset. Fall through to component-diff fallback.
+      if (!(error instanceof RangeError)) {
+        console.warn('Unable to resolve timezone offset via shortOffset for ICS TZID:', timeZone, error);
+      }
     }
   }
 
