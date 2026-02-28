@@ -399,7 +399,7 @@ export function parseICS(icsText) {
  * @returns {{name: string, params: Object}} Field name + parameter map
  */
 function parseICSField(field) {
-  const parts = field.split(';');
+  const parts = tokenizeICSFieldParts(field);
   const name = (parts[0] || '').toUpperCase();
   const params = {};
 
@@ -410,10 +410,76 @@ function parseICSField(field) {
 
     const key = part.substring(0, equalsIndex).toUpperCase();
     const rawValue = part.substring(equalsIndex + 1).trim();
-    params[key] = rawValue.replace(/^"|"$/g, '');
+    params[key] = decodeICSParamValue(rawValue);
   }
 
   return { name, params };
+}
+
+/**
+ * Split ICS field declaration into parameter parts while preserving escaped/quoted semicolons.
+ * @param {string} field - Raw field declaration
+ * @returns {string[]} Field name + parameter segments
+ */
+function tokenizeICSFieldParts(field) {
+  const parts = [];
+  let current = '';
+  let inQuotes = false;
+  let escaped = false;
+
+  for (let i = 0; i < field.length; i++) {
+    const char = field[i];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+      continue;
+    }
+
+    if (char === ';' && !inQuotes) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * Decode ICS parameter value escaping.
+ * Supports quoted values and common backslash/caret escape forms seen in feeds.
+ * @param {string} rawValue - Raw parameter value text
+ * @returns {string} Decoded parameter value
+ */
+function decodeICSParamValue(rawValue) {
+  let value = rawValue.trim();
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.slice(1, -1);
+  }
+
+  value = value
+    .replace(/\\([\\;,:"])/g, '$1')
+    .replace(/\^\^/g, '^')
+    .replace(/\^n/gi, '\n')
+    .replace(/\^'/g, '"');
+
+  return value;
 }
 
 /**

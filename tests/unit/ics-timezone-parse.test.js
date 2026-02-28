@@ -204,6 +204,46 @@ describe('ICS timezone parsing', () => {
         );
     });
 
+    it('unescapes quoted TZID parameter separators before timezone resolution', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART;TZID="Custom\\,Zone\\;Region":20260310T180000',
+            'SUMMARY:Escaped TZID Separators',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+        expect(events).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith(
+            'Unable to resolve ICS TZID datetime, dropping event date:',
+            'Custom,Zone;Region',
+            '20260310T180000'
+        );
+    });
+
+    it('unescapes escaped quotes inside quoted TZID parameter values', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'DTSTART;TZID="Custom\\\"Zone":20260310T180000',
+            'SUMMARY:Escaped TZID Quote',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+        expect(events).toHaveLength(0);
+        expect(warnSpy).toHaveBeenCalledWith(
+            'Unable to resolve ICS TZID datetime, dropping event date:',
+            'Custom"Zone',
+            '20260310T180000'
+        );
+    });
+
     it('drops non-existent DST spring-forward local times', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const ics = [
