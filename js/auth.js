@@ -17,6 +17,29 @@ import {
 } from './firebase.js?v=9';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
 
+async function cleanupFailedNewUser(user, context) {
+    if (!user) {
+        try {
+            await signOut(auth);
+        } catch (signOutError) {
+            console.error(`Error signing out after ${context}:`, signOutError);
+        }
+        return;
+    }
+
+    try {
+        await user.delete();
+    } catch (deleteError) {
+        console.error(`Error deleting user after ${context}:`, deleteError);
+    }
+
+    try {
+        await signOut(auth);
+    } catch (signOutError) {
+        console.error(`Error signing out after ${context}:`, signOutError);
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -52,15 +75,22 @@ export async function signup(email, password, activationCode) {
         // Parent Invite Flow
         try {
             await redeemParentInvite(userId, validation.data.code);
-            // Also create basic profile
+        } catch (e) {
+            console.error('Error linking parent:', e);
+            await cleanupFailedNewUser(userCredential.user, 'parent invite link failure');
+            // Parent invite signup must fail closed if linking fails.
+            throw e;
+        }
+
+        // Best-effort profile write after invite redemption.
+        try {
             await updateUserProfile(userId, {
                 email: email,
                 createdAt: new Date(),
                 emailVerificationRequired: true
             });
         } catch (e) {
-            console.error('Error linking parent:', e);
-            // Don't fail the whole signup, but log it
+            console.error('Error creating user profile after parent invite redeem:', e);
         }
     } else {
         // Standard Flow (Coach/Admin)
@@ -183,6 +213,14 @@ async function processGoogleAuthResult(result, activationCode = null) {
         if (validation.type === 'parent_invite') {
             try {
                 await redeemParentInvite(userId, validation.data.code);
+            } catch (e) {
+                console.error('Error linking parent:', e);
+                await cleanupFailedNewUser(result.user, 'parent invite link failure');
+                throw e;
+            }
+
+            // Best-effort profile write after invite redemption.
+            try {
                 await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
@@ -190,7 +228,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     createdAt: new Date()
                 });
             } catch (e) {
-                console.error('Error linking parent:', e);
+                console.error('Error creating user profile after parent invite redeem:', e);
             }
         } else {
             try {
