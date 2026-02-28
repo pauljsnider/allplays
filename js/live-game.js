@@ -1323,7 +1323,7 @@ async function init() {
     [team, game, players, configs] = await Promise.all([
       getTeam(state.teamId),
       getGame(state.teamId, state.gameId),
-      getPlayers(state.teamId, { includeInactive: true }),
+      getPlayers(state.teamId, { includeInactive: state.isReplay }),
       getConfigs(state.teamId)
     ]);
   } catch (error) {
