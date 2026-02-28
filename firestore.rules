@@ -20,19 +20,11 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
-    function isCoachForTeam(teamId) {
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      return isSignedIn() &&
-             exists(userPath) &&
-             teamId in get(userPath).data.get('coachOf', []);
-    }
-
     function isTeamOwnerOrAdmin(teamId) {
       return isSignedIn() &&
              (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
               (request.auth.token.email != null &&
                request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
-              isCoachForTeam(teamId) ||
               isGlobalAdmin());
     }
 
@@ -63,7 +55,6 @@ service cloud.firestore {
       let isOwnerOrAdmin = team.ownerId == request.auth.uid ||
         (request.auth.token.email != null &&
          request.auth.token.email.lower() in team.get('adminEmails', [])) ||
-        isCoachForTeam(teamId) ||
         isGlobalAdmin();
 
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
