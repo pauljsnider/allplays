@@ -30,6 +30,12 @@ import {
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
+import {
+    isTeamActive,
+    filterTeamsByActive,
+    shouldIncludeTeamInLiveOrUpcoming,
+    shouldIncludeTeamInReplay
+} from './team-visibility.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -176,30 +182,38 @@ export async function uploadStatSheetPhoto(file) {
 }
 
 // Teams
-export async function getTeams() {
+export async function getTeams(options = {}) {
+    const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), orderBy("name"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
-export async function getTeam(teamId) {
+export async function getTeam(teamId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const docRef = doc(db, "teams", teamId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-        return { id: docSnap.id, ...docSnap.data() };
+        const team = { id: docSnap.id, ...docSnap.data() };
+        if (!includeInactive && !isTeamActive(team)) return null;
+        return team;
     } else {
         return null;
     }
 }
 
-export async function getUserTeams(userId) {
+export async function getUserTeams(userId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), where("ownerId", "==", userId));
     const snapshot = await getDocs(q);
     // Sort in memory instead of query to avoid composite index requirement
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
-export async function getUserTeamsWithAccess(userId, email) {
+export async function getUserTeamsWithAccess(userId, email, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const [ownedSnap, adminSnap] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
         email ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", email.toLowerCase()))) : Promise.resolve({ docs: [] })
@@ -209,14 +223,16 @@ export async function getUserTeamsWithAccess(userId, email) {
     ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
     adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
 
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
 /**
  * Get teams where the user is connected as a parent (via parentOf)
  * This is used to power the "My Teams" view for parents, in a read-only way.
  */
-export async function getParentTeams(userId) {
+export async function getParentTeams(userId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const profile = await getUserProfile(userId);
     if (!profile || !Array.isArray(profile.parentOf) || profile.parentOf.length === 0) {
         return [];
@@ -227,7 +243,7 @@ export async function getParentTeams(userId) {
 
     const teams = [];
     for (const teamId of teamIds) {
-        const team = await getTeam(teamId);
+        const team = await getTeam(teamId, { includeInactive });
         if (team) {
             teams.push(team);
         }
@@ -266,6 +282,15 @@ export async function getUserByEmail(email) {
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'active')) {
+        teamData.active = true;
+    }
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'deactivatedAt')) {
+        teamData.deactivatedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'deactivatedBy')) {
+        teamData.deactivatedBy = null;
+    }
     const docRef = await addDoc(collection(db, "teams"), teamData);
     return docRef.id;
 }
@@ -277,29 +302,13 @@ export async function updateTeam(teamId, teamData) {
 }
 
 export async function deleteTeam(teamId) {
-    // Delete games and their subcollections
-    const gamesSnapshot = await getDocs(collection(db, `teams/${teamId}/games`));
-    for (const gameDoc of gamesSnapshot.docs) {
-        const gameId = gameDoc.id;
-        // Remove events
-        const eventsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/events`));
-        await Promise.all(eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-        // Remove aggregated stats
-        const statsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
-        await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-        await deleteDoc(gameDoc.ref);
-    }
-
-    // Delete players
-    const playersSnapshot = await getDocs(collection(db, `teams/${teamId}/players`));
-    await Promise.all(playersSnapshot.docs.map(docItem => deleteDoc(docItem.ref)));
-
-    // Delete configs
-    const configsSnapshot = await getDocs(collection(db, `teams/${teamId}/statTrackerConfigs`));
-    await Promise.all(configsSnapshot.docs.map(docItem => deleteDoc(docItem.ref)));
-
-    // Finally delete team document
-    await deleteDoc(doc(db, "teams", teamId));
+    const userId = auth.currentUser?.uid || null;
+    await updateDoc(doc(db, "teams", teamId), {
+        active: false,
+        deactivatedAt: Timestamp.now(),
+        deactivatedBy: userId,
+        updatedAt: Timestamp.now()
+    });
 }
 
 // Players
@@ -1090,6 +1099,7 @@ export async function getParentDashboardData(userId) {
     // parents[] entry, because production rules may block that
     // write even when the profile is updated successfully.
     const children = userProfile.parentOf;
+    const activeChildren = [];
     const upcomingGames = [];
 
     // Cache events per team to avoid duplicate reads when a parent
@@ -1102,6 +1112,9 @@ export async function getParentDashboardData(userId) {
 
     for (const child of children) {
         if (!child.teamId) continue;
+        const team = await getTeam(child.teamId);
+        if (!team) continue;
+        activeChildren.push(child);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
@@ -1131,7 +1144,7 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    return { upcomingGames, children };
+    return { upcomingGames, children: activeChildren };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
@@ -1624,6 +1637,11 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2082,6 +2100,11 @@ export async function getLiveGamesNow() {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2115,6 +2138,11 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInReplay(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }

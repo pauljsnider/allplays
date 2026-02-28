@@ -181,8 +181,14 @@
             <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                 <div class="p-4 border-b border-gray-200 flex justify-between items-center">
                     <h2 class="text-lg font-semibold text-gray-900">All Teams</h2>
-                    <input type="text" id="search-teams" placeholder="Search teams..."
-                        class="px-3 py-1 border border-gray-300 rounded-md text-sm">
+                    <div class="flex items-center gap-3">
+                        <label for="filter-inactive-teams" class="flex items-center gap-2 text-sm text-gray-600">
+                            <input id="filter-inactive-teams" type="checkbox" class="rounded border-gray-300">
+                            Show inactive
+                        </label>
+                        <input type="text" id="search-teams" placeholder="Search teams..."
+                            class="px-3 py-1 border border-gray-300 rounded-md text-sm">
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">

@@ -267,11 +267,11 @@
                         const buttonEl = e.currentTarget;
                         const teamId = buttonEl.dataset.teamId;
                         const teamName = buttonEl.dataset.teamName;
-                        if (!confirm(`Delete team "${teamName}"? This will remove its schedule, roster, and stats.`)) return;
+                        if (!confirm(`Deactivate team "${teamName}"? Team data will be retained for history.`)) return;
                         const card = buttonEl.closest('[data-team-card]');
                         const originalText = buttonEl.textContent;
                         buttonEl.disabled = true;
-                        buttonEl.textContent = 'Deleting...';
+                        buttonEl.textContent = 'Deactivating...';
                         try {
                             await deleteTeam(teamId);
                             if (card) card.remove();
@@ -293,8 +293,8 @@
                                 `;
                             }
                         } catch (err) {
-                            console.error('Delete team failed', err);
-                            alert('Error deleting team. ' + (err?.message || 'Please try again.'));
+                            console.error('Deactivate team failed', err);
+                            alert('Error deactivating team. ' + (err?.message || 'Please try again.'));
                             buttonEl.disabled = false;
                             buttonEl.textContent = originalText;
                         }
