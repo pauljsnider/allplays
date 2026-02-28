@@ -67,8 +67,10 @@ describe('signup parent invite flow', () => {
         dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
 
         await expect(signup('parent@example.com', 'password123', 'PARENT1')).rejects.toThrow('Team or Player not found');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT1');
         expect(deleteMock).toHaveBeenCalledTimes(1);
         expect(firebaseMocks.signOut).toHaveBeenCalledTimes(1);
+        expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
     });
 
@@ -95,8 +97,10 @@ describe('signup parent invite flow', () => {
         dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
 
         await expect(loginWithGoogle('PARENT1')).rejects.toThrow('Team or Player not found');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-1', 'PARENT1');
         expect(deleteMock).toHaveBeenCalledTimes(1);
         expect(firebaseMocks.signOut).toHaveBeenCalledTimes(1);
+        expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
     });
 
