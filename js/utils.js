@@ -359,14 +359,15 @@ export function parseICS(icsText) {
         const field = line.substring(0, colonIndex);
         const value = line.substring(colonIndex + 1);
 
-        const fieldName = field.split(';')[0]; // Handle fields like DTSTART;TZID=...
+        const parsedField = parseICSField(field);
+        const fieldName = parsedField.name;
 
         switch (fieldName) {
           case 'DTSTART':
-            currentEvent.dtstart = parseICSDate(value);
+            currentEvent.dtstart = parseICSDate(value, parsedField.params);
             break;
           case 'DTEND':
-            currentEvent.dtend = parseICSDate(value);
+            currentEvent.dtend = parseICSDate(value, parsedField.params);
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
@@ -393,11 +394,102 @@ export function parseICS(icsText) {
 }
 
 /**
+ * Parse ICS field declaration with optional parameters.
+ * Example: DTSTART;TZID=America/New_York;VALUE=DATE-TIME
+ * @param {string} field - Field text before colon
+ * @returns {{name: string, params: Object}} Field name + parameter map
+ */
+function parseICSField(field) {
+  const parts = tokenizeICSFieldParts(field);
+  const name = (parts[0] || '').toUpperCase();
+  const params = {};
+
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    const equalsIndex = part.indexOf('=');
+    if (equalsIndex <= 0) continue;
+
+    const key = part.substring(0, equalsIndex).toUpperCase();
+    const rawValue = part.substring(equalsIndex + 1).trim();
+    params[key] = decodeICSParamValue(rawValue);
+  }
+
+  return { name, params };
+}
+
+/**
+ * Split ICS field declaration into parameter parts while preserving escaped/quoted semicolons.
+ * @param {string} field - Raw field declaration
+ * @returns {string[]} Field name + parameter segments
+ */
+function tokenizeICSFieldParts(field) {
+  const parts = [];
+  let current = '';
+  let inQuotes = false;
+  let escaped = false;
+
+  for (let i = 0; i < field.length; i++) {
+    const char = field[i];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+      continue;
+    }
+
+    if (char === ';' && !inQuotes) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * Decode ICS parameter value escaping.
+ * Supports quoted values and common backslash/caret escape forms seen in feeds.
+ * @param {string} rawValue - Raw parameter value text
+ * @returns {string} Decoded parameter value
+ */
+function decodeICSParamValue(rawValue) {
+  let value = rawValue.trim();
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.slice(1, -1);
+  }
+
+  value = value
+    .replace(/\\([\\;,:"])/g, '$1')
+    .replace(/\^\^/g, '^')
+    .replace(/\^n/gi, '\n')
+    .replace(/\^'/g, '"');
+
+  return value;
+}
+
+/**
  * Parse ICS date format to JavaScript Date
  * @param {string} icsDate - Date string from ICS file
+ * @param {Object} params - ICS property parameters (TZID, VALUE, etc)
  * @returns {Date} JavaScript Date object
  */
-function parseICSDate(icsDate) {
+function parseICSDate(icsDate, params = {}) {
   // ICS dates are in format: 20251115T020000Z or 20251115
   const year = parseInt(icsDate.substring(0, 4));
   const month = parseInt(icsDate.substring(4, 6)) - 1; // JS months are 0-indexed
@@ -407,18 +499,270 @@ function parseICSDate(icsDate) {
     // Has time component
     const hour = parseInt(icsDate.substring(9, 11));
     const minute = parseInt(icsDate.substring(11, 13));
-    const second = parseInt(icsDate.substring(13, 15));
+    const second = parseInt(icsDate.substring(13, 15) || '0');
 
     if (icsDate.endsWith('Z')) {
       // UTC time
       return new Date(Date.UTC(year, month, day, hour, minute, second));
-    } else {
-      // Local time
-      return new Date(year, month, day, hour, minute, second);
     }
+
+    const offsetMatch = icsDate.match(/([+-])(\d{2}):?(\d{2})$/);
+    if (offsetMatch) {
+      const sign = offsetMatch[1] === '+' ? 1 : -1;
+      const offsetHours = parseInt(offsetMatch[2], 10);
+      const offsetMinutes = parseInt(offsetMatch[3], 10);
+
+      if (offsetHours > 14 || offsetMinutes > 59) {
+        console.warn('Invalid ICS numeric UTC offset:', icsDate);
+        return null;
+      }
+
+      const totalOffsetMinutes = sign * ((offsetHours * 60) + offsetMinutes);
+      const utcMs = Date.UTC(year, month, day, hour, minute, second) - (totalOffsetMinutes * 60000);
+      return new Date(utcMs);
+    }
+
+    const rawTzid = typeof params.TZID === 'string' ? params.TZID : '';
+    const tzid = rawTzid ? rawTzid.replace(/^\//, '') : '';
+    if (rawTzid && !tzid) {
+      console.warn('Malformed ICS TZID value, dropping event date:', rawTzid, icsDate);
+      return null;
+    }
+
+    if (tzid) {
+      const tzDate = parseDateTimeInTimeZone({
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        timeZone: tzid
+      });
+
+      if (tzDate) return tzDate;
+      console.warn('Unable to resolve ICS TZID datetime, dropping event date:', tzid, icsDate);
+      return null;
+    }
+
+    // Floating/local ICS time: preserve existing local-browser behavior.
+    return new Date(year, month, day, hour, minute, second);
   } else {
     // Date only
     return new Date(year, month, day);
+  }
+}
+
+/**
+ * Convert calendar wall time in an IANA timezone to an absolute Date.
+ * @param {Object} args - Date-time parts and timezone
+ * @returns {Date|null} Converted Date or null when timezone cannot be resolved
+ */
+function parseDateTimeInTimeZone(args) {
+  const {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    timeZone
+  } = args;
+
+  const initialUtcMs = Date.UTC(year, month, day, hour, minute, second);
+  let resolvedUtcMs = initialUtcMs;
+  let didConverge = false;
+  const maxOffsetIterations = 8;
+
+  // Iterate because timezone offsets can vary with DST near boundaries.
+  for (let i = 0; i < maxOffsetIterations; i++) {
+    const offsetMinutes = getTimeZoneOffsetMinutes(new Date(resolvedUtcMs), timeZone);
+    if (offsetMinutes == null) {
+      console.warn('Unable to resolve timezone offset while parsing ICS TZID datetime:', timeZone);
+      return null;
+    }
+
+    const nextUtcMs = Date.UTC(year, month, day, hour, minute, second) - (offsetMinutes * 60000);
+    if (nextUtcMs === resolvedUtcMs) {
+      didConverge = true;
+      break;
+    }
+    resolvedUtcMs = nextUtcMs;
+  }
+
+  if (!didConverge) {
+    console.warn(
+      'Timezone offset iteration did not converge for ICS TZID datetime:',
+      timeZone,
+      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+    );
+    return null;
+  }
+
+  const resolvedDate = new Date(resolvedUtcMs);
+  const roundTripped = getWallClockPartsInTimeZone(resolvedDate, timeZone);
+  if (
+    !roundTripped ||
+    roundTripped.year !== year ||
+    roundTripped.month !== month ||
+    roundTripped.day !== day ||
+    roundTripped.hour !== hour ||
+    roundTripped.minute !== minute ||
+    roundTripped.second !== second
+  ) {
+    console.warn(
+      'Detected invalid or non-existent local time for ICS TZID datetime:',
+      timeZone,
+      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+    );
+    return null;
+  }
+
+  return resolvedDate;
+}
+
+let shortOffsetSupport;
+
+function parseShortOffsetZonePart(zonePart, options = {}) {
+  const { requireTwoDigitHours = false } = options;
+  if (!zonePart || zonePart === 'GMT' || zonePart === 'UTC') return 0;
+
+  const offsetMatch = zonePart.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!offsetMatch) return null;
+
+  const rawHours = offsetMatch[2];
+  if (requireTwoDigitHours && rawHours.length !== 2) return null;
+
+  const sign = offsetMatch[1] === '+' ? 1 : -1;
+  const hours = parseInt(rawHours, 10);
+  const minutes = parseInt(offsetMatch[3] || '0', 10);
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours > 23 || minutes > 59) {
+    return null;
+  }
+
+  return sign * ((hours * 60) + minutes);
+}
+
+function supportsShortOffsetTimeZoneName() {
+  if (shortOffsetSupport != null) return shortOffsetSupport;
+
+  try {
+    const probeDate = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
+    const probeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      timeZoneName: 'shortOffset',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    const zonePart = probeFormatter.formatToParts(probeDate)
+      .find((part) => part.type === 'timeZoneName')?.value || '';
+    shortOffsetSupport = parseShortOffsetZonePart(zonePart, { requireTwoDigitHours: true }) != null;
+  } catch (_) {
+    shortOffsetSupport = false;
+  }
+
+  return shortOffsetSupport;
+}
+
+/**
+ * Resolve timezone offset (minutes from UTC) for a Date in a given IANA timezone.
+ * @param {Date} date - Reference date
+ * @param {string} timeZone - IANA timezone name
+ * @returns {number|null} Offset in minutes, or null if unavailable
+ */
+function getTimeZoneOffsetMinutes(date, timeZone) {
+  const parseOffsetFromZonePart = (zonePart) => {
+    // Convention used throughout this module: offsetMinutes = local time minus UTC.
+    // Example: "GMT+05" => +300 because local time is 5 hours ahead of UTC.
+    return parseShortOffsetZonePart(zonePart, { requireTwoDigitHours: true });
+  };
+
+  if (supportsShortOffsetTimeZoneName()) {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'shortOffset',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+
+      const parts = formatter.formatToParts(date);
+      const zonePart = parts.find((part) => part.type === 'timeZoneName')?.value || '';
+      const parsedOffset = parseOffsetFromZonePart(zonePart);
+      if (parsedOffset != null) return parsedOffset;
+    } catch (error) {
+      // Browser may partially support shortOffset. Fall through to component-diff fallback.
+      if (!(error instanceof RangeError)) {
+        console.warn('Unable to resolve timezone offset via shortOffset for ICS TZID:', timeZone, error);
+      }
+    }
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, timeZone);
+  if (!wallClock) {
+    console.warn('Unable to resolve timezone offset for ICS TZID:', timeZone);
+    return null;
+  }
+
+  const asUtcWallClock = Date.UTC(
+    wallClock.year,
+    wallClock.month,
+    wallClock.day,
+    wallClock.hour,
+    wallClock.minute,
+    wallClock.second
+  );
+
+  return Math.round((asUtcWallClock - date.getTime()) / 60000);
+}
+
+/**
+ * Resolve wall-clock parts in a timezone for a given Date.
+ * @param {Date} date - Instant to represent in target timezone
+ * @param {string} timeZone - IANA timezone name
+ * @returns {{year:number,month:number,day:number,hour:number,minute:number,second:number}|null}
+ */
+function getWallClockPartsInTimeZone(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    const parts = formatter.formatToParts(date);
+    const getPart = (type) => parseInt(parts.find((part) => part.type === type)?.value || '', 10);
+    const year = getPart('year');
+    const month = getPart('month') - 1;
+    const day = getPart('day');
+    const hour = getPart('hour');
+    const minute = getPart('minute');
+    const second = getPart('second');
+
+    if ([year, month, day, hour, minute, second].some((value) => Number.isNaN(value))) {
+      return null;
+    }
+
+    return { year, month, day, hour, minute, second };
+  } catch (error) {
+    console.warn('Unable to resolve timezone wall-clock parts for ICS TZID:', timeZone, error);
+    return null;
   }
 }
 
