@@ -20,8 +20,8 @@ describe('team access helpers', () => {
     expect(hasFullTeamAccess({ uid: 'u2', isAdmin: true }, TEAM)).toBe(true);
   });
 
-  it('grants full access to assigned coach', () => {
-    expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toBe(true);
+  it('does not grant full access from coachOf alone', () => {
+    expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toBe(false);
   });
 
   it('returns parent access level for parent-linked users', () => {

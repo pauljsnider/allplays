@@ -370,6 +370,7 @@ export function parseICS(icsText) {
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
+            currentEvent.isPractice = isPracticeEvent(value);
             break;
           case 'DESCRIPTION':
             currentEvent.description = value;
@@ -529,6 +530,13 @@ export function generateSeriesId() {
 const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+function toLocalDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 /**
  * Expand a recurring practice master into individual occurrences
  * @param {Object} master - The series master document
@@ -551,13 +559,47 @@ export function expandRecurrence(master, windowDays = 180) {
   const normalizedInterval = Math.max(1, Number(interval) || 1);
   const exDates = master.exDates || [];
   const overrides = master.overrides || {};
+  let untilBoundary = null;
+
+  if (until) {
+    const untilDate = until.toDate ? until.toDate() : new Date(until);
+    untilBoundary = new Date(untilDate);
+
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    const isUtcMidnight =
+      untilBoundary.getUTCHours() === 0 &&
+      untilBoundary.getUTCMinutes() === 0 &&
+      untilBoundary.getUTCSeconds() === 0 &&
+      untilBoundary.getUTCMilliseconds() === 0;
+
+    // Handle UTC date-only parsing first (new Date('YYYY-MM-DD') from date inputs).
+    if (isUtcMidnight) {
+      untilBoundary = new Date(
+        untilBoundary.getUTCFullYear(),
+        untilBoundary.getUTCMonth(),
+        untilBoundary.getUTCDate(),
+        23,
+        59,
+        59,
+        999
+      );
+    } else if (isLocalMidnight) {
+      // Local date-only values should include the full local end date.
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
 
   // Start from series creation date
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
+  const seriesStartDayNumber = Math.floor(seriesStart.getTime() / MS_PER_DAY);
+  const seriesStartDayOfWeek = seriesStart.getDay();
+  const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStartDayOfWeek;
   let current = new Date(seriesStart);
   let generated = 0;
-  const seriesStartUtc = Date.UTC(seriesStart.getFullYear(), seriesStart.getMonth(), seriesStart.getDate());
-  const seriesWeekStartUtc = seriesStartUtc - (seriesStart.getDay() * MS_PER_DAY);
 
   // For weekly recurrence, we need to check each day
   const maxIterations = windowDays * 2; // Safety limit
@@ -567,36 +609,32 @@ export function expandRecurrence(master, windowDays = 180) {
     iterations++;
 
     // Check end conditions
-    if (until) {
-      const untilDate = until.toDate ? until.toDate() : new Date(until);
-      if (current > untilDate) break;
+    if (untilBoundary) {
+      if (current > untilBoundary) break;
     }
     if (count && generated >= count) break;
 
-    const isoDate = current.toISOString().split('T')[0];
-    const dayCode = DAY_CODES[current.getDay()];
+    const isoDate = toLocalDateKey(current);
+    const currentDayOfWeek = current.getDay();
+    const dayCode = DAY_CODES[currentDayOfWeek];
+    const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+    const daysSinceSeriesStart = currentDayNumber - seriesStartDayNumber;
+    const currentWeekStartDayNumber = currentDayNumber - currentDayOfWeek;
+    const weeksSinceSeriesStart = Math.floor((currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
+    const weeklyIntervalMatch =
+      weeksSinceSeriesStart >= 0 &&
+      (weeksSinceSeriesStart % normalizedInterval === 0);
 
     // Check if this day matches the recurrence pattern
     let matches = false;
-    const daysSinceSeriesStart = Math.floor(
-      (
-        Date.UTC(current.getFullYear(), current.getMonth(), current.getDate()) -
-        seriesStartUtc
-      ) / MS_PER_DAY
-    );
-    const currentUtc = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
-    const hasStarted = currentUtc >= seriesStartUtc;
-    const currentWeekStartUtc = currentUtc - (current.getDay() * MS_PER_DAY);
-    const weeksSinceSeriesWeekStart = Math.floor((currentWeekStartUtc - seriesWeekStartUtc) / (7 * MS_PER_DAY));
-    const matchesWeeklyInterval = hasStarted && weeksSinceSeriesWeekStart >= 0 && (weeksSinceSeriesWeekStart % normalizedInterval === 0);
-
     if (freq === 'weekly' && byDays.length > 0) {
-      matches = byDays.includes(dayCode) && matchesWeeklyInterval;
+      matches = byDays.includes(dayCode) && weeklyIntervalMatch && daysSinceSeriesStart >= 0;
     } else if (freq === 'daily') {
-      matches = hasStarted && (daysSinceSeriesStart % normalizedInterval === 0);
+      matches = daysSinceSeriesStart >= 0 && (daysSinceSeriesStart % normalizedInterval === 0);
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
-      matches = current.getDay() === seriesStart.getDay() && matchesWeeklyInterval;
+      matches = currentDayOfWeek === seriesStartDayOfWeek && weeklyIntervalMatch;
+      matches = matches && daysSinceSeriesStart >= 0;
     }
 
     // Only process if within visible window and matches pattern
@@ -641,7 +679,7 @@ export function expandRecurrence(master, windowDays = 180) {
       generated++;
     }
 
-    // Advance by one day; interval matching is handled by daysSinceSeriesStart modulo checks
+    // Advance to next day
     current.setDate(current.getDate() + 1);
   }
 

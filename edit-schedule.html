@@ -132,6 +132,28 @@
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                         </div>
                         <div>
+                            <label class="block text-sm font-medium text-gray-700">Season Label</label>
+                            <input type="text" id="seasonLabel" placeholder="e.g. 2026 Spring"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <p class="text-xs text-gray-500 mt-1">Used to separate records by season.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Competition Type</label>
+                            <select id="competitionType"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                <option value="league">League</option>
+                                <option value="tournament">Tournament</option>
+                                <option value="scrimmage">Scrimmage</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                                <input type="checkbox" id="countsTowardSeasonRecord" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                Count this game toward season record
+                            </label>
+                        </div>
+                        <div>
                             <label class="block text-sm font-medium text-gray-700">Arrival Time</label>
                             <input type="datetime-local" id="arrivalTime"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
@@ -907,14 +929,22 @@
                         title: event.title,
                         location: event.location || 'TBD',
                         notes: event.notes,
+                        isHome: event.isHome ?? null,
+                        kitColor: event.kitColor || null,
+                        seasonLabel: event.seasonLabel || null,
+                        competitionType: event.competitionType || 'league',
+                        countsTowardSeasonRecord: event.countsTowardSeasonRecord !== false,
+                        arrivalTime: event.arrivalTime || null,
+                        assignments: Array.isArray(event.assignments) ? event.assignments : [],
+                        rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
-                            id: event.id,
-                            eventId: event.id,
-                            isPractice: eventType === 'practice',
-                            isRecurring: false
-                        });
+                        id: event.id,
+                        eventId: event.id,
+                        isPractice: eventType === 'practice',
+                        isRecurring: false
+                    });
                 }
             });
 
@@ -1305,6 +1335,9 @@
                             ${game.isHome === true ? '<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
                             ${game.isHome === false ? '<span class="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
                             ${game.kitColor ? `<span class="inline-block bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
+                            ${game.seasonLabel ? `<span class="inline-block bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold">Season: ${escapeHtml(game.seasonLabel)}</span>` : ''}
+                            ${game.competitionType ? `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(String(game.competitionType).replace(/_/g, ' '))}</span>` : ''}
+                            ${game.countsTowardSeasonRecord === false ? '<span class="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-semibold">No record impact</span>' : ''}
                         </div>
                         ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${formatTime(game.arrivalTime)}</div>` : ''}
                         ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
@@ -1361,6 +1394,9 @@
             // Populate new fields
             setHomeAway(game.isHome === true ? 'home' : (game.isHome === false ? 'away' : null));
             document.getElementById('kitColor').value = game.kitColor || '';
+            document.getElementById('seasonLabel').value = game.seasonLabel || inferSeasonLabel(date);
+            document.getElementById('competitionType').value = game.competitionType || 'league';
+            document.getElementById('countsTowardSeasonRecord').checked = game.countsTowardSeasonRecord !== false;
             if (game.arrivalTime) {
                 const at = game.arrivalTime.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime);
                 const atStr = new Date(at.getTime() - at.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -1385,6 +1421,14 @@
             document.getElementById('homeAwayHome').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'home' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
             document.getElementById('homeAwayAway').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'away' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
         };
+
+        function inferSeasonLabel(dateLike) {
+            const d = dateLike instanceof Date
+                ? dateLike
+                : (dateLike?.toDate ? dateLike.toDate() : new Date(dateLike || Date.now()));
+            if (Number.isNaN(d.getTime())) return String(new Date().getFullYear());
+            return String(d.getFullYear());
+        }
 
         // ===== ASSIGNMENT ROWS =====
         function addAssignmentRow(role = '', value = '') {
@@ -1428,6 +1472,9 @@
             clearLinkedOpponent();
             setHomeAway(null);
             document.getElementById('kitColor').value = '';
+            document.getElementById('seasonLabel').value = inferSeasonLabel(new Date());
+            document.getElementById('competitionType').value = 'league';
+            document.getElementById('countsTowardSeasonRecord').checked = true;
             document.getElementById('arrivalTime').value = '';
             document.getElementById('gameNotes').value = '';
             document.getElementById('assignment-rows').innerHTML = '';
@@ -1447,6 +1494,7 @@
         }
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
+        resetGameForm();
 
         document.getElementById('add-game-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1460,9 +1508,10 @@
             try {
                 const isHomeVal = document.getElementById('isHome').value;
                 const arrivalVal = document.getElementById('arrivalTime').value;
+                const parsedGameDate = new Date(dateVal);
                 const gameData = {
                     type: 'game',
-                    date: Timestamp.fromDate(new Date(dateVal)),
+                    date: Timestamp.fromDate(parsedGameDate),
                     opponent,
                     location,
                     statTrackerConfigId: configId || null,
@@ -1471,6 +1520,9 @@
                     opponentTeamPhoto: selectedOpponentTeam ? selectedOpponentTeam.photoUrl || null : null,
                     isHome: isHomeVal === 'home' ? true : (isHomeVal === 'away' ? false : null),
                     kitColor: document.getElementById('kitColor').value.trim() || null,
+                    seasonLabel: document.getElementById('seasonLabel').value.trim() || inferSeasonLabel(parsedGameDate),
+                    competitionType: document.getElementById('competitionType').value || 'league',
+                    countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked,
                     arrivalTime: arrivalVal ? Timestamp.fromDate(new Date(arrivalVal)) : null,
                     notes: document.getElementById('gameNotes').value.trim() || null,
                     assignments: getAssignmentsFromForm()
@@ -1903,6 +1955,9 @@
                     status: 'scheduled',
                     homeScore: 0,
                     awayScore: 0,
+                    seasonLabel: inferSeasonLabel(eventDate),
+                    competitionType: 'league',
+                    countsTowardSeasonRecord: true,
                     calendarEventUid: calendarEvent.uid
                 });
 
