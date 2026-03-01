@@ -1,24 +1,35 @@
-# Requirements Role Notes (Parent Take-Home Packet Visibility)
+# Requirements Role Notes (Issue #53 Rideshare)
 
 ## Objective
-Ensure parents can reliably open a generated take-home packet from the parent dashboard schedule experience.
+Ship an MVP rideshare workflow on `parent-dashboard.html` so parents can offer seats and request spots for scheduled games/practices.
 
 ## Current State
-- `Open Packet` in schedule list/calendar only appears when `practiceHomePacket` is attached directly to the rendered event.
-- Event->session linkage can miss in some recurring/calendar cases even when a valid practice session packet exists.
-- Result: packet exists in session data, but no `Open Packet` CTA appears in schedule.
+- Parent dashboard supports availability (RSVP), attendance, and take-home packets.
+- No rideshare data model, no rideshare UI, and no permissions for rideshare documents.
 
 ## Proposed State
-- Keep existing direct linkage path.
-- Add a safe fallback lookup so schedule views can resolve packet context from known practice sessions when direct event linkage is missing.
-- Preserve tenant/team boundaries and avoid cross-team packet exposure.
+- Add event-level rideshare offers + nested requests under each `teams/{teamId}/games/{gameId}` event.
+- Surface rideshare controls on parent schedule list cards and day modal.
+- Allow parent drivers to manage request decisions with transaction-protected seat counts.
 
-## User-Facing Acceptance Criteria
-1. Parent sees `Open Packet` on practice schedule cards when a packet exists for the matched session.
-2. Parent sees `Open Packet` in calendar day modal under the same conditions.
-3. If no packet exists, no CTA is shown (existing behavior).
-4. Fallback never maps to another team’s session.
+## Acceptance Mapping
+- Parent creates offer: `createRideOffer` + dashboard offer form.
+- Another parent requests for linked child: `requestRideSpot` + request actions.
+- Driver confirms and seat counts update: `updateRideRequestStatus` transaction updates `seatCountConfirmed`.
+- Cannot exceed seat capacity: transaction throws if confirm would overbook.
+- Parent-child linkage enforced: Firestore rules require `isParentForPlayer(teamId, childId)` for request create.
+- Dashboard reflects state in-page: refresh rideshare for event + rerender without navigation.
 
 ## Assumptions
-- Practice session docs remain the source of truth for packet content.
-- Team/date proximity is a valid fallback key when event IDs are absent or mismatched.
+- MVP scopes rideshare to Firestore-tracked DB events (`isDbGame=true`), not external ICS-only events.
+- A request ID is unique per parent+child per offer (`{parentUid}__{childId}`).
+- Offer owner (driver) is the primary manager; team owner/admin can also moderate via rules.
+
+## Risk Surface / Blast Radius
+- `parent-dashboard.html` (UI + interactions)
+- `js/db.js` (new Firestore helpers and transactions)
+- `firestore.rules` (new write/read paths)
+- New helper module + tests only (`js/rideshare-helpers.js`, `tests/unit/rideshare-helpers.test.js`)
+
+## Recommendation
+Ship this as a contained parent-dashboard MVP with strict rules and transaction checks now; defer notifications/recurring-series rideshare to follow-up issues.
