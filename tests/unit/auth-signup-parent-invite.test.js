@@ -43,7 +43,8 @@ describe('auth signup parent invite handling', () => {
         const user = {
             uid: 'user-1',
             email: 'parent@example.com',
-            reload: vi.fn().mockResolvedValue(undefined)
+            reload: vi.fn().mockResolvedValue(undefined),
+            delete: vi.fn().mockResolvedValue(undefined)
         };
 
         firebaseMocks.auth.currentUser = user;
@@ -59,11 +60,26 @@ describe('auth signup parent invite handling', () => {
     });
 
     it('rejects signup when parent invite profile finalization fails', async () => {
+        const user = firebaseMocks.auth.currentUser;
         dbMocks.updateUserProfile.mockRejectedValue(new Error('profile write failed'));
 
         await expect(signup('parent@example.com', 'secret123', 'PARENT01')).rejects.toThrow('profile write failed');
 
         expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT01');
+        expect(user.delete).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
+    });
+
+    it('still signs out and rethrows when auth-user cleanup delete fails', async () => {
+        const user = firebaseMocks.auth.currentUser;
+        const profileError = new Error('profile write failed');
+        user.delete.mockRejectedValue(new Error('delete failed'));
+        dbMocks.updateUserProfile.mockRejectedValue(profileError);
+
+        await expect(signup('parent@example.com', 'secret123', 'PARENT01')).rejects.toThrow('profile write failed');
+
+        expect(user.delete).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
     });
 });
