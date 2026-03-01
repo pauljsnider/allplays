@@ -46,4 +46,11 @@ describe('team chat last-read snapshot policy', () => {
             isWindowFocused: true
         })).toBe(false);
     });
+
+    it('does not update when active-view gates are omitted', () => {
+        expect(shouldUpdateChatLastRead({
+            hasCurrentUser: true,
+            hasTeamId: true
+        })).toBe(false);
+    });
 });
