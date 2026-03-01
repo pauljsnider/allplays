@@ -585,14 +585,15 @@ export function expandRecurrence(master, windowDays = 180) {
       ) / MS_PER_DAY
     );
     const currentUtc = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
+    const hasStarted = currentUtc >= seriesStartUtc;
     const currentWeekStartUtc = currentUtc - (current.getDay() * MS_PER_DAY);
     const weeksSinceSeriesWeekStart = Math.floor((currentWeekStartUtc - seriesWeekStartUtc) / (7 * MS_PER_DAY));
-    const matchesWeeklyInterval = daysSinceSeriesStart >= 0 && (weeksSinceSeriesWeekStart % normalizedInterval === 0);
+    const matchesWeeklyInterval = hasStarted && weeksSinceSeriesWeekStart >= 0 && (weeksSinceSeriesWeekStart % normalizedInterval === 0);
 
     if (freq === 'weekly' && byDays.length > 0) {
       matches = byDays.includes(dayCode) && matchesWeeklyInterval;
     } else if (freq === 'daily') {
-      matches = daysSinceSeriesStart >= 0 && (daysSinceSeriesStart % normalizedInterval === 0);
+      matches = hasStarted && (daysSinceSeriesStart % normalizedInterval === 0);
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
       matches = current.getDay() === seriesStart.getDay() && matchesWeeklyInterval;

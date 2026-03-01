@@ -120,6 +120,18 @@ describe('expandRecurrence daily interval behavior', () => {
         ]);
     });
 
+    it('honors every-3-days interval for daily recurrences', () => {
+        const occurrences = expandRecurrence(buildDailyMaster(3), 12);
+        const firstFive = occurrences.slice(0, 5).map((item) => item.instanceDate);
+
+        expect(firstFive).toEqual([
+            '2026-03-02',
+            '2026-03-05',
+            '2026-03-08',
+            '2026-03-11'
+        ]);
+    });
+
     it('keeps daily interval 1 behavior unchanged', () => {
         const occurrences = expandRecurrence(buildDailyMaster(1), 5);
         const firstFive = occurrences.slice(0, 5).map((item) => item.instanceDate);
