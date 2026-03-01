@@ -550,6 +550,39 @@ export function expandRecurrence(master, windowDays = 180) {
   const { freq, interval = 1, byDays = [], until, count } = master.recurrence;
   const exDates = master.exDates || [];
   const overrides = master.overrides || {};
+  let untilBoundary = null;
+
+  if (until) {
+    const untilDate = until.toDate ? until.toDate() : new Date(until);
+    untilBoundary = new Date(untilDate);
+
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    const isUtcMidnight =
+      untilBoundary.getUTCHours() === 0 &&
+      untilBoundary.getUTCMinutes() === 0 &&
+      untilBoundary.getUTCSeconds() === 0 &&
+      untilBoundary.getUTCMilliseconds() === 0;
+
+    // Handle UTC date-only parsing first (new Date('YYYY-MM-DD') from date inputs).
+    if (isUtcMidnight) {
+      untilBoundary = new Date(
+        untilBoundary.getUTCFullYear(),
+        untilBoundary.getUTCMonth(),
+        untilBoundary.getUTCDate(),
+        23,
+        59,
+        59,
+        999
+      );
+    } else if (isLocalMidnight) {
+      // Local date-only values should include the full local end date.
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
 
   // Start from series creation date
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
@@ -564,9 +597,8 @@ export function expandRecurrence(master, windowDays = 180) {
     iterations++;
 
     // Check end conditions
-    if (until) {
-      const untilDate = until.toDate ? until.toDate() : new Date(until);
-      if (current > untilDate) break;
+    if (untilBoundary) {
+      if (current > untilBoundary) break;
     }
     if (count && generated >= count) break;
 
