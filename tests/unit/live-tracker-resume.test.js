@@ -60,4 +60,16 @@ describe('live tracker resume clock state', () => {
     expect(result.period).toBe('Q2');
     expect(result.clock).toBe(24000);
   });
+
+  it('uses latest event order for mixed timestamp datasets', () => {
+    const result = deriveResumeClockState([
+      { period: 'Q3', gameClockMs: 150000, createdAt: { toMillis: () => 2000 } },
+      { period: 'Q3', gameClockMs: 160000, createdAt: null },
+      { period: 'Q4', gameClockMs: 10000, createdAt: null }
+    ]);
+
+    expect(result.restored).toBe(true);
+    expect(result.period).toBe('Q4');
+    expect(result.clock).toBe(10000);
+  });
 });

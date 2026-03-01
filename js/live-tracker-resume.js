@@ -86,26 +86,11 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         return { period: furthest.period, clock: furthest.clock, restored: true };
     }
 
-    const withoutTimestamp = candidates.filter(item => !Number.isFinite(item.createdAtMs));
-    const latestTimestamped = withTimestamp.reduce((best, item) => {
-        if (!best) return item;
-        if (item.createdAtMs > best.createdAtMs) return item;
-        if (item.createdAtMs === best.createdAtMs && item.order > best.order) return item;
-        return best;
-    }, null);
-    const untimestampedAfterLatestTimestamp = withoutTimestamp.filter(
-        item => item.order > latestTimestamped.order
+    // Mixed datasets can include pending serverTimestamp() writes (createdAt: null).
+    // In this case, preserve recency from snapshot order instead of ignoring untimestamped events.
+    const latestByOrder = candidates.reduce(
+        (best, item) => (item.order > best.order ? item : best),
+        candidates[0]
     );
-    if (untimestampedAfterLatestTimestamp.length) {
-        const latestUntimestamped = untimestampedAfterLatestTimestamp.reduce(
-            (best, item) => (item.order > best.order ? item : best),
-            untimestampedAfterLatestTimestamp[0]
-        );
-        return { period: latestUntimestamped.period, clock: latestUntimestamped.clock, restored: true };
-    }
-
-    const furthestUntimestamped = pickMostAdvanced(withoutTimestamp);
-    const chosen = compareProgress(furthestUntimestamped, latestTimestamped) > 0 ? furthestUntimestamped : latestTimestamped;
-
-    return { period: chosen.period, clock: chosen.clock, restored: true };
+    return { period: latestByOrder.period, clock: latestByOrder.clock, restored: true };
 }
