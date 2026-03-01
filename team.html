@@ -232,6 +232,7 @@
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
+        import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -270,6 +271,7 @@
         let scheduleViewMode = 'list';
         let scheduleCalendarMonth = new Date().getMonth();
         let scheduleCalendarYear = new Date().getFullYear();
+        let seasonFilterLabel = String(new Date().getFullYear());
 
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -344,24 +346,27 @@
             return Number.isNaN(d?.getTime?.()) ? null : d;
         }
 
-        function calculateSeasonRecord(games) {
-            let wins = 0;
-            let losses = 0;
-            let ties = 0;
+        function getSeasonRecordMeta(games, selectedSeason) {
+            const record = calculateSeasonRecord(games, { seasonLabel: selectedSeason });
+            const totalGames = record.wins + record.losses + record.ties;
+            const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+            return { record, totalGames, winPercentage };
+        }
 
-            games.forEach(game => {
-                if (game.status === 'completed' && game.homeScore !== undefined && game.awayScore !== undefined) {
-                    if (game.homeScore > game.awayScore) {
-                        wins++;
-                    } else if (game.homeScore < game.awayScore) {
-                        losses++;
-                    } else {
-                        ties++;
-                    }
-                }
-            });
+        function updateSeasonRecordCard(games, selectedSeason) {
+            const titleEl = document.getElementById('season-record-title');
+            const valueEl = document.getElementById('season-record-value');
+            const pctEl = document.getElementById('season-record-pct');
+            const playedEl = document.getElementById('season-record-played');
+            if (!titleEl || !valueEl || !pctEl || !playedEl) return;
 
-            return { wins, losses, ties };
+            const { record, totalGames, winPercentage } = getSeasonRecordMeta(games, selectedSeason);
+            titleEl.textContent = `Season Record (${selectedSeason})`;
+            valueEl.textContent = `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}`;
+            pctEl.textContent = totalGames > 0 ? `(${winPercentage}%)` : '';
+            playedEl.textContent = totalGames === 0
+                ? 'No countable games completed yet'
+                : `${totalGames} game${totalGames === 1 ? '' : 's'} played`;
         }
 
         function formatMMSS(ms) {
@@ -633,8 +638,15 @@
                     }
                 }
 
-                // Calculate season record
-                const record = calculateSeasonRecord(dbGames);
+                const seasonLabels = listSeasonLabels(dbGames);
+                if (!seasonLabels.length) {
+                    seasonLabels.push(String(new Date().getFullYear()));
+                }
+                if (!seasonLabels.includes(seasonFilterLabel)) {
+                    const currentYearLabel = String(new Date().getFullYear());
+                    seasonFilterLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0];
+                }
+                const seasonMeta = getSeasonRecordMeta(dbGames, seasonFilterLabel);
 
                 // Render Header
                 document.getElementById('team-header').innerHTML = `
@@ -677,8 +689,9 @@
                 `;
 
                 // Render Season Overview Cards
-                const totalGames = dbGames.filter(g => g.status === 'completed').length;
-                const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+                const totalGames = seasonMeta.totalGames;
+                const winPercentage = seasonMeta.winPercentage;
+                const record = seasonMeta.record;
                 const leagueSnapshot = team.leagueUrl
                     ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
                     : { ok: false, reason: 'missing-url', rows: [], match: null };
@@ -694,21 +707,26 @@
                     <!-- Season Record -->
                     <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
                         <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record</h3>
+                            <div class="flex flex-col gap-1">
+                                <h3 id="season-record-title" class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record (${seasonFilterLabel})</h3>
+                                <select id="season-record-filter" class="text-xs border border-gray-200 rounded px-2 py-0.5 text-gray-700">
+                                    ${seasonLabels.map((label) => `<option value="${escapeHtml(label)}" ${label === seasonFilterLabel ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                                </select>
+                            </div>
                             <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                             </svg>
                         </div>
                         <div class="flex items-baseline gap-2">
-                            <span class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
+                            <span id="season-record-value" class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
                             ${totalGames > 0
-                            ? `<span class="text-sm text-gray-500">(${winPercentage}%)</span>`
-                            : ''
+                            ? `<span id="season-record-pct" class="text-sm text-gray-500">(${winPercentage}%)</span>`
+                            : '<span id="season-record-pct" class="text-sm text-gray-500"></span>'
                         }
                         </div>
                         ${totalGames === 0
-                            ? `<p class="text-xs text-gray-500 mt-2">No games completed yet</p>`
-                            : `<p class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
+                            ? `<p id="season-record-played" class="text-xs text-gray-500 mt-2">No countable games completed yet</p>`
+                            : `<p id="season-record-played" class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
                         }
                     </div>
 
@@ -746,6 +764,14 @@
                         ${renderLeagueOverviewBody(leagueSnapshot, team)}
                     </div>
                 `;
+
+                const seasonFilterEl = document.getElementById('season-record-filter');
+                if (seasonFilterEl) {
+                    seasonFilterEl.addEventListener('change', () => {
+                        seasonFilterLabel = seasonFilterEl.value;
+                        updateSeasonRecordCard(dbGames, seasonFilterLabel);
+                    });
+                }
 
                 // Start countdown updates
                 if (nextGame) {

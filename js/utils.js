@@ -370,6 +370,7 @@ export function parseICS(icsText) {
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
+            currentEvent.isPractice = isPracticeEvent(value);
             break;
           case 'DESCRIPTION':
             currentEvent.description = value;
@@ -555,8 +556,42 @@ export function expandRecurrence(master, windowDays = 180) {
   const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
   const { freq, interval = 1, byDays = [], until, count } = master.recurrence;
+  const normalizedInterval = Math.max(1, Number(interval) || 1);
   const exDates = master.exDates || [];
   const overrides = master.overrides || {};
+  let untilBoundary = null;
+
+  if (until) {
+    const untilDate = until.toDate ? until.toDate() : new Date(until);
+    untilBoundary = new Date(untilDate);
+
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    const isUtcMidnight =
+      untilBoundary.getUTCHours() === 0 &&
+      untilBoundary.getUTCMinutes() === 0 &&
+      untilBoundary.getUTCSeconds() === 0 &&
+      untilBoundary.getUTCMilliseconds() === 0;
+
+    // Handle UTC date-only parsing first (new Date('YYYY-MM-DD') from date inputs).
+    if (isUtcMidnight) {
+      untilBoundary = new Date(
+        untilBoundary.getUTCFullYear(),
+        untilBoundary.getUTCMonth(),
+        untilBoundary.getUTCDate(),
+        23,
+        59,
+        59,
+        999
+      );
+    } else if (isLocalMidnight) {
+      // Local date-only values should include the full local end date.
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
 
   // Start from series creation date
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
@@ -574,9 +609,8 @@ export function expandRecurrence(master, windowDays = 180) {
     iterations++;
 
     // Check end conditions
-    if (until) {
-      const untilDate = until.toDate ? until.toDate() : new Date(until);
-      if (current > untilDate) break;
+    if (untilBoundary) {
+      if (current > untilBoundary) break;
     }
     if (count && generated >= count) break;
 
@@ -584,19 +618,23 @@ export function expandRecurrence(master, windowDays = 180) {
     const currentDayOfWeek = current.getDay();
     const dayCode = DAY_CODES[currentDayOfWeek];
     const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+    const daysSinceSeriesStart = currentDayNumber - seriesStartDayNumber;
     const currentWeekStartDayNumber = currentDayNumber - currentDayOfWeek;
     const weeksSinceSeriesStart = Math.floor((currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
-    const weeklyIntervalMatch = interval <= 1 || (weeksSinceSeriesStart >= 0 && weeksSinceSeriesStart % interval === 0);
+    const weeklyIntervalMatch =
+      weeksSinceSeriesStart >= 0 &&
+      (weeksSinceSeriesStart % normalizedInterval === 0);
 
     // Check if this day matches the recurrence pattern
     let matches = false;
     if (freq === 'weekly' && byDays.length > 0) {
-      matches = byDays.includes(dayCode) && weeklyIntervalMatch;
+      matches = byDays.includes(dayCode) && weeklyIntervalMatch && daysSinceSeriesStart >= 0;
     } else if (freq === 'daily') {
-      matches = true;
+      matches = daysSinceSeriesStart >= 0 && (daysSinceSeriesStart % normalizedInterval === 0);
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
       matches = currentDayOfWeek === seriesStartDayOfWeek && weeklyIntervalMatch;
+      matches = matches && daysSinceSeriesStart >= 0;
     }
 
     // Only process if within visible window and matches pattern
@@ -643,11 +681,6 @@ export function expandRecurrence(master, windowDays = 180) {
 
     // Advance to next day
     current.setDate(current.getDate() + 1);
-
-    // For daily with interval > 1, skip days
-    if (freq === 'daily' && interval > 1) {
-      current.setDate(current.getDate() + interval - 1);
-    }
   }
 
   return occurrences;

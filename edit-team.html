@@ -192,6 +192,7 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { hasFullTeamAccess } from './js/team-access.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -239,10 +240,7 @@
                 document.getElementById('page-title').textContent = 'Edit Team';
                 const team = await getTeam(teamId);
                 if (team) {
-                    // Check ownership
-                    const isAdmin = (team.adminEmails || []).map(e => e.toLowerCase()).includes((currentUser.email || '').toLowerCase());
-
-                    if (team.ownerId !== currentUser.uid && !isAdmin && !currentUser.isAdmin) {
+                    if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
                         alert("You don't have permission to edit this team.");
                         window.location.href = 'dashboard.html';
                         return;
