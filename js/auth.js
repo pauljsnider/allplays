@@ -92,6 +92,34 @@ export async function loginWithGoogle(activationCode = null) {
     }
 }
 
+function clearPendingActivationCode() {
+    try {
+        window.sessionStorage.removeItem('pendingActivationCode');
+    } catch (storageError) {
+        console.error('Error clearing pending activation code:', storageError);
+    }
+}
+
+async function cleanupFailedGoogleSignup(user, context) {
+    if (!user) {
+        return;
+    }
+
+    if (typeof user.delete === 'function') {
+        try {
+            await user.delete();
+        } catch (deleteError) {
+            console.error(`Error deleting auth user (${context}):`, deleteError);
+        }
+    }
+
+    try {
+        await signOut(auth);
+    } catch (signOutError) {
+        console.error(`Error signing out (${context}):`, signOutError);
+    }
+}
+
 // Shared function to process Google auth result (used by both popup and redirect flows)
 async function processGoogleAuthResult(result, activationCode = null) {
     console.log('[Google Auth] Processing result for user:', result.user.email);
@@ -108,26 +136,16 @@ async function processGoogleAuthResult(result, activationCode = null) {
         // New user - require activation code
         if (!code) {
             console.log('[Google Auth] No activation code - deleting unauthorized user');
-            try {
-                await result.user.delete();
-                await signOut(auth);
-            } catch (deleteError) {
-                console.error('Error deleting unauthorized Google user:', deleteError);
-                await signOut(auth);
-            }
+            clearPendingActivationCode();
+            await cleanupFailedGoogleSignup(result.user, 'missing activation code');
             throw new Error('Activation code is required for new accounts');
         }
 
         // Validate activation code
         const validation = await validateAccessCode(code);
         if (!validation.valid) {
-            try {
-                await result.user.delete();
-                await signOut(auth);
-            } catch (deleteError) {
-                console.error('Error deleting user with invalid code:', deleteError);
-                await signOut(auth);
-            }
+            clearPendingActivationCode();
+            await cleanupFailedGoogleSignup(result.user, 'invalid activation code');
             throw new Error(validation.message || 'Invalid activation code');
         }
 
@@ -144,19 +162,8 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 });
             } catch (e) {
                 console.error('Error linking parent:', e);
-
-                try {
-                    await result.user.delete();
-                } catch (deleteError) {
-                    console.error('Error deleting user after parent invite failure:', deleteError);
-                }
-
-                try {
-                    await signOut(auth);
-                } catch (signOutError) {
-                    console.error('Error signing out after parent invite failure:', signOutError);
-                }
-
+                clearPendingActivationCode();
+                await cleanupFailedGoogleSignup(result.user, 'parent invite linking failure');
                 throw e;
             }
         } else {
@@ -179,7 +186,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         }
 
         // Clear the activation code from sessionStorage
-        window.sessionStorage.removeItem('pendingActivationCode');
+        clearPendingActivationCode();
         console.log('[Google Auth] New user setup complete');
     } else {
         console.log('[Google Auth] Existing user - no setup needed');
