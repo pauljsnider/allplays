@@ -30,6 +30,7 @@ import {
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
+import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -2215,6 +2216,7 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
     const uid = rsvp?.userId || rsvp?.id;
     return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
 }
+export { buildCoachOverrideRsvpDocId };
 
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
@@ -2271,6 +2273,73 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // Best effort: write denormalized summary if caller is allowed to update game doc.
     // For recurring-occurrence IDs (masterId__instanceDate) the virtual game doc may not
     // exist, so we also suppress 'not-found' rather than crashing the submission.
+    if (summary) {
+        try {
+            await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
+        } catch (err) {
+            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
+        }
+    }
+
+    return summary;
+}
+
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
+    const authUid = auth.currentUser?.uid || null;
+    if (userId && authUid && userId !== authUid) {
+        throw new Error('RSVP user mismatch. Please refresh and try again.');
+    }
+    const effectiveUserId = userId || authUid || null;
+    if (!effectiveUserId) {
+        throw new Error('You must be signed in to submit RSVP');
+    }
+
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) {
+        throw new Error('Missing player for RSVP override');
+    }
+
+    const docId = buildCoachOverrideRsvpDocId(effectiveUserId, normalizedPlayerId);
+    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, docId);
+    await setDoc(rsvpRef, {
+        userId: effectiveUserId,
+        displayName: displayName || null,
+        playerIds: [normalizedPlayerId],
+        response, // 'going' | 'maybe' | 'not_going'
+        respondedAt: Timestamp.now(),
+        note: note || null
+    });
+
+    // Keep denormalized summary consistent with submitRsvp behavior.
+    let summary = null;
+    try {
+        const [rsvps, roster] = await Promise.all([
+            getRsvps(teamId, gameId),
+            getPlayers(teamId)
+        ]);
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+        const activeRosterIds = new Set(roster.map((player) => player.id));
+        summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+        rsvps.forEach((rsvp) => {
+            const responseKey = normalizeRsvpResponse(rsvp.response);
+            if (responseKey === 'not_responded') return;
+
+            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+                .filter((id) => activeRosterIds.has(id))
+                .length;
+            if (playerCount === 0) return;
+
+            if (responseKey === 'going') summary.going += playerCount;
+            else if (responseKey === 'maybe') summary.maybe += playerCount;
+            else if (responseKey === 'not_going') summary.notGoing += playerCount;
+        });
+        summary.total = summary.going + summary.maybe + summary.notGoing;
+        summary.notResponded = Math.max(0, roster.length - summary.total);
+        summary.total = roster.length;
+    } catch (err) {
+        if (err?.code !== 'permission-denied') throw err;
+    }
+
     if (summary) {
         try {
             await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });

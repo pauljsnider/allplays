@@ -61,6 +61,49 @@ Pass criteria: filter behavior is correct and packet completion writes successfu
 
 Pass criteria: coach sees accurate completion rollup for the same session.
 
+## Addendum: Coach RSVP Overrides + Season Record Controls (2026-03-01)
+
+### A. Coach RSVP Override from Game Day
+
+1. Open `game-day.html?teamId=...&gameId=...` as a coach/admin.
+2. In the `RSVPs` panel, click `Going`, `Maybe`, and `Out` for a specific player.
+3. Verify the player moves between sections and counts update immediately.
+4. Refresh the page and confirm the overridden status persists.
+
+Pass criteria: coach can set per-player availability and values persist.
+
+### B. Parent/Coach Overwrite Behavior
+
+1. As a parent, submit RSVP for a child (`Going`).
+2. As coach/admin, override that same player to `Out` in Game Day.
+3. Return as parent and submit RSVP again (`Going` or `Maybe`).
+4. Open schedule RSVP modal or Game Day panel and verify the latest write wins.
+
+Pass criteria: parent and coach can overwrite each other; latest response is reflected.
+
+### C. Schedule Save: Home/Away + Kit Color
+
+1. Open `edit-schedule.html#teamId=...`.
+2. Edit a DB game and set `Home/Away` and `Kit Color`.
+3. Save, then verify badges appear in the game row.
+4. Re-open edit for the same game and verify values are still populated.
+
+Pass criteria: values persist and are not dropped on reload.
+
+### D. Season/Tournament Record Controls
+
+1. In `edit-schedule.html`, edit or create games with:
+   - `Season Label` (example: `2026` and `2025`)
+   - `Competition Type` (league/tournament/etc.)
+   - `Count this game toward season record` unchecked for tournament games.
+2. Mark games completed with final scores.
+3. Open `team.html#teamId=...`.
+4. Use the `Season Record` season dropdown and verify:
+   - Only selected season is counted.
+   - Games with `Count toward season record = false` are excluded.
+
+Pass criteria: season filter and record-exclusion behavior are correct.
+
 ## 🎯 Critical Test Areas
 
 ### 1. Basketball Tracker Selection Modal
