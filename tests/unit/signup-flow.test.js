@@ -9,12 +9,16 @@ function createDependencies(overrides = {}) {
             data: { code: 'PARENTCODE' }
         }),
         createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
-            user: { uid: 'user-123' }
+            user: {
+                uid: 'user-123',
+                delete: vi.fn().mockResolvedValue(undefined)
+            }
         }),
         redeemParentInvite: vi.fn().mockResolvedValue(undefined),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
         markAccessCodeAsUsed: vi.fn().mockResolvedValue(undefined),
         sendEmailVerification: vi.fn().mockResolvedValue(undefined),
+        signOut: vi.fn().mockResolvedValue(undefined),
         ...overrides
     };
 }
@@ -22,7 +26,14 @@ function createDependencies(overrides = {}) {
 describe('executeEmailPasswordSignup', () => {
     it('throws when parent invite linking fails so signup does not report success', async () => {
         const expectedError = new Error('temporary backend failure');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
             redeemParentInvite: vi.fn().mockRejectedValue(expectedError)
         });
         const auth = {
@@ -42,6 +53,9 @@ describe('executeEmailPasswordSignup', () => {
 
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
     });
 
     it('completes parent invite signup and sends verification when linking succeeds', async () => {

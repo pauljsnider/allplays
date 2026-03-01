@@ -11,7 +11,8 @@ export async function executeEmailPasswordSignup({
         redeemParentInvite,
         updateUserProfile,
         markAccessCodeAsUsed,
-        sendEmailVerification
+        sendEmailVerification,
+        signOut
     } = dependencies;
 
     if (!activationCode) {
@@ -36,6 +37,24 @@ export async function executeEmailPasswordSignup({
             });
         } catch (e) {
             console.error('Error linking parent:', e);
+
+            const createdUser = userCredential?.user;
+            if (createdUser && typeof createdUser.delete === 'function') {
+                try {
+                    await createdUser.delete();
+                } catch (deleteError) {
+                    console.error('Error deleting failed signup auth user:', deleteError);
+                }
+            }
+
+            if (typeof signOut === 'function') {
+                try {
+                    await signOut(auth);
+                } catch (signOutError) {
+                    console.error('Error signing out after failed parent invite:', signOutError);
+                }
+            }
+
             throw e;
         }
     } else {
