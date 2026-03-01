@@ -16,6 +16,7 @@ import {
 } from './db.js?v=14';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=9';
+import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 
@@ -276,7 +277,7 @@ function renderPlayByPlay(event, isNew = false) {
   const card = document.createElement('div');
 
   // System events (clock, period changes) don't have a side
-  const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove'].includes(event.type);
+  const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove', 'clock_sync'].includes(event.type);
   const sideClass = isSystemEvent ? 'border-slate' : (event.isOpponent ? 'event-away' : 'event-home');
   card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${sideClass} ${isNew ? 'event-slide' : ''}`;
   const opponentLabel = [
@@ -722,6 +723,17 @@ function processNewEvents(events) {
       renderLineup();
     }
     if (event.type === 'lineup') {
+      return;
+    }
+
+    // Tracker emits heartbeat events to keep late-joining viewers on an accurate clock.
+    // Apply score/period/clock updates but don't add feed noise.
+    if (event.type === 'clock_sync') {
+      if (event.homeScore !== undefined) state.homeScore = event.homeScore;
+      if (event.awayScore !== undefined) state.awayScore = event.awayScore;
+      if (event.period) state.period = event.period;
+      if (event.gameClockMs !== undefined) state.gameClockMs = event.gameClockMs;
+      renderScoreboard();
       return;
     }
     state.events.push(event);
@@ -1277,18 +1289,7 @@ function handleGameUpdate(gameDoc) {
 }
 
 function updateChatAvailability() {
-  if (state.isReplay) {
-    state.chatEnabled = false;
-  } else {
-    const gameDate = state.game?.date?.toDate ? state.game.date.toDate() : (state.game?.date ? new Date(state.game.date) : null);
-    const today = new Date();
-    const isSameDay = gameDate
-      ? gameDate.getFullYear() === today.getFullYear() &&
-        gameDate.getMonth() === today.getMonth() &&
-        gameDate.getDate() === today.getDate()
-      : false;
-    state.chatEnabled = isSameDay;
-  }
+  state.chatEnabled = isViewerChatEnabled(state.game, { isReplay: state.isReplay });
 
   if (els.chatInput) {
     if (state.chatEnabled) {

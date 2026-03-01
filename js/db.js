@@ -24,11 +24,14 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    runTransaction,
     ref,
     uploadBytes,
     getDownloadURL
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
+import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -361,12 +364,7 @@ export async function updatePlayer(teamId, playerId, playerData) {
 }
 
 export async function deletePlayer(teamId, playerId) {
-    // Soft-delete: preserve historical references/stats while removing from active roster.
-    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
-        active: false,
-        deactivatedAt: Timestamp.now(),
-        updatedAt: Timestamp.now()
-    });
+    await deleteDoc(doc(db, `teams/${teamId}/players`, playerId));
 }
 
 export async function deactivatePlayer(teamId, playerId) {
@@ -1443,6 +1441,17 @@ export async function getLiveEvents(teamId, gameId) {
 }
 
 /**
+ * Subscribe to aggregated stats (real-time) for Game Day Command Center
+ */
+export function subscribeAggregatedStats(teamId, gameId, callback, onError) {
+    const ref = collection(db, 'teams', teamId, 'games', gameId, 'aggregatedStats');
+    return onSnapshot(ref, snap => {
+        const stats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        callback(stats);
+    }, onError);
+}
+
+/**
  * Update game live status
  */
 export async function setGameLiveStatus(teamId, gameId, status) {
@@ -1698,6 +1707,40 @@ export async function getDrills(options = {}) {
 }
 
 /**
+ * Get drills published by teams to the community feed.
+ * Uses explicit query guards so Firestore rules evaluate safely for all documents.
+ * @param {Object} options - { sport, type, level, skill, searchText, limitCount }
+ * @returns {Promise<Array>}
+ */
+export async function getPublishedDrills(options = {}) {
+    const q = query(
+        collection(db, 'drillLibrary'),
+        where('publishedToCommunity', '==', true),
+        limitQuery(options.limitCount || 40)
+    );
+    const snapshot = await getDocs(q);
+    let drills = snapshot.docs
+        .map(d => ({ id: d.id, ...d.data(), _doc: d }))
+        .filter(d => d.source === 'custom');
+    const term = options.searchText ? options.searchText.toLowerCase() : null;
+    if (options.sport) {
+        drills = drills.filter(d => d.sport === options.sport);
+    }
+    if (options.type) drills = drills.filter(d => d.type === options.type);
+    if (options.level) drills = drills.filter(d => d.level === options.level);
+    if (options.skill) drills = drills.filter(d => Array.isArray(d.skills) && d.skills.includes(options.skill));
+    if (term) {
+        drills = drills.filter(d =>
+            (d.title || '').toLowerCase().includes(term) ||
+            (d.description || '').toLowerCase().includes(term) ||
+            (d.skills || []).some(s => s.toLowerCase().includes(term))
+        );
+    }
+    drills.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    return drills;
+}
+
+/**
  * Get custom drills for a specific team
  */
 export async function getTeamDrills(teamId) {
@@ -1766,11 +1809,22 @@ export async function deleteDrill(drillId) {
 // ============================================
 
 export async function uploadDrillDiagram(drillId, file) {
-    await requireImageAuth();
-    const path = `drill-diagrams/${drillId}/${Date.now()}_${file.name}`;
-    const storageRef = ref(imageStorage, path);
-    const snapshot = await uploadBytes(storageRef, file);
-    return await getDownloadURL(snapshot.ref);
+    await ensureImageAuth();
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(drillId, file?.name, Date.now());
+    try {
+        const storageRef = ref(imageStorage, imagePath);
+        const snapshot = await uploadBytes(storageRef, file);
+        return await getDownloadURL(snapshot.ref);
+    } catch (error) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
+            // Match fallback behavior used by chat/stat-sheet uploads.
+            const fallbackRef = ref(storage, fallbackPath);
+            const snapshot = await uploadBytes(fallbackRef, file);
+            return await getDownloadURL(snapshot.ref);
+        }
+        throw error;
+    }
 }
 
 // ============================================
@@ -2104,6 +2158,67 @@ export async function getLatestGameAssignments(teamId) {
 // RSVP / Availability
 // ============================================
 
+function normalizeRsvpResponse(response) {
+    if (response === 'going' || response === 'maybe' || response === 'not_going') {
+        return response;
+    }
+    return 'not_responded';
+}
+
+function uniqueNonEmptyIds(ids) {
+    if (!Array.isArray(ids)) return [];
+    return Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
+}
+
+function extractDirectRsvpPlayerIds(rsvp) {
+    const direct = uniqueNonEmptyIds(rsvp?.playerIds);
+    if (direct.length) return direct;
+    const legacy = [];
+    if (typeof rsvp?.playerId === 'string' && rsvp.playerId.trim()) legacy.push(rsvp.playerId.trim());
+    if (typeof rsvp?.childId === 'string' && rsvp.childId.trim()) legacy.push(rsvp.childId.trim());
+    return uniqueNonEmptyIds(legacy);
+}
+
+async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
+    const fallbackByUser = new Map();
+    const unresolvedUserIds = Array.from(new Set(
+        rsvps
+            .filter((rsvp) => extractDirectRsvpPlayerIds(rsvp).length === 0)
+            .map((rsvp) => rsvp?.userId || rsvp?.id)
+            .filter(Boolean)
+    ));
+    if (unresolvedUserIds.length === 0) return fallbackByUser;
+
+    await Promise.all(unresolvedUserIds.map(async (uid) => {
+        try {
+            const profile = await getUserProfile(uid);
+            const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+            const idsForTeam = uniqueNonEmptyIds(
+                parentLinks
+                    .filter((link) => link?.teamId === teamId)
+                    .map((link) => link?.playerId)
+            );
+            fallbackByUser.set(uid, idsForTeam);
+        } catch (err) {
+            if (err?.code === 'permission-denied') {
+                fallbackByUser.set(uid, []);
+                return;
+            }
+            throw err;
+        }
+    }));
+
+    return fallbackByUser;
+}
+
+function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
+    const direct = extractDirectRsvpPlayerIds(rsvp);
+    if (direct.length) return direct;
+    const uid = rsvp?.userId || rsvp?.id;
+    return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
+}
+export { buildCoachOverrideRsvpDocId };
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
@@ -2129,31 +2244,108 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // depending on team linkage state in profile claims/data.
     let summary = null;
     try {
-        const rsvps = await getRsvps(teamId, gameId);
+        const [rsvps, roster] = await Promise.all([
+            getRsvps(teamId, gameId),
+            getPlayers(teamId)
+        ]);
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+        const activeRosterIds = new Set(roster.map((player) => player.id));
         summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-        rsvps.forEach(r => {
-            if (r.response === 'going') summary.going++;
-            else if (r.response === 'maybe') summary.maybe++;
-            else if (r.response === 'not_going') summary.notGoing++;
+        rsvps.forEach((rsvp) => {
+            const responseKey = normalizeRsvpResponse(rsvp.response);
+            if (responseKey === 'not_responded') return;
+
+            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+                .filter((id) => activeRosterIds.has(id))
+                .length;
+            if (playerCount === 0) return;
+
+            if (responseKey === 'going') summary.going += playerCount;
+            else if (responseKey === 'maybe') summary.maybe += playerCount;
+            else if (responseKey === 'not_going') summary.notGoing += playerCount;
         });
         summary.total = summary.going + summary.maybe + summary.notGoing;
-        try {
-            const roster = await getPlayers(teamId);
-            summary.notResponded = Math.max(0, roster.length - summary.total);
-            summary.total = roster.length;
-        } catch (rosterErr) {
-            if (rosterErr?.code !== 'permission-denied') throw rosterErr;
-        }
+        summary.notResponded = Math.max(0, roster.length - summary.total);
+        summary.total = roster.length;
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
 
     // Best effort: write denormalized summary if caller is allowed to update game doc.
+    // For recurring-occurrence IDs (masterId__instanceDate) the virtual game doc may not
+    // exist, so we also suppress 'not-found' rather than crashing the submission.
     if (summary) {
         try {
             await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
         } catch (err) {
-            if (err?.code !== 'permission-denied') throw err;
+            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
+        }
+    }
+
+    return summary;
+}
+
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
+    const authUid = auth.currentUser?.uid || null;
+    if (userId && authUid && userId !== authUid) {
+        throw new Error('RSVP user mismatch. Please refresh and try again.');
+    }
+    const effectiveUserId = userId || authUid || null;
+    if (!effectiveUserId) {
+        throw new Error('You must be signed in to submit RSVP');
+    }
+
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) {
+        throw new Error('Missing player for RSVP override');
+    }
+
+    const docId = buildCoachOverrideRsvpDocId(effectiveUserId, normalizedPlayerId);
+    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, docId);
+    await setDoc(rsvpRef, {
+        userId: effectiveUserId,
+        displayName: displayName || null,
+        playerIds: [normalizedPlayerId],
+        response, // 'going' | 'maybe' | 'not_going'
+        respondedAt: Timestamp.now(),
+        note: note || null
+    });
+
+    // Keep denormalized summary consistent with submitRsvp behavior.
+    let summary = null;
+    try {
+        const [rsvps, roster] = await Promise.all([
+            getRsvps(teamId, gameId),
+            getPlayers(teamId)
+        ]);
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
+        const activeRosterIds = new Set(roster.map((player) => player.id));
+        summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+        rsvps.forEach((rsvp) => {
+            const responseKey = normalizeRsvpResponse(rsvp.response);
+            if (responseKey === 'not_responded') return;
+
+            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+                .filter((id) => activeRosterIds.has(id))
+                .length;
+            if (playerCount === 0) return;
+
+            if (responseKey === 'going') summary.going += playerCount;
+            else if (responseKey === 'maybe') summary.maybe += playerCount;
+            else if (responseKey === 'not_going') summary.notGoing += playerCount;
+        });
+        summary.total = summary.going + summary.maybe + summary.notGoing;
+        summary.notResponded = Math.max(0, roster.length - summary.total);
+        summary.total = roster.length;
+    } catch (err) {
+        if (err?.code !== 'permission-denied') throw err;
+    }
+
+    if (summary) {
+        try {
+            await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
+        } catch (err) {
+            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
         }
     }
 
@@ -2172,11 +2364,215 @@ export async function getMyRsvp(teamId, gameId, userId) {
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
+const RIDE_OFFER_STATUS = {
+    OPEN: 'open',
+    CLOSED: 'closed',
+    CANCELLED: 'cancelled'
+};
+
+const RIDE_REQUEST_STATUS = {
+    PENDING: 'pending',
+    CONFIRMED: 'confirmed',
+    WAITLISTED: 'waitlisted',
+    DECLINED: 'declined'
+};
+
+function normalizeRideOfferStatus(status) {
+    const value = (status || '').toString().toLowerCase();
+    if (value === RIDE_OFFER_STATUS.CLOSED || value === RIDE_OFFER_STATUS.CANCELLED) return value;
+    return RIDE_OFFER_STATUS.OPEN;
+}
+
+function normalizeRideRequestStatus(status) {
+    const value = (status || '').toString().toLowerCase();
+    if (value === RIDE_REQUEST_STATUS.CONFIRMED) return RIDE_REQUEST_STATUS.CONFIRMED;
+    if (value === RIDE_REQUEST_STATUS.WAITLISTED) return RIDE_REQUEST_STATUS.WAITLISTED;
+    if (value === RIDE_REQUEST_STATUS.DECLINED) return RIDE_REQUEST_STATUS.DECLINED;
+    return RIDE_REQUEST_STATUS.PENDING;
+}
+
+function isDecisionStatus(status) {
+    const normalized = normalizeRideRequestStatus(status);
+    return normalized === RIDE_REQUEST_STATUS.CONFIRMED ||
+        normalized === RIDE_REQUEST_STATUS.WAITLISTED ||
+        normalized === RIDE_REQUEST_STATUS.DECLINED;
+}
+
+function toNonNegativeInteger(value, fallback = 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+}
+
+function nextConfirmedSeatCount(currentSeatCountConfirmed, previousRequestStatus, nextRequestStatus) {
+    const current = toNonNegativeInteger(currentSeatCountConfirmed, 0);
+    const wasConfirmed = normalizeRideRequestStatus(previousRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
+    const willBeConfirmed = normalizeRideRequestStatus(nextRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
+    if (wasConfirmed === willBeConfirmed) return current;
+    if (wasConfirmed && !willBeConfirmed) return Math.max(0, current - 1);
+    return current + 1;
+}
+
+/**
+ * Create a rideshare offer under a game/practice event.
+ */
+export async function createRideOffer(teamId, gameId, payload = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to offer a ride.');
+    const seatCapacity = toNonNegativeInteger(payload.seatCapacity, 0);
+    if (seatCapacity <= 0) throw new Error('Seat capacity must be at least 1.');
+
+    const directionRaw = (payload.direction || '').toString().toLowerCase();
+    const direction = directionRaw === 'to' || directionRaw === 'from' || directionRaw === 'round-trip'
+        ? directionRaw
+        : 'to';
+
+    const note = typeof payload.note === 'string' ? payload.note.trim() : '';
+    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`), {
+        driverUserId: user.uid,
+        driverName: payload.driverName || user.displayName || user.email || 'Parent Driver',
+        seatCapacity,
+        seatCountConfirmed: 0,
+        direction,
+        note: note || null,
+        status: RIDE_OFFER_STATUS.OPEN,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return offerRef.id;
+}
+
+/**
+ * List rideshare offers (with nested requests) for an event.
+ */
+export async function listRideOffersForEvent(teamId, gameId) {
+    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
+    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
+        const offerData = offerDoc.data() || {};
+        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
+        const requests = requestsSnap.docs
+            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+            .sort((a, b) => {
+                const at = a?.requestedAt?.toMillis?.() || 0;
+                const bt = b?.requestedAt?.toMillis?.() || 0;
+                return at - bt;
+            });
+        return {
+            id: offerDoc.id,
+            ...offerData,
+            status: normalizeRideOfferStatus(offerData.status),
+            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
+            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
+            requests
+        };
+    }));
+
+    offers.sort((a, b) => {
+        const at = a?.createdAt?.toMillis?.() || 0;
+        const bt = b?.createdAt?.toMillis?.() || 0;
+        return bt - at;
+    });
+    return offers;
+}
+
+/**
+ * Request a seat for a linked child.
+ */
+export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to request a ride.');
+    const childId = (payload.childId || '').toString().trim();
+    if (!childId) throw new Error('childId is required to request a ride.');
+    const childName = (payload.childName || '').toString().trim();
+    const requestId = `${user.uid}__${childId}`;
+    await setDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId), {
+        parentUserId: user.uid,
+        childId,
+        childName: childName || null,
+        status: RIDE_REQUEST_STATUS.PENDING,
+        requestedAt: Timestamp.now(),
+        respondedAt: null,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return requestId;
+}
+
+/**
+ * Driver/admin updates request status with seat-capacity protection.
+ */
+export async function updateRideRequestStatus(teamId, gameId, offerId, requestId, nextStatus) {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
+    const normalizedNextStatus = normalizeRideRequestStatus(nextStatus);
+    if (!isDecisionStatus(normalizedNextStatus)) {
+        throw new Error('Status must be confirmed, waitlisted, or declined.');
+    }
+
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, requestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!offerSnap.exists()) throw new Error('Ride offer not found.');
+        if (!requestSnap.exists()) throw new Error('Ride request not found.');
+
+        const offer = offerSnap.data() || {};
+        const request = requestSnap.data() || {};
+        const offerStatus = normalizeRideOfferStatus(offer.status);
+        if (offerStatus !== RIDE_OFFER_STATUS.OPEN) throw new Error('Ride offer is closed.');
+
+        const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);
+        const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);
+        const nextSeatCount = nextConfirmedSeatCount(currentSeatCountConfirmed, request.status, normalizedNextStatus);
+        if (nextSeatCount > seatCapacity) throw new Error('Offer is full.');
+
+        tx.update(requestRef, {
+            status: normalizedNextStatus,
+            respondedAt: Timestamp.now(),
+            updatedAt: Timestamp.now()
+        });
+        tx.update(offerRef, {
+            seatCountConfirmed: nextSeatCount,
+            updatedAt: Timestamp.now()
+        });
+        return { seatCountConfirmed: nextSeatCount };
+    });
+}
+
+export async function closeRideOffer(teamId, gameId, offerId, status = RIDE_OFFER_STATUS.CLOSED) {
+    const normalizedStatus = normalizeRideOfferStatus(status);
+    await updateDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId), {
+        status: normalizedStatus,
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function cancelRideRequest(teamId, gameId, offerId, requestId) {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
+
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, requestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!requestSnap.exists()) return;
+        const offer = offerSnap.exists() ? (offerSnap.data() || {}) : null;
+        const request = requestSnap.data() || {};
+        tx.delete(requestRef);
+        if (!offer) return;
+        const nextSeatCount = nextConfirmedSeatCount(
+            toNonNegativeInteger(offer.seatCountConfirmed, 0),
+            request.status,
+            RIDE_REQUEST_STATUS.DECLINED
+        );
+        tx.update(offerRef, {
+            seatCountConfirmed: nextSeatCount,
+            updatedAt: Timestamp.now()
+        });
+    });
+}
+
 export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     const [players, rsvps] = await Promise.all([
-        getPlayers(teamId),
+        getPlayers(teamId, { includeInactive: true }),
         getRsvps(teamId, gameId)
     ]);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
 
     const byPlayer = new Map();
     players.forEach((player) => {
@@ -2200,15 +2596,25 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     };
 
     rsvps.forEach((rsvp) => {
-        const ids = Array.isArray(rsvp.playerIds) ? rsvp.playerIds.filter(Boolean) : [];
+        const ids = resolveRsvpPlayerIds(rsvp, fallbackByUser);
         if (!ids.length) return;
         ids.forEach((playerId) => {
-            const existing = byPlayer.get(playerId);
-            if (!existing) return;
+            let existing = byPlayer.get(playerId);
+            if (!existing) {
+                existing = {
+                    playerId,
+                    playerName: 'Former Player',
+                    playerNumber: '',
+                    response: 'not_responded',
+                    respondedAt: null,
+                    note: null,
+                    responderUserId: null
+                };
+            }
             const existingMillis = toMillis(existing.respondedAt);
             const nextMillis = toMillis(rsvp.respondedAt);
             if (nextMillis < existingMillis) return;
-            existing.response = rsvp.response || 'not_responded';
+            existing.response = normalizeRsvpResponse(rsvp.response);
             existing.respondedAt = rsvp.respondedAt || null;
             existing.note = rsvp.note || null;
             existing.responderUserId = rsvp.userId || null;
