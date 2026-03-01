@@ -32,28 +32,34 @@ redact_sensitive() {
   # Best-effort masking for bearer tokens and Slack token formats in upstream errors.
   redacted="$(sed -E \
     -e 's/(Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/g' \
-    -e 's/xox[baprs]-[A-Za-z0-9-]+/[REDACTED_SLACK_TOKEN]/g' <<<"$redacted")"
+    -e 's/xox[a-z]-[A-Za-z0-9-]+/[REDACTED_SLACK_TOKEN]/g' \
+    -e 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://hooks.slack.com/services/[REDACTED]#g' <<<"$redacted")"
   printf '%s' "$redacted"
 }
 
 slack_api_post() {
   local endpoint="$1"
   local payload="$2"
-  local resp stderr_file curl_err curl_exit
+  local resp stderr_file resp_file curl_err curl_exit
 
   stderr_file="$(mktemp)"
-  if resp="$(curl -sS -X POST "https://slack.com/api/${endpoint}" \
+  resp_file="$(mktemp)"
+  if curl -sS -X POST "https://slack.com/api/${endpoint}" \
     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
     -H "Content-Type: application/json; charset=utf-8" \
     --data "$payload" \
-    2>"$stderr_file")"; then
-    curl_exit=0
+    >"$resp_file" \
+    2>"$stderr_file"; then
+    resp="$(cat "$resp_file" 2>/dev/null || true)"
+    rm -f "$stderr_file" "$resp_file"
+    printf '%s' "$resp"
+    return 0
   else
     curl_exit=$?
   fi
   if [[ "$curl_exit" -ne 0 ]]; then
     curl_err="$(cat "$stderr_file" 2>/dev/null || true)"
-    rm -f "$stderr_file"
+    rm -f "$stderr_file" "$resp_file"
     if [[ -n "$curl_err" ]]; then
       log "slack notify failed: curl error (exit=${curl_exit}): $(redact_sensitive "$curl_err")" >&2
     else
@@ -61,8 +67,6 @@ slack_api_post() {
     fi
     return 1
   fi
-  rm -f "$stderr_file"
-  printf '%s' "$resp"
 }
 
 slack_notify() {
@@ -119,6 +123,8 @@ is_placeholder_value() {
   [[ "$value" == "C0123456789" ]] && return 0
   [[ "$value" == "U0123456789" ]] && return 0
   [[ "$value" == *"your-token-here"* ]] && return 0
+  [[ "$lowered" == *"your-channel-id"* ]] && return 0
+  [[ "$lowered" == *"your-user-id"* ]] && return 0
   [[ "$lowered" == *"placeholder"* ]] && return 0
   [[ "$lowered" == *"example"* ]] && return 0
   [[ "$lowered" == *"changeme"* ]] && return 0
@@ -188,6 +194,10 @@ set +e
 (
   cd "$WORKDIR"
   # Parse TEST_CMD into argv and run directly (no login shell/profile loading).
+  if [[ "$TEST_CMD" =~ ^[[:space:]]*$ ]]; then
+    log "TEST_CMD is empty; set TEST_CMD to the smoke command to run"
+    exit 1
+  fi
   read -r -a test_cmd_argv <<<"$TEST_CMD"
   "${test_cmd_argv[@]}"
 ) >"$run_log" 2>&1
