@@ -541,16 +541,13 @@
                         fallbackCodeCount: 0,
                         failedCount: 0
                     };
-                    try {
-                        pendingInviteSummary = await processPendingAdminInvites({
-                            teamId: newTeamId,
-                            pendingEmails: pendingAdminInviteEmails,
-                            inviteAdmin,
-                            sendInviteEmail
-                        });
-                    } finally {
-                        pendingAdminInviteEmails = [];
-                    }
+                    pendingInviteSummary = await processPendingAdminInvites({
+                        teamId: newTeamId,
+                        pendingEmails: pendingAdminInviteEmails,
+                        inviteAdmin,
+                        sendInviteEmail
+                    });
+                    pendingAdminInviteEmails = [];
 
                     const inviteFollowUp = buildAdminInviteFollowUp(pendingInviteSummary, window.location.origin);
                     if (inviteFollowUp.shareableCount > 0) {

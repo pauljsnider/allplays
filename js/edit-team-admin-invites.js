@@ -27,13 +27,14 @@ export async function processPendingAdminInvites({
             const parsedInviteResult = (inviteResult && typeof inviteResult === 'object')
                 ? inviteResult
                 : null;
-            const code = typeof parsedInviteResult?.code === 'string'
+            const parsedCode = typeof parsedInviteResult?.code === 'string'
                 ? parsedInviteResult.code.trim()
                 : '';
+            const code = parsedCode || null;
 
             if (parsedInviteResult?.existingUser) {
                 summary.existingUserCount += 1;
-                summary.results.push({ email, status: 'existing_user', code: code || null });
+                summary.results.push({ email, status: 'existing_user', code });
                 continue;
             }
 
