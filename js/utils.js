@@ -548,6 +548,7 @@ export function expandRecurrence(master, windowDays = 180) {
   const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
 
   const { freq, interval = 1, byDays = [], until, count } = master.recurrence;
+  const normalizedInterval = Math.max(1, Number(interval) || 1);
   const exDates = master.exDates || [];
   const overrides = master.overrides || {};
 
@@ -555,6 +556,9 @@ export function expandRecurrence(master, windowDays = 180) {
   const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
   let current = new Date(seriesStart);
   let generated = 0;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const seriesStartDayNumber = Math.floor(seriesStart.getTime() / MS_PER_DAY);
+  const seriesWeekStartDayNumber = seriesStartDayNumber - seriesStart.getDay();
 
   // For weekly recurrence, we need to check each day
   const maxIterations = windowDays * 2; // Safety limit
@@ -572,16 +576,30 @@ export function expandRecurrence(master, windowDays = 180) {
 
     const isoDate = current.toISOString().split('T')[0];
     const dayCode = DAY_CODES[current.getDay()];
+    const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+    const daysSinceSeriesStart = currentDayNumber - seriesStartDayNumber;
+    const currentWeekStartDayNumber = currentDayNumber - current.getDay();
+    const weeksSinceSeriesStart = Math.floor((currentWeekStartDayNumber - seriesWeekStartDayNumber) / 7);
 
     // Check if this day matches the recurrence pattern
     let matches = false;
     if (freq === 'weekly' && byDays.length > 0) {
-      matches = byDays.includes(dayCode);
+      matches = (
+        weeksSinceSeriesStart >= 0 &&
+        (weeksSinceSeriesStart % normalizedInterval === 0) &&
+        byDays.includes(dayCode) &&
+        daysSinceSeriesStart >= 0
+      );
     } else if (freq === 'daily') {
-      matches = true;
+      matches = daysSinceSeriesStart >= 0 && (daysSinceSeriesStart % normalizedInterval === 0);
     } else if (freq === 'weekly' && byDays.length === 0) {
       // If no specific days, match the same day as series start
-      matches = current.getDay() === seriesStart.getDay();
+      matches = (
+        weeksSinceSeriesStart >= 0 &&
+        (weeksSinceSeriesStart % normalizedInterval === 0) &&
+        current.getDay() === seriesStart.getDay() &&
+        daysSinceSeriesStart >= 0
+      );
     }
 
     // Only process if within visible window and matches pattern
@@ -628,11 +646,6 @@ export function expandRecurrence(master, windowDays = 180) {
 
     // Advance to next day
     current.setDate(current.getDate() + 1);
-
-    // For daily with interval > 1, skip days
-    if (freq === 'daily' && interval > 1) {
-      current.setDate(current.getDate() + interval - 1);
-    }
   }
 
   return occurrences;

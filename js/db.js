@@ -24,6 +24,7 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    runTransaction,
     ref,
     uploadBytes,
     getDownloadURL
@@ -2292,6 +2293,209 @@ export async function getMyRsvp(teamId, gameId, userId) {
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
     const snap = await getDoc(rsvpRef);
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+const RIDE_OFFER_STATUS = {
+    OPEN: 'open',
+    CLOSED: 'closed',
+    CANCELLED: 'cancelled'
+};
+
+const RIDE_REQUEST_STATUS = {
+    PENDING: 'pending',
+    CONFIRMED: 'confirmed',
+    WAITLISTED: 'waitlisted',
+    DECLINED: 'declined'
+};
+
+function normalizeRideOfferStatus(status) {
+    const value = (status || '').toString().toLowerCase();
+    if (value === RIDE_OFFER_STATUS.CLOSED || value === RIDE_OFFER_STATUS.CANCELLED) return value;
+    return RIDE_OFFER_STATUS.OPEN;
+}
+
+function normalizeRideRequestStatus(status) {
+    const value = (status || '').toString().toLowerCase();
+    if (value === RIDE_REQUEST_STATUS.CONFIRMED) return RIDE_REQUEST_STATUS.CONFIRMED;
+    if (value === RIDE_REQUEST_STATUS.WAITLISTED) return RIDE_REQUEST_STATUS.WAITLISTED;
+    if (value === RIDE_REQUEST_STATUS.DECLINED) return RIDE_REQUEST_STATUS.DECLINED;
+    return RIDE_REQUEST_STATUS.PENDING;
+}
+
+function isDecisionStatus(status) {
+    const normalized = normalizeRideRequestStatus(status);
+    return normalized === RIDE_REQUEST_STATUS.CONFIRMED ||
+        normalized === RIDE_REQUEST_STATUS.WAITLISTED ||
+        normalized === RIDE_REQUEST_STATUS.DECLINED;
+}
+
+function toNonNegativeInteger(value, fallback = 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+}
+
+function nextConfirmedSeatCount(currentSeatCountConfirmed, previousRequestStatus, nextRequestStatus) {
+    const current = toNonNegativeInteger(currentSeatCountConfirmed, 0);
+    const wasConfirmed = normalizeRideRequestStatus(previousRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
+    const willBeConfirmed = normalizeRideRequestStatus(nextRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
+    if (wasConfirmed === willBeConfirmed) return current;
+    if (wasConfirmed && !willBeConfirmed) return Math.max(0, current - 1);
+    return current + 1;
+}
+
+/**
+ * Create a rideshare offer under a game/practice event.
+ */
+export async function createRideOffer(teamId, gameId, payload = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to offer a ride.');
+    const seatCapacity = toNonNegativeInteger(payload.seatCapacity, 0);
+    if (seatCapacity <= 0) throw new Error('Seat capacity must be at least 1.');
+
+    const directionRaw = (payload.direction || '').toString().toLowerCase();
+    const direction = directionRaw === 'to' || directionRaw === 'from' || directionRaw === 'round-trip'
+        ? directionRaw
+        : 'to';
+
+    const note = typeof payload.note === 'string' ? payload.note.trim() : '';
+    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`), {
+        driverUserId: user.uid,
+        driverName: payload.driverName || user.displayName || user.email || 'Parent Driver',
+        seatCapacity,
+        seatCountConfirmed: 0,
+        direction,
+        note: note || null,
+        status: RIDE_OFFER_STATUS.OPEN,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return offerRef.id;
+}
+
+/**
+ * List rideshare offers (with nested requests) for an event.
+ */
+export async function listRideOffersForEvent(teamId, gameId) {
+    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
+    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
+        const offerData = offerDoc.data() || {};
+        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
+        const requests = requestsSnap.docs
+            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+            .sort((a, b) => {
+                const at = a?.requestedAt?.toMillis?.() || 0;
+                const bt = b?.requestedAt?.toMillis?.() || 0;
+                return at - bt;
+            });
+        return {
+            id: offerDoc.id,
+            ...offerData,
+            status: normalizeRideOfferStatus(offerData.status),
+            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
+            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
+            requests
+        };
+    }));
+
+    offers.sort((a, b) => {
+        const at = a?.createdAt?.toMillis?.() || 0;
+        const bt = b?.createdAt?.toMillis?.() || 0;
+        return bt - at;
+    });
+    return offers;
+}
+
+/**
+ * Request a seat for a linked child.
+ */
+export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to request a ride.');
+    const childId = (payload.childId || '').toString().trim();
+    if (!childId) throw new Error('childId is required to request a ride.');
+    const childName = (payload.childName || '').toString().trim();
+    const requestId = `${user.uid}__${childId}`;
+    await setDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId), {
+        parentUserId: user.uid,
+        childId,
+        childName: childName || null,
+        status: RIDE_REQUEST_STATUS.PENDING,
+        requestedAt: Timestamp.now(),
+        respondedAt: null,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return requestId;
+}
+
+/**
+ * Driver/admin updates request status with seat-capacity protection.
+ */
+export async function updateRideRequestStatus(teamId, gameId, offerId, requestId, nextStatus) {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
+    const normalizedNextStatus = normalizeRideRequestStatus(nextStatus);
+    if (!isDecisionStatus(normalizedNextStatus)) {
+        throw new Error('Status must be confirmed, waitlisted, or declined.');
+    }
+
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, requestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!offerSnap.exists()) throw new Error('Ride offer not found.');
+        if (!requestSnap.exists()) throw new Error('Ride request not found.');
+
+        const offer = offerSnap.data() || {};
+        const request = requestSnap.data() || {};
+        const offerStatus = normalizeRideOfferStatus(offer.status);
+        if (offerStatus !== RIDE_OFFER_STATUS.OPEN) throw new Error('Ride offer is closed.');
+
+        const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);
+        const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);
+        const nextSeatCount = nextConfirmedSeatCount(currentSeatCountConfirmed, request.status, normalizedNextStatus);
+        if (nextSeatCount > seatCapacity) throw new Error('Offer is full.');
+
+        tx.update(requestRef, {
+            status: normalizedNextStatus,
+            respondedAt: Timestamp.now(),
+            updatedAt: Timestamp.now()
+        });
+        tx.update(offerRef, {
+            seatCountConfirmed: nextSeatCount,
+            updatedAt: Timestamp.now()
+        });
+        return { seatCountConfirmed: nextSeatCount };
+    });
+}
+
+export async function closeRideOffer(teamId, gameId, offerId, status = RIDE_OFFER_STATUS.CLOSED) {
+    const normalizedStatus = normalizeRideOfferStatus(status);
+    await updateDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId), {
+        status: normalizedStatus,
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function cancelRideRequest(teamId, gameId, offerId, requestId) {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
+
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, requestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!requestSnap.exists()) return;
+        const offer = offerSnap.exists() ? (offerSnap.data() || {}) : null;
+        const request = requestSnap.data() || {};
+        tx.delete(requestRef);
+        if (!offer) return;
+        const nextSeatCount = nextConfirmedSeatCount(
+            toNonNegativeInteger(offer.seatCountConfirmed, 0),
+            request.status,
+            RIDE_REQUEST_STATUS.DECLINED
+        );
+        tx.update(offerRef, {
+            seatCountConfirmed: nextSeatCount,
+            updatedAt: Timestamp.now()
+        });
+    });
 }
 
 export async function getRsvpBreakdownByPlayer(teamId, gameId) {
