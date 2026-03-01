@@ -58,6 +58,41 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.signOut).toHaveBeenCalledWith(auth);
     });
 
+    it('still signs out and rethrows original invite error when auth user delete fails', async () => {
+        const expectedError = new Error('temporary backend failure');
+        const deleteError = new Error('delete failed');
+        const deleteAuthUser = vi.fn().mockRejectedValue(deleteError);
+        const dependencies = createDependencies({
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            redeemParentInvite: vi.fn().mockRejectedValue(expectedError)
+        });
+        const auth = {
+            currentUser: {
+                email: 'parent@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        })).rejects.toThrow('temporary backend failure');
+
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+    });
+
     it('completes parent invite signup and sends verification when linking succeeds', async () => {
         const dependencies = createDependencies();
         const reload = vi.fn().mockResolvedValue(undefined);

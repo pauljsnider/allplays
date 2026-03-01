@@ -27,6 +27,24 @@ export async function executeEmailPasswordSignup({
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const userId = userCredential.user.uid;
 
+    async function cleanupFailedParentInviteSignup(createdUser) {
+        if (createdUser && typeof createdUser.delete === 'function') {
+            try {
+                await createdUser.delete();
+            } catch (deleteError) {
+                console.error('Error deleting failed signup auth user:', deleteError);
+            }
+        }
+
+        if (typeof signOut === 'function') {
+            try {
+                await signOut(auth);
+            } catch (signOutError) {
+                console.error('Error signing out after failed parent invite:', signOutError);
+            }
+        }
+    }
+
     if (validation.type === 'parent_invite') {
         try {
             await redeemParentInvite(userId, validation.data.code);
@@ -37,24 +55,7 @@ export async function executeEmailPasswordSignup({
             });
         } catch (e) {
             console.error('Error linking parent:', e);
-
-            const createdUser = userCredential?.user;
-            if (createdUser && typeof createdUser.delete === 'function') {
-                try {
-                    await createdUser.delete();
-                } catch (deleteError) {
-                    console.error('Error deleting failed signup auth user:', deleteError);
-                }
-            }
-
-            if (typeof signOut === 'function') {
-                try {
-                    await signOut(auth);
-                } catch (signOutError) {
-                    console.error('Error signing out after failed parent invite:', signOutError);
-                }
-            }
-
+            await cleanupFailedParentInviteSignup(userCredential?.user);
             throw e;
         }
     } else {
