@@ -22,6 +22,9 @@ export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gam
     const allowedSet = new Set(allowedPlayerIds);
     const sanitizeToAllowedScope = (ids) => ids.filter((id) => allowedSet.has(id));
 
+    const selectedChildId = String(childContext?.selectedChildId || '').trim();
+    if (selectedChildId) return sanitizeToAllowedScope([selectedChildId]);
+
     const explicitChildId = String(childContext?.childId || '').trim();
     if (explicitChildId) return sanitizeToAllowedScope([explicitChildId]);
 
