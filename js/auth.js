@@ -267,23 +267,23 @@ async function processGoogleAuthResult(result, activationCode = null) {
 }
 
 export async function handleGoogleRedirectResult() {
-    console.log('[Google Auth] Checking for redirect result...');
-    const result = await getRedirectResult(auth);
-
-    console.log('[Google Auth] Redirect result:', result ? 'Found' : 'None', result?.user?.email || '');
-
-    if (!result || !result.user) {
-        // No redirect result (user didn't just come back from Google)
-        console.log('[Google Auth] No redirect result found');
-        return null;
-    }
-
     try {
+        console.log('[Google Auth] Checking for redirect result...');
+        const result = await getRedirectResult(auth);
+
+        console.log('[Google Auth] Redirect result:', result ? 'Found' : 'None', result?.user?.email || '');
+
+        if (!result || !result.user) {
+            // No redirect result (user didn't just come back from Google)
+            console.log('[Google Auth] No redirect result found');
+            return null;
+        }
+
         // Use shared processing function
         return await processGoogleAuthResult(result);
     } finally {
         // Redirect errors do not pass through loginWithGoogle catch cleanup.
-        // Always clear pending activation state once redirect result is consumed.
+        // Always clear pending activation state once redirect handling completes.
         window.sessionStorage.removeItem('pendingActivationCode');
     }
 }
