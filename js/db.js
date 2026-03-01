@@ -881,10 +881,14 @@ export async function redeemAdminInviteAtomicPersistence({
     const teamRef = doc(db, "teams", teamId);
     const userRef = doc(db, "users", userId);
     const codeRef = doc(db, "accessCodes", codeId);
+    let userGrantApplied = false;
+    let userAlreadyCoachedTeam = false;
+    let userAlreadyHadCoachRole = false;
     try {
-        const [teamSnapshot, codeSnapshot] = await Promise.all([
+        const [teamSnapshot, codeSnapshot, userSnapshot] = await Promise.all([
             getDoc(teamRef),
-            getDoc(codeRef)
+            getDoc(codeRef),
+            getDoc(userRef)
         ]);
 
         if (!teamSnapshot.exists()) {
@@ -907,12 +911,19 @@ export async function redeemAdminInviteAtomicPersistence({
             throw new Error('Access code has already been used');
         }
 
+        const existingUserData = userSnapshot.exists() ? (userSnapshot.data() || {}) : {};
+        const existingCoachOf = Array.isArray(existingUserData.coachOf) ? existingUserData.coachOf : [];
+        const existingRoles = Array.isArray(existingUserData.roles) ? existingUserData.roles : [];
+        userAlreadyCoachedTeam = existingCoachOf.includes(teamId);
+        userAlreadyHadCoachRole = existingRoles.includes('coach');
+
         const userGrantTimestamp = Timestamp.now();
         await setDoc(userRef, {
             coachOf: arrayUnion(teamId),
             roles: arrayUnion('coach'),
             updatedAt: userGrantTimestamp
         }, { merge: true });
+        userGrantApplied = true;
 
         await runTransaction(db, async (transaction) => {
             const [teamSnapshotAfterGrant, codeSnapshotAfterGrant] = await Promise.all([
@@ -950,7 +961,33 @@ export async function redeemAdminInviteAtomicPersistence({
             });
         });
     } catch (error) {
-        throw new Error(`Admin invite atomic persistence failed: ${error?.message || error}`);
+        let rollbackError = null;
+        if (userGrantApplied) {
+            const rollbackUpdate = {
+                updatedAt: Timestamp.now()
+            };
+
+            if (!userAlreadyCoachedTeam) {
+                rollbackUpdate.coachOf = arrayRemove(teamId);
+            }
+            if (!userAlreadyHadCoachRole) {
+                rollbackUpdate.roles = arrayRemove('coach');
+            }
+
+            if (rollbackUpdate.coachOf || rollbackUpdate.roles) {
+                try {
+                    await updateDoc(userRef, rollbackUpdate);
+                } catch (rollbackFailure) {
+                    rollbackError = rollbackFailure;
+                }
+            }
+        }
+
+        const baseMessage = `Admin invite atomic persistence failed: ${error?.message || error}`;
+        if (rollbackError) {
+            throw new Error(`${baseMessage}. Rollback failed: ${rollbackError?.message || rollbackError}`);
+        }
+        throw new Error(baseMessage);
     }
 }
 
