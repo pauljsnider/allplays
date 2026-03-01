@@ -1054,7 +1054,8 @@ export async function redeemAdminInviteAtomically(codeId, userId) {
 
         const teamData = teamSnap.data() || {};
         const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
-        const userEmail = (userData.email || '').toLowerCase().trim();
+        const authEmail = auth.currentUser?.email || '';
+        const userEmail = (userData.email || authEmail || '').toLowerCase().trim();
 
         if (userEmail) {
             transaction.set(teamRef, {
