@@ -42,12 +42,16 @@ slack_api_post() {
   local resp stderr_file curl_err curl_exit
 
   stderr_file="$(mktemp)"
-  if ! resp="$(curl -sS -X POST "https://slack.com/api/${endpoint}" \
+  set +e
+  resp="$(curl -sS -X POST "https://slack.com/api/${endpoint}" \
     -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
     -H "Content-Type: application/json; charset=utf-8" \
     --data "$payload" \
-    2>"$stderr_file")"; then
-    curl_exit=$?
+    2>"$stderr_file")"
+  curl_exit=$?
+  set -e
+
+  if [[ "$curl_exit" -ne 0 ]]; then
     curl_err="$(cat "$stderr_file" 2>/dev/null || true)"
     rm -f "$stderr_file"
     if [[ -n "$curl_err" ]]; then
