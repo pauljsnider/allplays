@@ -17,6 +17,22 @@ describe('parent dashboard RSVP player scope', () => {
     expect(result).toEqual(['child-a']);
   });
 
+  it('filters explicit childIds down to players in the selected game scope', () => {
+    const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {
+      childIds: 'child-a,child-c,child-z,child-a'
+    });
+
+    expect(result).toEqual(['child-a']);
+  });
+
+  it('rejects explicit childId values outside the selected game scope', () => {
+    const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {
+      childId: 'child-z'
+    });
+
+    expect(result).toEqual([]);
+  });
+
   it('falls back to the clicked game scope instead of all team events', () => {
     const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {});
 

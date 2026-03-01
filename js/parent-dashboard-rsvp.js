@@ -13,16 +13,20 @@ function parseChildIds(childIds) {
 }
 
 export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext = {}) {
-    const explicitChildId = String(childContext?.childId || '').trim();
-    if (explicitChildId) return [explicitChildId];
-
-    const explicitChildIds = parseChildIds(childContext?.childIds);
-    if (explicitChildIds.length > 0) return explicitChildIds;
-
     const events = Array.isArray(allScheduleEvents) ? allScheduleEvents : [];
-    return uniqNonEmpty(
+    const allowedPlayerIds = uniqNonEmpty(
         events
             .filter((event) => event?.teamId === teamId && event?.id === gameId)
             .map((event) => event?.childId || event?.playerId)
     );
+    const allowedSet = new Set(allowedPlayerIds);
+    const sanitizeToAllowedScope = (ids) => ids.filter((id) => allowedSet.has(id));
+
+    const explicitChildId = String(childContext?.childId || '').trim();
+    if (explicitChildId) return sanitizeToAllowedScope([explicitChildId]);
+
+    const explicitChildIds = parseChildIds(childContext?.childIds);
+    if (explicitChildIds.length > 0) return sanitizeToAllowedScope(explicitChildIds);
+
+    return allowedPlayerIds;
 }
