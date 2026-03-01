@@ -64,6 +64,10 @@ describe('auth signup parent invite failure handling', () => {
         const branchBody = parentInviteBranch[1];
         expect(branchBody).toContain('userCredential.user.delete();');
         expect(branchBody).toContain('await signOut(auth);');
+        expect(branchBody).toContain('Error cleaning up failed parent invite signup');
+        expect(branchBody).toContain('Error signing out after failed parent invite signup');
+        expect(branchBody).toMatch(/await userCredential\.user\.delete\(\);[\s\S]*catch \(deleteError\)/);
+        expect(branchBody).toMatch(/try \{[\s\S]*await signOut\(auth\);[\s\S]*catch \(signOutError\)/);
         expect(branchBody).toMatch(/catch \(e\) \{[\s\S]*throw\s+(e|new Error\()/);
         expect(branchBody).not.toContain("Don't fail the whole signup");
     });
