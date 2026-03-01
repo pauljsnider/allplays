@@ -52,18 +52,20 @@ describe('auth signup parent invite failure handling', () => {
         firebaseMocks.sendEmailVerification.mockResolvedValue(undefined);
     });
 
-    it('fails closed by rethrowing parent invite finalization errors', () => {
+    it('fails closed by cleaning up auth user and rethrowing parent invite finalization errors', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
         const signupSection = authSource.split('export async function signup')[1]?.split('export async function loginWithGoogle')[0];
 
         expect(signupSection).toBeTruthy();
 
-        const parentInviteCatchBlock = signupSection.match(/if \(validation\.type === 'parent_invite'\)[\s\S]*?catch \(e\) \{([\s\S]*?)\n\s*\}/);
-        expect(parentInviteCatchBlock).toBeTruthy();
+        const parentInviteBranch = signupSection.match(/if \(validation\.type === 'parent_invite'\) \{([\s\S]*?)\n\s*\} else \{/);
+        expect(parentInviteBranch).toBeTruthy();
 
-        const catchBody = parentInviteCatchBlock[1];
-        expect(catchBody).toMatch(/throw\s+(e|new Error\()/);
-        expect(catchBody).not.toContain("Don't fail the whole signup");
+        const branchBody = parentInviteBranch[1];
+        expect(branchBody).toContain('userCredential.user.delete();');
+        expect(branchBody).toContain('await signOut(auth);');
+        expect(branchBody).toMatch(/catch \(e\) \{[\s\S]*throw\s+(e|new Error\()/);
+        expect(branchBody).not.toContain("Don't fail the whole signup");
     });
 
     it('rejects signup when parent invite profile finalization fails', async () => {
