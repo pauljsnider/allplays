@@ -10,6 +10,7 @@ import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLi
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
+import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1476,8 +1477,11 @@ async function saveAndComplete() {
     if (sendEmail) {
       const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
       const body = generateEmailBody(finalHome, finalAway, summary);
-      const userEmail = currentUser.email || '';
-      const mailto = `mailto:${userEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      const recipientEmail = resolveSummaryRecipient({
+        teamNotificationEmail: currentTeam?.notificationEmail,
+        userEmail: currentUser?.email
+      });
+      const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       window.location.href = mailto;
       setTimeout(() => {
         window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
