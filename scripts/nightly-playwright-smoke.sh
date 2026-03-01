@@ -32,7 +32,8 @@ redact_sensitive() {
   # Best-effort masking for bearer tokens and Slack token formats in upstream errors.
   redacted="$(sed -E \
     -e 's/(Bearer[[:space:]]+)[^[:space:]]+/\1[REDACTED]/g' \
-    -e 's/xox[baprs]-[A-Za-z0-9-]+/[REDACTED_SLACK_TOKEN]/g' <<<"$redacted")"
+    -e 's/xox[a-z]-[A-Za-z0-9-]+/[REDACTED_SLACK_TOKEN]/g' \
+    -e 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://hooks.slack.com/services/[REDACTED]#g' <<<"$redacted")"
   printf '%s' "$redacted"
 }
 
@@ -120,6 +121,8 @@ is_placeholder_value() {
   [[ "$value" == "C0123456789" ]] && return 0
   [[ "$value" == "U0123456789" ]] && return 0
   [[ "$value" == *"your-token-here"* ]] && return 0
+  [[ "$lowered" == *"your-channel-id"* ]] && return 0
+  [[ "$lowered" == *"your-user-id"* ]] && return 0
   [[ "$lowered" == *"placeholder"* ]] && return 0
   [[ "$lowered" == *"example"* ]] && return 0
   [[ "$lowered" == *"changeme"* ]] && return 0
@@ -189,6 +192,10 @@ set +e
 (
   cd "$WORKDIR"
   # Parse TEST_CMD into argv and run directly (no login shell/profile loading).
+  if [[ "$TEST_CMD" =~ ^[[:space:]]*$ ]]; then
+    log "TEST_CMD is empty; set TEST_CMD to the smoke command to run"
+    exit 1
+  fi
   read -r -a test_cmd_argv <<<"$TEST_CMD"
   "${test_cmd_argv[@]}"
 ) >"$run_log" 2>&1
