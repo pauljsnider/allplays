@@ -2262,7 +2262,7 @@ async function init() {
 
   try {
     const [team, game, playersList] = await Promise.all([
-      getTeam(teamId),
+      getTeam(teamId, { includeInactive: true }),
       getGame(teamId, gameId),
       getPlayers(teamId)
     ]);
@@ -2290,7 +2290,7 @@ async function init() {
 
     if (game.opponentTeamId) {
       try {
-        const linkedTeam = await getTeam(game.opponentTeamId);
+        const linkedTeam = await getTeam(game.opponentTeamId, { includeInactive: true });
         opponentTeam = linkedTeam || {
           id: game.opponentTeamId,
           name: game.opponentTeamName || game.opponent || 'Opponent',
