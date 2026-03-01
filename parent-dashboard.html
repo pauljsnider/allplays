@@ -190,6 +190,7 @@
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
+        import { resolveRsvpPlayerIdsForSubmission } from './js/parent-dashboard-rsvp.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -228,15 +229,12 @@
             return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
         }
 
-        window.submitGameRsvp = async function(teamId, gameId, response) {
+        window.submitGameRsvp = async function(teamId, gameId, response, childContext = {}) {
             try {
-                const playerIds = allScheduleEvents
-                    .filter(e => e.teamId === teamId)
-                    .map(e => e.childId || e.playerId)
-                    .filter(Boolean);
+                const playerIds = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext);
                 const summary = await submitRsvp(teamId, gameId, currentUserId, {
                     displayName: currentUser?.displayName || currentUser?.email,
-                    playerIds: [...new Set(playerIds)],
+                    playerIds,
                     response
                 });
                 // Update local state and re-render
@@ -257,7 +255,10 @@
             const teamId = btn?.dataset?.teamId || '';
             const gameId = btn?.dataset?.gameId || '';
             if (!teamId || !gameId) return;
-            window.submitGameRsvp(teamId, gameId, response);
+            window.submitGameRsvp(teamId, gameId, response, {
+                childId: btn?.dataset?.childId || '',
+                childIds: btn?.dataset?.childIds || ''
+            });
         }
 
         function hasRecordedAttendance(attendance) {
@@ -684,14 +685,16 @@
                 if (!d || Number.isNaN(d.getTime())) return;
                 const key = `${event.teamId || ''}::${event.id || ''}::${d.toISOString()}::${event.type || ''}`;
                 if (!byKey.has(key)) {
-                    byKey.set(key, { ...event, date: d, childNames: [] });
+                    byKey.set(key, { ...event, date: d, childNames: [], childIds: [] });
                 }
                 const item = byKey.get(key);
                 if (event.childName) item.childNames.push(event.childName);
+                if (event.childId || event.playerId) item.childIds.push(event.childId || event.playerId);
             });
             return Array.from(byKey.values()).map((item) => ({
                 ...item,
-                childNames: [...new Set(item.childNames)]
+                childNames: [...new Set(item.childNames)],
+                childIds: [...new Set(item.childIds)]
             }));
         }
 
@@ -811,9 +814,9 @@
                                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                                     ${ev.isDbGame ? `
                                         <div class="flex gap-2">
-                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                                         </div>
                                     ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
                                     <div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>
@@ -1273,9 +1276,9 @@
                             <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                             ${game.isDbGame ? `
                                 <div class="flex gap-2">
-                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                                 </div>
                             ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
                             <div class="text-[10px] text-gray-400 mt-1">${formatRsvpSummary(game.rsvpSummary)}</div>
