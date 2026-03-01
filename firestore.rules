@@ -295,6 +295,7 @@ service cloud.firestore {
                              request.resource.data.parentUserId == request.auth.uid &&
                              isParentForPlayer(teamId, request.resource.data.childId) &&
                              isRideshareOfferOpen(teamId, gameId, offerId) &&
+                             get(rideshareOfferPath(teamId, gameId, offerId)).data.status == 'open' &&
                              request.resource.data.status == 'pending';
 
             allow update: if isSignedIn() &&
@@ -316,6 +317,7 @@ service cloud.firestore {
                                  request.resource.data.childId == resource.data.childId &&
                                  request.resource.data.requestedAt == resource.data.requestedAt &&
                                  resource.data.status == 'pending' &&
+                                 request.resource.data.status == resource.data.status &&
                                  request.resource.data.status == 'pending' &&
                                  request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'updatedAt'])
                                )

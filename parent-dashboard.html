@@ -291,6 +291,14 @@
             rerenderActiveDayModal();
         }
 
+        function getSelectedRideChildId(teamId, eventId, offerId, defaultChildId, childChoices, includeChildPicker) {
+            if (!includeChildPicker) return defaultChildId;
+            const selectionKey = getRideOfferSelectionKey(teamId, eventId, offerId);
+            const selectedChildId = selectedRideChildByOffer.get(selectionKey) || defaultChildId;
+            if (childChoices.some((child) => child.childId === selectedChildId)) return selectedChildId;
+            return childChoices[0]?.childId || '';
+        }
+
         function renderEventRideshare(event, { includeChildPicker = false } = {}) {
             if (!event?.isDbGame || event?.isCancelled || !event?.teamId || !event?.id) return '';
             const offers = getEventRideOffers(event.teamId, event.id);
@@ -332,10 +340,14 @@
                             const seatInfo = getOfferSeatInfo(offer);
                             const canManageOffer = offer.driverUserId === currentUserId;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
-                            const selectionKey = getRideOfferSelectionKey(event.teamId, event.id, offer.id);
-                            const selectedChildId = includeChildPicker
-                                ? (selectedRideChildByOffer.get(selectionKey) || defaultChildId)
-                                : defaultChildId;
+                            const selectedChildId = getSelectedRideChildId(
+                                event.teamId,
+                                event.id,
+                                offer.id,
+                                defaultChildId,
+                                childChoices,
+                                includeChildPicker
+                            );
                             const selectedChild = childChoices.find((child) => child.childId === selectedChildId);
                             const selectedChildName = selectedChild?.childName || defaultChildName;
                             const myRequest = findRequestForChild(offer, currentUserId, selectedChildId);
