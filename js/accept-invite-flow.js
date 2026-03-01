@@ -33,16 +33,18 @@ export function createInviteProcessor(deps) {
 
             const profile = await getUserProfile(userId);
             const userEmail = profile?.email;
-            const adminEmails = team.adminEmails || [];
+            const adminEmails = Array.isArray(team.adminEmails) ? [...team.adminEmails] : [];
             const normalizedEmail = userEmail ? userEmail.toLowerCase() : null;
+            const normalizedAdminEmails = adminEmails.map((email) => String(email || '').toLowerCase());
 
-            if (normalizedEmail && !adminEmails.map((email) => email.toLowerCase()).includes(normalizedEmail)) {
+            if (normalizedEmail && !normalizedAdminEmails.includes(normalizedEmail)) {
+                adminEmails.push(normalizedEmail);
                 await updateTeam(validation.data.teamId, {
-                    adminEmails: [...adminEmails, normalizedEmail]
+                    adminEmails
                 });
             }
 
-            const existingCoachOf = Array.isArray(profile?.coachOf) ? profile.coachOf : [];
+            const existingCoachOf = Array.isArray(profile?.coachOf) ? [...profile.coachOf] : [];
             const mergedCoachOf = Array.from(new Set([...existingCoachOf, validation.data.teamId]));
             const existingRoles = Array.isArray(profile?.roles) ? profile.roles : [];
             const mergedRoles = existingRoles.includes('coach') ? existingRoles : [...existingRoles, 'coach'];
