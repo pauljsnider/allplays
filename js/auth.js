@@ -60,7 +60,7 @@ export async function signup(email, password, activationCode) {
             });
         } catch (e) {
             console.error('Error linking parent:', e);
-            // Don't fail the whole signup, but log it
+            throw e;
         }
     } else {
         // Standard Flow (Coach/Admin)
