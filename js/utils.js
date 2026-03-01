@@ -476,6 +476,19 @@ export function isPracticeEvent(summary) {
     lowerSummary.includes('skills club');
 }
 
+/**
+ * Resolve event type for ICS events, preserving explicit parser booleans and
+ * falling back to summary heuristics when isPractice is missing.
+ * @param {Object} event - Parsed ICS event
+ * @returns {'practice'|'game'} Event type for calendar filtering
+ */
+export function getCalendarEventType(event) {
+  const isPractice = typeof event?.isPractice === 'boolean'
+    ? event.isPractice
+    : isPracticeEvent(event?.summary || '');
+  return isPractice ? 'practice' : 'game';
+}
+
 // ============================================
 // Practice & Event Utilities - Phase 1
 // ============================================
