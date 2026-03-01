@@ -60,6 +60,13 @@ export async function signup(email, password, activationCode) {
             });
         } catch (e) {
             console.error('Error linking parent:', e);
+            try {
+                await userCredential.user.delete();
+                await signOut(auth);
+            } catch (deleteError) {
+                console.error('Error cleaning up failed parent invite signup:', deleteError);
+                await signOut(auth);
+            }
             throw e;
         }
     } else {
