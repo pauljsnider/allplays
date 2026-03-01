@@ -61,7 +61,9 @@ export async function signup(email, password, activationCode) {
         } catch (e) {
             console.error('Error linking parent:', e);
             try {
-                await userCredential.user.delete();
+                if (userCredential?.user) {
+                    await userCredential.user.delete();
+                }
             } catch (deleteError) {
                 console.error('Error deleting auth user after parent invite failure:', deleteError);
             }
