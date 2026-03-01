@@ -258,11 +258,18 @@ service cloud.firestore {
         // RSVP subcollection - game attendance responses
         match /rsvps/{rsvpId} {
           allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+          // Supports two doc ID patterns for writes by the authenticated user:
+          // 1) request.auth.uid (standard parent RSVP)
+          // 2) request.auth.uid__{playerId} (coach/player-specific override RSVP)
+          function isOwnRsvpDoc() {
+            return rsvpId == request.auth.uid ||
+                   rsvpId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$');
+          }
           allow create, update: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
-                                   isSignedIn() && rsvpId == request.auth.uid &&
+                                   isSignedIn() && isOwnRsvpDoc() &&
                                    request.resource.data.userId == request.auth.uid;
           allow delete: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
-                           isSignedIn() && rsvpId == request.auth.uid;
+                           isSignedIn() && isOwnRsvpDoc();
         }
 
         // Rideshare offers for games/practices.
