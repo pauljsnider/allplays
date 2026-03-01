@@ -53,7 +53,8 @@ describe('player soft-delete policy', () => {
         const teamChat = readFile('team-chat.html');
 
         expect(playerPage).toContain('getPlayers(teamId, { includeInactive: true })');
-        expect(liveGame).toContain('getPlayers(state.teamId, { includeInactive: true })');
+        expect(liveGame).toContain('? getPlayers(state.teamId, { includeInactive: true })');
+        expect(liveGame).toContain(': getPlayers(state.teamId);');
         expect(teamChat).toContain('getPlayers(teamId, { includeInactive: true })');
     });
 });
