@@ -511,7 +511,11 @@ function parseICSDate(icsDate, params = {}) {
       const offsetHours = parseInt(offsetMatch[2], 10);
       const offsetMinutes = parseInt(offsetMatch[3], 10);
 
-      if (offsetHours > 14 || offsetMinutes > 59) {
+      if (
+        offsetHours > 14 ||
+        offsetMinutes > 59 ||
+        (offsetHours === 14 && offsetMinutes !== 0)
+      ) {
         console.warn('Invalid ICS numeric UTC offset:', icsDate);
         return null;
       }
@@ -635,7 +639,13 @@ function parseShortOffsetZonePart(zonePart, options = {}) {
   const sign = offsetMatch[1] === '+' ? 1 : -1;
   const hours = parseInt(rawHours, 10);
   const minutes = parseInt(offsetMatch[3] || '0', 10);
-  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours > 23 || minutes > 59) {
+  if (
+    Number.isNaN(hours) ||
+    Number.isNaN(minutes) ||
+    hours > 14 ||
+    minutes > 59 ||
+    (hours === 14 && minutes !== 0)
+  ) {
     return null;
   }
 
