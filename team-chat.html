@@ -1103,7 +1103,7 @@
 
         async function buildAiContext(question, { fetchStats, fetchEvents }) {
             const [players, games] = await Promise.all([
-                getPlayers(teamId),
+                getPlayers(teamId, { includeInactive: true }),
                 getGames(teamId)
             ]);
             const playersById = new Map(players.map(p => [p.id, p]));
