@@ -189,7 +189,10 @@
                 };
             } else if (validation.type === 'admin_invite') {
                 const profile = await getUserProfile(userId);
-                const userEmail = profile?.email || authEmail || validation?.data?.email;
+                const profileEmail = typeof profile?.email === 'string' ? profile.email.trim().toLowerCase() : '';
+                const authUserEmail = typeof authEmail === 'string' ? authEmail.trim().toLowerCase() : '';
+                const inviteEmail = typeof validation?.data?.email === 'string' ? validation.data.email.trim().toLowerCase() : '';
+                const userEmail = profileEmail || authUserEmail || inviteEmail;
                 const team = await redeemAdminInviteAcceptance({
                     userId,
                     userEmail,

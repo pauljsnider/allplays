@@ -17,11 +17,12 @@ export async function redeemAdminInviteAcceptance({
         throw new Error('Team not found');
     }
 
-    if (!userEmail) {
+    const profile = await getUserProfile(userId);
+    const resolvedUserEmail = String(userEmail || profile?.email || '').trim().toLowerCase();
+    if (!resolvedUserEmail) {
         throw new Error('Missing user email');
     }
 
-    const profile = await getUserProfile(userId);
     const existingCoachOf = Array.isArray(profile?.coachOf) ? profile.coachOf : [];
     const existingRoles = Array.isArray(profile?.roles) ? profile.roles : [];
 
@@ -41,7 +42,7 @@ export async function redeemAdminInviteAcceptance({
         throw new Error('Unable to grant team coach access before admin assignment');
     }
 
-    await addTeamAdminEmail(teamId, userEmail);
+    await addTeamAdminEmail(teamId, resolvedUserEmail);
 
     if (codeId) {
         await markAccessCodeAsUsed(codeId, userId);
