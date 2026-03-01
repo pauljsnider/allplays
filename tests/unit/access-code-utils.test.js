@@ -30,10 +30,21 @@ describe('access code expiration helper', () => {
         expect(isAccessCodeExpired(expiresAt, nowMs)).toBe(false);
     });
 
+    it('treats Date expiration exactly at nowMs as expired', () => {
+        const nowMs = Date.UTC(2026, 1, 28, 20, 20, 0);
+        const expiresAt = new Date(nowMs);
+        expect(isAccessCodeExpired(expiresAt, nowMs)).toBe(true);
+    });
+
     it('accepts numeric timestamps', () => {
         const nowMs = Date.UTC(2026, 1, 28, 20, 20, 0);
         const expiresAtMs = nowMs - 5000;
         expect(isAccessCodeExpired(expiresAtMs, nowMs)).toBe(true);
+    });
+
+    it('treats numeric expiration exactly at nowMs as expired', () => {
+        const nowMs = Date.UTC(2026, 1, 28, 20, 20, 0);
+        expect(isAccessCodeExpired(nowMs, nowMs)).toBe(true);
     });
 
     it('treats zero-millis timestamps as valid expirations', () => {
