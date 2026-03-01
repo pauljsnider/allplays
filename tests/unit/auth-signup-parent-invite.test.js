@@ -80,6 +80,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
     });
 
     it('rejects signup when parent invite profile finalization fails', async () => {
@@ -170,6 +171,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
     });
 
     it('does not fail signup when parent invite profile write fails after redeem', async () => {

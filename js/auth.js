@@ -42,6 +42,17 @@ async function cleanupFailedNewUser(user, context) {
     }
 }
 
+async function linkParentInviteOrRollback(user, parentInviteCode) {
+    try {
+        await redeemParentInvite(user.uid, parentInviteCode);
+    } catch (inviteLinkError) {
+        console.error('Error linking parent:', inviteLinkError);
+        await cleanupFailedNewUser(user, 'parent invite link failure');
+        // Fail closed only for invite-linking errors.
+        throw inviteLinkError;
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -160,13 +171,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
-            try {
-                await redeemParentInvite(userId, validation.data.code);
-            } catch (e) {
-                console.error('Error linking parent:', e);
-                await cleanupFailedNewUser(result.user, 'parent invite link failure');
-                throw e;
-            }
+            await linkParentInviteOrRollback(result.user, validation.data.code);
 
             // Best-effort profile write after invite redemption.
             try {
