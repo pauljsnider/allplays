@@ -200,7 +200,7 @@
             getUserProfile,
             submitRsvp,
             getMyRsvp,
-            getRsvpSummary,
+            getRsvpSummaries,
             createRideOffer,
             listRideOffersForEvent,
             requestRideSpot,
@@ -611,14 +611,29 @@
                         .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
                         .map((event) => `${event.teamId}::${event.id}`)
                 )];
-                await Promise.all(uniqueGameKeys.map(async (key) => {
+                const unsummarizedByTeam = new Map();
+                uniqueGameKeys.forEach((key) => {
                     const [teamId, gameId] = key.split('::');
                     const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
+                    if (!shouldLoadSummary) return;
+                    if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
+                    unsummarizedByTeam.get(teamId).push(gameId);
+                });
+
+                const summaryMapsByTeam = new Map();
+                await Promise.all(Array.from(unsummarizedByTeam.entries()).map(async ([teamId, gameIds]) => {
                     try {
-                        const [myRsvp, summary] = await Promise.all([
-                            getMyRsvp(teamId, gameId, currentUserId),
-                            shouldLoadSummary ? getRsvpSummary(teamId, gameId).catch(() => null) : Promise.resolve(null)
-                        ]);
+                        summaryMapsByTeam.set(teamId, await getRsvpSummaries(teamId, gameIds));
+                    } catch (e) {
+                        summaryMapsByTeam.set(teamId, new Map());
+                    }
+                }));
+
+                await Promise.all(uniqueGameKeys.map(async (key) => {
+                    const [teamId, gameId] = key.split('::');
+                    try {
+                        const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
+                        const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
                         applyRsvpHydration(allScheduleEvents, teamId, gameId, {
                             myRsvp: myRsvp ? myRsvp.response : null,
                             summary

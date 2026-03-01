@@ -2303,6 +2303,54 @@ async function computeRsvpSummary(teamId, gameId) {
     return summary;
 }
 
+export async function getRsvpSummaries(teamId, gameIds) {
+    const uniqueGameIds = uniqueNonEmptyIds(gameIds);
+    const summaries = new Map();
+    if (!teamId || uniqueGameIds.length === 0) return summaries;
+
+    const roster = await getCachedRsvpRoster(teamId);
+    const activeRosterIds = new Set(roster.map((player) => player.id));
+
+    const rsvpResults = await Promise.allSettled(
+        uniqueGameIds.map((gameId) => getRsvps(teamId, gameId))
+    );
+
+    await Promise.all(rsvpResults.map(async (result, index) => {
+        const gameId = uniqueGameIds[index];
+        if (result.status !== 'fulfilled') {
+            summaries.set(gameId, null);
+            return;
+        }
+
+        const rsvps = result.value;
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+            resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
+        });
+        const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+
+        rsvps.forEach((rsvp) => {
+            const responseKey = normalizeRsvpResponse(rsvp.response);
+            if (responseKey === 'not_responded') return;
+
+            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+                .filter((id) => activeRosterIds.has(id))
+                .length;
+            if (playerCount === 0) return;
+
+            if (responseKey === 'going') summary.going += playerCount;
+            else if (responseKey === 'maybe') summary.maybe += playerCount;
+            else if (responseKey === 'not_going') summary.notGoing += playerCount;
+        });
+
+        summary.total = summary.going + summary.maybe + summary.notGoing;
+        summary.notResponded = Math.max(0, roster.length - summary.total);
+        summary.total = roster.length;
+        summaries.set(gameId, summary);
+    }));
+
+    return summaries;
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
