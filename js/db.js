@@ -304,6 +304,19 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
+export async function addTeamAdminEmail(teamId, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Admin email is required');
+    }
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        adminEmails: arrayUnion(normalizedEmail),
+        updatedAt: Timestamp.now()
+    });
+}
+
 export async function deleteTeam(teamId) {
     const userId = auth.currentUser?.uid || null;
     await updateDoc(doc(db, "teams", teamId), {
