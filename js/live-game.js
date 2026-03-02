@@ -17,6 +17,7 @@ import {
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=9';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
+import { getReplayElapsedMs, rebaseReplayStartTimeMs } from './live-game-replay.js?v=1';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 
@@ -958,7 +959,7 @@ function playReplay() {
 
 function replayTick() {
   if (!state.replayPlaying) return;
-  const elapsed = (Date.now() - state.replayStartTime) * state.replaySpeed;
+  const elapsed = getReplayElapsedMs(Date.now(), state.replayStartTime, state.replaySpeed);
 
   while (
     state.replayIndex < state.replayEvents.length &&
@@ -1093,6 +1094,12 @@ function initReplayControls() {
   document.querySelectorAll('[data-speed]').forEach(btn => {
     btn.addEventListener('click', () => {
       const speed = Number(btn.dataset.speed);
+      if (!Number.isFinite(speed) || speed <= 0) return;
+      if (state.replayPlaying && Number.isFinite(state.replayStartTime)) {
+        const nowMs = Date.now();
+        const elapsedMs = getReplayElapsedMs(nowMs, state.replayStartTime, state.replaySpeed);
+        state.replayStartTime = rebaseReplayStartTimeMs(nowMs, elapsedMs, speed);
+      }
       state.replaySpeed = speed;
       document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('bg-teal', 'text-ink'));
       btn.classList.add('bg-teal', 'text-ink');
