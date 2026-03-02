@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getReplayElapsedMs, rebaseReplayStartTimeMs } from '../../js/live-game-replay.js';
+import { getReplayElapsedMs, rebaseReplayStartTimeMs, getReplayStartTimeAfterSpeedChange } from '../../js/live-game-replay.js';
 
 describe('live game replay speed timing', () => {
   it('keeps replay elapsed continuous when speed changes during playback', () => {
@@ -27,5 +27,16 @@ describe('live game replay speed timing', () => {
 
     expect(getReplayElapsedMs(20_100, rebasedStartTimeMs, 10)).toBe(9_000);
     expect(getReplayElapsedMs(20_250, rebasedStartTimeMs, 10)).toBe(10_500);
+  });
+
+  it('falls back to current game clock when speed changes and replayStartTime is invalid', () => {
+    const nowMs = 50_000;
+    const nextSpeed = 2;
+    const gameClockMs = 12_000;
+
+    const startTimeMs = getReplayStartTimeAfterSpeedChange(nowMs, null, 1, nextSpeed, gameClockMs);
+    const elapsedAfterChange = getReplayElapsedMs(nowMs, startTimeMs, nextSpeed);
+
+    expect(elapsedAfterChange).toBe(12_000);
   });
 });
