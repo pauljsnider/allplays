@@ -15,6 +15,7 @@ import {
   subscribeGame
 } from './db.js?v=14';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
+import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=9';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, rebaseReplayStartTimeMs } from './live-game-replay.js?v=1';
@@ -70,7 +71,8 @@ const state = {
 
   lastStatChange: null,
   scoringRun: { team: null, points: 0 },
-  lastRunAnnounced: 0
+  lastRunAnnounced: 0,
+  hasVideoStream: false
 };
 
 const els = {
@@ -128,6 +130,7 @@ const els = {
   gameStartTime: q('#game-start-time'),
 
   mobileTabs: document.querySelectorAll('#mobile-tabs [data-tab]'),
+  videoPanel: q('#video-panel'),
   playsPanel: q('#plays-panel'),
   statsPanel: q('#stats-panel'),
   chatPanelMobile: q('#chat-panel')
@@ -197,13 +200,19 @@ function initTabs() {
 
 function updateTabs() {
   const isMobile = window.matchMedia('(max-width: 767px)').matches;
+  const visibility = computePanelVisibility({
+    isMobile,
+    activeTab: state.activeTab,
+    hasVideoStream: state.hasVideoStream
+  });
+  state.activeTab = visibility.activeTab;
 
-  if (!isMobile) {
-    els.playsPanel?.classList.remove('hidden');
-    els.statsPanel?.classList.remove('hidden');
-    els.chatPanel?.classList.remove('hidden');
-    return;
-  }
+  els.videoPanel?.classList.toggle('hidden', visibility.videoHidden);
+  els.playsPanel?.classList.toggle('hidden', visibility.playsHidden);
+  els.statsPanel?.classList.toggle('hidden', visibility.statsHidden);
+  els.chatPanel?.classList.toggle('hidden', visibility.chatHidden);
+
+  if (!isMobile) return;
 
   els.mobileTabs.forEach(tab => {
     const active = tab.dataset.tab === state.activeTab;
@@ -212,19 +221,57 @@ function updateTabs() {
     tab.classList.toggle('text-sand/50', !active);
     tab.classList.toggle('border-transparent', !active);
   });
+}
 
-  if (state.activeTab === 'plays') {
-    els.playsPanel?.classList.remove('hidden');
-    els.statsPanel?.classList.add('hidden');
-    els.chatPanel?.classList.add('hidden');
-  } else if (state.activeTab === 'stats') {
-    els.playsPanel?.classList.add('hidden');
-    els.statsPanel?.classList.remove('hidden');
-    els.chatPanel?.classList.add('hidden');
+function setupVideoPanel() {
+  // Build embed URL: Twitch takes priority, then streamEmbedUrl, then legacy YouTube fields
+  let embedUrl = null;
+  let publicUrl = null;
+  let publicLabel = null;
+
+  if (state.team?.twitchChannel) {
+    const host = window.location.hostname;
+    embedUrl = `https://player.twitch.tv/?channel=${state.team.twitchChannel}&parent=${host}&autoplay=true&muted=true`;
+    publicUrl = `https://twitch.tv/${state.team.twitchChannel}`;
+    publicLabel = 'Watch on Twitch ↗';
   } else {
-    els.playsPanel?.classList.add('hidden');
-    els.statsPanel?.classList.add('hidden');
-    els.chatPanel?.classList.remove('hidden');
+    const src = state.team?.streamEmbedUrl ||
+      state.team?.youtubeEmbedUrl ||
+      (state.team?.youtubeVideoId
+        ? `https://www.youtube.com/embed/${state.team.youtubeVideoId}?autoplay=1&mute=1`
+        : null);
+    if (src) {
+      embedUrl = src;
+      const channelMatch = src.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+      const videoMatch = src.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+      publicUrl = channelMatch
+        ? `https://www.youtube.com/channel/${channelMatch[1]}`
+        : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+      publicLabel = 'Watch on YouTube ↗';
+    }
+  }
+
+  const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
+  const extLink = document.getElementById('stream-external-link');
+  state.hasVideoStream = Boolean(embedUrl);
+
+  if (embedUrl) {
+    const iframe = document.getElementById('youtube-stream-iframe');
+    if (iframe) iframe.src = embedUrl;
+    if (videoTab) videoTab.classList.remove('hidden');
+    if (extLink && publicUrl) {
+      extLink.href = publicUrl;
+      extLink.textContent = publicLabel;
+      extLink.classList.remove('hidden');
+    }
+  } else {
+    els.videoPanel?.classList.add('hidden');
+    if (videoTab) videoTab.classList.add('hidden');
+    if (extLink) {
+      extLink.classList.add('hidden');
+      extLink.removeAttribute('href');
+    }
+    if (state.activeTab === 'video') state.activeTab = 'plays';
   }
 }
 
@@ -1372,6 +1419,7 @@ async function init() {
   state.awayScore = game.awayScore || 0;
   state.period = game.period || 'Q1';
 
+  setupVideoPanel();
   renderGameInfo();
   renderScoreboard();
   renderLineup();
