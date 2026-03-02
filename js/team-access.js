@@ -10,8 +10,10 @@ export function hasFullTeamAccess(user, team) {
   const adminEmails = (team.adminEmails || []).map((email) => String(email || '').toLowerCase());
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;
+  const teamId = typeof team.id === 'string' ? team.id.trim() : '';
+  const isCoach = teamId !== '' && Array.isArray(user.coachOf) && user.coachOf.includes(teamId);
 
-  return isOwner || isTeamAdmin || isPlatformAdmin;
+  return isOwner || isTeamAdmin || isPlatformAdmin || isCoach;
 }
 
 /**
