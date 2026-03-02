@@ -340,6 +340,28 @@
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
         }
 
+        function streamLinkHtml(team) {
+            if (team.twitchChannel) {
+                return `<a class="inline-flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 font-medium transition" target="_blank" rel="noopener noreferrer" href="https://twitch.tv/${encodeURIComponent(team.twitchChannel)}">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Watch on Twitch
+                </a>`;
+            }
+            const embedUrl = team.streamEmbedUrl || team.youtubeEmbedUrl;
+            if (embedUrl) {
+                const channelMatch = embedUrl.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+                const videoMatch = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+                const url = channelMatch
+                    ? `https://www.youtube.com/channel/${channelMatch[1]}`
+                    : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+                if (url) return `<a class="inline-flex items-center gap-1 text-sm text-red-500 hover:text-red-600 font-medium transition" target="_blank" rel="noopener noreferrer" href="${url}">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Watch on YouTube
+                </a>`;
+            }
+            return '';
+        }
+
         function toDateSafe(value) {
             if (!value) return null;
             const d = value?.toDate ? value.toDate() : new Date(value);
@@ -682,6 +704,7 @@
                                     </a>`
                         : ''
                     }
+                                ${streamLinkHtml(team)}
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
                         </div>

@@ -35,6 +35,12 @@ import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-imag
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
+import {
+    isTeamActive,
+    filterTeamsByActive,
+    shouldIncludeTeamInLiveOrUpcoming,
+    shouldIncludeTeamInReplay
+} from './team-visibility.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -181,30 +187,38 @@ export async function uploadStatSheetPhoto(file) {
 }
 
 // Teams
-export async function getTeams() {
+export async function getTeams(options = {}) {
+    const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), orderBy("name"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
-export async function getTeam(teamId) {
+export async function getTeam(teamId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const docRef = doc(db, "teams", teamId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-        return { id: docSnap.id, ...docSnap.data() };
+        const team = { id: docSnap.id, ...docSnap.data() };
+        if (!includeInactive && !isTeamActive(team)) return null;
+        return team;
     } else {
         return null;
     }
 }
 
-export async function getUserTeams(userId) {
+export async function getUserTeams(userId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), where("ownerId", "==", userId));
     const snapshot = await getDocs(q);
     // Sort in memory instead of query to avoid composite index requirement
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
-export async function getUserTeamsWithAccess(userId, email) {
+export async function getUserTeamsWithAccess(userId, email, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const [ownedSnap, adminSnap] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
         email ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", email.toLowerCase()))) : Promise.resolve({ docs: [] })
@@ -214,14 +228,16 @@ export async function getUserTeamsWithAccess(userId, email) {
     ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
     adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
 
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
 /**
  * Get teams where the user is connected as a parent (via parentOf)
  * This is used to power the "My Teams" view for parents, in a read-only way.
  */
-export async function getParentTeams(userId) {
+export async function getParentTeams(userId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const profile = await getUserProfile(userId);
     if (!profile || !Array.isArray(profile.parentOf) || profile.parentOf.length === 0) {
         return [];
@@ -232,7 +248,7 @@ export async function getParentTeams(userId) {
 
     const teams = [];
     for (const teamId of teamIds) {
-        const team = await getTeam(teamId);
+        const team = await getTeam(teamId, { includeInactive });
         if (team) {
             teams.push(team);
         }
@@ -271,6 +287,15 @@ export async function getUserByEmail(email) {
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'active')) {
+        teamData.active = true;
+    }
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'deactivatedAt')) {
+        teamData.deactivatedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'deactivatedBy')) {
+        teamData.deactivatedBy = null;
+    }
     const docRef = await addDoc(collection(db, "teams"), teamData);
     return docRef.id;
 }
@@ -281,30 +306,27 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
-export async function deleteTeam(teamId) {
-    // Delete games and their subcollections
-    const gamesSnapshot = await getDocs(collection(db, `teams/${teamId}/games`));
-    for (const gameDoc of gamesSnapshot.docs) {
-        const gameId = gameDoc.id;
-        // Remove events
-        const eventsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/events`));
-        await Promise.all(eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-        // Remove aggregated stats
-        const statsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
-        await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-        await deleteDoc(gameDoc.ref);
+export async function addTeamAdminEmail(teamId, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Admin email is required');
     }
 
-    // Delete players
-    const playersSnapshot = await getDocs(collection(db, `teams/${teamId}/players`));
-    await Promise.all(playersSnapshot.docs.map(docItem => deleteDoc(docItem.ref)));
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        adminEmails: arrayUnion(normalizedEmail),
+        updatedAt: Timestamp.now()
+    });
+}
 
-    // Delete configs
-    const configsSnapshot = await getDocs(collection(db, `teams/${teamId}/statTrackerConfigs`));
-    await Promise.all(configsSnapshot.docs.map(docItem => deleteDoc(docItem.ref)));
-
-    // Finally delete team document
-    await deleteDoc(doc(db, "teams", teamId));
+export async function deleteTeam(teamId) {
+    const userId = auth.currentUser?.uid || null;
+    await updateDoc(doc(db, "teams", teamId), {
+        active: false,
+        deactivatedAt: Timestamp.now(),
+        deactivatedBy: userId,
+        updatedAt: Timestamp.now()
+    });
 }
 
 // Players
@@ -1218,6 +1240,98 @@ export async function redeemParentInvite(userId, code) {
     return { success: true, teamId: codeData.teamId };
 }
 
+export async function rollbackParentInviteRedemption(userId, code) {
+    console.log('[rollbackParentInviteRedemption] start', { userId, code });
+
+    const normalizedCode = String(code || '').toUpperCase();
+    if (!userId || !normalizedCode) {
+        throw new Error('User and code are required to rollback parent invite redemption');
+    }
+
+    const q = query(
+        collection(db, "accessCodes"),
+        where("code", "==", normalizedCode)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+        throw new Error('Invite code not found for rollback');
+    }
+
+    const codeDoc = snapshot.docs.find(d => (d.data() || {}).type === 'parent_invite') || snapshot.docs[0];
+    const codeData = codeDoc.data() || {};
+    if (codeData.type !== 'parent_invite') {
+        throw new Error('Rollback target is not a parent invite code');
+    }
+
+    if (!codeData.used || codeData.usedBy !== userId) {
+        console.warn('[rollbackParentInviteRedemption] skipping rollback; code not used by user', {
+            codeId: codeDoc.id,
+            used: codeData.used,
+            usedBy: codeData.usedBy
+        });
+        return;
+    }
+
+    const teamId = codeData.teamId || null;
+    const playerId = codeData.playerId || null;
+
+    try {
+        const userRef = doc(db, "users", userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+            const userData = userSnap.data() || {};
+            const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+            const filteredParentOf = parentOf.filter(link =>
+                !(link?.teamId === teamId && link?.playerId === playerId)
+            );
+            const filteredParentTeamIds = [...new Set(
+                filteredParentOf.map(link => link?.teamId).filter(Boolean)
+            )];
+            const filteredParentPlayerKeys = [...new Set(
+                filteredParentOf
+                    .map(link => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : null))
+                    .filter(Boolean)
+            )];
+            const existingRoles = Array.isArray(userData.roles) ? userData.roles : [];
+            const filteredRoles = filteredParentOf.length === 0
+                ? existingRoles.filter(role => role !== 'parent')
+                : existingRoles;
+
+            await setDoc(userRef, {
+                parentOf: filteredParentOf,
+                parentTeamIds: filteredParentTeamIds,
+                parentPlayerKeys: filteredParentPlayerKeys,
+                roles: filteredRoles
+            }, { merge: true });
+        }
+    } catch (error) {
+        console.warn('[rollbackParentInviteRedemption] failed to rollback user profile links (non-fatal)', error);
+    }
+
+    if (teamId && playerId) {
+        try {
+            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
+            const playerSnap = await getDoc(playerRef);
+            if (playerSnap.exists()) {
+                const playerData = playerSnap.data() || {};
+                const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
+                const filteredParents = parents.filter(parent => parent?.userId !== userId);
+                await updateDoc(playerRef, { parents: filteredParents });
+            }
+        } catch (error) {
+            console.warn('[rollbackParentInviteRedemption] failed to rollback player parent link (non-fatal)', error);
+        }
+    }
+
+    await updateDoc(codeDoc.ref, {
+        used: false,
+        usedBy: null,
+        usedAt: null
+    });
+
+    console.log('[rollbackParentInviteRedemption] completed', { codeId: codeDoc.id });
+}
+
 export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
@@ -1230,6 +1344,7 @@ export async function getParentDashboardData(userId) {
     // parents[] entry, because production rules may block that
     // write even when the profile is updated successfully.
     const children = userProfile.parentOf;
+    const activeChildren = [];
     const upcomingGames = [];
 
     // Cache events per team to avoid duplicate reads when a parent
@@ -1242,6 +1357,9 @@ export async function getParentDashboardData(userId) {
 
     for (const child of children) {
         if (!child.teamId) continue;
+        const team = await getTeam(child.teamId);
+        if (!team) continue;
+        activeChildren.push(child);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
@@ -1271,7 +1389,7 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    return { upcomingGames, children };
+    return { upcomingGames, children: activeChildren };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
@@ -1764,6 +1882,11 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2222,6 +2345,11 @@ export async function getLiveGamesNow() {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2255,6 +2383,11 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInReplay(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2308,6 +2441,55 @@ function uniqueNonEmptyIds(ids) {
     return Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
 }
 
+const rsvpSummaryHydrationCacheByTeam = new Map();
+
+function getRsvpSummaryHydrationCache(teamId) {
+    if (!rsvpSummaryHydrationCacheByTeam.has(teamId)) {
+        rsvpSummaryHydrationCacheByTeam.set(teamId, {
+            rosterPromise: null,
+            playerIdsByUserPromise: new Map()
+        });
+    }
+    return rsvpSummaryHydrationCacheByTeam.get(teamId);
+}
+
+function getCachedRsvpRoster(teamId) {
+    const cache = getRsvpSummaryHydrationCache(teamId);
+    if (!cache.rosterPromise) {
+        cache.rosterPromise = getPlayers(teamId).catch((err) => {
+            cache.rosterPromise = null;
+            throw err;
+        });
+    }
+    return cache.rosterPromise;
+}
+
+function getCachedFallbackPlayerIdsForUser(teamId, userId) {
+    if (!userId) return Promise.resolve([]);
+    const cache = getRsvpSummaryHydrationCache(teamId);
+    if (!cache.playerIdsByUserPromise.has(userId)) {
+        const playerIdsPromise = (async () => {
+            try {
+                const profile = await getUserProfile(userId);
+                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+                return uniqueNonEmptyIds(
+                    parentLinks
+                        .filter((link) => link?.teamId === teamId)
+                        .map((link) => link?.playerId)
+                );
+            } catch (err) {
+                if (err?.code === 'permission-denied') return [];
+                throw err;
+            }
+        })().catch((err) => {
+            cache.playerIdsByUserPromise.delete(userId);
+            throw err;
+        });
+        cache.playerIdsByUserPromise.set(userId, playerIdsPromise);
+    }
+    return cache.playerIdsByUserPromise.get(userId);
+}
+
 function extractDirectRsvpPlayerIds(rsvp) {
     const direct = uniqueNonEmptyIds(rsvp?.playerIds);
     if (direct.length) return direct;
@@ -2317,7 +2499,24 @@ function extractDirectRsvpPlayerIds(rsvp) {
     return uniqueNonEmptyIds(legacy);
 }
 
-async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
+async function buildFallbackPlayerIdsByUser(teamId, rsvps, options = {}) {
+    const resolveIdsForUser = typeof options.resolveIdsForUser === 'function'
+        ? options.resolveIdsForUser
+        : async (uid) => {
+            try {
+                const profile = await getUserProfile(uid);
+                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+                return uniqueNonEmptyIds(
+                    parentLinks
+                        .filter((link) => link?.teamId === teamId)
+                        .map((link) => link?.playerId)
+                );
+            } catch (err) {
+                if (err?.code === 'permission-denied') return [];
+                throw err;
+            }
+        };
+
     const fallbackByUser = new Map();
     const unresolvedUserIds = Array.from(new Set(
         rsvps
@@ -2328,22 +2527,8 @@ async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
     if (unresolvedUserIds.length === 0) return fallbackByUser;
 
     await Promise.all(unresolvedUserIds.map(async (uid) => {
-        try {
-            const profile = await getUserProfile(uid);
-            const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
-            const idsForTeam = uniqueNonEmptyIds(
-                parentLinks
-                    .filter((link) => link?.teamId === teamId)
-                    .map((link) => link?.playerId)
-            );
-            fallbackByUser.set(uid, idsForTeam);
-        } catch (err) {
-            if (err?.code === 'permission-denied') {
-                fallbackByUser.set(uid, []);
-                return;
-            }
-            throw err;
-        }
+        const idsForTeam = await resolveIdsForUser(uid);
+        fallbackByUser.set(uid, idsForTeam);
     }));
 
     return fallbackByUser;
@@ -2356,6 +2541,86 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
     return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
 }
 export { buildCoachOverrideRsvpDocId };
+
+async function computeRsvpSummary(teamId, gameId) {
+    const [rsvps, roster] = await Promise.all([
+        getRsvps(teamId, gameId),
+        getCachedRsvpRoster(teamId)
+    ]);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+        resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
+    });
+    const activeRosterIds = new Set(roster.map((player) => player.id));
+    const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+
+    rsvps.forEach((rsvp) => {
+        const responseKey = normalizeRsvpResponse(rsvp.response);
+        if (responseKey === 'not_responded') return;
+
+        const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+            .filter((id) => activeRosterIds.has(id))
+            .length;
+        if (playerCount === 0) return;
+
+        if (responseKey === 'going') summary.going += playerCount;
+        else if (responseKey === 'maybe') summary.maybe += playerCount;
+        else if (responseKey === 'not_going') summary.notGoing += playerCount;
+    });
+
+    summary.total = summary.going + summary.maybe + summary.notGoing;
+    summary.notResponded = Math.max(0, roster.length - summary.total);
+    summary.total = roster.length;
+
+    return summary;
+}
+
+export async function getRsvpSummaries(teamId, gameIds) {
+    const uniqueGameIds = uniqueNonEmptyIds(gameIds);
+    const summaries = new Map();
+    if (!teamId || uniqueGameIds.length === 0) return summaries;
+
+    const roster = await getCachedRsvpRoster(teamId);
+    const activeRosterIds = new Set(roster.map((player) => player.id));
+
+    const rsvpResults = await Promise.allSettled(
+        uniqueGameIds.map((gameId) => getRsvps(teamId, gameId))
+    );
+
+    await Promise.all(rsvpResults.map(async (result, index) => {
+        const gameId = uniqueGameIds[index];
+        if (result.status !== 'fulfilled') {
+            summaries.set(gameId, null);
+            return;
+        }
+
+        const rsvps = result.value;
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+            resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
+        });
+        const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+
+        rsvps.forEach((rsvp) => {
+            const responseKey = normalizeRsvpResponse(rsvp.response);
+            if (responseKey === 'not_responded') return;
+
+            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
+                .filter((id) => activeRosterIds.has(id))
+                .length;
+            if (playerCount === 0) return;
+
+            if (responseKey === 'going') summary.going += playerCount;
+            else if (responseKey === 'maybe') summary.maybe += playerCount;
+            else if (responseKey === 'not_going') summary.notGoing += playerCount;
+        });
+
+        summary.total = summary.going + summary.maybe + summary.notGoing;
+        summary.notResponded = Math.max(0, roster.length - summary.total);
+        summary.total = roster.length;
+        summaries.set(gameId, summary);
+    }));
+
+    return summaries;
+}
 
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     const authUid = auth.currentUser?.uid || null;
@@ -2382,29 +2647,7 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // depending on team linkage state in profile claims/data.
     let summary = null;
     try {
-        const [rsvps, roster] = await Promise.all([
-            getRsvps(teamId, gameId),
-            getPlayers(teamId)
-        ]);
-        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-        const activeRosterIds = new Set(roster.map((player) => player.id));
-        summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-        rsvps.forEach((rsvp) => {
-            const responseKey = normalizeRsvpResponse(rsvp.response);
-            if (responseKey === 'not_responded') return;
-
-            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
-                .filter((id) => activeRosterIds.has(id))
-                .length;
-            if (playerCount === 0) return;
-
-            if (responseKey === 'going') summary.going += playerCount;
-            else if (responseKey === 'maybe') summary.maybe += playerCount;
-            else if (responseKey === 'not_going') summary.notGoing += playerCount;
-        });
-        summary.total = summary.going + summary.maybe + summary.notGoing;
-        summary.notResponded = Math.max(0, roster.length - summary.total);
-        summary.total = roster.length;
+        summary = await computeRsvpSummary(teamId, gameId);
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
@@ -2500,6 +2743,10 @@ export async function getMyRsvp(teamId, gameId, userId) {
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
     const snap = await getDoc(rsvpRef);
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function getRsvpSummary(teamId, gameId) {
+    return computeRsvpSummary(teamId, gameId);
 }
 
 const RIDE_OFFER_STATUS = {
