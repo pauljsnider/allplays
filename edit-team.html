@@ -95,6 +95,30 @@
                     <p class="text-xs text-gray-500 mt-1">Used to display external league standings (W/L/T) on the team page.</p>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">
+                        Live Stream <span class="font-normal text-gray-400">(optional)</span>
+                    </label>
+                    <input type="text" id="streamUrl"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                        placeholder="youtube.com/live/... or twitch.tv/yourchannel">
+                    <div id="stream-detect" class="hidden mt-1 text-xs font-medium"></div>
+                    <details class="mt-2 group">
+                        <summary class="text-xs text-indigo-500 cursor-pointer hover:text-indigo-700 select-none">
+                            What can I paste? ▸
+                        </summary>
+                        <ul class="mt-2 text-xs text-gray-500 space-y-1 pl-1 border-l-2 border-indigo-100 ml-1">
+                            <li class="pl-2"><span class="text-purple-600 font-semibold">Twitch</span> — twitch.tv/yourchannel</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — youtube.com/live/VIDEO_ID</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — youtube.com/watch?v=VIDEO_ID</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — youtu.be/VIDEO_ID</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — Channel ID: UCa9ghvbup6VQmnDOdqwYpqQ</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — paste the entire &lt;iframe&gt; embed code</li>
+                        </ul>
+                        <p class="mt-2 text-xs text-gray-400 pl-1">Shown to fans during live games. For a permanent YouTube channel stream, use your Channel ID from YouTube Studio → Settings → Channel → Advanced.</p>
+                    </details>
+                </div>
+
                 <div class="flex items-start">
                     <div class="flex items-center h-5">
                         <input id="isPublic" type="checkbox"
@@ -253,6 +277,14 @@
                     document.getElementById('leagueUrl').value = team.leagueUrl || '';
                     document.getElementById('zip').value = team.zip || '';
                     document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
+                    // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
+                    const streamInput = document.getElementById('streamUrl');
+                    if (team.twitchChannel) {
+                        streamInput.value = `twitch.tv/${team.twitchChannel}`;
+                    } else if (team.streamEmbedUrl || team.youtubeEmbedUrl) {
+                        streamInput.value = team.streamEmbedUrl || team.youtubeEmbedUrl;
+                    }
+                    streamInput.dispatchEvent(new Event('input')); // trigger detection badge
                     adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
                     renderAdminList();
 
@@ -433,6 +465,66 @@
             }
         });
 
+        // Parses any YouTube or Twitch URL and returns { platform, twitchChannel?, streamEmbedUrl? }
+        function parseStreamUrl(input) {
+            if (!input) return null;
+            const str = input.trim();
+
+            // Extract src from a pasted <iframe> embed code
+            const iframeSrc = str.match(/src="([^"]+)"/);
+            const url = iframeSrc ? iframeSrc[1] : str;
+
+            // ── TWITCH ──────────────────────────────────────────────────────────
+            // Matches: twitch.tv/channel  or  player.twitch.tv/?channel=name
+            const twitchMatch = url.match(/(?:(?:www\.)?twitch\.tv\/|player\.twitch\.tv\/\?.*channel=)([a-zA-Z0-9_]{1,25})/);
+            if (twitchMatch) {
+                return { platform: 'twitch', twitchChannel: twitchMatch[1].toLowerCase() };
+            }
+
+            // ── YOUTUBE ─────────────────────────────────────────────────────────
+            // Already a YouTube embed URL — normalize params
+            if (url.includes('youtube.com/embed/')) {
+                return { platform: 'youtube', streamEmbedUrl: url.split('?')[0] + '?autoplay=1&mute=1' };
+            }
+            // Raw channel ID (UC + 22 chars)
+            if (/^UC[a-zA-Z0-9_-]{22}$/.test(url)) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/live_stream?channel=${url}&autoplay=1&mute=1` };
+            }
+            // youtube.com/channel/UCxxxxxxxxxx
+            const channelMatch = url.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+            if (channelMatch) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/live_stream?channel=${channelMatch[1]}&autoplay=1&mute=1` };
+            }
+            // Path-based video ID: /live/ID, /embed/ID, youtu.be/ID
+            const pathMatch = url.match(/(?:youtube\.com\/(?:live|embed)\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            // Query-based video ID: ?v=ID or &v=ID
+            const queryMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+            const videoId = (pathMatch && pathMatch[1]) || (queryMatch && queryMatch[1]);
+            if (videoId) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1` };
+            }
+
+            return null;
+        }
+
+        // Live detection badge as the user types / pastes
+        document.getElementById('streamUrl').addEventListener('input', function () {
+            const detect = document.getElementById('stream-detect');
+            const result = parseStreamUrl(this.value);
+            if (!this.value.trim()) {
+                detect.className = 'hidden mt-1 text-xs font-medium';
+            } else if (result?.platform === 'twitch') {
+                detect.textContent = `✅ Twitch channel detected: ${result.twitchChannel}`;
+                detect.className = 'mt-1 text-xs font-medium text-purple-600';
+            } else if (result?.platform === 'youtube') {
+                detect.textContent = '✅ YouTube stream detected';
+                detect.className = 'mt-1 text-xs font-medium text-red-600';
+            } else {
+                detect.textContent = '⚠️ Link not recognized — try a full URL (e.g. twitch.tv/channel)';
+                detect.className = 'mt-1 text-xs font-medium text-amber-600';
+            }
+        });
+
         document.getElementById('team-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('save-btn');
@@ -469,7 +561,15 @@
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
-                    adminEmails
+                    adminEmails,
+                    ...((() => {
+                        const sr = parseStreamUrl(document.getElementById('streamUrl').value);
+                        return {
+                            twitchChannel: sr?.platform === 'twitch' ? sr.twitchChannel : null,
+                            streamEmbedUrl: sr?.platform === 'youtube' ? sr.streamEmbedUrl : null,
+                            youtubeEmbedUrl: null, // clear legacy field on every save
+                        };
+                    })())
                 };
 
                 if (!currentTeamId) {

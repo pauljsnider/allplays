@@ -127,6 +127,7 @@ const els = {
   gameStartTime: q('#game-start-time'),
 
   mobileTabs: document.querySelectorAll('#mobile-tabs [data-tab]'),
+  videoPanel: q('#video-panel'),
   playsPanel: q('#plays-panel'),
   statsPanel: q('#stats-panel'),
   chatPanelMobile: q('#chat-panel')
@@ -198,6 +199,7 @@ function updateTabs() {
   const isMobile = window.matchMedia('(max-width: 767px)').matches;
 
   if (!isMobile) {
+    els.videoPanel?.classList.remove('hidden');
     els.playsPanel?.classList.remove('hidden');
     els.statsPanel?.classList.remove('hidden');
     els.chatPanel?.classList.remove('hidden');
@@ -212,18 +214,37 @@ function updateTabs() {
     tab.classList.toggle('border-transparent', !active);
   });
 
-  if (state.activeTab === 'plays') {
-    els.playsPanel?.classList.remove('hidden');
-    els.statsPanel?.classList.add('hidden');
-    els.chatPanel?.classList.add('hidden');
-  } else if (state.activeTab === 'stats') {
-    els.playsPanel?.classList.add('hidden');
-    els.statsPanel?.classList.remove('hidden');
-    els.chatPanel?.classList.add('hidden');
+  const tab = state.activeTab;
+  els.videoPanel?.classList.toggle('hidden', tab !== 'video');
+  els.playsPanel?.classList.toggle('hidden', tab !== 'plays');
+  els.statsPanel?.classList.toggle('hidden', tab !== 'stats');
+  els.chatPanel?.classList.toggle('hidden', tab !== 'chat');
+}
+
+function setupVideoPanel() {
+  // Build embed URL: Twitch takes priority, then streamEmbedUrl, then legacy YouTube fields
+  let embedUrl = null;
+  if (state.team?.twitchChannel) {
+    const host = window.location.hostname;
+    embedUrl = `https://player.twitch.tv/?channel=${state.team.twitchChannel}&parent=${host}&autoplay=true&muted=true`;
   } else {
-    els.playsPanel?.classList.add('hidden');
-    els.statsPanel?.classList.add('hidden');
-    els.chatPanel?.classList.remove('hidden');
+    embedUrl = state.team?.streamEmbedUrl ||
+      state.team?.youtubeEmbedUrl ||
+      (state.team?.youtubeVideoId
+        ? `https://www.youtube.com/embed/${state.team.youtubeVideoId}?autoplay=1&mute=1`
+        : null);
+  }
+
+  const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
+
+  if (embedUrl) {
+    const iframe = document.getElementById('youtube-stream-iframe');
+    if (iframe) iframe.src = embedUrl;
+    if (videoTab) videoTab.classList.remove('hidden');
+  } else {
+    els.videoPanel?.classList.add('hidden');
+    if (videoTab) videoTab.classList.add('hidden');
+    if (state.activeTab === 'video') state.activeTab = 'plays';
   }
 }
 
@@ -1361,6 +1382,7 @@ async function init() {
   state.awayScore = game.awayScore || 0;
   state.period = game.period || 'Q1';
 
+  setupVideoPanel();
   renderGameInfo();
   renderScoreboard();
   renderLineup();

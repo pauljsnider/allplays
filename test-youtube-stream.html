@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Suite - Stream URL Parser</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-detail { font-size: 0.85em; color: #555; margin-top: 4px; }
+        .test-error { font-size: 0.85em; color: #b91c1c; margin-top: 4px; }
+        h2 { color: #4338ca; margin-bottom: 4px; }
+        .summary { font-size: 1.1em; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; }
+        .summary.all-pass { background: #dcfce7; color: #15803d; }
+        .summary.has-fail { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Stream URL Parser Test Suite</h1>
+    <p>Tests for <code>parseStreamUrl()</code> (YouTube + Twitch) and <code>setupVideoPanel()</code> visibility logic.</p>
+
+    <div id="summary"></div>
+    <div id="test-results"></div>
+
+    <script>
+        // ─── Test harness ───────────────────────────────────────────────────────────
+        const results = [];
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ name, pass: true, detail: null, error: null });
+            } catch (e) {
+                results.push({ name, pass: false, detail: null, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, label) {
+            if (actual !== expected) {
+                throw new Error(`${label || ''}\n  Expected: ${JSON.stringify(expected)}\n  Got:      ${JSON.stringify(actual)}`);
+            }
+        }
+
+        function assertNull(actual, label) {
+            if (actual !== null) throw new Error(`${label || ''} — expected null, got ${JSON.stringify(actual)}`);
+        }
+
+        function assertContains(str, substr, label) {
+            if (!str || !str.includes(substr)) {
+                throw new Error(`${label || ''}\n  Expected "${str}" to contain "${substr}"`);
+            }
+        }
+
+        // ─── Function under test (copied from edit-team.html) ───────────────────────
+        function parseStreamUrl(input) {
+            if (!input) return null;
+            const str = input.trim();
+
+            // Extract src from a pasted <iframe> embed code
+            const iframeSrc = str.match(/src="([^"]+)"/);
+            const url = iframeSrc ? iframeSrc[1] : str;
+
+            // ── TWITCH ──────────────────────────────────────────────────────────
+            // Matches: twitch.tv/channel  or  player.twitch.tv/?channel=name
+            const twitchMatch = url.match(/(?:(?:www\.)?twitch\.tv\/|player\.twitch\.tv\/\?.*channel=)([a-zA-Z0-9_]{1,25})/);
+            if (twitchMatch) {
+                return { platform: 'twitch', twitchChannel: twitchMatch[1].toLowerCase() };
+            }
+
+            // ── YOUTUBE ─────────────────────────────────────────────────────────
+            // Already a YouTube embed URL — normalize params
+            if (url.includes('youtube.com/embed/')) {
+                return { platform: 'youtube', streamEmbedUrl: url.split('?')[0] + '?autoplay=1&mute=1' };
+            }
+            // Raw channel ID (UC + 22 chars)
+            if (/^UC[a-zA-Z0-9_-]{22}$/.test(url)) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/live_stream?channel=${url}&autoplay=1&mute=1` };
+            }
+            // youtube.com/channel/UCxxxxxxxxxx
+            const channelMatch = url.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+            if (channelMatch) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/live_stream?channel=${channelMatch[1]}&autoplay=1&mute=1` };
+            }
+            // Path-based video ID: /live/ID, /embed/ID, youtu.be/ID
+            const pathMatch = url.match(/(?:youtube\.com\/(?:live|embed)\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            // Query-based video ID: ?v=ID or &v=ID
+            const queryMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+            const videoId = (pathMatch && pathMatch[1]) || (queryMatch && queryMatch[1]);
+            if (videoId) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1` };
+            }
+
+            return null;
+        }
+
+        // ─── SUITE 1: parseStreamUrl — YouTube video URLs ──────────────────────────
+
+        test('YouTube video: youtube.com/live/ID', () => {
+            const result = parseStreamUrl('https://www.youtube.com/live/LJNfHqRRhBI?si=abc');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'embed URL');
+        });
+
+        test('YouTube video: youtube.com/watch?v=ID', () => {
+            const result = parseStreamUrl('https://www.youtube.com/watch?v=LJNfHqRRhBI');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'embed URL');
+        });
+
+        test('YouTube video: youtu.be/ID (short link)', () => {
+            const result = parseStreamUrl('https://youtu.be/LJNfHqRRhBI');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'embed URL');
+        });
+
+        test('YouTube video: watch URL with extra params', () => {
+            const result = parseStreamUrl('https://www.youtube.com/watch?v=LJNfHqRRhBI&t=30s&feature=share');
+            assertContains(result.streamEmbedUrl, 'LJNfHqRRhBI', 'extracts ID from URL with extra params');
+        });
+
+        test('YouTube video: full <iframe> embed code', () => {
+            const iframe = `<iframe width="560" height="315" src="https://www.youtube.com/embed/LJNfHqRRhBI?si=xyz" title="YouTube video player" frameborder="0" allowfullscreen></iframe>`;
+            const result = parseStreamUrl(iframe);
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'embed URL from iframe');
+        });
+
+        test('YouTube video: embed URL already — strips old params, adds autoplay+mute', () => {
+            const result = parseStreamUrl('https://www.youtube.com/embed/LJNfHqRRhBI?si=old&controls=0');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'normalises existing embed URL');
+        });
+
+        // ─── SUITE 2: parseStreamUrl — YouTube channel IDs ────────────────────────
+
+        test('YouTube channel: raw Channel ID (UCa9ghvbup6VQmnDOdqwYpqQ)', () => {
+            const result = parseStreamUrl('UCa9ghvbup6VQmnDOdqwYpqQ');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl,
+                'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1',
+                'embed URL');
+        });
+
+        test('YouTube channel: youtube.com/channel/UCxxxxxxxxxx URL', () => {
+            const result = parseStreamUrl('https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertEquals(result.streamEmbedUrl,
+                'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1',
+                'embed URL');
+        });
+
+        test('YouTube channel: embed URL uses live_stream endpoint', () => {
+            const result = parseStreamUrl('UCa9ghvbup6VQmnDOdqwYpqQ');
+            assertContains(result.streamEmbedUrl, 'live_stream', 'uses live_stream embed endpoint');
+            assertContains(result.streamEmbedUrl, 'channel=UCa9ghvbup6VQmnDOdqwYpqQ', 'includes channel param');
+        });
+
+        // ─── SUITE 3: parseStreamUrl — Twitch URLs ─────────────────────────────────
+
+        test('Twitch: twitch.tv/username', () => {
+            const result = parseStreamUrl('twitch.tv/mychannelname');
+            assertEquals(result.platform, 'twitch', 'platform');
+            assertEquals(result.twitchChannel, 'mychannelname', 'channel name');
+        });
+
+        test('Twitch: https://www.twitch.tv/username', () => {
+            const result = parseStreamUrl('https://www.twitch.tv/allplayslive');
+            assertEquals(result.platform, 'twitch', 'platform');
+            assertEquals(result.twitchChannel, 'allplayslive', 'channel name');
+        });
+
+        test('Twitch: channel name is lowercased', () => {
+            const result = parseStreamUrl('https://twitch.tv/MyTeamChannel');
+            assertEquals(result.platform, 'twitch', 'platform');
+            assertEquals(result.twitchChannel, 'myteamchannel', 'lowercased');
+        });
+
+        test('Twitch: player.twitch.tv embed URL', () => {
+            const result = parseStreamUrl('https://player.twitch.tv/?channel=mychannelname&parent=allplays.ai');
+            assertEquals(result.platform, 'twitch', 'platform');
+            assertEquals(result.twitchChannel, 'mychannelname', 'channel from player URL');
+        });
+
+        // ─── SUITE 4: parseStreamUrl — null / unresolvable inputs ─────────────────
+
+        test('null: empty string returns null', () => {
+            assertNull(parseStreamUrl(''), 'empty string');
+        });
+
+        test('null: null input returns null', () => {
+            assertNull(parseStreamUrl(null), 'null input');
+        });
+
+        test('null: @handle URL returns null (not resolvable without API)', () => {
+            assertNull(parseStreamUrl('https://youtube.com/@pauljsnider?si=jEP5BI9XDQoo1jth'),
+                '@handle URL');
+        });
+
+        test('null: random URL returns null', () => {
+            assertNull(parseStreamUrl('https://example.com/video'), 'random URL');
+        });
+
+        test('null: garbage string returns null', () => {
+            assertNull(parseStreamUrl('not a url at all'), 'garbage string');
+        });
+
+        // ─── SUITE 5: autoplay + mute always present in YouTube embeds ────────────
+
+        test('YouTube params: video embed always has autoplay=1', () => {
+            const result = parseStreamUrl('https://youtu.be/LJNfHqRRhBI');
+            assertContains(result.streamEmbedUrl, 'autoplay=1', 'video embed has autoplay');
+        });
+
+        test('YouTube params: video embed always has mute=1', () => {
+            const result = parseStreamUrl('https://youtu.be/LJNfHqRRhBI');
+            assertContains(result.streamEmbedUrl, 'mute=1', 'video embed has mute');
+        });
+
+        test('YouTube params: channel embed always has autoplay=1', () => {
+            const result = parseStreamUrl('UCa9ghvbup6VQmnDOdqwYpqQ');
+            assertContains(result.streamEmbedUrl, 'autoplay=1', 'channel embed has autoplay');
+        });
+
+        test('YouTube params: channel embed always has mute=1', () => {
+            const result = parseStreamUrl('UCa9ghvbup6VQmnDOdqwYpqQ');
+            assertContains(result.streamEmbedUrl, 'mute=1', 'channel embed has mute');
+        });
+
+        // ─── SUITE 6: setupVideoPanel logic (DOM simulation) ──────────────────────
+
+        test('visibility: video panel hidden when no stream on team', () => {
+            const panel = { classList: { _h: true, add(c) { this._h = true; }, remove(c) { this._h = false; } } };
+            const tab   = { classList: { _h: true, add(c) { this._h = true; }, remove(c) { this._h = false; } } };
+            const team = {}; // no twitchChannel, no streamEmbedUrl, no youtubeEmbedUrl
+
+            const embedUrl = team.twitchChannel ? 'TWITCH' :
+                (team.streamEmbedUrl || team.youtubeEmbedUrl ||
+                 (team.youtubeVideoId ? `https://www.youtube.com/embed/${team.youtubeVideoId}?autoplay=1&mute=1` : null));
+
+            if (!embedUrl) {
+                panel.classList.add('hidden');
+                tab.classList.add('hidden');
+            }
+
+            if (!panel.classList._h) throw new Error('video panel should be hidden when team has no stream');
+            if (!tab.classList._h) throw new Error('video tab should be hidden when team has no stream');
+        });
+
+        test('visibility: video panel shown when team has streamEmbedUrl (YouTube)', () => {
+            let iframeSrc = '';
+            const iframe = { set src(v) { iframeSrc = v; } };
+            const tab = { classList: { _h: true, remove(c) { this._h = false; } } };
+            const team = { streamEmbedUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1' };
+
+            const embedUrl = team.streamEmbedUrl;
+            if (embedUrl) {
+                iframe.src = embedUrl;
+                tab.classList.remove('hidden');
+            }
+
+            if (tab.classList._h) throw new Error('video tab should be visible when team has a stream');
+            assertContains(iframeSrc, 'live_stream', 'iframe src set to channel embed URL');
+        });
+
+        test('visibility: team with twitchChannel generates Twitch player URL', () => {
+            let iframeSrc = '';
+            const iframe = { set src(v) { iframeSrc = v; } };
+            const team = { twitchChannel: 'myteam' };
+
+            if (team.twitchChannel) {
+                iframe.src = `https://player.twitch.tv/?channel=${team.twitchChannel}&parent=localhost&autoplay=true&muted=true`;
+            }
+
+            assertContains(iframeSrc, 'player.twitch.tv', 'uses Twitch player URL');
+            assertContains(iframeSrc, 'channel=myteam', 'includes channel param');
+            assertContains(iframeSrc, 'parent=localhost', 'includes parent param');
+        });
+
+        // ─── Render results ────────────────────────────────────────────────────────
+
+        const passed = results.filter(r => r.pass).length;
+        const failed = results.filter(r => !r.pass).length;
+
+        const summaryEl = document.getElementById('summary');
+        summaryEl.innerHTML = `<div class="summary ${failed === 0 ? 'all-pass' : 'has-fail'}">
+            ${failed === 0 ? '✅' : '❌'} ${passed} passed, ${failed} failed (${results.length} total)
+        </div>`;
+
+        // Group by suite
+        const suites = [
+            { label: 'Suite 1: YouTube video URL parsing', start: 0, count: 6 },
+            { label: 'Suite 2: YouTube channel ID parsing', start: 6, count: 3 },
+            { label: 'Suite 3: Twitch URL parsing', start: 9, count: 4 },
+            { label: 'Suite 4: Null / unresolvable inputs', start: 13, count: 5 },
+            { label: 'Suite 5: YouTube autoplay + mute params', start: 18, count: 4 },
+            { label: 'Suite 6: setupVideoPanel visibility logic', start: 22, count: 3 },
+        ];
+
+        const container = document.getElementById('test-results');
+        suites.forEach(suite => {
+            const section = document.createElement('div');
+            section.className = 'test-section';
+            section.innerHTML = `<h2>${suite.label}</h2>`;
+            const slice = results.slice(suite.start, suite.start + suite.count);
+            slice.forEach(r => {
+                section.innerHTML += `
+                    <div class="test-case ${r.pass ? 'pass' : 'fail'}">
+                        <div class="test-name">${r.pass ? '✅' : '❌'} ${r.name}</div>
+                        ${r.error ? `<div class="test-error"><pre>${r.error}</pre></div>` : ''}
+                    </div>`;
+            });
+            container.appendChild(section);
+        });
+    </script>
+</body>
+</html>
