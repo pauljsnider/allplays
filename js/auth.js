@@ -60,7 +60,19 @@ export async function signup(email, password, activationCode) {
             });
         } catch (e) {
             console.error('Error linking parent:', e);
-            // Don't fail the whole signup, but log it
+            try {
+                if (userCredential?.user) {
+                    await userCredential.user.delete();
+                }
+            } catch (deleteError) {
+                console.error('Error deleting auth user after parent invite failure:', deleteError);
+            }
+            try {
+                await signOut(auth);
+            } catch (signOutError) {
+                console.error('Error signing out after parent invite failure:', signOutError);
+            }
+            throw e;
         }
     } else {
         // Standard Flow (Coach/Admin)
