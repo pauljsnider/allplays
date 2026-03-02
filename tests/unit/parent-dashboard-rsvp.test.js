@@ -35,17 +35,14 @@ describe('parent dashboard RSVP player scope', () => {
   });
 
   it('rejects explicit childId values outside the selected game scope', () => {
-    const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {
+    expect(() => resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {
       childId: 'child-z'
-    });
-
-    expect(result).toEqual([]);
+    })).toThrow('Select a child in this game before submitting RSVP.');
   });
 
-  it('returns empty scope when fallback is ambiguous across multiple children', () => {
-    const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {});
-
-    expect(result).toEqual([]);
+  it('throws when fallback is ambiguous across multiple children', () => {
+    expect(() => resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {}))
+      .toThrow('Select a child in this game before submitting RSVP.');
   });
 
   it('falls back to the only child when a game scope has exactly one child', () => {

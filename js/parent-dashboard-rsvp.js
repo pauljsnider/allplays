@@ -21,16 +21,31 @@ export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gam
     );
     const allowedSet = new Set(allowedPlayerIds);
     const sanitizeToAllowedScope = (ids) => ids.filter((id) => allowedSet.has(id));
+    const throwScopeError = () => {
+        throw new Error('Select a child in this game before submitting RSVP.');
+    };
 
     const selectedChildId = String(childContext?.selectedChildId || '').trim();
-    if (selectedChildId) return sanitizeToAllowedScope([selectedChildId]);
+    if (selectedChildId) {
+        const scoped = sanitizeToAllowedScope([selectedChildId]);
+        if (scoped.length === 0) throwScopeError();
+        return scoped;
+    }
 
     const explicitChildId = String(childContext?.childId || '').trim();
-    if (explicitChildId) return sanitizeToAllowedScope([explicitChildId]);
+    if (explicitChildId) {
+        const scoped = sanitizeToAllowedScope([explicitChildId]);
+        if (scoped.length === 0) throwScopeError();
+        return scoped;
+    }
 
     const explicitChildIds = parseChildIds(childContext?.childIds);
-    if (explicitChildIds.length > 0) return sanitizeToAllowedScope(explicitChildIds);
+    if (explicitChildIds.length > 0) {
+        const scoped = sanitizeToAllowedScope(explicitChildIds);
+        if (scoped.length === 0) throwScopeError();
+        return scoped;
+    }
 
     if (allowedPlayerIds.length === 1) return allowedPlayerIds;
-    return [];
+    throwScopeError();
 }
