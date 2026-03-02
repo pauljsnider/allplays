@@ -224,23 +224,43 @@ function updateTabs() {
 function setupVideoPanel() {
   // Build embed URL: Twitch takes priority, then streamEmbedUrl, then legacy YouTube fields
   let embedUrl = null;
+  let publicUrl = null;
+  let publicLabel = null;
+
   if (state.team?.twitchChannel) {
     const host = window.location.hostname;
     embedUrl = `https://player.twitch.tv/?channel=${state.team.twitchChannel}&parent=${host}&autoplay=true&muted=true`;
+    publicUrl = `https://twitch.tv/${state.team.twitchChannel}`;
+    publicLabel = 'Watch on Twitch ↗';
   } else {
-    embedUrl = state.team?.streamEmbedUrl ||
+    const src = state.team?.streamEmbedUrl ||
       state.team?.youtubeEmbedUrl ||
       (state.team?.youtubeVideoId
         ? `https://www.youtube.com/embed/${state.team.youtubeVideoId}?autoplay=1&mute=1`
         : null);
+    if (src) {
+      embedUrl = src;
+      const channelMatch = src.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+      const videoMatch = src.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+      publicUrl = channelMatch
+        ? `https://www.youtube.com/channel/${channelMatch[1]}`
+        : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+      publicLabel = 'Watch on YouTube ↗';
+    }
   }
 
   const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
+  const extLink = document.getElementById('stream-external-link');
 
   if (embedUrl) {
     const iframe = document.getElementById('youtube-stream-iframe');
     if (iframe) iframe.src = embedUrl;
     if (videoTab) videoTab.classList.remove('hidden');
+    if (extLink && publicUrl) {
+      extLink.href = publicUrl;
+      extLink.textContent = publicLabel;
+      extLink.classList.remove('hidden');
+    }
   } else {
     els.videoPanel?.classList.add('hidden');
     if (videoTab) videoTab.classList.add('hidden');
