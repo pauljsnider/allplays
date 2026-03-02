@@ -135,7 +135,8 @@
 
     <script type="module">
         import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=9';
-        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile } from './js/db.js?v=14';
+        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile, updateTeam, markAccessCodeAsUsed } from './js/db.js?v=14';
+        import { createInviteProcessor } from './js/accept-invite-flow.js?v=2';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
 
         renderFooter(document.getElementById('footer-container'));
@@ -170,59 +171,15 @@
             }, 2000);
         }
 
-        async function processInvite(userId, code) {
-            // Validate the invite code
-            const validation = await validateAccessCode(code);
-            if (!validation.valid) {
-                throw new Error(validation.message || 'Invalid or expired invite code');
-            }
-
-            if (validation.type === 'parent_invite') {
-                // Process parent invite
-                await redeemParentInvite(userId, code);
-                const team = await getTeam(validation.data.teamId);
-                return {
-                    success: true,
-                    message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : 'a player'} on ${team?.name || 'the team'}!`,
-                    redirectUrl: 'parent-dashboard.html'
-                };
-            } else if (validation.type === 'admin_invite') {
-                // Process admin invite - add email to team's adminEmails
-                const team = await getTeam(validation.data.teamId);
-                if (!team) {
-                    throw new Error('Team not found');
-                }
-
-                // Get current user's email
-                const profile = await getUserProfile(userId);
-                const userEmail = profile?.email;
-
-                if (userEmail) {
-                    const adminEmails = team.adminEmails || [];
-                    if (!adminEmails.map(e => e.toLowerCase()).includes(userEmail.toLowerCase())) {
-                        adminEmails.push(userEmail.toLowerCase());
-                        // Note: We need to update the team, but we should use db.js
-                        // For now, we'll update user profile with coach role
-                    }
-                }
-
-                // Update user profile to add coachOf
-                await updateUserProfile(userId, {
-                    coachOf: [validation.data.teamId],
-                    roles: ['coach']
-                });
-
-                // Mark code as used is handled by validateAccessCode flow
-
-                return {
-                    success: true,
-                    message: `You've been added as an admin of ${team?.name || 'the team'}!`,
-                    redirectUrl: 'dashboard.html'
-                };
-            } else {
-                throw new Error('Unknown invite type');
-            }
-        }
+        const processInvite = createInviteProcessor({
+            validateAccessCode,
+            redeemParentInvite,
+            updateUserProfile,
+            getTeam,
+            getUserProfile,
+            updateTeam,
+            markAccessCodeAsUsed
+        });
 
         async function init() {
             renderHeader(document.getElementById('header-container'), null);
