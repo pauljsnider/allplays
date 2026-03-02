@@ -45,8 +45,12 @@ export async function signup(email, password, activationCode) {
             validateAccessCode,
             createUserWithEmailAndPassword,
             redeemParentInvite,
+            redeemAdminInviteAcceptance,
             updateUserProfile,
             markAccessCodeAsUsed,
+            getTeam,
+            addTeamAdminEmail,
+            getUserProfile,
             sendEmailVerification,
             signOut
         }

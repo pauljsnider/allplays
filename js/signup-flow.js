@@ -9,8 +9,12 @@ export async function executeEmailPasswordSignup({
         validateAccessCode,
         createUserWithEmailAndPassword,
         redeemParentInvite,
+        redeemAdminInviteAcceptance,
         updateUserProfile,
         markAccessCodeAsUsed,
+        getTeam,
+        addTeamAdminEmail,
+        getUserProfile,
         sendEmailVerification,
         signOut
     } = dependencies;
@@ -55,6 +59,29 @@ export async function executeEmailPasswordSignup({
             });
         } catch (e) {
             console.error('Error linking parent:', e);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw e;
+        }
+    } else if (validation.type === 'admin_invite') {
+        try {
+            await redeemAdminInviteAcceptance({
+                userId,
+                userEmail: email,
+                teamId: validation?.data?.teamId,
+                codeId: validation.codeId,
+                markAccessCodeAsUsed,
+                getTeam,
+                addTeamAdminEmail,
+                getUserProfile,
+                updateUserProfile
+            });
+            await updateUserProfile(userId, {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true
+            });
+        } catch (e) {
+            console.error('Error redeeming admin invite:', e);
             await cleanupFailedParentInviteSignup(userCredential?.user);
             throw e;
         }
