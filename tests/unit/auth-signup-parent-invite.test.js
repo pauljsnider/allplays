@@ -83,7 +83,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
     });
 
-    it('rejects signup when parent invite profile finalization fails', async () => {
+    it('does not fail signup when parent invite profile finalization fails after redeem', async () => {
         const deleteMock = vi.fn().mockResolvedValue(undefined);
         const user = {
             uid: 'user-1',
@@ -101,11 +101,11 @@ describe('auth signup parent invite failure handling', () => {
         dbMocks.redeemParentInvite.mockResolvedValue({ success: true });
         dbMocks.updateUserProfile.mockRejectedValue(new Error('profile write failed'));
 
-        await expect(signup('parent@example.com', 'secret123', 'PARENT01')).rejects.toThrow('profile write failed');
+        await expect(signup('parent@example.com', 'secret123', 'PARENT01')).resolves.toEqual({ user });
         expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT01');
-        expect(deleteMock).toHaveBeenCalledTimes(1);
-        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
-        expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
+        expect(deleteMock).not.toHaveBeenCalled();
+        expect(firebaseMocks.signOut).not.toHaveBeenCalled();
+        expect(firebaseMocks.sendEmailVerification).toHaveBeenCalledWith(user);
     });
 
     it('delegates signup flow to executeEmailPasswordSignup with parent invite dependencies', () => {
@@ -121,7 +121,7 @@ describe('auth signup parent invite failure handling', () => {
         expect(signupSection).toContain('signOut');
     });
 
-    it('still signs out and rethrows when auth-user cleanup delete fails', async () => {
+    it('does not trigger auth-user cleanup when profile write fails after parent invite redeem', async () => {
         const user = {
             uid: 'user-1',
             email: 'parent@example.com',
@@ -138,9 +138,10 @@ describe('auth signup parent invite failure handling', () => {
         dbMocks.redeemParentInvite.mockResolvedValue({ success: true });
         dbMocks.updateUserProfile.mockRejectedValue(new Error('profile write failed'));
 
-        await expect(signup('parent@example.com', 'secret123', 'PARENT01')).rejects.toThrow('profile write failed');
-        expect(user.delete).toHaveBeenCalledTimes(1);
-        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
+        await expect(signup('parent@example.com', 'secret123', 'PARENT01')).resolves.toEqual({ user });
+        expect(user.delete).not.toHaveBeenCalled();
+        expect(firebaseMocks.signOut).not.toHaveBeenCalled();
+        expect(firebaseMocks.sendEmailVerification).toHaveBeenCalledWith(user);
     });
 
     it('rejects google signup when parent invite linking fails', async () => {

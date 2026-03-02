@@ -47,6 +47,7 @@ async function linkParentInviteOrRollback(user, parentInviteCode) {
         await redeemParentInvite(user.uid, parentInviteCode);
     } catch (inviteLinkError) {
         console.error('Error linking parent:', inviteLinkError);
+        clearPendingActivationCode();
         await cleanupFailedNewUser(user, 'parent invite link failure');
         // Fail closed only for invite-linking errors.
         throw inviteLinkError;
