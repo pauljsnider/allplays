@@ -263,7 +263,7 @@
                 currentTeamId = teamId; // Store global
                 const [team, players, games] = await Promise.all([
                     getTeam(teamId),
-                    getPlayers(teamId),
+                    getPlayers(teamId, { includeInactive: true }),
                     getGames(teamId)
                 ]);
 

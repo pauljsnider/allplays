@@ -608,7 +608,7 @@ Write the match report now:`;
                 const [team, game, players] = await Promise.all([
                     getTeam(teamId),
                     getGame(teamId, gameId),
-                    getPlayers(teamId)
+                    getPlayers(teamId, { includeInactive: true })
                 ]);
 
                 if (!game) {

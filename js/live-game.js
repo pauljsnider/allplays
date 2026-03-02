@@ -1327,10 +1327,13 @@ async function init() {
 
   let team, game, players, configs;
   try {
+    const playersPromise = state.isReplay
+      ? getPlayers(state.teamId, { includeInactive: true })
+      : getPlayers(state.teamId);
     [team, game, players, configs] = await Promise.all([
       getTeam(state.teamId),
       getGame(state.teamId, state.gameId),
-      getPlayers(state.teamId),
+      playersPromise,
       getConfigs(state.teamId)
     ]);
   } catch (error) {
