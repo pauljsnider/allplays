@@ -19,6 +19,41 @@ import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemPare
 import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=2';
 
+async function cleanupFailedNewUser(user, context) {
+    if (!user) {
+        try {
+            await signOut(auth);
+        } catch (signOutError) {
+            console.error(`Error signing out after ${context}:`, signOutError);
+        }
+        return;
+    }
+
+    try {
+        await user.delete();
+    } catch (deleteError) {
+        console.error(`Error deleting user after ${context}:`, deleteError);
+    }
+
+    try {
+        await signOut(auth);
+    } catch (signOutError) {
+        console.error(`Error signing out after ${context}:`, signOutError);
+    }
+}
+
+async function linkParentInviteOrRollback(user, parentInviteCode) {
+    try {
+        await redeemParentInvite(user.uid, parentInviteCode);
+    } catch (inviteLinkError) {
+        console.error('Error linking parent:', inviteLinkError);
+        clearPendingActivationCode();
+        await cleanupFailedNewUser(user, 'parent invite link failure');
+        // Fail closed only for invite-linking errors.
+        throw inviteLinkError;
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -105,26 +140,6 @@ function clearPendingActivationCode() {
     }
 }
 
-async function cleanupFailedGoogleSignup(user, context) {
-    if (!user) {
-        return;
-    }
-
-    if (typeof user.delete === 'function') {
-        try {
-            await user.delete();
-        } catch (deleteError) {
-            console.error(`Error deleting auth user (${context}):`, deleteError);
-        }
-    }
-
-    try {
-        await signOut(auth);
-    } catch (signOutError) {
-        console.error(`Error signing out (${context}):`, signOutError);
-    }
-}
-
 // Shared function to process Google auth result (used by both popup and redirect flows)
 async function processGoogleAuthResult(result, activationCode = null) {
     console.log('[Google Auth] Processing result for user:', result.user.email);
@@ -142,7 +157,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         if (!code) {
             console.log('[Google Auth] No activation code - deleting unauthorized user');
             clearPendingActivationCode();
-            await cleanupFailedGoogleSignup(result.user, 'missing activation code');
+            await cleanupFailedNewUser(result.user, 'missing activation code');
             throw new Error('Activation code is required for new accounts');
         }
 
@@ -150,15 +165,17 @@ async function processGoogleAuthResult(result, activationCode = null) {
         const validation = await validateAccessCode(code);
         if (!validation.valid) {
             clearPendingActivationCode();
-            await cleanupFailedGoogleSignup(result.user, 'invalid activation code');
+            await cleanupFailedNewUser(result.user, 'invalid activation code');
             throw new Error(validation.message || 'Invalid activation code');
         }
 
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
+            await linkParentInviteOrRollback(result.user, validation.data.code);
+
+            // Best-effort profile write after invite redemption.
             try {
-                await redeemParentInvite(userId, validation.data.code);
                 await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
@@ -166,10 +183,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     createdAt: new Date()
                 });
             } catch (e) {
-                console.error('Error linking parent:', e);
-                clearPendingActivationCode();
-                await cleanupFailedGoogleSignup(result.user, 'parent invite linking failure');
-                throw e;
+                console.error('Error creating user profile after parent invite redeem:', e);
             }
         } else if (validation.type === 'admin_invite') {
             try {
