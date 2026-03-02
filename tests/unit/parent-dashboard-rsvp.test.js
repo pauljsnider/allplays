@@ -25,6 +25,15 @@ describe('parent dashboard RSVP player scope', () => {
     expect(result).toEqual(['child-a']);
   });
 
+  it('prioritizes selected child filter over broad childIds payload', () => {
+    const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {
+      selectedChildId: 'child-a',
+      childIds: 'child-a,child-b'
+    });
+
+    expect(result).toEqual(['child-a']);
+  });
+
   it('rejects explicit childId values outside the selected game scope', () => {
     const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {
       childId: 'child-z'
