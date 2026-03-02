@@ -28,6 +28,8 @@ const dbMocks = vi.hoisted(() => ({
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
+    getTeam: vi.fn(),
+    addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn()
@@ -52,24 +54,17 @@ describe('auth signup parent invite failure handling', () => {
         firebaseMocks.sendEmailVerification.mockResolvedValue(undefined);
     });
 
-    it('fails closed by cleaning up auth user and rethrowing parent invite finalization errors', () => {
+    it('delegates signup flow to executeEmailPasswordSignup with parent invite dependencies', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
         const signupSection = authSource.split('export async function signup')[1]?.split('export async function loginWithGoogle')[0];
 
         expect(signupSection).toBeTruthy();
-
-        const parentInviteBranch = signupSection.match(/if \(validation\.type === 'parent_invite'\) \{([\s\S]*?)\n\s*\} else \{/);
-        expect(parentInviteBranch).toBeTruthy();
-
-        const branchBody = parentInviteBranch[1];
-        expect(branchBody).toContain('userCredential.user.delete();');
-        expect(branchBody).toContain('await signOut(auth);');
-        expect(branchBody).toContain('Error cleaning up failed parent invite signup');
-        expect(branchBody).toContain('Error signing out after failed parent invite signup');
-        expect(branchBody).toMatch(/await userCredential\.user\.delete\(\);[\s\S]*catch \(deleteError\)/);
-        expect(branchBody).toMatch(/try \{[\s\S]*await signOut\(auth\);[\s\S]*catch \(signOutError\)/);
-        expect(branchBody).toMatch(/catch \(e\) \{[\s\S]*throw\s+(e|new Error\()/);
-        expect(branchBody).not.toContain("Don't fail the whole signup");
+        expect(signupSection).toContain('return executeEmailPasswordSignup');
+        expect(signupSection).toContain('redeemParentInvite');
+        expect(signupSection).toContain('updateUserProfile');
+        expect(signupSection).toContain('markAccessCodeAsUsed');
+        expect(signupSection).toContain('sendEmailVerification');
+        expect(signupSection).toContain('signOut');
     });
 
     it('rejects signup when parent invite profile finalization fails', async () => {

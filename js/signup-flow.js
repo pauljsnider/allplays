@@ -9,8 +9,12 @@ export async function executeEmailPasswordSignup({
         validateAccessCode,
         createUserWithEmailAndPassword,
         redeemParentInvite,
+        redeemAdminInviteAcceptance,
         updateUserProfile,
         markAccessCodeAsUsed,
+        getTeam,
+        addTeamAdminEmail,
+        getUserProfile,
         sendEmailVerification,
         signOut
     } = dependencies;
@@ -58,6 +62,18 @@ export async function executeEmailPasswordSignup({
             await cleanupFailedParentInviteSignup(userCredential?.user);
             throw e;
         }
+    } else if (validation.type === 'admin_invite') {
+        await redeemAdminInviteAcceptance({
+            userId,
+            userEmail: email,
+            teamId: validation?.data?.teamId,
+            codeId: validation.codeId,
+            markAccessCodeAsUsed,
+            getTeam,
+            addTeamAdminEmail,
+            getUserProfile,
+            updateUserProfile
+        });
     } else {
         try {
             await updateUserProfile(userId, {

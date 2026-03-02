@@ -15,8 +15,12 @@ function createDependencies(overrides = {}) {
             }
         }),
         redeemParentInvite: vi.fn().mockResolvedValue(undefined),
+        redeemAdminInviteAcceptance: vi.fn().mockResolvedValue(undefined),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
         markAccessCodeAsUsed: vi.fn().mockResolvedValue(undefined),
+        getTeam: vi.fn().mockResolvedValue({ id: 'team-42', name: 'Blue Rockets' }),
+        addTeamAdminEmail: vi.fn().mockResolvedValue(undefined),
+        getUserProfile: vi.fn().mockResolvedValue({ email: 'newadmin@example.com' }),
         sendEmailVerification: vi.fn().mockResolvedValue(undefined),
         signOut: vi.fn().mockResolvedValue(undefined),
         ...overrides
@@ -115,6 +119,41 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE');
         expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
         expect(reload).toHaveBeenCalledTimes(1);
+        expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes admin invite signup through admin persistence and not generic code consumption', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'admin_invite',
+                codeId: 'code-admin-1',
+                data: { teamId: 'team-42' }
+            })
+        });
+        const reload = vi.fn().mockResolvedValue(undefined);
+        const auth = {
+            currentUser: {
+                email: 'newadmin@example.com',
+                reload
+            }
+        };
+
+        await executeEmailPasswordSignup({
+            email: 'newadmin@example.com',
+            password: 'password123',
+            activationCode: 'ADMIN001',
+            auth,
+            dependencies
+        });
+
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-123',
+            userEmail: 'newadmin@example.com',
+            teamId: 'team-42',
+            codeId: 'code-admin-1'
+        }));
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
     });
 });
