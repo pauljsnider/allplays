@@ -75,6 +75,11 @@ export async function executeEmailPasswordSignup({
                 getUserProfile,
                 updateUserProfile
             });
+            await updateUserProfile(userId, {
+                email: email,
+                createdAt: new Date(),
+                emailVerificationRequired: true
+            });
         } catch (e) {
             console.error('Error redeeming admin invite:', e);
             await cleanupFailedParentInviteSignup(userCredential?.user);
