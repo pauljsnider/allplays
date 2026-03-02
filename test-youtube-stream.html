@@ -280,6 +280,99 @@
             assertContains(iframeSrc, 'parent=localhost', 'includes parent param');
         });
 
+        // ─── Functions under test (copied from team.html / live-game.js) ────────────
+
+        function streamLinkHtml(team) {
+            if (team.twitchChannel) {
+                return `<a href="https://twitch.tv/${encodeURIComponent(team.twitchChannel)}" class="text-purple-600">Watch on Twitch</a>`;
+            }
+            const embedUrl = team.streamEmbedUrl || team.youtubeEmbedUrl;
+            if (embedUrl) {
+                const channelMatch = embedUrl.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+                const videoMatch = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+                const url = channelMatch
+                    ? `https://www.youtube.com/channel/${channelMatch[1]}`
+                    : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+                if (url) return `<a href="${url}" class="text-red-500">Watch on YouTube</a>`;
+            }
+            return '';
+        }
+
+        function buildPublicStreamUrl(team) {
+            if (team.twitchChannel) {
+                return { publicUrl: `https://twitch.tv/${team.twitchChannel}`, publicLabel: 'Watch on Twitch ↗' };
+            }
+            const src = team.streamEmbedUrl || team.youtubeEmbedUrl ||
+                (team.youtubeVideoId ? `https://www.youtube.com/embed/${team.youtubeVideoId}?autoplay=1&mute=1` : null);
+            if (src) {
+                const channelMatch = src.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+                const videoMatch = src.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+                const publicUrl = channelMatch
+                    ? `https://www.youtube.com/channel/${channelMatch[1]}`
+                    : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+                return { publicUrl, publicLabel: 'Watch on YouTube ↗' };
+            }
+            return { publicUrl: null, publicLabel: null };
+        }
+
+        // ─── SUITE 7: streamLinkHtml() — Watch Live link on team page ─────────────
+
+        test('streamLink Twitch: href points to twitch.tv/channel', () => {
+            const html = streamLinkHtml({ twitchChannel: 'pauljsnider' });
+            assertContains(html, 'https://twitch.tv/pauljsnider', 'href');
+        });
+
+        test('streamLink Twitch: label says Watch on Twitch', () => {
+            const html = streamLinkHtml({ twitchChannel: 'pauljsnider' });
+            assertContains(html, 'Watch on Twitch', 'label');
+        });
+
+        test('streamLink Twitch: has purple color class', () => {
+            const html = streamLinkHtml({ twitchChannel: 'pauljsnider' });
+            assertContains(html, 'purple', 'purple color class');
+        });
+
+        test('streamLink YouTube channel embed: href points to youtube.com/channel/UCxxx', () => {
+            const html = streamLinkHtml({ streamEmbedUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1' });
+            assertContains(html, 'https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ', 'href');
+        });
+
+        test('streamLink YouTube video embed: href points to youtube.com/watch?v=ID', () => {
+            const html = streamLinkHtml({ streamEmbedUrl: 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1' });
+            assertContains(html, 'https://www.youtube.com/watch?v=LJNfHqRRhBI', 'href');
+        });
+
+        test('streamLink no stream: returns empty string', () => {
+            assertEquals(streamLinkHtml({}), '', 'empty team returns empty string');
+        });
+
+        // ─── SUITE 8: setupVideoPanel public URL resolution ────────────────────────
+
+        test('publicUrl Twitch: resolves to twitch.tv/channel', () => {
+            const { publicUrl } = buildPublicStreamUrl({ twitchChannel: 'pauljsnider' });
+            assertEquals(publicUrl, 'https://twitch.tv/pauljsnider', 'publicUrl');
+        });
+
+        test('publicUrl Twitch: label is Watch on Twitch ↗', () => {
+            const { publicLabel } = buildPublicStreamUrl({ twitchChannel: 'pauljsnider' });
+            assertEquals(publicLabel, 'Watch on Twitch ↗', 'publicLabel');
+        });
+
+        test('publicUrl YouTube channel embed: resolves to youtube.com/channel/UCxxx', () => {
+            const { publicUrl } = buildPublicStreamUrl({ streamEmbedUrl: 'https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&autoplay=1&mute=1' });
+            assertEquals(publicUrl, 'https://www.youtube.com/channel/UCa9ghvbup6VQmnDOdqwYpqQ', 'publicUrl');
+        });
+
+        test('publicUrl YouTube video embed: resolves to youtube.com/watch?v=ID', () => {
+            const { publicUrl } = buildPublicStreamUrl({ streamEmbedUrl: 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1' });
+            assertEquals(publicUrl, 'https://www.youtube.com/watch?v=LJNfHqRRhBI', 'publicUrl');
+        });
+
+        test('publicUrl legacy youtubeVideoId: resolves to youtube.com/watch?v=ID', () => {
+            const { publicUrl } = buildPublicStreamUrl({ youtubeVideoId: 'LJNfHqRRhBI' });
+            assertEquals(publicUrl, 'https://www.youtube.com/watch?v=LJNfHqRRhBI', 'legacy youtubeVideoId');
+        });
+
         // ─── Render results ────────────────────────────────────────────────────────
 
         const passed = results.filter(r => r.pass).length;
@@ -298,6 +391,8 @@
             { label: 'Suite 4: Null / unresolvable inputs', start: 13, count: 5 },
             { label: 'Suite 5: YouTube autoplay + mute params', start: 18, count: 4 },
             { label: 'Suite 6: setupVideoPanel visibility logic', start: 22, count: 3 },
+            { label: 'Suite 7: streamLinkHtml() — Watch Live link (team page)', start: 25, count: 6 },
+            { label: 'Suite 8: setupVideoPanel public URL resolution', start: 31, count: 5 },
         ];
 
         const container = document.getElementById('test-results');
