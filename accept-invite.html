@@ -135,8 +135,8 @@
 
     <script type="module">
         import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=9';
-        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile, addTeamAdminEmail, markAccessCodeAsUsed } from './js/db.js?v=14';
-        import { redeemAdminInviteAcceptance } from './js/admin-invite.js?v=2';
+        import { validateAccessCode, redeemParentInvite, updateUserProfile, getTeam, getUserProfile, redeemAdminInviteAtomicPersistence } from './js/db.js?v=14';
+        import { redeemAdminInviteAcceptance } from './js/admin-invite-redemption.js?v=1';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
 
         renderFooter(document.getElementById('footer-container'));
@@ -188,26 +188,17 @@
                     redirectUrl: 'parent-dashboard.html'
                 };
             } else if (validation.type === 'admin_invite') {
-                const profile = await getUserProfile(userId);
-                const profileEmail = typeof profile?.email === 'string' ? profile.email.trim().toLowerCase() : '';
-                const authUserEmail = typeof authEmail === 'string' ? authEmail.trim().toLowerCase() : '';
-                const inviteEmail = typeof validation?.data?.email === 'string' ? validation.data.email.trim().toLowerCase() : '';
-                const userEmail = profileEmail || authUserEmail || inviteEmail;
-                const team = await redeemAdminInviteAcceptance({
+                const result = await redeemAdminInviteAcceptance({
                     userId,
-                    userEmail,
-                    teamId: validation.data.teamId,
-                    codeId: validation.codeId,
-                    markAccessCodeAsUsed,
+                    validation,
                     getTeam,
-                    addTeamAdminEmail,
                     getUserProfile,
-                    updateUserProfile
+                    redeemAdminInviteAtomicPersistence
                 });
 
                 return {
                     success: true,
-                    message: `You've been added as an admin of ${team?.name || 'the team'}!`,
+                    message: `You've been added as an admin of ${result.teamName || 'the team'}!`,
                     redirectUrl: 'dashboard.html'
                 };
             } else {
