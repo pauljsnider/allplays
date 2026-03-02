@@ -63,17 +63,23 @@ export async function executeEmailPasswordSignup({
             throw e;
         }
     } else if (validation.type === 'admin_invite') {
-        await redeemAdminInviteAcceptance({
-            userId,
-            userEmail: email,
-            teamId: validation?.data?.teamId,
-            codeId: validation.codeId,
-            markAccessCodeAsUsed,
-            getTeam,
-            addTeamAdminEmail,
-            getUserProfile,
-            updateUserProfile
-        });
+        try {
+            await redeemAdminInviteAcceptance({
+                userId,
+                userEmail: email,
+                teamId: validation?.data?.teamId,
+                codeId: validation.codeId,
+                markAccessCodeAsUsed,
+                getTeam,
+                addTeamAdminEmail,
+                getUserProfile,
+                updateUserProfile
+            });
+        } catch (e) {
+            console.error('Error redeeming admin invite:', e);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw e;
+        }
     } else {
         try {
             await updateUserProfile(userId, {
