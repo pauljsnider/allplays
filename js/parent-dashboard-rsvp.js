@@ -31,5 +31,6 @@ export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gam
     const explicitChildIds = parseChildIds(childContext?.childIds);
     if (explicitChildIds.length > 0) return sanitizeToAllowedScope(explicitChildIds);
 
-    return allowedPlayerIds;
+    if (allowedPlayerIds.length === 1) return allowedPlayerIds;
+    return [];
 }

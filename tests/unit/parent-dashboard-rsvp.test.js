@@ -42,9 +42,15 @@ describe('parent dashboard RSVP player scope', () => {
     expect(result).toEqual([]);
   });
 
-  it('falls back to the clicked game scope instead of all team events', () => {
+  it('returns empty scope when fallback is ambiguous across multiple children', () => {
     const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-1', {});
 
-    expect(result).toEqual(['child-a', 'child-b']);
+    expect(result).toEqual([]);
+  });
+
+  it('falls back to the only child when a game scope has exactly one child', () => {
+    const result = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, 'team-1', 'game-2', {});
+
+    expect(result).toEqual(['child-c']);
   });
 });
