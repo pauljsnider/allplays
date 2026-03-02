@@ -55,6 +55,13 @@
             }
         }
 
+        function normalizeYouTubeEmbedUrl(url) {
+            const parsed = new URL(url);
+            parsed.searchParams.set('autoplay', '1');
+            parsed.searchParams.set('mute', '1');
+            return parsed.toString();
+        }
+
         // ─── Function under test (copied from edit-team.html) ───────────────────────
         function parseStreamUrl(input) {
             if (!input) return null;
@@ -74,7 +81,7 @@
             // ── YOUTUBE ─────────────────────────────────────────────────────────
             // Already a YouTube embed URL — normalize params
             if (url.includes('youtube.com/embed/')) {
-                return { platform: 'youtube', streamEmbedUrl: url.split('?')[0] + '?autoplay=1&mute=1' };
+                return { platform: 'youtube', streamEmbedUrl: normalizeYouTubeEmbedUrl(url) };
             }
             // Raw channel ID (UC + 22 chars)
             if (/^UC[a-zA-Z0-9_-]{22}$/.test(url)) {
@@ -129,10 +136,21 @@
             assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'embed URL from iframe');
         });
 
-        test('YouTube video: embed URL already — strips old params, adds autoplay+mute', () => {
+        test('YouTube video: embed URL already — preserves params and sets autoplay+mute', () => {
             const result = parseStreamUrl('https://www.youtube.com/embed/LJNfHqRRhBI?si=old&controls=0');
             assertEquals(result.platform, 'youtube', 'platform');
-            assertEquals(result.streamEmbedUrl, 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1', 'normalises existing embed URL');
+            assertContains(result.streamEmbedUrl, 'controls=0', 'preserves existing params');
+            assertContains(result.streamEmbedUrl, 'autoplay=1', 'enforces autoplay');
+            assertContains(result.streamEmbedUrl, 'mute=1', 'enforces mute');
+        });
+
+        test('YouTube channel: embed URL keeps channel query while normalising', () => {
+            const result = parseStreamUrl('https://www.youtube.com/embed/live_stream?channel=UCa9ghvbup6VQmnDOdqwYpqQ&controls=0');
+            assertEquals(result.platform, 'youtube', 'platform');
+            assertContains(result.streamEmbedUrl, 'channel=UCa9ghvbup6VQmnDOdqwYpqQ', 'keeps required channel query');
+            assertContains(result.streamEmbedUrl, 'controls=0', 'preserves other query params');
+            assertContains(result.streamEmbedUrl, 'autoplay=1', 'enforces autoplay');
+            assertContains(result.streamEmbedUrl, 'mute=1', 'enforces mute');
         });
 
         // ─── SUITE 2: parseStreamUrl — YouTube channel IDs ────────────────────────

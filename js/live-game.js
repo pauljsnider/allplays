@@ -15,6 +15,7 @@ import {
   subscribeGame
 } from './db.js?v=14';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
+import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=9';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
@@ -69,7 +70,8 @@ const state = {
 
   lastStatChange: null,
   scoringRun: { team: null, points: 0 },
-  lastRunAnnounced: 0
+  lastRunAnnounced: 0,
+  hasVideoStream: false
 };
 
 const els = {
@@ -197,14 +199,19 @@ function initTabs() {
 
 function updateTabs() {
   const isMobile = window.matchMedia('(max-width: 767px)').matches;
+  const visibility = computePanelVisibility({
+    isMobile,
+    activeTab: state.activeTab,
+    hasVideoStream: state.hasVideoStream
+  });
+  state.activeTab = visibility.activeTab;
 
-  if (!isMobile) {
-    els.videoPanel?.classList.remove('hidden');
-    els.playsPanel?.classList.remove('hidden');
-    els.statsPanel?.classList.remove('hidden');
-    els.chatPanel?.classList.remove('hidden');
-    return;
-  }
+  els.videoPanel?.classList.toggle('hidden', visibility.videoHidden);
+  els.playsPanel?.classList.toggle('hidden', visibility.playsHidden);
+  els.statsPanel?.classList.toggle('hidden', visibility.statsHidden);
+  els.chatPanel?.classList.toggle('hidden', visibility.chatHidden);
+
+  if (!isMobile) return;
 
   els.mobileTabs.forEach(tab => {
     const active = tab.dataset.tab === state.activeTab;
@@ -213,12 +220,6 @@ function updateTabs() {
     tab.classList.toggle('text-sand/50', !active);
     tab.classList.toggle('border-transparent', !active);
   });
-
-  const tab = state.activeTab;
-  els.videoPanel?.classList.toggle('hidden', tab !== 'video');
-  els.playsPanel?.classList.toggle('hidden', tab !== 'plays');
-  els.statsPanel?.classList.toggle('hidden', tab !== 'stats');
-  els.chatPanel?.classList.toggle('hidden', tab !== 'chat');
 }
 
 function setupVideoPanel() {
@@ -251,6 +252,7 @@ function setupVideoPanel() {
 
   const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
   const extLink = document.getElementById('stream-external-link');
+  state.hasVideoStream = Boolean(embedUrl);
 
   if (embedUrl) {
     const iframe = document.getElementById('youtube-stream-iframe');
@@ -264,6 +266,10 @@ function setupVideoPanel() {
   } else {
     els.videoPanel?.classList.add('hidden');
     if (videoTab) videoTab.classList.add('hidden');
+    if (extLink) {
+      extLink.classList.add('hidden');
+      extLink.removeAttribute('href');
+    }
     if (state.activeTab === 'video') state.activeTab = 'plays';
   }
 }

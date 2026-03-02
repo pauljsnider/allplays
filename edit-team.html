@@ -216,6 +216,7 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
         import { hasFullTeamAccess } from './js/team-access.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -484,7 +485,8 @@
             // ── YOUTUBE ─────────────────────────────────────────────────────────
             // Already a YouTube embed URL — normalize params
             if (url.includes('youtube.com/embed/')) {
-                return { platform: 'youtube', streamEmbedUrl: url.split('?')[0] + '?autoplay=1&mute=1' };
+                const normalized = normalizeYouTubeEmbedUrl(url);
+                return normalized ? { platform: 'youtube', streamEmbedUrl: normalized } : null;
             }
             // Raw channel ID (UC + 22 chars)
             if (/^UC[a-zA-Z0-9_-]{22}$/.test(url)) {
