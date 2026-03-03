@@ -49,6 +49,16 @@
         const resultSummary = document.getElementById('help-result-summary');
         const bottomNav = document.getElementById('bottom-help-nav');
         const backLink = document.getElementById('context-back-link');
+        const htmlEscapes = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (char) => htmlEscapes[char]);
+        }
+
+        function toSafeFragmentId(value, index) {
+            const trimmed = String(value ?? '').trim();
+            return trimmed ? encodeURIComponent(trimmed) : `section-${index}`;
+        }
 
         const params = new URLSearchParams(window.location.search);
         const initialRole = normalizeHelpRole(params.get('role'));
@@ -68,19 +78,30 @@
 
             resultSummary.textContent = `${filtered.length} section${filtered.length === 1 ? '' : 's'} shown for ${role}.`;
 
-            results.innerHTML = filtered.map((section) => `
-                <article id="${section.id}" class="bg-white border border-gray-200 rounded-xl p-5">
-                    <h2 class="text-xl font-semibold text-gray-900">${section.title}</h2>
-                    <p class="mt-2 text-gray-700">${section.summary}</p>
+            results.innerHTML = filtered.map((section, index) => {
+                const safeId = toSafeFragmentId(section.id, index);
+                const escapedTitle = escapeHtml(section.title);
+                const escapedSummary = escapeHtml(section.summary);
+                const escapedWorkflows = (section.workflows || [])
+                    .map((workflow) => `<li>${escapeHtml(workflow)}</li>`)
+                    .join('');
+
+                return `
+                <article id="${safeId}" class="bg-white border border-gray-200 rounded-xl p-5">
+                    <h2 class="text-xl font-semibold text-gray-900">${escapedTitle}</h2>
+                    <p class="mt-2 text-gray-700">${escapedSummary}</p>
                     <ul class="mt-3 space-y-2 list-disc list-inside text-gray-700">
-                        ${section.workflows.map((workflow) => `<li>${workflow}</li>`).join('')}
+                        ${escapedWorkflows}
                     </ul>
                 </article>
-            `).join('');
+            `;
+            }).join('');
 
-            bottomNav.innerHTML = filtered.map((section) =>
-                `<a class="inline-block mr-4 text-primary-700 hover:text-primary-900" href="#${section.id}">${section.title}</a>`
-            ).join('');
+            bottomNav.innerHTML = filtered.map((section, index) => {
+                const safeId = toSafeFragmentId(section.id, index);
+                const escapedTitle = escapeHtml(section.title);
+                return `<a class="inline-block mr-4 text-primary-700 hover:text-primary-900" href="#${safeId}">${escapedTitle}</a>`;
+            }).join('');
         }
 
         searchInput.addEventListener('input', render);
