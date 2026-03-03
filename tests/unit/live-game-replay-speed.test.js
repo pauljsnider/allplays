@@ -2,6 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { getReplayElapsedMs, rebaseReplayStartTimeMs, getReplayStartTimeAfterSpeedChange } from '../../js/live-game-replay.js';
 
 describe('live game replay speed timing', () => {
+  it('prevents an immediate 1x to 4x jump around the 10-second mark', () => {
+    const startTimeMs = 1_000;
+    const nowMs = 11_000;
+    const nextSpeed = 4;
+
+    const elapsedAtSwitch = getReplayElapsedMs(nowMs, startTimeMs, 1);
+    expect(elapsedAtSwitch).toBe(10_000);
+
+    const rebasedStartTimeMs = getReplayStartTimeAfterSpeedChange(nowMs, startTimeMs, 1, nextSpeed, 9_800);
+    expect(getReplayElapsedMs(nowMs, rebasedStartTimeMs, nextSpeed)).toBe(10_000);
+
+    const oneFrameLaterElapsed = getReplayElapsedMs(11_016, rebasedStartTimeMs, nextSpeed);
+    expect(oneFrameLaterElapsed).toBe(10_064);
+  });
+
   it('keeps replay elapsed continuous when speed changes during playback', () => {
     const startTimeMs = 1_000;
     const speedBefore = 1;
