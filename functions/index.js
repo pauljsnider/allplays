@@ -62,8 +62,13 @@ function writeCorsHeaders(res) {
   res.set('Cache-Control', 'no-store');
 }
 
+const calendarServiceAccount = functions.config()?.calendar?.service_account;
+const fetchCalendarRuntime = calendarServiceAccount
+  ? { serviceAccount: calendarServiceAccount }
+  : {};
+
 exports.fetchCalendarIcs = functions
-  .runWith({ serviceAccount: 'game-flow-c6311@appspot.gserviceaccount.com' })
+  .runWith(fetchCalendarRuntime)
   .https
   .onRequest(async (req, res) => {
   writeCorsHeaders(res);
