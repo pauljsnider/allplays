@@ -129,7 +129,12 @@ function getAllowedOrigins() {
   if (typeof configuredOrigins === 'string') {
     return configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
   }
-  return [];
+  return [
+    'https://allplays.ai',
+    'https://www.allplays.ai',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000'
+  ];
 }
 
 const allowedOriginSet = new Set(getAllowedOrigins());
@@ -152,7 +157,10 @@ function writeCorsHeaders(req, res) {
   res.set('Cache-Control', 'no-store');
 }
 
-const calendarServiceAccount = functions.config()?.calendar?.service_account;
+const calendarServiceAccount =
+  functions.config()?.calendar?.service_account ||
+  process.env.CALENDAR_FETCH_SERVICE_ACCOUNT ||
+  null;
 const fetchCalendarRuntime = calendarServiceAccount
   ? { serviceAccount: calendarServiceAccount }
   : {};
@@ -161,56 +169,56 @@ exports.fetchCalendarIcs = functions
   .runWith(fetchCalendarRuntime)
   .https
   .onRequest(async (req, res) => {
-  writeCorsHeaders(req, res);
+    writeCorsHeaders(req, res);
 
-  if (!isAllowedOrigin(req.headers.origin)) {
-    res.status(403).json({ ok: false, error: 'Origin not allowed' });
-    return;
-  }
+    if (!isAllowedOrigin(req.headers.origin)) {
+      res.status(403).json({ ok: false, error: 'Origin not allowed' });
+      return;
+    }
 
-  if (req.method === 'OPTIONS') {
-    res.status(204).send('');
-    return;
-  }
+    if (req.method === 'OPTIONS') {
+      res.status(204).send('');
+      return;
+    }
 
-  if (req.method !== 'GET') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
+    if (req.method !== 'GET') {
+      res.status(405).json({ error: 'Method not allowed' });
+      return;
+    }
 
-  try {
-    const rawUrl = req.query.url;
-    const normalizedUrl = await normalizeTargetUrl(rawUrl);
+    try {
+      const rawUrl = req.query.url;
+      const normalizedUrl = await normalizeTargetUrl(rawUrl);
 
-    const response = await fetchWithTimeout(normalizedUrl);
-    if (!response.ok) {
-      res.status(502).json({
-        ok: false,
-        error: `Calendar fetch failed: ${response.status} ${response.statusText}`
+      const response = await fetchWithTimeout(normalizedUrl);
+      if (!response.ok) {
+        res.status(502).json({
+          ok: false,
+          error: `Calendar fetch failed: ${response.status} ${response.statusText}`
+        });
+        return;
+      }
+
+      const rawText = await response.text();
+      const icsText = normalizeIcsText(rawText);
+
+      if (!icsText.includes('BEGIN:VCALENDAR')) {
+        res.status(502).json({ ok: false, error: 'Response was not valid ICS' });
+        return;
+      }
+
+      const fetchedAt = new Date().toISOString();
+
+      res.status(200).json({
+        ok: true,
+        source: 'live',
+        fetchedAt,
+        icsText
       });
-      return;
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        error: error?.message || 'Unknown error'
+      });
     }
-
-    const rawText = await response.text();
-    const icsText = normalizeIcsText(rawText);
-
-    if (!icsText.includes('BEGIN:VCALENDAR')) {
-      res.status(502).json({ ok: false, error: 'Response was not valid ICS' });
-      return;
-    }
-
-    const fetchedAt = new Date().toISOString();
-
-    res.status(200).json({
-      ok: true,
-      source: 'live',
-      fetchedAt,
-      icsText
-    });
-  } catch (error) {
-    res.status(400).json({
-      ok: false,
-      error: error?.message || 'Unknown error'
-    });
-  }
   });
