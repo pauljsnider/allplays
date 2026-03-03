@@ -11,9 +11,19 @@ describe('help navigation wiring', () => {
         expect(utilsJs).toContain('<li><a href="help.html" class="hover:text-white transition">Help Center</a></li>');
     });
 
-    it('includes help destination in team navigation banner', () => {
+    it('includes help destination in team navigation banner with role context', () => {
         const bannerJs = readRepoFile('js/team-admin-banner.js');
         expect(bannerJs).toContain('help: `help.html?context=team&teamId=${teamId}`');
+        expect(bannerJs).toContain("const helpRole = isFullAccess ? 'coach' : 'parent';");
         expect(bannerJs).toContain("label: 'Help'");
+    });
+
+    it('renders deep help center layout controls', () => {
+        const helpHtml = readRepoFile('help.html');
+        expect(helpHtml).toContain('id="help-category"');
+        expect(helpHtml).toContain('id="top-task-links"');
+        expect(helpHtml).toContain('id="category-links"');
+        expect(helpHtml).toContain('Workflow Steps');
+        expect(helpHtml).toContain('Related Guides');
     });
 });
