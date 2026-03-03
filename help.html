@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ALL PLAYS Help Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-screen">
+    <main class="max-w-5xl mx-auto px-4 pb-28 pt-8" aria-labelledby="help-title">
+        <header class="mb-6">
+            <a id="context-back-link" class="hidden inline-flex items-center gap-2 text-sm text-primary-700 hover:text-primary-800 mb-3" href="dashboard.html">Back to team context</a>
+            <h1 id="help-title" class="text-3xl font-bold">Help Center</h1>
+            <p class="mt-2 text-gray-600">Search all workflows, then filter by role to see role-aware guidance.</p>
+        </header>
+
+        <section class="bg-white border border-gray-200 rounded-xl p-4 mb-6" aria-label="Help filters">
+            <div class="grid gap-4 md:grid-cols-3">
+                <div class="md:col-span-2">
+                    <label for="help-search" class="block text-sm font-medium text-gray-700 mb-1">Search help</label>
+                    <input id="help-search" type="search" placeholder="Try permissions, roster, notifications, troubleshooting" class="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500">
+                </div>
+                <div>
+                    <label for="help-role" class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                    <select id="help-role" class="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500">
+                        <option value="member">Member</option>
+                        <option value="parent">Parent</option>
+                        <option value="coach">Coach</option>
+                        <option value="administrator">Administrator</option>
+                    </select>
+                </div>
+            </div>
+            <p id="help-result-summary" class="text-sm text-gray-600 mt-3"></p>
+        </section>
+
+        <section id="help-results" class="space-y-4" aria-live="polite"></section>
+    </main>
+
+    <nav aria-label="Help section navigation" class="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200">
+        <div id="bottom-help-nav" class="max-w-5xl mx-auto px-4 py-3 overflow-x-auto whitespace-nowrap text-sm"></div>
+    </nav>
+
+    <script type="module">
+        import { normalizeHelpRole, getHelpSectionsForRole, searchHelpSections } from './js/help-center.js?v=1';
+
+        const searchInput = document.getElementById('help-search');
+        const roleSelect = document.getElementById('help-role');
+        const results = document.getElementById('help-results');
+        const resultSummary = document.getElementById('help-result-summary');
+        const bottomNav = document.getElementById('bottom-help-nav');
+        const backLink = document.getElementById('context-back-link');
+
+        const params = new URLSearchParams(window.location.search);
+        const initialRole = normalizeHelpRole(params.get('role'));
+        roleSelect.value = initialRole;
+
+        const teamId = params.get('teamId');
+        const context = params.get('context');
+        if (context === 'team' && teamId) {
+            backLink.classList.remove('hidden');
+            backLink.href = `team.html#teamId=${encodeURIComponent(teamId)}`;
+        }
+
+        function render() {
+            const role = normalizeHelpRole(roleSelect.value);
+            const sections = getHelpSectionsForRole(role);
+            const filtered = searchHelpSections(sections, searchInput.value);
+
+            resultSummary.textContent = `${filtered.length} section${filtered.length === 1 ? '' : 's'} shown for ${role}.`;
+
+            results.innerHTML = filtered.map((section) => `
+                <article id="${section.id}" class="bg-white border border-gray-200 rounded-xl p-5">
+                    <h2 class="text-xl font-semibold text-gray-900">${section.title}</h2>
+                    <p class="mt-2 text-gray-700">${section.summary}</p>
+                    <ul class="mt-3 space-y-2 list-disc list-inside text-gray-700">
+                        ${section.workflows.map((workflow) => `<li>${workflow}</li>`).join('')}
+                    </ul>
+                </article>
+            `).join('');
+
+            bottomNav.innerHTML = filtered.map((section) =>
+                `<a class="inline-block mr-4 text-primary-700 hover:text-primary-900" href="#${section.id}">${section.title}</a>`
+            ).join('');
+        }
+
+        searchInput.addEventListener('input', render);
+        roleSelect.addEventListener('change', render);
+        render();
+    </script>
+</body>
+</html>
