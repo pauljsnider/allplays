@@ -261,6 +261,9 @@ export function renderFooter(container) {
  */
 export async function fetchAndParseCalendar(url) {
   const timeoutMs = 5000;
+  const cleanedUrl = url.trim();
+  const normalizedUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+  const calendarFetchFunctionUrl = 'https://us-central1-game-flow-c6311.cloudfunctions.net/fetchCalendarIcs';
 
   function normalizeIcsText(text) {
     const marker = 'BEGIN:VCALENDAR';
@@ -279,19 +282,43 @@ export async function fetchAndParseCalendar(url) {
     return response;
   }
 
+  async function fetchViaFunction(targetUrl) {
+    const functionUrl = `${calendarFetchFunctionUrl}?url=${encodeURIComponent(targetUrl)}&forceRefresh=true`;
+    const response = await fetchWithTimeout(functionUrl);
+    if (!response.ok) {
+      throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+    }
+    const payload = await response.json();
+    if (!payload?.ok || !payload?.icsText) {
+      throw new Error(payload?.error || 'Invalid function response');
+    }
+    return payload.icsText;
+  }
+
   function buildProxyUrls(targetUrl) {
-    const cleanedUrl = targetUrl.trim();
-    const httpsUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+    const httpsUrl = targetUrl.trim().replace(/^http:\/\//i, 'https://');
+    const cacheBustUrl = httpsUrl.includes('?')
+      ? `${httpsUrl}&cachebust=${Date.now()}`
+      : `${httpsUrl}?cachebust=${Date.now()}`;
     return [
       `https://corsproxy.io/?${encodeURIComponent(httpsUrl)}`,
+      `https://r.jina.ai/https://${cacheBustUrl.replace(/^https:\/\//i, '')}`,
       `https://r.jina.ai/https://${httpsUrl.replace(/^https:\/\//i, '')}`,
       `https://r.jina.ai/http://${httpsUrl.replace(/^https?:\/\//i, '')}`
     ];
   }
 
   try {
+    // First try Firebase function to avoid browser CORS/proxy issues
+    try {
+      const functionIcsText = await fetchViaFunction(normalizedUrl);
+      return parseICS(normalizeIcsText(functionIcsText));
+    } catch (functionError) {
+      console.warn('Function calendar fetch failed, falling back to client fetch:', functionError);
+    }
+
     // Try direct fetch first
-    const response = await fetchWithTimeout(url);
+    const response = await fetchWithTimeout(normalizedUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch calendar: ${response.statusText}`);
     }
