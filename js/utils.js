@@ -393,7 +393,7 @@ export function parseICS(icsText) {
       currentEvent = {};
     } else if (line === 'END:VEVENT' && currentEvent) {
       if (currentEvent.dtstart && currentEvent.summary) {
-        events.push(currentEvent);
+        events.push(...expandRecurringICSEvent(currentEvent));
       }
       currentEvent = null;
     } else if (currentEvent) {
@@ -428,12 +428,187 @@ export function parseICS(icsText) {
           case 'STATUS':
             currentEvent.status = value;
             break;
+          case 'RRULE':
+            currentEvent.rrule = parseICSRRule(value);
+            break;
+          case 'EXDATE': {
+            const rawDates = value.split(',').map((token) => token.trim()).filter(Boolean);
+            const parsedDates = rawDates
+              .map((rawDate) => parseICSDate(rawDate, parsedField.params))
+              .filter((parsedDate) => parsedDate instanceof Date && !Number.isNaN(parsedDate.getTime()));
+            if (parsedDates.length) {
+              if (!Array.isArray(currentEvent.exDates)) currentEvent.exDates = [];
+              currentEvent.exDates.push(...parsedDates);
+            }
+            break;
+          }
         }
       }
     }
   }
 
   return events;
+}
+
+const ICS_DAY_TO_INDEX = {
+  SU: 0,
+  MO: 1,
+  TU: 2,
+  WE: 3,
+  TH: 4,
+  FR: 5,
+  SA: 6
+};
+const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
+
+function parseICSRRule(rawRule) {
+  if (!rawRule || typeof rawRule !== 'string') return null;
+  const parts = rawRule.split(';');
+  const parsed = {};
+
+  for (const part of parts) {
+    const equalsIndex = part.indexOf('=');
+    if (equalsIndex <= 0) continue;
+    const key = part.substring(0, equalsIndex).trim().toUpperCase();
+    const value = part.substring(equalsIndex + 1).trim();
+    if (!value) continue;
+
+    switch (key) {
+      case 'FREQ':
+        parsed.freq = value.toUpperCase();
+        break;
+      case 'INTERVAL':
+        parsed.interval = Math.max(1, parseInt(value, 10) || 1);
+        break;
+      case 'COUNT': {
+        const count = parseInt(value, 10);
+        if (!Number.isNaN(count) && count > 0) parsed.count = count;
+        break;
+      }
+      case 'UNTIL': {
+        const untilDate = parseICSDate(value);
+        if (untilDate instanceof Date && !Number.isNaN(untilDate.getTime())) {
+          parsed.until = untilDate;
+        }
+        break;
+      }
+      case 'BYDAY':
+        parsed.byDays = value
+          .split(',')
+          .map((dayCode) => dayCode.trim().toUpperCase())
+          .filter((dayCode) => dayCode in ICS_DAY_TO_INDEX);
+        break;
+    }
+  }
+
+  if (!parsed.freq) return null;
+  return parsed;
+}
+
+function expandRecurringICSEvent(event) {
+  const { rrule, exDates = [], ...baseEvent } = event;
+  if (!rrule) return [baseEvent];
+
+  const freq = String(rrule.freq || '').toUpperCase();
+  if (freq !== 'DAILY' && freq !== 'WEEKLY') return [baseEvent];
+
+  const startDate = baseEvent.dtstart;
+  if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime())) return [baseEvent];
+  const durationMs =
+    baseEvent.dtend instanceof Date && !Number.isNaN(baseEvent.dtend.getTime())
+      ? baseEvent.dtend.getTime() - startDate.getTime()
+      : null;
+
+  let untilBoundary = null;
+  if (rrule.until instanceof Date && !Number.isNaN(rrule.until.getTime())) {
+    untilBoundary = new Date(rrule.until);
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    if (isLocalMidnight) {
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
+
+  const interval = Math.max(1, Number(rrule.interval) || 1);
+  const countLimit = Number(rrule.count) > 0 ? Number(rrule.count) : Infinity;
+  const exDateTimes = new Set(
+    exDates
+      .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+      .map((date) => date.getTime())
+  );
+
+  const occurrences = [];
+  const pushOccurrence = (occurrenceStart) => {
+    const timestamp = occurrenceStart.getTime();
+    if (exDateTimes.has(timestamp)) return;
+    const occurrence = {
+      ...baseEvent,
+      dtstart: new Date(timestamp)
+    };
+    if (durationMs != null) {
+      occurrence.dtend = new Date(timestamp + durationMs);
+    } else {
+      delete occurrence.dtend;
+    }
+    occurrences.push(occurrence);
+  };
+
+  if (freq === 'DAILY') {
+    let cursor = new Date(startDate);
+    let generated = 0;
+
+    while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+      if (untilBoundary && cursor > untilBoundary) break;
+      pushOccurrence(cursor);
+      generated++;
+      cursor = new Date(cursor.getTime() + interval * MS_PER_DAY);
+    }
+
+    return occurrences.length ? occurrences : [baseEvent];
+  }
+
+  const defaultDayCode = DAY_CODES[startDate.getDay()];
+  const byDays = Array.isArray(rrule.byDays) && rrule.byDays.length
+    ? Array.from(new Set(rrule.byDays))
+    : [defaultDayCode];
+  const byDayIndexes = new Set(byDays.map((dayCode) => ICS_DAY_TO_INDEX[dayCode]).filter((idx) => idx != null));
+  if (!byDayIndexes.size) {
+    byDayIndexes.add(startDate.getDay());
+  }
+
+  const startWeekAnchor = new Date(startDate);
+  startWeekAnchor.setHours(0, 0, 0, 0);
+  startWeekAnchor.setDate(startWeekAnchor.getDate() - startWeekAnchor.getDay());
+
+  const hardEnd = untilBoundary
+    ? new Date(untilBoundary)
+    : new Date(startDate.getTime() + (MAX_ICS_RECURRENCE_OCCURRENCES * 14 * MS_PER_DAY));
+  hardEnd.setHours(23, 59, 59, 999);
+
+  let cursor = new Date(startDate);
+  let generated = 0;
+  while (cursor <= hardEnd && generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+    const cursorDayStart = new Date(cursor);
+    cursorDayStart.setHours(0, 0, 0, 0);
+    const cursorWeekAnchor = new Date(cursorDayStart);
+    cursorWeekAnchor.setDate(cursorWeekAnchor.getDate() - cursorWeekAnchor.getDay());
+    const weekDiff = Math.floor((cursorWeekAnchor - startWeekAnchor) / (7 * MS_PER_DAY));
+    const isCadencedWeek = weekDiff >= 0 && weekDiff % interval === 0;
+    const isMatchingWeekday = byDayIndexes.has(cursor.getDay());
+
+    if (isCadencedWeek && isMatchingWeekday && cursor >= startDate) {
+      if (untilBoundary && cursor > untilBoundary) break;
+      pushOccurrence(cursor);
+      generated++;
+    }
+
+    cursor = new Date(cursor.getTime() + MS_PER_DAY);
+  }
+
+  return occurrences.length ? occurrences : [baseEvent];
 }
 
 /**
