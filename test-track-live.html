@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Suite - track-live.html Live Broadcasting</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-error { font-size: 0.85em; color: #b91c1c; margin-top: 4px; white-space: pre-wrap; }
+        h2 { color: #4338ca; margin-bottom: 4px; }
+        h3 { color: #666; font-size: 0.9em; margin-bottom: 12px; }
+        .summary { font-size: 1.1em; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; }
+        .summary.all-pass { background: #dcfce7; color: #15803d; }
+        .summary.has-fail { background: #fee2e2; color: #991b1b; }
+        #loading { color: #666; padding: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Suite — track-live.html Live Broadcasting</h1>
+    <p>Tests for: event schema, mock broadcast integration, DOM structure, and routing.</p>
+    <div id="loading">Running tests…</div>
+    <div id="summary" class="hidden"></div>
+    <div id="test-results"></div>
+
+    <script type="module">
+        // ─── Async-aware test harness ─────────────────────────────────────────────────
+        const suites = {};   // { suiteName: [{name, pass, error}] }
+        let currentSuite = 'Uncategorized';
+        const pending = [];  // Promise[] for async tests
+
+        function suite(name) {
+            currentSuite = name;
+            if (!suites[name]) suites[name] = [];
+        }
+
+        function test(name, fn) {
+            const bucket = suites[currentSuite];
+            const p = Promise.resolve()
+                .then(() => fn())
+                .then(() => bucket.push({ name, pass: true, error: null }))
+                .catch(e => bucket.push({ name, pass: false, error: e.message }));
+            pending.push(p);
+        }
+
+        function assertEquals(actual, expected, label) {
+            if (actual !== expected)
+                throw new Error(`${label || 'assertEquals'}\n  Expected: ${JSON.stringify(expected)}\n  Got:      ${JSON.stringify(actual)}`);
+        }
+        function assertTrue(val, label) {
+            if (!val) throw new Error(label || `Expected truthy, got ${JSON.stringify(val)}`);
+        }
+        function assertFalse(val, label) {
+            if (val) throw new Error(label || `Expected falsy, got ${JSON.stringify(val)}`);
+        }
+        function assertDefined(val, label) {
+            if (val === undefined || val === null)
+                throw new Error(label || `Expected defined value, got ${val}`);
+        }
+        function assertContains(str, sub, label) {
+            if (!str || !str.includes(sub))
+                throw new Error(`${label || 'assertContains'}\n  "${sub}" not found in source`);
+        }
+        function assertNotContains(str, sub, label) {
+            if (str && str.includes(sub))
+                throw new Error(`${label || 'assertNotContains'}\n  Did not expect to find "${sub}"`);
+        }
+
+        // ─── Shared source cache (fetched once) ───────────────────────────────────────
+        const src = {};
+        async function fetchSrc(file) {
+            if (!src[file]) src[file] = await fetch(file).then(r => r.text());
+            return src[file];
+        }
+
+        // ─── Pure event-builder helpers (mirrors track-live.html logic) ──────────────
+
+        function buildClockStartEvent({ period, homeScore, awayScore, uid }) {
+            return { type: 'clock_start', period, gameClockMs: 0, homeScore, awayScore, description: 'Game started', createdBy: uid || null };
+        }
+
+        function buildStatEvent({ period, gameClockMs, homeScore, awayScore, playerId, playerName, playerNumber, statKey, value, isOpponent, uid }) {
+            return {
+                type: 'stat', period, gameClockMs, homeScore, awayScore,
+                playerId, playerName, playerNumber, statKey, value,
+                isOpponent: !!isOpponent,
+                description: isOpponent
+                    ? `${playerName} +${value} ${statKey.toUpperCase()}`
+                    : `#${playerNumber || '-'} ${playerName} +${value} ${statKey.toUpperCase()}`,
+                createdBy: uid || null
+            };
+        }
+
+        function buildUndoEvent({ period, gameClockMs, homeScore, awayScore, statKey, uid }) {
+            return { type: 'undo', period, gameClockMs, homeScore, awayScore, description: `Corrected: ${statKey.toUpperCase()} adjusted`, createdBy: uid || null };
+        }
+
+        function buildPeriodChangeEvent({ period, gameClockMs, homeScore, awayScore, uid }) {
+            return { type: 'period_change', period, gameClockMs, homeScore, awayScore, description: `Period changed to ${period}`, createdBy: uid || null };
+        }
+
+        // ─── Mock broadcaster ─────────────────────────────────────────────────────────
+
+        function createMockBroadcaster() {
+            const calls = [], statusCalls = [];
+            return {
+                broadcastLiveEvent: (teamId, gameId, event) => { calls.push({ teamId, gameId, event }); return Promise.resolve({ id: `doc-${calls.length}` }); },
+                setGameLiveStatus: (teamId, gameId, status) => { statusCalls.push({ teamId, gameId, status }); return Promise.resolve(); },
+                getCalls: () => calls,
+                getStatusCalls: () => statusCalls
+            };
+        }
+
+        const TEAM = 'team-abc', GAME = 'game-xyz', UID = 'user-001';
+        const mockPlayers = [{ id: 'p1', name: 'Alice', number: '10' }, { id: 'p2', name: 'Bob', number: '23' }];
+        const mockOpponents = [{ id: 'opp1', name: 'Johnson', number: '' }];
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // SUITE 1: Event Schema Validation
+        // ═══════════════════════════════════════════════════════════════════════════════
+        suite('Event Schema Validation');
+
+        test('clock_start has all required fields', () => {
+            const ev = buildClockStartEvent({ period: 'Q1', homeScore: 0, awayScore: 0, uid: UID });
+            assertEquals(ev.type, 'clock_start', 'type');
+            assertEquals(ev.period, 'Q1', 'period');
+            assertEquals(ev.gameClockMs, 0, 'gameClockMs is 0');
+            assertEquals(ev.homeScore, 0, 'homeScore');
+            assertEquals(ev.awayScore, 0, 'awayScore');
+            assertEquals(ev.description, 'Game started', 'description');
+            assertEquals(ev.createdBy, UID, 'createdBy');
+        });
+
+        test('clock_start gameClockMs is always 0 regardless of game state', () => {
+            const ev = buildClockStartEvent({ period: 'Q2', homeScore: 14, awayScore: 10, uid: UID });
+            assertEquals(ev.gameClockMs, 0, 'gameClockMs forced to 0 at start');
+        });
+
+        test('home player stat event has correct shape', () => {
+            const ev = buildStatEvent({ period: 'Q1', gameClockMs: 120000, homeScore: 2, awayScore: 0, playerId: 'p1', playerName: 'Alice', playerNumber: '10', statKey: 'pts', value: 2, isOpponent: false, uid: UID });
+            assertEquals(ev.type, 'stat', 'type');
+            assertEquals(ev.isOpponent, false, 'isOpponent false');
+            assertEquals(ev.playerId, 'p1', 'playerId');
+            assertEquals(ev.playerName, 'Alice', 'playerName');
+            assertEquals(ev.playerNumber, '10', 'playerNumber');
+            assertEquals(ev.statKey, 'pts', 'statKey');
+            assertEquals(ev.value, 2, 'value');
+            assertEquals(ev.homeScore, 2, 'homeScore updated');
+            assertEquals(ev.description, '#10 Alice +2 PTS', 'description format');
+            assertEquals(ev.createdBy, UID, 'createdBy');
+        });
+
+        test('opponent stat event has correct shape', () => {
+            const ev = buildStatEvent({ period: 'Q2', gameClockMs: 300000, homeScore: 4, awayScore: 3, playerId: 'opp1', playerName: 'Johnson', playerNumber: '', statKey: 'pts', value: 3, isOpponent: true, uid: UID });
+            assertEquals(ev.type, 'stat', 'type');
+            assertEquals(ev.isOpponent, true, 'isOpponent true');
+            assertEquals(ev.playerNumber, '', 'empty playerNumber for opponent');
+            assertEquals(ev.description, 'Johnson +3 PTS', 'no # prefix for opponent');
+        });
+
+        test('undo event has correct shape', () => {
+            const ev = buildUndoEvent({ period: 'Q1', gameClockMs: 90000, homeScore: 2, awayScore: 0, statKey: 'pts', uid: UID });
+            assertEquals(ev.type, 'undo', 'type');
+            assertEquals(ev.description, 'Corrected: PTS adjusted', 'description');
+            assertEquals(ev.homeScore, 2, 'homeScore');
+            assertEquals(ev.createdBy, UID, 'createdBy');
+        });
+
+        test('undo description uppercases any statKey', () => {
+            const ev = buildUndoEvent({ period: 'Q3', gameClockMs: 0, homeScore: 0, awayScore: 0, statKey: 'reb', uid: UID });
+            assertEquals(ev.description, 'Corrected: REB adjusted', 'reb → REB');
+        });
+
+        test('period_change event has correct shape', () => {
+            const ev = buildPeriodChangeEvent({ period: 'Q3', gameClockMs: 720000, homeScore: 18, awayScore: 15, uid: UID });
+            assertEquals(ev.type, 'period_change', 'type');
+            assertEquals(ev.period, 'Q3', 'period');
+            assertEquals(ev.gameClockMs, 720000, 'gameClockMs');
+            assertEquals(ev.homeScore, 18, 'homeScore');
+            assertEquals(ev.awayScore, 15, 'awayScore');
+            assertEquals(ev.description, 'Period changed to Q3', 'description');
+        });
+
+        test('stat description uppercases non-points statKey', () => {
+            const ev = buildStatEvent({ period: 'Q1', gameClockMs: 60000, homeScore: 0, awayScore: 0, playerId: 'p2', playerName: 'Bob', playerNumber: '23', statKey: 'reb', value: 1, isOpponent: false, uid: UID });
+            assertEquals(ev.description, '#23 Bob +1 REB', 'reb uppercased in description');
+        });
+
+        test('isOpponent coerced to boolean', () => {
+            const ev = buildStatEvent({ period: 'Q1', gameClockMs: 0, homeScore: 0, awayScore: 0, playerId: 'opp1', playerName: 'X', playerNumber: '', statKey: 'pts', value: 1, isOpponent: 1, uid: UID });
+            assertEquals(ev.isOpponent, true, 'truthy int coerced to true');
+        });
+
+        test('createdBy is null when no uid', () => {
+            const ev = buildStatEvent({ period: 'Q1', gameClockMs: 0, homeScore: 0, awayScore: 0, playerId: 'p1', playerName: 'Alice', playerNumber: '10', statKey: 'pts', value: 1, isOpponent: false, uid: null });
+            assertEquals(ev.createdBy, null, 'createdBy null');
+        });
+
+        test('all event types carry homeScore and awayScore', () => {
+            const events = [
+                buildClockStartEvent({ period: 'Q1', homeScore: 0, awayScore: 0, uid: UID }),
+                buildStatEvent({ period: 'Q1', gameClockMs: 100, homeScore: 2, awayScore: 3, playerId: 'p1', playerName: 'Alice', playerNumber: '10', statKey: 'pts', value: 2, isOpponent: false, uid: UID }),
+                buildUndoEvent({ period: 'Q1', gameClockMs: 200, homeScore: 2, awayScore: 3, statKey: 'pts', uid: UID }),
+                buildPeriodChangeEvent({ period: 'Q2', gameClockMs: 600000, homeScore: 14, awayScore: 12, uid: UID })
+            ];
+            for (const ev of events) {
+                assertDefined(ev.homeScore, `${ev.type} missing homeScore`);
+                assertDefined(ev.awayScore, `${ev.type} missing awayScore`);
+            }
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // SUITE 2: Score State in Events
+        // ═══════════════════════════════════════════════════════════════════════════════
+        suite('Score State in Events');
+
+        test('homeScore increases after home PTS increment', () => {
+            let homeScore = 0;
+            homeScore += 3;
+            const ev = buildStatEvent({ period: 'Q1', gameClockMs: 0, homeScore, awayScore: 0, playerId: 'p1', playerName: 'Alice', playerNumber: '10', statKey: 'pts', value: 3, isOpponent: false, uid: UID });
+            assertEquals(ev.homeScore, 3, 'homeScore 3');
+        });
+
+        test('awayScore increases after opponent PTS increment', () => {
+            let awayScore = 0;
+            awayScore += 2;
+            const ev = buildStatEvent({ period: 'Q1', gameClockMs: 0, homeScore: 0, awayScore, playerId: 'opp1', playerName: 'Johnson', playerNumber: '', statKey: 'pts', value: 2, isOpponent: true, uid: UID });
+            assertEquals(ev.awayScore, 2, 'awayScore 2');
+        });
+
+        test('score floors at 0 after decrement', () => {
+            let homeScore = 2;
+            homeScore = Math.max(0, homeScore - 3);
+            assertEquals(homeScore, 0, 'score floored at 0');
+            const ev = buildUndoEvent({ period: 'Q1', gameClockMs: 0, homeScore, awayScore: 0, statKey: 'pts', uid: UID });
+            assertEquals(ev.homeScore, 0, 'floored value in event');
+        });
+
+        test('non-points stat does not affect score', () => {
+            let homeScore = 10;
+            // REB increment — homeScore stays 10
+            const ev = buildStatEvent({ period: 'Q2', gameClockMs: 300000, homeScore, awayScore: 8, playerId: 'p2', playerName: 'Bob', playerNumber: '23', statKey: 'reb', value: 1, isOpponent: false, uid: UID });
+            assertEquals(ev.homeScore, 10, 'homeScore unchanged for non-points stat');
+            assertEquals(ev.statKey, 'reb', 'statKey is reb');
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // SUITE 3: Mock Broadcast Integration
+        // ═══════════════════════════════════════════════════════════════════════════════
+        suite('Mock Broadcast Integration');
+
+        test('setGameLiveStatus called with live on game start', async () => {
+            const mock = createMockBroadcaster();
+            await mock.setGameLiveStatus(TEAM, GAME, 'live');
+            await mock.broadcastLiveEvent(TEAM, GAME, buildClockStartEvent({ period: 'Q1', homeScore: 0, awayScore: 0, uid: UID }));
+            const sc = mock.getStatusCalls();
+            assertEquals(sc.length, 1, 'one setGameLiveStatus call');
+            assertEquals(sc[0].status, 'live', 'status is live');
+            assertEquals(sc[0].teamId, TEAM, 'correct teamId');
+            assertEquals(mock.getCalls()[0].event.type, 'clock_start', 'clock_start broadcast');
+        });
+
+        test('stat event broadcast on home player increment', async () => {
+            const mock = createMockBroadcaster();
+            let homeScore = 0;
+            homeScore += 2;
+            await mock.broadcastLiveEvent(TEAM, GAME, buildStatEvent({
+                period: 'Q1', gameClockMs: 120000, homeScore, awayScore: 0,
+                playerId: 'p1', playerName: 'Alice', playerNumber: '10',
+                statKey: 'pts', value: 2, isOpponent: false, uid: UID
+            }));
+            const ev = mock.getCalls()[0].event;
+            assertEquals(ev.homeScore, 2, 'homeScore 2 in event');
+            assertEquals(ev.playerId, 'p1', 'playerId p1');
+            assertEquals(ev.isOpponent, false, 'isOpponent false');
+        });
+
+        test('stat event broadcast on opponent increment', async () => {
+            const mock = createMockBroadcaster();
+            let awayScore = 0;
+            awayScore += 3;
+            await mock.broadcastLiveEvent(TEAM, GAME, buildStatEvent({
+                period: 'Q1', gameClockMs: 180000, homeScore: 0, awayScore,
+                playerId: 'opp1', playerName: 'Johnson', playerNumber: '',
+                statKey: 'pts', value: 3, isOpponent: true, uid: UID
+            }));
+            const ev = mock.getCalls()[0].event;
+            assertEquals(ev.awayScore, 3, 'awayScore 3');
+            assertEquals(ev.isOpponent, true, 'isOpponent true');
+        });
+
+        test('undo event broadcast on decrement', async () => {
+            const mock = createMockBroadcaster();
+            let homeScore = 2;
+            homeScore = Math.max(0, homeScore - 2);
+            await mock.broadcastLiveEvent(TEAM, GAME, buildUndoEvent({ period: 'Q1', gameClockMs: 200000, homeScore, awayScore: 0, statKey: 'pts', uid: UID }));
+            const ev = mock.getCalls()[0].event;
+            assertEquals(ev.type, 'undo', 'type undo');
+            assertEquals(ev.homeScore, 0, 'homeScore 0 after decrement');
+        });
+
+        test('period_change only broadcast when game is running', async () => {
+            const mock = createMockBroadcaster();
+            // Not running — no broadcast
+            let isRunning = false;
+            if (isRunning) await mock.broadcastLiveEvent(TEAM, GAME, buildPeriodChangeEvent({ period: 'Q2', gameClockMs: 0, homeScore: 0, awayScore: 0, uid: UID }));
+            assertEquals(mock.getCalls().length, 0, 'no broadcast when not running');
+            // Running — broadcast
+            isRunning = true;
+            if (isRunning) await mock.broadcastLiveEvent(TEAM, GAME, buildPeriodChangeEvent({ period: 'Q3', gameClockMs: 600000, homeScore: 10, awayScore: 8, uid: UID }));
+            assertEquals(mock.getCalls().length, 1, 'broadcast when running');
+            assertEquals(mock.getCalls()[0].event.period, 'Q3', 'correct period');
+        });
+
+        test('setGameLiveStatus called with completed on finish', async () => {
+            const mock = createMockBroadcaster();
+            await mock.setGameLiveStatus(TEAM, GAME, 'completed');
+            assertEquals(mock.getStatusCalls()[0].status, 'completed', 'status completed');
+        });
+
+        test('full game sequence produces correct event order and status calls', async () => {
+            const mock = createMockBroadcaster();
+            let homeScore = 0, awayScore = 0, elapsed = 0, period = 'Q1';
+
+            // 1. Start
+            await mock.setGameLiveStatus(TEAM, GAME, 'live');
+            await mock.broadcastLiveEvent(TEAM, GAME, buildClockStartEvent({ period, homeScore, awayScore, uid: UID }));
+
+            // 2. Home +2 PTS
+            elapsed = 60000; homeScore += 2;
+            await mock.broadcastLiveEvent(TEAM, GAME, buildStatEvent({ period, gameClockMs: elapsed, homeScore, awayScore, playerId: 'p1', playerName: 'Alice', playerNumber: '10', statKey: 'pts', value: 2, isOpponent: false, uid: UID }));
+
+            // 3. Opp +1 REB (no score change)
+            elapsed = 90000;
+            await mock.broadcastLiveEvent(TEAM, GAME, buildStatEvent({ period, gameClockMs: elapsed, homeScore, awayScore, playerId: 'opp1', playerName: 'Johnson', playerNumber: '', statKey: 'reb', value: 1, isOpponent: true, uid: UID }));
+
+            // 4. Undo (Alice -2 PTS)
+            elapsed = 100000; homeScore = Math.max(0, homeScore - 2);
+            await mock.broadcastLiveEvent(TEAM, GAME, buildUndoEvent({ period, gameClockMs: elapsed, homeScore, awayScore, statKey: 'pts', uid: UID }));
+
+            // 5. Period change
+            elapsed = 600000; period = 'Q2';
+            await mock.broadcastLiveEvent(TEAM, GAME, buildPeriodChangeEvent({ period, gameClockMs: elapsed, homeScore, awayScore, uid: UID }));
+
+            // 6. Finish
+            await mock.setGameLiveStatus(TEAM, GAME, 'completed');
+
+            const sc = mock.getStatusCalls();
+            assertEquals(sc.length, 2, 'two status calls');
+            assertEquals(sc[0].status, 'live', 'first: live');
+            assertEquals(sc[1].status, 'completed', 'second: completed');
+
+            const bc = mock.getCalls();
+            assertEquals(bc.length, 5, '5 broadcast events');
+            assertEquals(bc[0].event.type, 'clock_start', 'ev0: clock_start');
+            assertEquals(bc[1].event.type, 'stat', 'ev1: stat (home PTS)');
+            assertEquals(bc[2].event.type, 'stat', 'ev2: stat (opp REB)');
+            assertEquals(bc[3].event.type, 'undo', 'ev3: undo');
+            assertEquals(bc[4].event.type, 'period_change', 'ev4: period_change');
+            assertEquals(bc[4].event.period, 'Q2', 'period_change to Q2');
+        });
+
+        test('broadcastLiveEvent resolves as a Promise', async () => {
+            const mock = createMockBroadcaster();
+            const result = await mock.broadcastLiveEvent(TEAM, GAME, buildClockStartEvent({ period: 'Q1', homeScore: 0, awayScore: 0, uid: UID }));
+            assertTrue(result.id.startsWith('doc-'), 'resolves with doc id');
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // SUITE 4: Source Code Verification — track-live.html
+        // ═══════════════════════════════════════════════════════════════════════════════
+        suite('track-live.html Source');
+
+        test('imports broadcastLiveEvent', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'broadcastLiveEvent', 'broadcastLiveEvent imported');
+        });
+
+        test('imports setGameLiveStatus', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'setGameLiveStatus', 'setGameLiveStatus imported');
+        });
+
+        test('imports both from db.js', async () => {
+            const html = await fetchSrc('track-live.html');
+            // Both names should appear in the same import line
+            const importLine = html.split('\n').find(l => l.includes('from') && l.includes('db.js'));
+            assertTrue(importLine && importLine.includes('broadcastLiveEvent') && importLine.includes('setGameLiveStatus'),
+                'both live functions in same db.js import');
+        });
+
+        test('has liveBadge element', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'id="liveBadge"', 'liveBadge in DOM');
+        });
+
+        test('liveBadge starts hidden', async () => {
+            const html = await fetchSrc('track-live.html');
+            const match = html.match(/id="liveBadge"[^>]*/);
+            assertTrue(match && match[0].includes('hidden'), 'liveBadge has hidden class initially');
+        });
+
+        test('has shareLiveBtn element', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'id="shareLiveBtn"', 'shareLiveBtn in DOM');
+        });
+
+        test('shareLiveBtn starts hidden', async () => {
+            const html = await fetchSrc('track-live.html');
+            const match = html.match(/id="shareLiveBtn"[^>]*/);
+            assertTrue(match && match[0].includes('hidden'), 'shareLiveBtn has hidden class initially');
+        });
+
+        test('reveals liveBadge when game starts', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "liveBadge').classList.remove('hidden')", 'liveBadge revealed on start');
+        });
+
+        test('reveals shareLiveBtn when game starts', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "shareLiveBtn').classList.remove('hidden')", 'shareLiveBtn revealed on start');
+        });
+
+        test('calls setGameLiveStatus live on start', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "setGameLiveStatus(currentTeamId, currentGameId, 'live')", 'live status on start');
+        });
+
+        test('calls setGameLiveStatus completed on finish', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "setGameLiveStatus(currentTeamId, currentGameId, 'completed')", 'completed status on finish');
+        });
+
+        test('broadcasts clock_start event', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "type: 'clock_start'", 'clock_start event');
+        });
+
+        test('broadcasts stat events', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "type: 'stat'", 'stat event');
+        });
+
+        test('broadcasts undo events', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "type: 'undo'", 'undo event');
+        });
+
+        test('broadcasts period_change events', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, "type: 'period_change'", 'period_change event');
+        });
+
+        test('period_change guarded by isRunning check', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'if (gameState.isRunning)', 'isRunning guard present');
+        });
+
+        test('share link uses live-game.html with query params', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'live-game.html?teamId=', 'share link format correct');
+        });
+
+        test('title is Live Track Game', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'Live Track Game', 'title updated');
+            assertNotContains(html, '<title>Track Game - ALL PLAYS</title>', 'original title gone');
+        });
+
+        test('has unified live-note input and add button', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'id="live-note-input"', 'single live note input exists');
+            assertContains(html, 'id="live-note-add"', 'single live note add button exists');
+            assertContains(html, 'id="voice-note-btn"', 'voice note button exists');
+        });
+
+        test('does not render per-player notes columns in stat tables', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertNotContains(html, 'id="notes-${player.id}"', 'team per-player note input removed');
+            assertNotContains(html, 'id="opp-notes-${opp.id}"', 'opponent per-player note input removed');
+            assertNotContains(html, '<th class="notes-cell p-1">Notes</th>', 'notes column header removed');
+        });
+
+        test('opponent non-point buttons use red palette (not orange)', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'bg-red-50 text-red-600 border border-red-300', 'opponent stat buttons are red');
+            assertNotContains(html, 'bg-orange-50 text-orange-600 border border-orange-300', 'legacy orange opponent buttons removed');
+        });
+
+        test('chat panel includes toggle, messages, and form controls', async () => {
+            const html = await fetchSrc('track-live.html');
+            assertContains(html, 'id="chat-panel"', 'chat panel exists');
+            assertContains(html, 'id="chat-toggle"', 'chat toggle exists');
+            assertContains(html, 'id="chat-messages"', 'chat messages container exists');
+            assertContains(html, 'id="chat-form"', 'chat form exists');
+            assertContains(html, 'subscribeLiveChat', 'chat subscription wired');
+            assertContains(html, 'postLiveChatMessage', 'chat send wired');
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // SUITE 5: Source Code Verification — edit-schedule.html routing
+        // ═══════════════════════════════════════════════════════════════════════════════
+        suite('edit-schedule.html Routing');
+
+        test('live button modal option exists', async () => {
+            const html = await fetchSrc('edit-schedule.html');
+            assertContains(html, 'id="basketball-tracker-live"', 'live button in modal');
+        });
+
+        test('live button routes to both live trackers by sport', async () => {
+            const html = await fetchSrc('edit-schedule.html');
+            assertContains(html, 'track-live.html', 'non-basketball live tracker referenced');
+            assertContains(html, 'live-tracker.html', 'basketball live tracker referenced');
+        });
+
+        test('live button handler checks pendingTrackIsBasketball', async () => {
+            const html = await fetchSrc('edit-schedule.html');
+            // Find the addEventListener block for the live button
+            const listenerIdx = html.indexOf("'basketball-tracker-live')");
+            assertTrue(listenerIdx !== -1, 'live button addEventListener exists');
+            const snippet = html.slice(listenerIdx, listenerIdx + 700);
+            assertContains(snippet, 'pendingTrackIsBasketball', 'handler reads pendingTrackIsBasketball');
+        });
+
+        test('live button handler routes basketball to live-tracker and others to track-live', async () => {
+            const html = await fetchSrc('edit-schedule.html');
+            const listenerIdx = html.indexOf("'basketball-tracker-live')");
+            const snippet = html.slice(listenerIdx, listenerIdx + 900);
+            assertContains(snippet, 'live-tracker.html', 'basketball handler points to live-tracker.html');
+            assertContains(snippet, 'track-live.html', 'non-basketball handler points to track-live.html');
+        });
+
+        test('standard button still routes to track.html', async () => {
+            const html = await fetchSrc('edit-schedule.html');
+            const listenerIdx = html.indexOf("'basketball-tracker-standard')");
+            const snippet = html.slice(listenerIdx, listenerIdx + 400);
+            assertContains(snippet, 'track.html', 'standard still routes to track.html');
+            assertNotContains(snippet, 'track-live.html', 'standard does not route to track-live');
+        });
+
+        test('beta button still routes to track-basketball.html', async () => {
+            const html = await fetchSrc('edit-schedule.html');
+            const listenerIdx = html.indexOf("'basketball-tracker-beta')?.addEventListener");
+            assertTrue(listenerIdx !== -1, 'beta button addEventListener exists');
+            const snippet = html.slice(listenerIdx, listenerIdx + 900);
+            assertContains(snippet, 'track-basketball.html', 'beta still routes to track-basketball.html');
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════════
+        // Render
+        // ═══════════════════════════════════════════════════════════════════════════════
+
+        await Promise.allSettled(pending);
+
+        document.getElementById('loading').remove();
+
+        const allResults = Object.values(suites).flat();
+        const passCount = allResults.filter(r => r.pass).length;
+        const failCount = allResults.filter(r => !r.pass).length;
+
+        document.getElementById('summary').className = '';
+        document.getElementById('summary').innerHTML = `
+            <div class="summary ${failCount === 0 ? 'all-pass' : 'has-fail'}">
+                ${failCount === 0 ? '✅' : '❌'} ${passCount} passed, ${failCount} failed — ${allResults.length} total
+            </div>
+        `;
+
+        document.getElementById('test-results').innerHTML = Object.entries(suites).map(([name, tests]) => {
+            const sp = tests.filter(t => t.pass).length;
+            const sf = tests.filter(t => !t.pass).length;
+            return `
+                <div class="test-section">
+                    <h2>${name}</h2>
+                    <h3>${sp} passed${sf ? `, ${sf} failed` : ''}</h3>
+                    ${tests.map(t => `
+                        <div class="test-case ${t.pass ? 'pass' : 'fail'}">
+                            <div class="test-name">${t.pass ? '✅' : '❌'} ${t.name}</div>
+                            ${t.error ? `<div class="test-error">${t.error}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }).join('');
+    </script>
+</body>
+</html>
