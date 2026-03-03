@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { fetchAndParseCalendar } from '../../js/utils.js';
 
 function makeTextResponse(body, { ok = true, status = 200, statusText = 'OK' } = {}) {
@@ -35,6 +35,17 @@ function sampleIcs(uid = 'uid-1', summary = 'Wildcats vs TBD') {
   ].join('\n');
 }
 
+beforeEach(() => {
+  vi.stubGlobal('window', {
+    __ALLPLAYS_CONFIG__: {
+      calendarFetchFunctionUrl: 'https://example.com/fetchCalendarIcs'
+    }
+  });
+  vi.stubGlobal('document', {
+    querySelector: () => null
+  });
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -42,7 +53,7 @@ afterEach(() => {
 describe('fetchAndParseCalendar', () => {
   it('uses Firebase function first and returns parsed events when function succeeds', async () => {
     const fetchMock = vi.fn(async (url) => {
-      expect(url).toContain('cloudfunctions.net/fetchCalendarIcs');
+      expect(url).toContain('example.com/fetchCalendarIcs');
       return makeJsonResponse({
         ok: true,
         icsText: sampleIcs('from-function')
