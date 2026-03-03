@@ -10,7 +10,7 @@ describe('live game replay speed timing', () => {
     const elapsedAtSwitch = getReplayElapsedMs(nowMs, startTimeMs, 1);
     expect(elapsedAtSwitch).toBe(10_000);
 
-    const rebasedStartTimeMs = getReplayStartTimeAfterSpeedChange(nowMs, startTimeMs, 1, nextSpeed, 10_000);
+    const rebasedStartTimeMs = getReplayStartTimeAfterSpeedChange(nowMs, startTimeMs, 1, nextSpeed, elapsedAtSwitch);
     expect(getReplayElapsedMs(nowMs, rebasedStartTimeMs, nextSpeed)).toBe(10_000);
 
     const oneFrameLaterElapsed = getReplayElapsedMs(11_016, rebasedStartTimeMs, nextSpeed);
