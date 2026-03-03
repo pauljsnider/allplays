@@ -4,9 +4,15 @@ import {
   canApplySubstitution,
   canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog,
+  deriveScoreFromLog,
   acquireSingleFlightLock,
   releaseSingleFlightLock
 } from '../../js/live-tracker-integrity.js';
+import {
+  OVERTIME_MIXED_SCORING_LOG,
+  EMPTY_OR_NON_SCORING_LOG,
+  ZERO_VALUE_SCORING_LOG
+} from './fixtures/live-tracker-score-log.fixtures.js';
 
 describe('live tracker integrity helpers', () => {
   it('rejects same-player substitution', () => {
@@ -114,6 +120,72 @@ describe('live tracker integrity helpers', () => {
       liveAway: 0,
       log
     })).toBe(false);
+  });
+
+  it('derives score totals from mixed scoring aliases used across overtime logs', () => {
+    const derived = deriveScoreFromLog(OVERTIME_MIXED_SCORING_LOG);
+    expect(derived).toEqual({ home: 5, away: 1 });
+  });
+
+  it('ignores non-scoring and malformed entries while deriving totals', () => {
+    const log = [
+      ...OVERTIME_MIXED_SCORING_LOG,
+      {},
+      { undoData: null },
+      { undoData: { type: 'stat', statKey: 'PTS', value: 'not-a-number', isOpponent: true } }
+    ];
+
+    const derived = deriveScoreFromLog(log);
+    expect(derived).toEqual({ home: 5, away: 1 });
+  });
+
+  it('does not trust score log when only zero-value scoring events exist', () => {
+    expect(canTrustScoreLogForFinalization({
+      liveHome: 0,
+      liveAway: 0,
+      log: ZERO_VALUE_SCORING_LOG
+    })).toBe(false);
+  });
+
+  it('treats invalid requested scores as zero when reconciling', () => {
+    const result = reconcileFinalScoreFromLog({
+      requestedHome: undefined,
+      requestedAway: 'NaN',
+      log: EMPTY_OR_NON_SCORING_LOG
+    });
+
+    expect(result.mismatch).toBe(false);
+    expect(result.home).toBe(0);
+    expect(result.away).toBe(0);
+  });
+
+  it('flags mismatch when requested scores differ from derived overtime totals', () => {
+    const result = reconcileFinalScoreFromLog({
+      requestedHome: 4,
+      requestedAway: 1,
+      log: OVERTIME_MIXED_SCORING_LOG
+    });
+
+    expect(result.mismatch).toBe(true);
+    expect(result.home).toBe(5);
+    expect(result.away).toBe(1);
+  });
+
+  it('returns false when acquiring lock with missing lock object', () => {
+    expect(acquireSingleFlightLock(null)).toBe(false);
+  });
+
+  it('releasing a missing lock is a safe no-op', () => {
+    expect(() => releaseSingleFlightLock(null)).not.toThrow();
+  });
+
+  it('returns unchanged arrays when substitution input arrays are invalid', () => {
+    const result = applySubstitution(null, undefined, 'p1', 'p2');
+    expect(result).toEqual({ applied: false, onCourt: [], bench: [] });
+  });
+
+  it('can apply substitution when outgoing player is on court and incoming is not', () => {
+    expect(canApplySubstitution(['p1', 'p2', 'p3', 'p4', 'p5'], 'p4', 'p8')).toBe(true);
   });
 
   it('allows only one finish submission at a time and supports retry after release', () => {
