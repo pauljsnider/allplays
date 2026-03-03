@@ -1579,13 +1579,11 @@
             editingSeriesId = practice.seriesId || null;
             switchTab('tab-add-practice');
 
-            const date = practice.date?.toDate ? practice.date.toDate() : new Date(practice.date);
             document.getElementById('practiceTitle').value = practice.title || 'Practice';
-            document.getElementById('practiceStart').value = date.toISOString().slice(0, 16);
+            document.getElementById('practiceStart').value = formatIsoForInput(practice.date);
 
             if (practice.end) {
-                const endDate = practice.end?.toDate ? practice.end.toDate() : new Date(practice.end);
-                document.getElementById('practiceEnd').value = endDate.toISOString().slice(0, 16);
+                document.getElementById('practiceEnd').value = formatIsoForInput(practice.end);
             }
 
             document.getElementById('practiceLocation').value = practice.location || '';
