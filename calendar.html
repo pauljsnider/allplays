@@ -324,8 +324,10 @@
                                     if (trackedUids.includes(ev.uid)) continue;
                                     const evDate = ev.dtstart instanceof Date ? ev.dtstart : new Date(ev.dtstart);
                                     if (Number.isNaN(evDate.getTime())) continue;
+                                    const normalizedSummary = ev.summary?.trimStart().toUpperCase();
                                     const isCancelled = ev.status?.toUpperCase() === 'CANCELLED' ||
-                                        ev.summary?.includes('[CANCELED]');
+                                        normalizedSummary?.startsWith('[CANCELED]') ||
+                                        normalizedSummary?.startsWith('[CANCELLED]');
                                     events.push({
                                         id: ev.uid || `ics-${evDate.getTime()}`,
                                         teamId: team.id,

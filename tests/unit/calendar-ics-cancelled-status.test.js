@@ -8,11 +8,12 @@ function getCalendarIcsMappingSection() {
 }
 
 describe('calendar ICS cancelled status mapping', () => {
-    it('derives cancelled status from ICS status or [CANCELED] summary prefix', () => {
+    it('derives cancelled status from ICS status or case-insensitive summary prefix marker', () => {
         const mappingSection = getCalendarIcsMappingSection();
 
         expect(mappingSection).toBeTruthy();
-        expect(mappingSection).toMatch(/const isCancelled = ev\.status\?\.toUpperCase\(\) === 'CANCELLED'\s*\|\|\s*ev\.summary\?\.includes\('\[CANCELED\]'\);/);
+        expect(mappingSection).toMatch(/const normalizedSummary = ev\.summary\?\.trimStart\(\)\.toUpperCase\(\);/);
+        expect(mappingSection).toMatch(/const isCancelled = ev\.status\?\.toUpperCase\(\) === 'CANCELLED'\s*\|\|\s*normalizedSummary\?\.startsWith\('\[CANCELED\]'\)\s*\|\|\s*normalizedSummary\?\.startsWith\('\[CANCELLED\]'\);/);
         expect(mappingSection).toMatch(/status:\s*isCancelled\s*\?\s*'cancelled'\s*:\s*'scheduled'\s*,/);
         expect(mappingSection).not.toMatch(/^\s*status:\s*'scheduled'\s*,/m);
     });
