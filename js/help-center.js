@@ -269,8 +269,8 @@ const HELP_GUIDES = [
         id: 'track-game',
         title: 'Track a game (standard and live)',
         category: 'game-day',
-        roles: ['coach', 'administrator'],
-        tags: ['track', 'live tracker', 'stats', 'undo', 'game log'],
+        roles: ['member', 'parent', 'coach', 'administrator'],
+        tags: ['track', 'tracking', 'racking', 'racking a game', 'live tracker', 'stats', 'undo', 'game log'],
         summary: 'Choose the correct tracker for sport/game context and capture reliable in-game data.',
         prerequisites: [
             'A game is scheduled or selected from schedule.',
