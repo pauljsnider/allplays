@@ -263,7 +263,19 @@ export async function fetchAndParseCalendar(url) {
   const timeoutMs = 5000;
   const cleanedUrl = url.trim();
   const normalizedUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
-  const calendarFetchFunctionUrl = 'https://us-central1-game-flow-c6311.cloudfunctions.net/fetchCalendarIcs';
+
+  function resolveCalendarFunctionUrl() {
+    const globalConfig = window.__ALLPLAYS_CONFIG__;
+    const configuredUrl = globalConfig?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+    if (typeof configuredUrl === 'string' && configuredUrl.trim()) {
+      return configuredUrl.trim();
+    }
+    const metaTagUrl = document.querySelector('meta[name="allplays-calendar-function-url"]')?.content;
+    if (typeof metaTagUrl === 'string' && metaTagUrl.trim()) {
+      return metaTagUrl.trim();
+    }
+    return null;
+  }
 
   function normalizeIcsText(text) {
     const marker = 'BEGIN:VCALENDAR';
@@ -283,6 +295,10 @@ export async function fetchAndParseCalendar(url) {
   }
 
   async function fetchViaFunction(targetUrl) {
+    const calendarFetchFunctionUrl = resolveCalendarFunctionUrl();
+    if (!calendarFetchFunctionUrl) {
+      throw new Error('Calendar fetch function URL is not configured');
+    }
     const functionUrl = `${calendarFetchFunctionUrl}?url=${encodeURIComponent(targetUrl)}&forceRefresh=true`;
     const response = await fetchWithTimeout(functionUrl);
     if (!response.ok) {

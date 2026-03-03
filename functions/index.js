@@ -1,7 +1,6 @@
 const functions = require('firebase-functions');
-
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const inMemoryCache = new Map();
+const dns = require('node:dns').promises;
+const net = require('node:net');
 
 function normalizeIcsText(text) {
   const marker = 'BEGIN:VCALENDAR';
@@ -10,7 +9,72 @@ function normalizeIcsText(text) {
   return text.slice(markerIndex);
 }
 
-function normalizeTargetUrl(rawUrl) {
+function isPrivateIpAddress(ip) {
+  const ipVersion = net.isIP(ip);
+  if (!ipVersion) {
+    return true;
+  }
+
+  if (ipVersion === 4) {
+    const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
+    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
+      return true;
+    }
+    if (parts[0] === 10 || parts[0] === 127 || parts[0] === 0) return true;
+    if (parts[0] === 169 && parts[1] === 254) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    return false;
+  }
+
+  const normalized = ip.toLowerCase();
+  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized.startsWith('fe80:')) return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  return false;
+}
+
+function isBlockedHostname(host) {
+  const blockedHosts = new Set([
+    'localhost',
+    '127.0.0.1',
+    '0.0.0.0',
+    '::1',
+    'metadata',
+    'metadata.google.internal',
+    '169.254.169.254'
+  ]);
+  return blockedHosts.has(host) || host.endsWith('.local');
+}
+
+async function assertPublicHost(host) {
+  if (isBlockedHostname(host)) {
+    throw new Error('Blocked host');
+  }
+
+  if (net.isIP(host) && isPrivateIpAddress(host)) {
+    throw new Error('Blocked host address');
+  }
+
+  let resolved;
+  try {
+    resolved = await dns.lookup(host, { all: true, verbatim: true });
+  } catch (error) {
+    throw new Error('Could not resolve host');
+  }
+
+  if (!resolved.length) {
+    throw new Error('Could not resolve host');
+  }
+
+  for (const entry of resolved) {
+    if (isPrivateIpAddress(entry.address)) {
+      throw new Error('Blocked host address');
+    }
+  }
+}
+
+async function normalizeTargetUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') {
     throw new Error('Missing url');
   }
@@ -28,10 +92,7 @@ function normalizeTargetUrl(rawUrl) {
   }
 
   const host = parsed.hostname.toLowerCase();
-  const blockedHosts = new Set(['localhost', '127.0.0.1', '0.0.0.0']);
-  if (blockedHosts.has(host) || host.endsWith('.local')) {
-    throw new Error('Blocked host');
-  }
+  await assertPublicHost(host);
 
   return parsed.toString();
 }
@@ -50,13 +111,42 @@ async function fetchWithTimeout(url, timeoutMs = 12000) {
       }
     });
     return response;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error('Calendar request timed out');
+    }
+    throw new Error(`Calendar fetch failed: ${error?.message || 'Unknown network error'}`);
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-function writeCorsHeaders(res) {
-  res.set('Access-Control-Allow-Origin', '*');
+function getAllowedOrigins() {
+  const configuredOrigins = functions.config()?.calendar?.allowed_origins;
+  if (Array.isArray(configuredOrigins)) {
+    return configuredOrigins.map((origin) => String(origin).trim()).filter(Boolean);
+  }
+  if (typeof configuredOrigins === 'string') {
+    return configuredOrigins.split(',').map((origin) => origin.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+const allowedOriginSet = new Set(getAllowedOrigins());
+
+function isAllowedOrigin(origin) {
+  if (!origin) {
+    return true;
+  }
+  return allowedOriginSet.has(origin);
+}
+
+function writeCorsHeaders(req, res) {
+  const origin = req.headers.origin;
+  if (origin && allowedOriginSet.has(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+  }
   res.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
   res.set('Cache-Control', 'no-store');
@@ -71,7 +161,12 @@ exports.fetchCalendarIcs = functions
   .runWith(fetchCalendarRuntime)
   .https
   .onRequest(async (req, res) => {
-  writeCorsHeaders(res);
+  writeCorsHeaders(req, res);
+
+  if (!isAllowedOrigin(req.headers.origin)) {
+    res.status(403).json({ ok: false, error: 'Origin not allowed' });
+    return;
+  }
 
   if (req.method === 'OPTIONS') {
     res.status(204).send('');
@@ -85,21 +180,7 @@ exports.fetchCalendarIcs = functions
 
   try {
     const rawUrl = req.query.url;
-    const forceRefresh = String(req.query.forceRefresh || '') === 'true';
-    const normalizedUrl = normalizeTargetUrl(rawUrl);
-
-    if (!forceRefresh) {
-      const cached = inMemoryCache.get(normalizedUrl);
-      if (cached && cached.expiresAt > Date.now()) {
-        res.status(200).json({
-          ok: true,
-          source: 'cache',
-          fetchedAt: cached.fetchedAt,
-          icsText: cached.icsText
-        });
-        return;
-      }
-    }
+    const normalizedUrl = await normalizeTargetUrl(rawUrl);
 
     const response = await fetchWithTimeout(normalizedUrl);
     if (!response.ok) {
@@ -119,11 +200,6 @@ exports.fetchCalendarIcs = functions
     }
 
     const fetchedAt = new Date().toISOString();
-    inMemoryCache.set(normalizedUrl, {
-      fetchedAt,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-      icsText
-    });
 
     res.status(200).json({
       ok: true,
