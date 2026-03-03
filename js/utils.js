@@ -459,7 +459,19 @@ const ICS_DAY_TO_INDEX = {
   FR: 5,
   SA: 6
 };
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
+
+function addDaysPreservingLocalTime(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function toCalendarDayNumber(date) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY);
+}
 
 function parseICSRRule(rawRule) {
   if (!rawRule || typeof rawRule !== 'string') return null;
@@ -564,10 +576,10 @@ function expandRecurringICSEvent(event) {
       if (untilBoundary && cursor > untilBoundary) break;
       pushOccurrence(cursor);
       generated++;
-      cursor = new Date(cursor.getTime() + interval * MS_PER_DAY);
+      cursor = addDaysPreservingLocalTime(cursor, interval);
     }
 
-    return occurrences.length ? occurrences : [baseEvent];
+    return occurrences;
   }
 
   const defaultDayCode = DAY_CODES[startDate.getDay()];
@@ -583,32 +595,27 @@ function expandRecurringICSEvent(event) {
   startWeekAnchor.setHours(0, 0, 0, 0);
   startWeekAnchor.setDate(startWeekAnchor.getDate() - startWeekAnchor.getDay());
 
-  const hardEnd = untilBoundary
-    ? new Date(untilBoundary)
-    : new Date(startDate.getTime() + (MAX_ICS_RECURRENCE_OCCURRENCES * 14 * MS_PER_DAY));
-  hardEnd.setHours(23, 59, 59, 999);
-
   let cursor = new Date(startDate);
   let generated = 0;
-  while (cursor <= hardEnd && generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+  while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+    if (untilBoundary && cursor > untilBoundary) break;
     const cursorDayStart = new Date(cursor);
     cursorDayStart.setHours(0, 0, 0, 0);
     const cursorWeekAnchor = new Date(cursorDayStart);
     cursorWeekAnchor.setDate(cursorWeekAnchor.getDate() - cursorWeekAnchor.getDay());
-    const weekDiff = Math.floor((cursorWeekAnchor - startWeekAnchor) / (7 * MS_PER_DAY));
+    const weekDiff = Math.floor((toCalendarDayNumber(cursorWeekAnchor) - toCalendarDayNumber(startWeekAnchor)) / 7);
     const isCadencedWeek = weekDiff >= 0 && weekDiff % interval === 0;
     const isMatchingWeekday = byDayIndexes.has(cursor.getDay());
 
     if (isCadencedWeek && isMatchingWeekday && cursor >= startDate) {
-      if (untilBoundary && cursor > untilBoundary) break;
       pushOccurrence(cursor);
       generated++;
     }
 
-    cursor = new Date(cursor.getTime() + MS_PER_DAY);
+    cursor = addDaysPreservingLocalTime(cursor, 1);
   }
 
-  return occurrences.length ? occurrences : [baseEvent];
+  return occurrences;
 }
 
 /**
@@ -1108,12 +1115,6 @@ export function generateSeriesId() {
     return v.toString(16);
   });
 }
-
-/**
- * Day code mapping for recurrence
- */
-const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function toLocalDateKey(date) {
   const year = date.getFullYear();
