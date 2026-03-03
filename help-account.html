@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Help - Account and Access</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <main class="max-w-6xl mx-auto px-4 py-8">
+    <a href="help.html" class="text-sm text-blue-700 hover:text-blue-900">← Back to Help Portal</a>
+    <h1 class="mt-2 text-3xl font-extrabold">Account and Access</h1>
+    <p class="mt-2 text-slate-600">Who does what for authentication, onboarding, and account state workflows.</p>
+
+    <section class="mt-6 grid gap-4">
+      <article class="bg-white rounded-xl border border-slate-200 p-5">
+        <h2 class="text-xl font-bold">Login and Session</h2>
+        <ul class="mt-3 list-disc list-inside text-sm text-slate-700 space-y-1">
+          <li><strong>Member/Parent/Coach/Admin:</strong> Log in from <code>login.html</code>.</li>
+          <li><strong>Member/Parent/Coach/Admin:</strong> Log out from shared header controls.</li>
+          <li><strong>Coach/Admin:</strong> Verify team-management links appear after login.</li>
+          <li><strong>Parent:</strong> Verify parent dashboard links appear after login.</li>
+        </ul>
+      </article>
+
+      <article class="bg-white rounded-xl border border-slate-200 p-5">
+        <h2 class="text-xl font-bold">Forgot Password and Recovery</h2>
+        <ul class="mt-3 list-disc list-inside text-sm text-slate-700 space-y-1">
+          <li><strong>Member/Parent/Coach/Admin:</strong> Start reset from <code>login.html</code> / <code>reset-password.html</code>.</li>
+          <li><strong>Member/Parent/Coach/Admin:</strong> Complete email reset link flow.</li>
+          <li><strong>Member/Parent/Coach/Admin:</strong> Verify sign-in works with new password.</li>
+        </ul>
+      </article>
+
+      <article class="bg-white rounded-xl border border-slate-200 p-5">
+        <h2 class="text-xl font-bold">Sign Up and Invite Acceptance</h2>
+        <ul class="mt-3 list-disc list-inside text-sm text-slate-700 space-y-1">
+          <li><strong>Member/Parent/Coach/Admin:</strong> Sign up via activation/invite from <code>login.html</code> and <code>accept-invite.html</code>.</li>
+          <li><strong>Parent:</strong> Parent-invite activation and linkage workflows.</li>
+          <li><strong>Coach/Admin:</strong> Team invite redemption and elevated access checks.</li>
+          <li><strong>Member/Parent/Coach/Admin:</strong> Resolve pending verification in <code>verify-pending.html</code>.</li>
+        </ul>
+      </article>
+
+      <article class="bg-white rounded-xl border border-slate-200 p-5">
+        <h2 class="text-xl font-bold">Profile and Identity</h2>
+        <ul class="mt-3 list-disc list-inside text-sm text-slate-700 space-y-1">
+          <li><strong>Member/Parent/Coach/Admin:</strong> Update profile data in <code>profile.html</code>.</li>
+          <li><strong>Admin:</strong> Verify admin-only areas via <code>admin.html</code> and admin status checks.</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

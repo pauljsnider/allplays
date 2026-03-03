@@ -18,12 +18,12 @@ describe('help navigation wiring', () => {
         expect(bannerJs).toContain("label: 'Help'");
     });
 
-    it('renders deep help center layout controls', () => {
+    it('renders multi-page help portal links', () => {
         const helpHtml = readRepoFile('help.html');
-        expect(helpHtml).toContain('id="help-category"');
-        expect(helpHtml).toContain('id="top-task-links"');
-        expect(helpHtml).toContain('id="category-links"');
-        expect(helpHtml).toContain('Workflow Steps');
-        expect(helpHtml).toContain('Related Guides');
+        expect(helpHtml).toContain('href="help-account.html"');
+        expect(helpHtml).toContain('href="help-team-operations.html"');
+        expect(helpHtml).toContain('href="help-game-operations.html"');
+        expect(helpHtml).toContain('href="help-watch-chat.html"');
+        expect(helpHtml).toContain('href="help-page-reference.html"');
     });
 });
