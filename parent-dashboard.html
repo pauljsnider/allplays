@@ -445,6 +445,7 @@
                 const directionEl = document.getElementById(`ride-direction-${eventKey}`);
                 const noteEl = document.getElementById(`ride-note-${eventKey}`);
                 const seatCapacity = Number.parseInt(seatsEl?.value || '0', 10);
+                await ensureParentTeamAccess(currentUserId, [teamId]);
                 await createRideOffer(teamId, gameId, {
                     seatCapacity,
                     direction: directionEl?.value || 'to',
