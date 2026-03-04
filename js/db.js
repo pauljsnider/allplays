@@ -1205,7 +1205,14 @@ export async function redeemParentInvite(userId, code) {
     const snapshot = await getDocs(q);
     if (snapshot.empty) throw new Error("Invalid or used code");
 
-    const codeDoc = snapshot.docs.find(d => (d.data() || {}).type === 'parent_invite') || snapshot.docs[0];
+    const parentInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'parent_invite');
+    if (parentInviteDocs.length === 0) throw new Error("Invalid or used code");
+
+    // Duplicates can exist; prefer a currently redeemable parent invite doc.
+    const codeDoc = parentInviteDocs.find((d) => {
+        const invite = d.data() || {};
+        return invite.used !== true && !isAccessCodeExpired(invite.expiresAt);
+    }) || parentInviteDocs[0];
     const codeRef = codeDoc.ref;
     let codeData;
 
