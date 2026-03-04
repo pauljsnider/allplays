@@ -1140,6 +1140,25 @@ export function getCalendarEventType(event) {
   return isPractice ? 'practice' : 'game';
 }
 
+/**
+ * Resolve normalized calendar event status for ICS events.
+ * @param {Object} event - Parsed ICS event
+ * @returns {'scheduled'|'cancelled'} Event status
+ */
+export function getCalendarEventStatus(event) {
+  const normalizedStatus = String(event?.status || '').trim().toUpperCase();
+  if (normalizedStatus === 'CANCELLED' || normalizedStatus === 'CANCELED') {
+    return 'cancelled';
+  }
+
+  const normalizedSummary = String(event?.summary || '').toUpperCase();
+  if (normalizedSummary.includes('[CANCELED]') || normalizedSummary.includes('[CANCELLED]')) {
+    return 'cancelled';
+  }
+
+  return 'scheduled';
+}
+
 // ============================================
 // Practice & Event Utilities - Phase 1
 // ============================================
