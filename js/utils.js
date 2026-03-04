@@ -1284,12 +1284,26 @@ export function expandRecurrence(master, windowDays = 180) {
       seriesStart.getSeconds(),
       seriesStart.getMilliseconds()
     );
+
+    if (freq === 'weekly') {
+      const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+      const currentDayOfWeek = current.getDay();
+      const currentWeekStartDayNumber = currentDayNumber - currentDayOfWeek;
+      const weeksSinceSeriesStartAtCursor = Math.floor(
+        (currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7
+      );
+      const weekOffset = ((weeksSinceSeriesStartAtCursor % normalizedInterval) + normalizedInterval) % normalizedInterval;
+
+      if (weekOffset !== 0) {
+        current.setDate(current.getDate() + ((normalizedInterval - weekOffset) * 7));
+      }
+    }
   }
   let generated = 0;
 
-  // Safety limit based on visible traversal distance, not series age.
+  // Safety limit for day-by-day traversal plus one-year buffer for edge cases.
   const daysToTraverse = Math.ceil((windowEnd.getTime() - current.getTime()) / MS_PER_DAY);
-  const maxIterations = Math.max(windowDays * 2, (daysToTraverse + 31) * 2);
+  const maxIterations = Math.max(366, daysToTraverse + 366);
   let iterations = 0;
 
   while (current <= windowEnd && iterations < maxIterations) {
