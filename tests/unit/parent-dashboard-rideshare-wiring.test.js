@@ -13,4 +13,18 @@ describe('parent dashboard rideshare wiring', () => {
         expect(submitAssignments).toHaveLength(1);
         expect(html).not.toMatch(/window\.submitGameRsvp\s*=\s*async function\s*\([^)]*\)\s*\{\s*function\s+getEventRideKey\s*\(/s);
     });
+
+    it('allows rideshare rendering for practice events even when not db-tracked', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).toContain('function canShowRideshareForEvent(event)');
+        expect(html).toContain('event?.isDbGame || event?.type === \'practice\'');
+        expect(html).toContain('if (!canShowRideshareForEvent(event)) return \'\';');
+    });
+
+    it('hydrates rideshare offers for practices and db-tracked events', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).toContain('.filter((ev) => canShowRideshareForEvent(ev))');
+    });
 });
