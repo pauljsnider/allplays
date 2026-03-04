@@ -871,11 +871,27 @@ export async function validateAccessCode(code) {
 }
 
 export async function markAccessCodeAsUsed(codeId, userId) {
-    const docRef = doc(db, "accessCodes", codeId);
-    await updateDoc(docRef, {
-        used: true,
-        usedBy: userId,
-        usedAt: Timestamp.now()
+    const codeRef = doc(db, "accessCodes", codeId);
+    await runTransaction(db, async (transaction) => {
+        const codeSnapshot = await transaction.get(codeRef);
+        if (!codeSnapshot.exists()) {
+            throw new Error("Invalid access code");
+        }
+
+        const codeData = codeSnapshot.data() || {};
+        if (codeData.used) {
+            throw new Error("Code already used");
+        }
+
+        if (isAccessCodeExpired(codeData.expiresAt)) {
+            throw new Error("Code has expired");
+        }
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
     });
 }
 
@@ -1182,17 +1198,45 @@ export async function inviteAdmin(teamId, adminEmail) {
 export async function redeemParentInvite(userId, code) {
     console.log('[redeemParentInvite] start', { userId, code });
 
-    // 1. Validate Code
+    // 1. Find candidate code document
     const q = query(
         collection(db, "accessCodes"),
-        where("code", "==", code.toUpperCase()),
-        where("used", "==", false)
+        where("code", "==", code.toUpperCase())
     );
     const snapshot = await getDocs(q);
     if (snapshot.empty) throw new Error("Invalid or used code");
-    
-    const codeDoc = snapshot.docs[0];
-    const codeData = codeDoc.data() || {};
+
+    const codeDoc = snapshot.docs.find(d => (d.data() || {}).type === 'parent_invite') || snapshot.docs[0];
+    const codeRef = codeDoc.ref;
+    let codeData;
+
+    // 2. Atomically claim code before side effects
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) {
+            throw new Error("Invalid or used code");
+        }
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.type !== 'parent_invite') {
+            throw new Error("Not a parent invite code");
+        }
+        if (latestCodeData.used) {
+            throw new Error("Invalid or used code");
+        }
+        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+            throw new Error("Code has expired");
+        }
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        codeData = latestCodeData;
+    });
+
     console.log('[redeemParentInvite] code loaded', {
         codeId: codeDoc.id,
         type: codeData.type,
@@ -1200,111 +1244,118 @@ export async function redeemParentInvite(userId, code) {
         playerId: codeData.playerId,
         generatedBy: codeData.generatedBy
     });
-
-    if (codeData.type !== 'parent_invite') throw new Error("Not a parent invite code");
-    if (isAccessCodeExpired(codeData.expiresAt)) throw new Error("Code has expired");
-
-    // 2. Get Team & Player details for caching
-    console.log('[redeemParentInvite] fetching team & player', {
-        teamId: codeData.teamId,
-        playerId: codeData.playerId
-    });
-    const [team, player] = await Promise.all([
-        getTeam(codeData.teamId),
-        getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
-    ]);
-
-    if (!team || !player) {
-        console.error('[redeemParentInvite] missing team or player', { teamExists: !!team, playerExists: !!player });
-        throw new Error("Team or Player not found");
-    }
-    console.log('[redeemParentInvite] team & player resolved', {
-        teamName: team.name,
-        playerName: player.name,
-        playerNumber: player.number
-    });
-
-    // 3. Update User Profile (parentOf + parentTeamIds for Firestore rules)
     try {
-        const userRef = doc(db, "users", userId);
-        await setDoc(userRef, {
-            parentOf: arrayUnion({
-                teamId: codeData.teamId,
-                playerId: codeData.playerId,
-                teamName: team.name,
-                playerName: player.name,
-                playerNumber: player.number,
-                playerPhotoUrl: player.photoUrl || null,
-                relation: codeData.relation || null
-            }),
-            // Denormalized array for fast Firestore rules lookup
-            parentTeamIds: arrayUnion(codeData.teamId),
-            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
-            roles: arrayUnion('parent')
-        }, { merge: true });
-        console.log('[redeemParentInvite] user profile updated');
-    } catch (err) {
-        console.error('redeemParentInvite: error updating user profile', err);
-        throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
-    }
+        // 3. Get Team & Player details for caching
+        console.log('[redeemParentInvite] fetching team & player', {
+            teamId: codeData.teamId,
+            playerId: codeData.playerId
+        });
+        const [team, player] = await Promise.all([
+            getTeam(codeData.teamId),
+            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
+        ]);
 
-    // 4. Update Player Doc (parents list)
-    try {
-        const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+        if (!team || !player) {
+            console.error('[redeemParentInvite] missing team or player', { teamExists: !!team, playerExists: !!player });
+            throw new Error("Team or Player not found");
+        }
+        console.log('[redeemParentInvite] team & player resolved', {
+            teamName: team.name,
+            playerName: player.name,
+            playerNumber: player.number
+        });
 
-        // Log current parents state for debugging
+        // 4. Update User Profile (parentOf + parentTeamIds for Firestore rules)
         try {
-            const snap = await getDoc(playerRef);
-            if (snap.exists()) {
-                const data = snap.data() || {};
-                console.log('[redeemParentInvite] current player parents before update', {
+            const userRef = doc(db, "users", userId);
+            await setDoc(userRef, {
+                parentOf: arrayUnion({
                     teamId: codeData.teamId,
                     playerId: codeData.playerId,
-                    parents: data.parents || []
-                });
-            } else {
-                console.log('[redeemParentInvite] player doc not found before parents update', {
-                    teamId: codeData.teamId,
-                    playerId: codeData.playerId
-                });
-            }
-        } catch (innerErr) {
-            console.warn('[redeemParentInvite] failed to read player before update (non-fatal)', innerErr);
+                    teamName: team.name,
+                    playerName: player.name,
+                    playerNumber: player.number,
+                    playerPhotoUrl: player.photoUrl || null,
+                    relation: codeData.relation || null
+                }),
+                // Denormalized array for fast Firestore rules lookup
+                parentTeamIds: arrayUnion(codeData.teamId),
+                parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
+                roles: arrayUnion('parent')
+            }, { merge: true });
+            console.log('[redeemParentInvite] user profile updated');
+        } catch (err) {
+            console.error('redeemParentInvite: error updating user profile', err);
+            throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
         }
 
-        await updateDoc(playerRef, {
-            parents: arrayUnion({
-                userId,
-                email: codeData.email || 'pending', // Will be updated if email not provided in invite
-                relation: codeData.relation,
-                addedAt: Timestamp.now()
-            })
-        });
-        console.log('[redeemParentInvite] player parents updated');
+        // 5. Update Player Doc (parents list)
+        try {
+            const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+
+            // Log current parents state for debugging
+            try {
+                const snap = await getDoc(playerRef);
+                if (snap.exists()) {
+                    const data = snap.data() || {};
+                    console.log('[redeemParentInvite] current player parents before update', {
+                        teamId: codeData.teamId,
+                        playerId: codeData.playerId,
+                        parents: data.parents || []
+                    });
+                } else {
+                    console.log('[redeemParentInvite] player doc not found before parents update', {
+                        teamId: codeData.teamId,
+                        playerId: codeData.playerId
+                    });
+                }
+            } catch (innerErr) {
+                console.warn('[redeemParentInvite] failed to read player before update (non-fatal)', innerErr);
+            }
+
+            await updateDoc(playerRef, {
+                parents: arrayUnion({
+                    userId,
+                    email: codeData.email || 'pending', // Will be updated if email not provided in invite
+                    relation: codeData.relation,
+                    addedAt: Timestamp.now()
+                })
+            });
+            console.log('[redeemParentInvite] player parents updated');
+        } catch (err) {
+            // If this fails (e.g., due to stricter live rules), we still
+            // consider the parent linked via their user profile. Coaches
+            // simply won't see the connection until rules are updated.
+            console.error('redeemParentInvite: error updating player parents (non-fatal)', {
+                message: err?.message,
+                code: err?.code,
+                name: err?.name
+            });
+        }
     } catch (err) {
-        // If this fails (e.g., due to stricter live rules), we still
-        // consider the parent linked via their user profile. Coaches
-        // simply won't see the connection until rules are updated.
-        console.error('redeemParentInvite: error updating player parents (non-fatal)', {
-            message: err?.message,
-            code: err?.code,
-            name: err?.name
-        });
+        try {
+            await runTransaction(db, async (transaction) => {
+                const latestCodeSnapshot = await transaction.get(codeRef);
+                if (!latestCodeSnapshot.exists()) {
+                    return;
+                }
+
+                const latestCodeData = latestCodeSnapshot.data() || {};
+                if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
+                    transaction.update(codeRef, {
+                        used: false,
+                        usedBy: null,
+                        usedAt: null
+                    });
+                }
+            });
+        } catch (rollbackErr) {
+            console.error('redeemParentInvite: failed to rollback code claim', rollbackErr);
+        }
+        throw err;
     }
 
-    // 5. Mark Code Used
-    try {
-        await updateDoc(codeDoc.ref, {
-            used: true,
-            usedBy: userId,
-            usedAt: Timestamp.now()
-        });
-        console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
-    } catch (err) {
-        console.error('redeemParentInvite: error marking code used', err);
-        throw new Error('Unable to link parent (access code). ' + (err?.message || ''));
-    }
-
+    console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
     return { success: true, teamId: codeData.teamId };
 }
 
