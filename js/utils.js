@@ -1300,6 +1300,41 @@ export function expandRecurrence(master, windowDays = 180) {
     }
   }
   let generated = 0;
+  if (count && current > seriesStart) {
+    const precountCursor = new Date(seriesStart);
+    const precountMaxIterations = Math.max(366, Math.ceil((current.getTime() - seriesStart.getTime()) / MS_PER_DAY) + 366);
+    let precountIterations = 0;
+
+    while (precountCursor < current && generated < count && precountIterations < precountMaxIterations) {
+      precountIterations++;
+
+      const precountDayOfWeek = precountCursor.getDay();
+      const precountDayCode = DAY_CODES[precountDayOfWeek];
+      const precountDayNumber = Math.floor(precountCursor.getTime() / MS_PER_DAY);
+      const precountDaysSinceSeriesStart = precountDayNumber - seriesStartDayNumber;
+      const precountWeekStartDayNumber = precountDayNumber - precountDayOfWeek;
+      const precountWeeksSinceSeriesStart = Math.floor((precountWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
+      const precountWeeklyIntervalMatch =
+        precountWeeksSinceSeriesStart >= 0 &&
+        (precountWeeksSinceSeriesStart % normalizedInterval === 0);
+
+      let matches = false;
+      if (freq === 'weekly' && byDays.length > 0) {
+        matches = byDays.includes(precountDayCode) && precountWeeklyIntervalMatch && precountDaysSinceSeriesStart >= 0;
+      } else if (freq === 'daily') {
+        matches = precountDaysSinceSeriesStart >= 0 && (precountDaysSinceSeriesStart % normalizedInterval === 0);
+      } else if (freq === 'weekly' && byDays.length === 0) {
+        matches = precountDayOfWeek === seriesStartDayOfWeek && precountWeeklyIntervalMatch;
+        matches = matches && precountDaysSinceSeriesStart >= 0;
+      }
+
+      if (matches) {
+        generated++;
+      }
+
+      precountCursor.setDate(precountCursor.getDate() + 1);
+    }
+  }
 
   // Safety limit for day-by-day traversal plus one-year buffer for edge cases.
   const daysToTraverse = Math.ceil((windowEnd.getTime() - current.getTime()) / MS_PER_DAY);
@@ -1336,6 +1371,10 @@ export function expandRecurrence(master, windowDays = 180) {
       // If no specific days, match the same day as series start
       matches = currentDayOfWeek === seriesStartDayOfWeek && weeklyIntervalMatch;
       matches = matches && daysSinceSeriesStart >= 0;
+    }
+
+    if (matches) {
+      generated++;
     }
 
     // Only process if within visible window and matches pattern
@@ -1377,7 +1416,6 @@ export function expandRecurrence(master, windowDays = 180) {
       }
 
       occurrences.push(occurrence);
-      generated++;
     }
 
     // Advance to next day
