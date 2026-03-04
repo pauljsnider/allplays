@@ -21,6 +21,7 @@ import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState } from './live-game-state.js?v=1';
 
 const state = {
   teamId: null,
@@ -166,7 +167,7 @@ function showToast(message) {
 
 function buildShareText(mode, url) {
   const teamName = state.team?.name || 'Team';
-  const opponent = state.game?.opponent || 'Opponent';
+  const opponent = resolveOpponentDisplayName(state.game);
   const dateLabel = formatShortDate(state.game?.date);
   const timeLabel = formatTime(state.game?.date);
   if (mode === 'report') {
@@ -277,7 +278,7 @@ function setupVideoPanel() {
 
 function renderGameInfo() {
   els.homeTeamName.textContent = state.team?.name || 'Home Team';
-  els.awayTeamName.textContent = state.game?.opponent || 'Away Team';
+  els.awayTeamName.textContent = resolveOpponentDisplayName(state.game);
   if (els.homeTeamPhoto) {
     if (state.team?.photoUrl) {
       els.homeTeamPhoto.src = state.team.photoUrl;
@@ -367,9 +368,7 @@ function renderPlayByPlay(event, isNew = false) {
 function renderStats() {
   if (!els.opponentStats) return;
   const oppEntries = Object.entries(state.opponentStats || {});
-  const columns = (state.statColumns && state.statColumns.length)
-    ? state.statColumns
-    : ['PTS', 'REB', 'AST', 'FLS'];
+  const columns = normalizeLiveStatColumns(state.statColumns);
   els.opponentStats.innerHTML = oppEntries.map(([id, player]) => {
     const highlight = state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id;
     const nameClass = highlight ? 'text-coral' : 'text-sand';
@@ -414,9 +413,7 @@ function renderLineup() {
       const highlight = state.lastStatChange?.playerId === id && !state.lastStatChange?.isOpponent;
       const nameClass = highlight ? 'text-teal' : 'text-sand';
       const statClass = highlight ? 'text-teal' : 'text-sand';
-      const columns = (state.statColumns && state.statColumns.length)
-        ? state.statColumns
-        : ['PTS', 'REB', 'AST', 'FLS'];
+      const columns = normalizeLiveStatColumns(state.statColumns);
       const statItems = columns.map(col => {
         const key = statKeyMap[col] || col.toLowerCase();
         const val = stats[key] || 0;
@@ -443,8 +440,8 @@ function renderLineup() {
     }).join('');
   };
 
-  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'Lineup not set');
-  els.lineupBench.innerHTML = renderList(benchIds, 'Bench not set');
+  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'No players currently on field');
+  els.lineupBench.innerHTML = renderList(benchIds, 'No players currently on bench');
 }
 
 function renderChat() {
@@ -765,6 +762,18 @@ function processNewEvents(events) {
   const newEvents = events.filter(ev => !state.eventIds.has(ev.id));
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
+    if (event.type === 'reset') {
+      const next = applyResetEventState(state, event);
+      Object.assign(state, next);
+      state.eventIds.add(event.id);
+      if (els.playsFeed) {
+        els.playsFeed.innerHTML = '<div data-placeholder="plays" class="text-center text-sand/40 py-8">Game reset. Waiting for plays...</div>';
+      }
+      renderScoreboard();
+      renderStats();
+      renderLineup();
+      return;
+    }
     if (Array.isArray(event.onCourt)) state.onCourt = event.onCourt;
     if (Array.isArray(event.bench)) state.bench = event.bench;
     if (Array.isArray(event.onCourt) || Array.isArray(event.bench)) {
@@ -1323,6 +1332,7 @@ function formatFirestoreError(error) {
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
+  renderGameInfo();
   if (gameDoc.liveLineup) {
     state.onCourt = Array.isArray(gameDoc.liveLineup.onCourt) ? gameDoc.liveLineup.onCourt : state.onCourt;
     state.bench = Array.isArray(gameDoc.liveLineup.bench) ? gameDoc.liveLineup.bench : state.bench;
@@ -1413,15 +1423,10 @@ async function init() {
   if (game?.statTrackerConfigId && Array.isArray(configs)) {
     const config = configs.find(c => c.id === game.statTrackerConfigId);
     if (config && Array.isArray(config.columns)) {
-      state.statColumns = config.columns.map(c => String(c).toUpperCase());
+      state.statColumns = normalizeLiveStatColumns(config.columns);
     }
   }
-  if (!state.statColumns.length) {
-    state.statColumns = ['PTS', 'REB', 'AST', 'STL', 'TO'];
-  }
-  if (!state.statColumns.includes('FLS') && !state.statColumns.includes('FOULS')) {
-    state.statColumns.push('FLS');
-  }
+  state.statColumns = normalizeLiveStatColumns(state.statColumns);
   state.opponentStats = game.opponentStats || {};
   if (game.liveLineup) {
     state.onCourt = Array.isArray(game.liveLineup.onCourt) ? game.liveLineup.onCourt : [];
