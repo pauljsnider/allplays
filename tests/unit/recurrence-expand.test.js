@@ -84,12 +84,17 @@ describe('expandRecurrence interval guardrails', () => {
 
   it('does not drop in-window occurrences for long-running weekly series', () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-03-01T12:00:00Z'));
+    const now = new Date('2026-03-01T12:00:00Z');
+    vi.setSystemTime(now);
+    const windowDays = 30;
+    const dayMs = 24 * 60 * 60 * 1000;
+    const pastWindowDays = 14;
 
+    const seriesStart = new Date('2024-01-01T17:00:00Z');
     const master = {
       id: 'series-weekly-long-running',
       isSeriesMaster: true,
-      date: new Date('2024-01-01T17:00:00Z'),
+      date: seriesStart,
       recurrence: {
         freq: 'weekly',
         interval: 1,
@@ -97,17 +102,30 @@ describe('expandRecurrence interval guardrails', () => {
       }
     };
 
-    const dates = expandRecurrence(master, 30).map((occ) => occ.instanceDate);
-    expect(dates).toEqual([
-      '2026-02-16',
-      '2026-02-23',
-      '2026-03-02',
-      '2026-03-09',
-      '2026-03-16',
-      '2026-03-23',
-      '2026-03-30'
-    ]);
-    expect(dates).toHaveLength(7);
+    const dates = expandRecurrence(master, windowDays).map((occ) => occ.instanceDate);
+    const windowStart = new Date(now.getTime() - pastWindowDays * dayMs);
+    const windowEnd = new Date(now.getTime() + windowDays * dayMs);
+    expect((windowEnd.getTime() - seriesStart.getTime()) / dayMs).toBeGreaterThan(730);
+
+    const firstExpected = new Date(seriesStart);
+    while (firstExpected < windowStart) {
+      firstExpected.setDate(firstExpected.getDate() + 7);
+    }
+
+    const expectedDates = [];
+    const cursor = new Date(firstExpected);
+    while (cursor <= windowEnd) {
+      expectedDates.push(cursor.toISOString().slice(0, 10));
+      cursor.setDate(cursor.getDate() + 7);
+    }
+
+    expect(dates).toEqual(expectedDates);
+    expect(dates).toHaveLength(expectedDates.length);
+    for (let i = 1; i < dates.length; i++) {
+      const previous = new Date(`${dates[i - 1]}T00:00:00Z`);
+      const current = new Date(`${dates[i]}T00:00:00Z`);
+      expect((current.getTime() - previous.getTime()) / dayMs).toBe(7);
+    }
   });
 
   it('keeps biweekly multi-day cadence anchored to series start after window jump', () => {
