@@ -109,4 +109,32 @@ describe('expandRecurrence interval guardrails', () => {
     ]);
     expect(dates).toHaveLength(7);
   });
+
+  it('keeps biweekly multi-day cadence anchored to series start after window jump', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-01T12:00:00Z'));
+
+    const master = {
+      id: 'series-weekly-biweekly-long-running',
+      isSeriesMaster: true,
+      date: new Date('2024-01-03T17:00:00Z'),
+      recurrence: {
+        freq: 'weekly',
+        interval: 2,
+        byDays: ['MO', 'WE']
+      }
+    };
+
+    const dates = expandRecurrence(master, 45).map((occ) => occ.instanceDate);
+    expect(dates.slice(0, 6)).toEqual([
+      '2026-02-23',
+      '2026-02-25',
+      '2026-03-09',
+      '2026-03-11',
+      '2026-03-23',
+      '2026-03-25'
+    ]);
+    expect(dates).not.toContain('2026-02-16');
+    expect(dates).not.toContain('2026-02-18');
+  });
 });
