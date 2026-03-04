@@ -81,4 +81,28 @@ describe('expandRecurrence interval guardrails', () => {
     ]);
     expect(dates).not.toContain('2026-03-09');
   });
+
+  it('includes upcoming occurrences for long-running weekly series', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-01T12:00:00Z'));
+
+    const master = {
+      id: 'series-weekly-long-running',
+      isSeriesMaster: true,
+      date: new Date('2024-01-01T17:00:00Z'),
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['MO']
+      }
+    };
+
+    const dates = expandRecurrence(master, 30).map((occ) => occ.instanceDate);
+    expect(dates.slice(0, 4)).toEqual([
+      '2026-02-16',
+      '2026-02-23',
+      '2026-03-02',
+      '2026-03-09'
+    ]);
+  });
 });
