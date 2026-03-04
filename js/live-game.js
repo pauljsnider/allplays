@@ -18,7 +18,7 @@ import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, 
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=9';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
-import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=1';
+import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 
@@ -1144,12 +1144,19 @@ function initReplayControls() {
       if (!Number.isFinite(speed) || speed <= 0) return;
       if (state.replayPlaying) {
         const nowMs = Date.now();
+        const currentElapsedMs = Number.isFinite(state.replayStartTime) && Number.isFinite(state.replaySpeed) && state.replaySpeed > 0
+          ? getReplayElapsedMs(nowMs, state.replayStartTime, state.replaySpeed)
+          : state.gameClockMs;
+        state.gameClockMs = currentElapsedMs;
+        if (els.replayCurrent) {
+          els.replayCurrent.textContent = formatClock(currentElapsedMs);
+        }
         state.replayStartTime = getReplayStartTimeAfterSpeedChange(
           nowMs,
           state.replayStartTime,
           state.replaySpeed,
           speed,
-          state.gameClockMs
+          currentElapsedMs
         );
       }
       state.replaySpeed = speed;
