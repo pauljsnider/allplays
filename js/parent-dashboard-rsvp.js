@@ -85,8 +85,10 @@ export function resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, r
         const response = normalizeRsvpResponse(rsvp?.response);
         if (response === 'not_responded') return;
         const respondedAtMillis = toMillis(rsvp?.respondedAt);
+        const resolvedPlayerIds = extractRsvpPlayerIds(rsvp);
+        const playerIdsForHydration = resolvedPlayerIds.length > 0 ? resolvedPlayerIds : scopedPlayerIds;
 
-        extractRsvpPlayerIds(rsvp).forEach((playerId) => {
+        playerIdsForHydration.forEach((playerId) => {
             if (!scopedSet.has(playerId)) return;
             const existing = byChild.get(playerId);
             if (!existing || respondedAtMillis >= existing.respondedAtMillis) {
