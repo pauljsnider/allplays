@@ -51,6 +51,13 @@ function icon(name) {
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"></path>
     </svg>`;
   }
+  if (name === 'help') {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9a3.5 3.5 0 116.544 1.677c-.35.855-.977 1.303-1.529 1.696-.67.479-1.243.887-1.243 1.877v.25"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17h.01"></path>
+      <circle cx="12" cy="12" r="9" stroke-width="2"></circle>
+    </svg>`;
+  }
   if (name === 'exit') {
     return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v8a2 2 0 002 2h4"></path>
@@ -111,6 +118,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
   const sport = team?.sport || '';
   const photoUrl = team?.photoUrl || '';
   const isFullAccess = accessLevel === 'full';
+  const helpRole = isFullAccess ? 'coach' : 'parent';
 
   const hrefs = {
     view: `team.html#teamId=${teamId}`,
@@ -122,6 +130,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
     chat: `team-chat.html#teamId=${teamId}`,
     drills: `drills.html#teamId=${teamId}`,
     gameday: `game-day.html#teamId=${teamId}`,
+    help: `help.html?context=team&teamId=${teamId}`,
     exit: exitUrl
   };
 
@@ -139,19 +148,21 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
       ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
       ${actionCard({ href: hrefs.drills, label: 'Drills', iconName: 'drills', active: active === 'drills' })}
       ${actionCard({ href: hrefs.gameday, label: 'Game Day', iconName: 'gameday', active: active === 'gameday' })}
+      ${actionCard({ href: `${hrefs.help}&role=${helpRole}`, label: 'Help', iconName: 'help', active: active === 'help' })}
     `;
   } else {
-    // Parent: View, Chat only
+    // Parent: View, Chat, Help
     navCards = `
       ${actionCard({ href: hrefs.view, label: 'View', iconName: 'view', active: active === 'view' })}
       ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
+      ${actionCard({ href: `${hrefs.help}&role=${helpRole}`, label: 'Help', iconName: 'help', active: active === 'help' })}
     `;
   }
 
   // Determine grid columns based on number of items
   const gridCols = isFullAccess
-    ? 'grid-cols-2 sm:grid-cols-5 lg:grid-cols-9'
-    : 'grid-cols-2';
+    ? 'grid-cols-2 sm:grid-cols-5 lg:grid-cols-10'
+    : 'grid-cols-3';
 
   container.innerHTML = `
     <div class="group bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">

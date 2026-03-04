@@ -236,9 +236,8 @@ export function renderFooter(container) {
             <div>
               <h4 class="text-white font-semibold mb-4">Support</h4>
               <ul class="space-y-2 text-sm">
-                <li><a href="#" class="hover:text-white transition">Help Center</a></li>
-                <li><a href="#" class="hover:text-white transition">Contact</a></li>
-                <li><a href="https://github.com/pauljsnider/paulsnidernet" class="hover:text-white transition" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="help.html" class="hover:text-white transition">Help Center</a></li>
+                <li><a href="https://paulsnider.net" class="hover:text-white transition" target="_blank" rel="noopener noreferrer">Contact</a></li>
               </ul>
             </div>
           </div>
