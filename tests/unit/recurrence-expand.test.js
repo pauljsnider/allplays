@@ -155,4 +155,24 @@ describe('expandRecurrence interval guardrails', () => {
     expect(dates).not.toContain('2026-02-16');
     expect(dates).not.toContain('2026-02-18');
   });
+
+  it('does not resurface finite weekly series after recurrence count is exhausted before window start', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-01T12:00:00Z'));
+
+    const master = {
+      id: 'series-weekly-finite-exhausted',
+      isSeriesMaster: true,
+      date: new Date('2024-01-01T17:00:00Z'),
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['MO'],
+        count: 5
+      }
+    };
+
+    const dates = expandRecurrence(master, 45).map((occ) => occ.instanceDate);
+    expect(dates).toEqual([]);
+  });
 });
