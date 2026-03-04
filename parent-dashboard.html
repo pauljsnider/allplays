@@ -719,12 +719,25 @@
             const allEvents = [];
 
             for (const [teamId, teamChildren] of byTeam.entries()) {
-                const team = await getTeam(teamId);
-                if (!team) continue;
+                let team = null;
+                let dbGames = [];
+                let trackedUids = [];
+                let practiceSessions = [];
+                try {
+                    team = await getTeam(teamId);
+                    if (!team) continue;
 
-                const dbGames = await getGames(teamId);
-                const trackedUids = await getTrackedCalendarEventUids(teamId);
-                const practiceSessions = await getPracticeSessions(teamId);
+                    dbGames = await getGames(teamId);
+                    trackedUids = await getTrackedCalendarEventUids(teamId);
+                    practiceSessions = await getPracticeSessions(teamId);
+                } catch (err) {
+                    console.warn('[parent-dashboard] Failed to load team schedule data:', teamId, err);
+                    continue;
+                }
+                if (!Array.isArray(dbGames)) dbGames = [];
+                if (!Array.isArray(trackedUids)) trackedUids = [];
+                if (!Array.isArray(practiceSessions)) practiceSessions = [];
+
                 const sessionsByEventId = new Map();
                 const sessions = [];
                 const matchedSessionIds = new Set();
