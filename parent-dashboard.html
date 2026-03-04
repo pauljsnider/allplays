@@ -263,7 +263,6 @@
             return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
         }
 
-        window.submitGameRsvp = async function(teamId, gameId, response, childContext = {}) {
         function getEventRideKey(teamId, eventId) {
             return `${teamId || ''}::${eventId || ''}`;
         }
