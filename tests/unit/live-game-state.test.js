@@ -1,0 +1,46 @@
+import { describe, it, expect } from 'vitest';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState } from '../../js/live-game-state.js';
+
+describe('live game state helpers', () => {
+  it('prefers linked opponent team name when opponent is missing', () => {
+    expect(resolveOpponentDisplayName({ opponent: '', opponentTeamName: 'Riverside FC' })).toBe('Riverside FC');
+    expect(resolveOpponentDisplayName({ opponent: 'Lions', opponentTeamName: 'Riverside FC' })).toBe('Lions');
+  });
+
+  it('does not force foul column into generic stat columns', () => {
+    expect(normalizeLiveStatColumns(['PTS', 'REB', 'AST'])).toEqual(['PTS', 'REB', 'AST']);
+  });
+
+  it('resets live viewer state from reset event payload', () => {
+    const next = applyResetEventState({
+      period: 'Q4',
+      homeScore: 33,
+      awayScore: 21,
+      gameClockMs: 123000,
+      events: [{ id: 'e1' }],
+      eventIds: new Set(['e1']),
+      stats: { p1: { pts: 2 } },
+      opponentStats: { o1: { pts: 4 } },
+      onCourt: ['p1'],
+      bench: ['p2']
+    }, {
+      period: 'Q1',
+      homeScore: 0,
+      awayScore: 0,
+      gameClockMs: 0,
+      onCourt: [],
+      bench: ['p1', 'p2']
+    });
+
+    expect(next.period).toBe('Q1');
+    expect(next.homeScore).toBe(0);
+    expect(next.awayScore).toBe(0);
+    expect(next.gameClockMs).toBe(0);
+    expect(next.events).toEqual([]);
+    expect(Array.from(next.eventIds)).toEqual([]);
+    expect(next.stats).toEqual({});
+    expect(next.opponentStats).toEqual({});
+    expect(next.onCourt).toEqual([]);
+    expect(next.bench).toEqual(['p1', 'p2']);
+  });
+});
