@@ -34,6 +34,7 @@ import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-imag
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
+import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import {
     isTeamActive,
     filterTeamsByActive,
@@ -2618,27 +2619,13 @@ async function computeRsvpSummary(teamId, gameId) {
         resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
     });
     const activeRosterIds = new Set(roster.map((player) => player.id));
-    const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-
-    rsvps.forEach((rsvp) => {
-        const responseKey = normalizeRsvpResponse(rsvp.response);
-        if (responseKey === 'not_responded') return;
-
-        const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
-            .filter((id) => activeRosterIds.has(id))
-            .length;
-        if (playerCount === 0) return;
-
-        if (responseKey === 'going') summary.going += playerCount;
-        else if (responseKey === 'maybe') summary.maybe += playerCount;
-        else if (responseKey === 'not_going') summary.notGoing += playerCount;
+    return computeEffectiveRsvpSummary({
+        rsvps,
+        activeRosterIds,
+        fallbackByUser,
+        normalizeResponse: normalizeRsvpResponse,
+        resolvePlayerIds: resolveRsvpPlayerIds
     });
-
-    summary.total = summary.going + summary.maybe + summary.notGoing;
-    summary.notResponded = Math.max(0, roster.length - summary.total);
-    summary.total = roster.length;
-
-    return summary;
 }
 
 export async function getRsvpSummaries(teamId, gameIds) {
@@ -2664,25 +2651,13 @@ export async function getRsvpSummaries(teamId, gameIds) {
         const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
             resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
         });
-        const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-
-        rsvps.forEach((rsvp) => {
-            const responseKey = normalizeRsvpResponse(rsvp.response);
-            if (responseKey === 'not_responded') return;
-
-            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
-                .filter((id) => activeRosterIds.has(id))
-                .length;
-            if (playerCount === 0) return;
-
-            if (responseKey === 'going') summary.going += playerCount;
-            else if (responseKey === 'maybe') summary.maybe += playerCount;
-            else if (responseKey === 'not_going') summary.notGoing += playerCount;
+        const summary = computeEffectiveRsvpSummary({
+            rsvps,
+            activeRosterIds,
+            fallbackByUser,
+            normalizeResponse: normalizeRsvpResponse,
+            resolvePlayerIds: resolveRsvpPlayerIds
         });
-
-        summary.total = summary.going + summary.maybe + summary.notGoing;
-        summary.notResponded = Math.max(0, roster.length - summary.total);
-        summary.total = roster.length;
         summaries.set(gameId, summary);
     }));
 
@@ -2766,29 +2741,7 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
     // Keep denormalized summary consistent with submitRsvp behavior.
     let summary = null;
     try {
-        const [rsvps, roster] = await Promise.all([
-            getRsvps(teamId, gameId),
-            getPlayers(teamId)
-        ]);
-        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-        const activeRosterIds = new Set(roster.map((player) => player.id));
-        summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-        rsvps.forEach((rsvp) => {
-            const responseKey = normalizeRsvpResponse(rsvp.response);
-            if (responseKey === 'not_responded') return;
-
-            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
-                .filter((id) => activeRosterIds.has(id))
-                .length;
-            if (playerCount === 0) return;
-
-            if (responseKey === 'going') summary.going += playerCount;
-            else if (responseKey === 'maybe') summary.maybe += playerCount;
-            else if (responseKey === 'not_going') summary.notGoing += playerCount;
-        });
-        summary.total = summary.going + summary.maybe + summary.notGoing;
-        summary.notResponded = Math.max(0, roster.length - summary.total);
-        summary.total = roster.length;
+        summary = await computeRsvpSummary(teamId, gameId);
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
