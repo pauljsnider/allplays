@@ -199,7 +199,7 @@ Success metric:
 - [x] `vitest` harness and coverage configured
 - [x] `js/utils.js` unit tests complete
 - [x] Extracted tracker logic unit tests complete
-- [ ] Query/payload helper unit tests complete
+- [x] Query/payload helper unit tests complete
 
 ### Reliability and Reporting
 - [ ] Suite tags and shard strategy finalized

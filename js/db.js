@@ -32,6 +32,20 @@ import {
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
+import {
+    RIDE_OFFER_STATUS,
+    RIDE_REQUEST_STATUS,
+    normalizeRsvpResponse,
+    uniqueNonEmptyIds,
+    extractDirectRsvpPlayerIds,
+    resolveRsvpPlayerIds,
+    normalizeRideOfferStatus,
+    normalizeRideRequestStatus,
+    isDecisionStatus,
+    toNonNegativeInteger,
+    nextConfirmedSeatCount,
+    normalizeListLimit
+} from './db-query-payload-helpers.js';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -498,7 +512,7 @@ export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {
     const q = query(
         collection(db, `teams/${teamId}/games/${gameId}/events`),
         orderBy('timestamp', 'desc'),
-        limitQuery(limit)
+        limitQuery(normalizeListLimit(limit, 50))
     );
     const snapshot = await getDocs(q);
     return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
@@ -1226,10 +1240,11 @@ export function canModerateChat(user, team) {
  */
 export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null } = {}) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
-    let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
+    const normalizedLimit = normalizeListLimit(limit, 50);
+    let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(normalizedLimit));
 
     if (startAfterDoc) {
-        q = query(messagesRef, orderBy('createdAt', 'desc'), startAfterQuery(startAfterDoc), limitQuery(limit));
+        q = query(messagesRef, orderBy('createdAt', 'desc'), startAfterQuery(startAfterDoc), limitQuery(normalizedLimit));
     }
 
     const snapshot = await getDocs(q);
@@ -1242,7 +1257,7 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  */
 export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
-    const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
+    const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(normalizeListLimit(limit, 50)));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
         const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
@@ -2158,27 +2173,6 @@ export async function getLatestGameAssignments(teamId) {
 // RSVP / Availability
 // ============================================
 
-function normalizeRsvpResponse(response) {
-    if (response === 'going' || response === 'maybe' || response === 'not_going') {
-        return response;
-    }
-    return 'not_responded';
-}
-
-function uniqueNonEmptyIds(ids) {
-    if (!Array.isArray(ids)) return [];
-    return Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
-}
-
-function extractDirectRsvpPlayerIds(rsvp) {
-    const direct = uniqueNonEmptyIds(rsvp?.playerIds);
-    if (direct.length) return direct;
-    const legacy = [];
-    if (typeof rsvp?.playerId === 'string' && rsvp.playerId.trim()) legacy.push(rsvp.playerId.trim());
-    if (typeof rsvp?.childId === 'string' && rsvp.childId.trim()) legacy.push(rsvp.childId.trim());
-    return uniqueNonEmptyIds(legacy);
-}
-
 async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
     const fallbackByUser = new Map();
     const unresolvedUserIds = Array.from(new Set(
@@ -2211,12 +2205,6 @@ async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
     return fallbackByUser;
 }
 
-function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
-    const direct = extractDirectRsvpPlayerIds(rsvp);
-    if (direct.length) return direct;
-    const uid = rsvp?.userId || rsvp?.id;
-    return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
-}
 export { buildCoachOverrideRsvpDocId };
 
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
@@ -2362,55 +2350,6 @@ export async function getMyRsvp(teamId, gameId, userId) {
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
     const snap = await getDoc(rsvpRef);
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
-}
-
-const RIDE_OFFER_STATUS = {
-    OPEN: 'open',
-    CLOSED: 'closed',
-    CANCELLED: 'cancelled'
-};
-
-const RIDE_REQUEST_STATUS = {
-    PENDING: 'pending',
-    CONFIRMED: 'confirmed',
-    WAITLISTED: 'waitlisted',
-    DECLINED: 'declined'
-};
-
-function normalizeRideOfferStatus(status) {
-    const value = (status || '').toString().toLowerCase();
-    if (value === RIDE_OFFER_STATUS.CLOSED || value === RIDE_OFFER_STATUS.CANCELLED) return value;
-    return RIDE_OFFER_STATUS.OPEN;
-}
-
-function normalizeRideRequestStatus(status) {
-    const value = (status || '').toString().toLowerCase();
-    if (value === RIDE_REQUEST_STATUS.CONFIRMED) return RIDE_REQUEST_STATUS.CONFIRMED;
-    if (value === RIDE_REQUEST_STATUS.WAITLISTED) return RIDE_REQUEST_STATUS.WAITLISTED;
-    if (value === RIDE_REQUEST_STATUS.DECLINED) return RIDE_REQUEST_STATUS.DECLINED;
-    return RIDE_REQUEST_STATUS.PENDING;
-}
-
-function isDecisionStatus(status) {
-    const normalized = normalizeRideRequestStatus(status);
-    return normalized === RIDE_REQUEST_STATUS.CONFIRMED ||
-        normalized === RIDE_REQUEST_STATUS.WAITLISTED ||
-        normalized === RIDE_REQUEST_STATUS.DECLINED;
-}
-
-function toNonNegativeInteger(value, fallback = 0) {
-    const parsed = Number.parseInt(value, 10);
-    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-    return parsed;
-}
-
-function nextConfirmedSeatCount(currentSeatCountConfirmed, previousRequestStatus, nextRequestStatus) {
-    const current = toNonNegativeInteger(currentSeatCountConfirmed, 0);
-    const wasConfirmed = normalizeRideRequestStatus(previousRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
-    const willBeConfirmed = normalizeRideRequestStatus(nextRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
-    if (wasConfirmed === willBeConfirmed) return current;
-    if (wasConfirmed && !willBeConfirmed) return Math.max(0, current - 1);
-    return current + 1;
 }
 
 /**
