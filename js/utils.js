@@ -1275,10 +1275,21 @@ export function expandRecurrence(master, windowDays = 180) {
   const seriesStartDayOfWeek = seriesStart.getDay();
   const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStartDayOfWeek;
   let current = new Date(seriesStart);
+  if (current < windowStart) {
+    // Start iteration near the visible window so old series are still expanded.
+    current = new Date(windowStart);
+    current.setHours(
+      seriesStart.getHours(),
+      seriesStart.getMinutes(),
+      seriesStart.getSeconds(),
+      seriesStart.getMilliseconds()
+    );
+  }
   let generated = 0;
 
-  // For weekly recurrence, we need to check each day
-  const maxIterations = windowDays * 2; // Safety limit
+  // Safety limit based on visible traversal distance, not series age.
+  const daysToTraverse = Math.ceil((windowEnd.getTime() - current.getTime()) / MS_PER_DAY);
+  const maxIterations = Math.max(windowDays * 2, (daysToTraverse + 31) * 2);
   let iterations = 0;
 
   while (current <= windowEnd && iterations < maxIterations) {
