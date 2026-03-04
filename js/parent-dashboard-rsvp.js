@@ -12,6 +12,26 @@ function parseChildIds(childIds) {
     return [];
 }
 
+function normalizeRsvpResponse(response) {
+    const value = String(response || '').trim().toLowerCase();
+    if (value === 'going' || value === 'maybe' || value === 'not_going') return value;
+    return 'not_responded';
+}
+
+function toMillis(value) {
+    if (!value) return 0;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (value instanceof Date) return value.getTime();
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function extractRsvpPlayerIds(rsvp) {
+    const direct = uniqNonEmpty(rsvp?.playerIds);
+    if (direct.length > 0) return direct;
+    return uniqNonEmpty([rsvp?.playerId, rsvp?.childId]);
+}
+
 export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext = {}) {
     const events = Array.isArray(allScheduleEvents) ? allScheduleEvents : [];
     const allowedPlayerIds = uniqNonEmpty(
@@ -48,4 +68,37 @@ export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gam
 
     if (allowedPlayerIds.length === 1) return allowedPlayerIds;
     throwScopeError();
+}
+
+export function resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, userId) {
+    const events = Array.isArray(allScheduleEvents) ? allScheduleEvents : [];
+    const scopedPlayerIds = uniqNonEmpty(
+        events
+            .filter((event) => event?.teamId === teamId && event?.id === gameId)
+            .map((event) => event?.childId || event?.playerId)
+    );
+    const scopedSet = new Set(scopedPlayerIds);
+    const byChild = new Map();
+
+    (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
+        if ((rsvp?.userId || '') !== userId) return;
+        const response = normalizeRsvpResponse(rsvp?.response);
+        if (response === 'not_responded') return;
+        const respondedAtMillis = toMillis(rsvp?.respondedAt);
+
+        extractRsvpPlayerIds(rsvp).forEach((playerId) => {
+            if (!scopedSet.has(playerId)) return;
+            const existing = byChild.get(playerId);
+            if (!existing || respondedAtMillis >= existing.respondedAtMillis) {
+                byChild.set(playerId, {
+                    response,
+                    respondedAtMillis
+                });
+            }
+        });
+    });
+
+    return Object.fromEntries(
+        Array.from(byChild.entries()).map(([playerId, value]) => [playerId, value.response])
+    );
 }
