@@ -200,7 +200,8 @@
             updateUserProfile,
             getUserProfile,
             submitRsvp,
-            getMyRsvp,
+            submitRsvpForPlayer,
+            getRsvps,
             getRsvpSummaries,
             createRideOffer,
             listRideOffersForEvent,
@@ -212,7 +213,7 @@
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
-        import { resolveRsvpPlayerIdsForSubmission } from './js/parent-dashboard-rsvp.js?v=4';
+        import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
@@ -521,18 +522,26 @@
         window.submitGameRsvp = async function(teamId, gameId, response, childContext = {}) {
             try {
                 const playerIds = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext);
-                const summary = await submitRsvp(teamId, gameId, currentUserId, {
-                    displayName: currentUser?.displayName || currentUser?.email,
-                    playerIds,
-                    response
-                });
+                const isSinglePlayerSelection = playerIds.length === 1;
+                const summary = isSinglePlayerSelection
+                    ? await submitRsvpForPlayer(teamId, gameId, currentUserId, {
+                        displayName: currentUser?.displayName || currentUser?.email,
+                        playerId: playerIds[0],
+                        response
+                    })
+                    : await submitRsvp(teamId, gameId, currentUserId, {
+                        displayName: currentUser?.displayName || currentUser?.email,
+                        playerIds,
+                        response
+                    });
                 // Update local state and re-render
-                const game = allScheduleEvents.find(e => e.teamId === teamId && e.id === gameId);
-                if (game) {
-                    game.myRsvp = response;
-                    if (summary) game.rsvpSummary = summary;
-                    else if (!game.rsvpSummary) game.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-                }
+                allScheduleEvents.forEach((event) => {
+                    if (event?.teamId !== teamId || event?.id !== gameId) return;
+                    if (isSinglePlayerSelection && (event?.childId || event?.playerId) !== playerIds[0]) return;
+                    event.myRsvp = response;
+                    if (summary) event.rsvpSummary = summary;
+                    else if (!event.rsvpSummary) event.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+                });
                 renderScheduleFromControls();
             } catch (err) {
                 console.error('RSVP error:', err);
@@ -634,11 +643,19 @@
                 await Promise.all(uniqueGameKeys.map(async (key) => {
                     const [teamId, gameId] = key.split('::');
                     try {
-                        const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
+                        const rsvps = await getRsvps(teamId, gameId);
+                        const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, currentUserId);
                         const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
                         applyRsvpHydration(allScheduleEvents, teamId, gameId, {
-                            myRsvp: myRsvp ? myRsvp.response : null,
                             summary
+                        });
+                        allScheduleEvents.forEach((event) => {
+                            if (event?.teamId !== teamId || event?.id !== gameId) return;
+                            const childId = event?.childId || event?.playerId || '';
+                            if (!childId) return;
+                            event.myRsvp = Object.prototype.hasOwnProperty.call(myRsvpByChild, childId)
+                                ? myRsvpByChild[childId]
+                                : null;
                         });
                     } catch (e) {
                         // Ignore per-game RSVP read failures.
