@@ -275,7 +275,7 @@
         function canShowRideshareForEvent(event) {
             if (event?.isCancelled) return false;
             if (!event?.teamId || !event?.id) return false;
-            return event?.isDbGame || event?.type === 'practice';
+            return event?.isDbGame === true;
         }
 
         function resolveChildChoices(teamId) {
