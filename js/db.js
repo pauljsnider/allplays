@@ -2521,9 +2521,9 @@ function getRsvpSummaryHydrationCache(teamId) {
     return rsvpSummaryHydrationCacheByTeam.get(teamId);
 }
 
-function getCachedRsvpRoster(teamId) {
+function getCachedRsvpRoster(teamId, { forceRefresh = false } = {}) {
     const cache = getRsvpSummaryHydrationCache(teamId);
-    if (!cache.rosterPromise) {
+    if (forceRefresh || !cache.rosterPromise) {
         cache.rosterPromise = getPlayers(teamId).catch((err) => {
             cache.rosterPromise = null;
             throw err;
@@ -2610,10 +2610,11 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
 }
 export { buildCoachOverrideRsvpDocId };
 
-async function computeRsvpSummary(teamId, gameId) {
+async function computeRsvpSummary(teamId, gameId, options = {}) {
+    const { freshRoster = false } = options;
     const [rsvps, roster] = await Promise.all([
         getRsvps(teamId, gameId),
-        getCachedRsvpRoster(teamId)
+        getCachedRsvpRoster(teamId, { forceRefresh: freshRoster })
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
         resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
@@ -2737,7 +2738,7 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
     // Keep denormalized summary consistent with submitRsvp behavior.
     let summary = null;
     try {
-        summary = await computeRsvpSummary(teamId, gameId);
+        summary = await computeRsvpSummary(teamId, gameId, { freshRoster: true });
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
