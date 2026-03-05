@@ -64,4 +64,37 @@ describe('computeNativeStandings', () => {
 
     expect(table.map((row) => row.team)).toEqual(['Alpha', 'Beta']);
   });
+
+  it('counts only explicitly completed or final games', () => {
+    const games = [
+      { homeTeam: 'Alpha', awayTeam: 'Bravo', homeScore: 3, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Alpha', awayTeam: 'Bravo', homeScore: 0, awayScore: 0 }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 }
+    });
+
+    expect(table.find((row) => row.team === 'Alpha')).toMatchObject({ gp: 1, points: 3, record: '1-0' });
+    expect(table.find((row) => row.team === 'Bravo')).toMatchObject({ gp: 1, points: 0, record: '0-1' });
+  });
+
+  it('uses only completed games for head-to-head tiebreakers', () => {
+    const games = [
+      { homeTeam: 'Alpha', awayTeam: 'Bravo', homeScore: 10, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Alpha', awayTeam: 'Comets', homeScore: 8, awayScore: 1, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Comets', homeScore: 7, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Alpha', homeScore: 50, awayScore: 0, status: 'live' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 2, tie: 1, loss: 0 },
+      tiebreakers: ['head_to_head', 'point_diff', 'name']
+    });
+
+    expect(table[0].team).toBe('Alpha');
+    expect(table[1].team).toBe('Bravo');
+  });
 });
