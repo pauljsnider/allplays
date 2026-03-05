@@ -250,20 +250,32 @@
 
         renderFooter(document.getElementById('footer-container'));
 
+        const { teamId: initialTeamId } = getUrlParams();
         let currentUser = null;
-        let currentTeamId = null;
+        let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
         let adminEmails = [];
         let pendingAdminInviteEmails = [];
+        let isInitPending = true;
 
-        checkAuth((user) => {
+        const saveBtn = document.getElementById('save-btn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = initialTeamId ? 'Loading Team...' : 'Loading...';
+
+        checkAuth(async (user) => {
             if (!user) {
                 window.location.href = 'login.html';
                 return;
             }
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            init();
+            try {
+                await init();
+            } finally {
+                isInitPending = false;
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Team';
+            }
         });
 
         function renderAdminList() {
@@ -290,10 +302,8 @@
         }
 
         async function init() {
-            const { teamId } = getUrlParams();
-            if (teamId) {
-                currentTeamId = teamId;
-                const team = await getTeam(teamId);
+            if (initialTeamId) {
+                const team = await getTeam(initialTeamId);
                 if (!team) {
                     alert('Team not found or no longer active.');
                     currentTeamId = null;
@@ -336,17 +346,17 @@
                 }
 
                 // Update management links
-                document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${teamId}`;
-                document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${teamId}`;
+                document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${initialTeamId}`;
+                document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${initialTeamId}`;
 
                 // Fetch unread count and render banner
                 let unreadCount = 0;
                 try {
-                    unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
+                    unreadCount = await getUnreadChatCount(currentUser.uid, initialTeamId);
                 } catch (e) {
                     console.warn('Failed to get unread count:', e);
                 }
-                renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'edit', unreadCount });
+                renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
             }
         }
 
@@ -584,6 +594,10 @@
         document.getElementById('team-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('save-btn');
+            if (isInitPending) {
+                alert('Team is still loading. Please wait a moment and try again.');
+                return;
+            }
             btn.disabled = true;
             btn.textContent = 'Saving...';
 
