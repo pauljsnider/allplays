@@ -21,7 +21,7 @@ import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState } from './live-game-state.js?v=1';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc } from './live-game-state.js?v=1';
 
 const state = {
   teamId: null,
@@ -1356,6 +1356,24 @@ function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
   renderGameInfo();
+  if (shouldResetViewerFromGameDoc(gameDoc, state)) {
+    const liveLineup = gameDoc.liveLineup || {};
+    const next = applyResetEventState(state, {
+      period: gameDoc.period || 'Q1',
+      homeScore: gameDoc.homeScore || 0,
+      awayScore: gameDoc.awayScore || 0,
+      gameClockMs: Number.isFinite(gameDoc.liveClockMs) ? gameDoc.liveClockMs : 0,
+      onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
+      bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
+    });
+    Object.assign(state, next);
+    if (els.playsFeed) {
+      els.playsFeed.innerHTML = '<div data-placeholder="plays" class="text-center text-sand/40 py-8">Game reset. Waiting for plays...</div>';
+    }
+    renderScoreboard();
+    renderStats();
+    renderLineup();
+  }
   if (gameDoc.liveLineup) {
     state.onCourt = Array.isArray(gameDoc.liveLineup.onCourt) ? gameDoc.liveLineup.onCourt : state.onCourt;
     state.bench = Array.isArray(gameDoc.liveLineup.bench) ? gameDoc.liveLineup.bench : state.bench;
