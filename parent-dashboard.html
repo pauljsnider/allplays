@@ -274,6 +274,12 @@
             return rideshareOffersByEvent.get(key) || [];
         }
 
+        function canShowRideshareForEvent(event) {
+            if (event?.isCancelled) return false;
+            if (!event?.teamId || !event?.id) return false;
+            return event?.isDbGame === true;
+        }
+
         function resolveChildChoices(teamId) {
             const children = teamChildrenByTeamId.get(teamId) || [];
             return children.filter((child) => child?.playerId).map((child) => ({
@@ -303,7 +309,7 @@
         }
 
         function renderEventRideshare(event, { includeChildPicker = false } = {}) {
-            if (!event?.isDbGame || event?.isCancelled || !event?.teamId || !event?.id) return '';
+            if (!canShowRideshareForEvent(event)) return '';
             const offers = getEventRideOffers(event.teamId, event.id);
             const summary = getEventRideshareSummary(offers);
             const eventKey = getEventRideKey(event.teamId, event.id);
@@ -424,7 +430,7 @@
         async function hydrateRideshareOffersForSchedule(events = []) {
             const uniqueDbEvents = [...new Set(
                 (events || [])
-                    .filter((ev) => ev?.isDbGame && ev?.teamId && ev?.id)
+                    .filter((ev) => canShowRideshareForEvent(ev))
                     .map((ev) => getEventRideKey(ev.teamId, ev.id))
             )];
             await Promise.all(uniqueDbEvents.map(async (key) => {
