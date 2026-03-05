@@ -57,6 +57,7 @@ import {
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=1';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
+import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -892,6 +893,85 @@ export async function deleteGame(teamId, gameId) {
     if (existingGame?.sharedScheduleId) {
         await deleteSharedScheduleCounterpart(existingGame);
     }
+}
+
+// Brackets
+export async function getBrackets(teamId, options = {}) {
+    const onlyPublished = !!options.onlyPublished;
+    const bracketsRef = collection(db, `teams/${teamId}/brackets`);
+    let brackets = [];
+    try {
+        const q = query(bracketsRef, orderBy("createdAt", "desc"));
+        const snapshot = await getDocs(q);
+        brackets = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(bracketsRef);
+        brackets = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    }
+
+    if (onlyPublished) {
+        return brackets.filter(bracket => bracket.status === 'published');
+    }
+    return brackets;
+}
+
+export async function getBracket(teamId, bracketId) {
+    const bracketRef = doc(db, `teams/${teamId}/brackets`, bracketId);
+    const snapshot = await getDoc(bracketRef);
+    if (!snapshot.exists()) return null;
+    return { id: snapshot.id, ...snapshot.data() };
+}
+
+export async function addBracket(teamId, bracketData) {
+    const payload = {
+        ...bracketData,
+        format: bracketData?.format || 'single_elimination',
+        status: bracketData?.status || 'draft',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    };
+    const bracketRef = await addDoc(collection(db, `teams/${teamId}/brackets`), payload);
+    return bracketRef.id;
+}
+
+export async function updateBracket(teamId, bracketId, bracketData) {
+    const bracketRef = doc(db, `teams/${teamId}/brackets`, bracketId);
+    await updateDoc(bracketRef, {
+        ...bracketData,
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function publishBracket(teamId, bracketId, options = {}) {
+    const bracketRef = doc(db, `teams/${teamId}/brackets`, bracketId);
+    const bracketSnapshot = await getDoc(bracketRef);
+    if (!bracketSnapshot.exists()) {
+        throw new Error('Bracket not found');
+    }
+
+    const existingBracket = { id: bracketSnapshot.id, ...bracketSnapshot.data() };
+    const publishedAt = Timestamp.now();
+    const publishedBy = options.publishedBy || auth?.currentUser?.uid || null;
+    const publishedBracket = {
+        ...existingBracket,
+        status: 'published',
+        publishedBy,
+        publishedAt: publishedAt.toDate().toISOString()
+    };
+    const publishedView = buildPublishedBracketView(publishedBracket);
+
+    await updateDoc(bracketRef, {
+        status: 'published',
+        publishedAt,
+        publishedBy,
+        publishedView,
+        updatedAt: Timestamp.now()
+    });
+
+    return {
+        ...publishedBracket,
+        publishedView
+    };
 }
 
 // ============================================
