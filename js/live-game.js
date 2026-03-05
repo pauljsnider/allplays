@@ -14,7 +14,7 @@ import {
   getConfigs,
   subscribeGame
 } from './db.js?v=14';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=9';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
@@ -883,6 +883,29 @@ function startLiveEvents() {
       const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
       if (placeholder) placeholder.textContent = 'Connected. Waiting for plays...';
     }
+    if (!state.liveEventsFirstLoad && events.length === 0) {
+      const hadLiveState = state.events.length > 0 ||
+        Object.keys(state.stats || {}).length > 0 ||
+        Object.keys(state.opponentStats || {}).length > 0;
+      if (hadLiveState) {
+        const liveLineup = state.game?.liveLineup || {};
+        const next = applyResetEventState(state, {
+          period: state.game?.period || 'Q1',
+          homeScore: state.game?.homeScore || 0,
+          awayScore: state.game?.awayScore || 0,
+          gameClockMs: Number.isFinite(state.game?.liveClockMs) ? state.game.liveClockMs : 0,
+          onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
+          bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
+        });
+        Object.assign(state, next);
+        if (els.playsFeed) {
+          els.playsFeed.innerHTML = '<div data-placeholder="plays" class="text-center text-sand/40 py-8">Game reset. Waiting for plays...</div>';
+        }
+        renderScoreboard();
+        renderStats();
+        renderLineup();
+      }
+    }
     state.liveEventsFirstLoad = false;
     processNewEvents(events);
   }, (error) => {
@@ -1342,6 +1365,11 @@ function handleGameUpdate(gameDoc) {
     state.homeScore = gameDoc.homeScore || state.homeScore;
     state.awayScore = gameDoc.awayScore || state.awayScore;
     state.period = gameDoc.period || state.period;
+    if (Number.isFinite(gameDoc.liveClockMs)) {
+      state.gameClockMs = gameDoc.liveClockMs;
+    } else if (Number.isFinite(gameDoc.gameClockMs)) {
+      state.gameClockMs = gameDoc.gameClockMs;
+    }
     renderScoreboard();
   }
 

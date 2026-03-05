@@ -889,10 +889,12 @@
                 clearTimeout(liveSync.liveFlagTimeout);
                 liveSync.liveFlagTimeout = null;
             }
-            liveSync.playerTimeouts.forEach((timeoutId) => {
-                clearTimeout(timeoutId);
+            liveSync.playerTimeouts.forEach((timeout) => {
+                clearTimeout(timeout);
             });
             liveSync.playerTimeouts.clear();
+            liveSync.lastSyncedHome = null;
+            liveSync.lastSyncedAway = null;
         }
 
         async function syncClockToGameDoc() {
@@ -1431,6 +1433,17 @@
                             });
 
                             const resetLineup = getLiveLineup(gameState.playerFieldStatus, players);
+                            await broadcastLiveEvent(currentTeamId, currentGameId, {
+                                type: 'reset',
+                                period: gameState.currentPeriod,
+                                gameClockMs: 0,
+                                homeScore: 0,
+                                awayScore: 0,
+                                onCourt: resetLineup.onCourt,
+                                bench: resetLineup.bench,
+                                description: `Tracker restarted from zero. Cleared: ${persistedState.summary}.`,
+                                createdBy: currentUser?.uid || null
+                            }).catch(console.warn);
                             try {
                                 await updateGame(
                                     currentTeamId,
@@ -1449,18 +1462,6 @@
                             } catch (error) {
                                 console.warn('Failed to reset game metadata:', error);
                             }
-
-                            await broadcastLiveEvent(currentTeamId, currentGameId, {
-                                type: 'reset',
-                                period: gameState.currentPeriod,
-                                gameClockMs: 0,
-                                homeScore: 0,
-                                awayScore: 0,
-                                onCourt: resetLineup.onCourt,
-                                bench: resetLineup.bench,
-                                description: `Tracker restarted from zero. Cleared: ${persistedState.summary}.`,
-                                createdBy: currentUser?.uid || null
-                            }).catch(console.warn);
 
                             updateScoreDisplay();
                             renderGameLog();
@@ -1565,20 +1566,6 @@
                     await Promise.all(liveEventsSnapshot.docs.map(liveDoc => deleteDoc(liveDoc.ref)));
 
                     const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
-                    await updateGame(currentTeamId, currentGameId, {
-                        homeScore: 0,
-                        awayScore: 0,
-                        period: gameState.currentPeriod,
-                        liveStatus: 'scheduled',
-                        liveLineup,
-                        liveHasData: false,
-                        opponentStats: gameState.opponentStats
-                    });
-                    if (currentGame) {
-                        currentGame.liveHasData = false;
-                        currentGame.liveStatus = 'scheduled';
-                    }
-                    await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     await broadcastLiveEvent(currentTeamId, currentGameId, {
                         type: 'reset',
                         period: gameState.currentPeriod,
@@ -1590,6 +1577,22 @@
                         description: 'Game reset',
                         createdBy: currentUser?.uid || null
                     }).catch(console.warn);
+                    await updateGame(currentTeamId, currentGameId, {
+                        ...buildTrackLiveResetUpdate({
+                            currentGame,
+                            period: gameState.currentPeriod,
+                            liveLineup
+                        }),
+                        opponentStats: gameState.opponentStats
+                    });
+                    await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
+                    if (currentGame) {
+                        currentGame.liveStatus = 'scheduled';
+                        currentGame.liveHasData = false;
+                        currentGame.homeScore = 0;
+                        currentGame.awayScore = 0;
+                        currentGame.opponentStats = {};
+                    }
                 } catch (error) {
                     console.error('Error clearing stats:', error);
                 }
