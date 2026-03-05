@@ -52,6 +52,16 @@ npm run test:unit:coverage
 # Smoke suite only (< 2 min)
 npm run test:e2e:smoke
 
+# Critical suite
+npm run test:e2e:critical
+
+# Extended suite
+npm run test:e2e:extended
+
+# Extended suite sharded
+npm run test:e2e:extended:shard1
+npm run test:e2e:extended:shard2
+
 # All tests
 npm run test:e2e
 
@@ -78,6 +88,15 @@ Tests are tagged in the test title string. Use `--grep` to filter by tag.
 | `@smoke` | Fast structural checks — static HTML only, no Firebase required | Every PR |
 | `@critical` | Auth, access-control, and routing integration tests | Every PR (Week 2+) |
 | `@extended` | Practice, parent workflows, security/isolation | Nightly only |
+
+### Final shard strategy
+
+- `PLAYWRIGHT_SUITE` supports: `smoke`, `critical`, `extended`, `all`.
+- `PLAYWRIGHT_SHARD` uses `current/total` (example: `1/2`).
+- Nightly execution:
+  - Run `critical` in one job (no shard).
+  - Run `extended` in two shards (`1/2` and `2/2`).
+- PR smoke gate remains unsharded for quick feedback.
 
 ### Tagging example
 
@@ -130,7 +149,9 @@ PRs are expected to stay green on this gate at all times. If the smoke suite is 
 ### `playwright-nightly.yml` — Full suite
 
 - **Trigger:** Daily at 03:00 UTC + manual dispatch from Actions tab
-- **Suite:** All tests (`npm run test:e2e`)
+- **Suite strategy:**
+  - `critical` in one job
+  - `extended` split into `1/2` and `2/2` shards
 - **Runtime target:** < 30 minutes
 - **Artifacts:** HTML report always uploaded (30-day retention); traces uploaded on failure (14-day)
 

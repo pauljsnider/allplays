@@ -9,9 +9,22 @@ on:
 
 jobs:
   full-suite:
-    name: Full E2E suite (Chromium)
+    name: Nightly ${{ matrix.label }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: critical
+            suite: critical
+            shard: ""
+          - label: extended (shard 1/2)
+            suite: extended
+            shard: 1/2
+          - label: extended (shard 2/2)
+            suite: extended
+            shard: 2/2
 
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +40,10 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run full suite
+      - name: Run suite shard
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          PLAYWRIGHT_SHARD: ${{ matrix.shard }}
         run: npm run test:e2e
 
       # Always upload the HTML report so nightly evidence is available even on pass
@@ -35,7 +51,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-nightly-report-${{ github.run_id }}
+          name: playwright-nightly-report-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard || 'full' }}
           path: playwright-report/
           retention-days: 30
 
@@ -44,6 +60,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-nightly-traces-${{ github.run_id }}
+          name: playwright-nightly-traces-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard || 'full' }}
           path: test-results/
           retention-days: 14
