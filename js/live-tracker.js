@@ -11,7 +11,7 @@ import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalizatio
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
-import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=1';
+import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -68,6 +68,7 @@ let liveState = {
   unreadChatCount: 0,
   lastChatSeenAt: Date.now(),
   lastChatSnapshotAt: Date.now(),
+  lastChatSnapshotIds: [],
   chatInitialized: false,
   eventQueue: [],
   retryAttempt: 0,
@@ -1085,7 +1086,8 @@ function updateUnread(messages) {
     chatExpanded: liveState.chatExpanded,
     unreadChatCount: liveState.unreadChatCount,
     lastChatSeenAt: liveState.lastChatSeenAt,
-    lastChatSnapshotAt: liveState.lastChatSnapshotAt
+    lastChatSnapshotAt: liveState.lastChatSnapshotAt,
+    lastChatSnapshotIds: liveState.lastChatSnapshotIds
   });
   const shouldRefreshBadge =
     next.unreadChatCount !== liveState.unreadChatCount ||
@@ -1097,6 +1099,7 @@ function updateUnread(messages) {
   liveState.unreadChatCount = next.unreadChatCount;
   liveState.lastChatSeenAt = next.lastChatSeenAt;
   liveState.lastChatSnapshotAt = next.lastChatSnapshotAt;
+  liveState.lastChatSnapshotIds = next.lastChatSnapshotIds;
 
   if (shouldRefreshBadge) {
     updateUnreadBadge();
@@ -1138,6 +1141,7 @@ function toggleChat() {
   if (liveState.chatExpanded) {
     liveState.lastChatSeenAt = Date.now();
     liveState.lastChatSnapshotAt = liveState.lastChatSeenAt;
+    liveState.lastChatSnapshotIds = [];
     liveState.unreadChatCount = 0;
     updateUnreadBadge();
   }
