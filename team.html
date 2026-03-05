@@ -330,13 +330,17 @@
 
             const leagueGames = (Array.isArray(dbGames) ? dbGames : [])
                 .filter((game) => game?.type !== 'practice')
-                .map((game) => ({
-                    homeTeam: teamName,
-                    awayTeam: String(game?.opponent || '').trim(),
-                    homeScore: game?.homeScore,
-                    awayScore: game?.awayScore,
-                    status: game?.status
-                }));
+                .map((game) => {
+                    const opponent = String(game?.opponent || '').trim();
+                    const isHome = game?.isHome !== false;
+                    return {
+                        homeTeam: isHome ? teamName : opponent,
+                        awayTeam: isHome ? opponent : teamName,
+                        homeScore: game?.homeScore,
+                        awayScore: game?.awayScore,
+                        status: game?.status
+                    };
+                });
 
             const rows = computeNativeStandings(leagueGames, standingsConfig);
             const match = rows.find((row) => row.team === teamName) || rows[0] || null;
