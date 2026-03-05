@@ -151,6 +151,22 @@
       border-color: rgba(255, 107, 107, 0.65);
     }
 
+    .panel-shell {
+      background: linear-gradient(165deg, rgba(28, 37, 65, 0.74), rgba(11, 19, 43, 0.78));
+      border: 1px solid rgba(91, 192, 190, 0.22);
+      border-radius: 14px;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+    }
+
+    #mobile-tabs {
+      background: rgba(15, 27, 53, 0.84);
+      backdrop-filter: blur(8px);
+    }
+
+    #mobile-tabs [data-tab] {
+      transition: color 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+    }
+
     @keyframes float-up {
       0% { transform: translateY(0) scale(1); opacity: 1; }
       100% { transform: translateY(-200px) scale(1.4); opacity: 0; }
@@ -242,8 +258,8 @@
     <div class="md:grid md:grid-cols-4 md:gap-4 md:h-[52vh] mb-6">
 
       <!-- PLAY-BY-PLAY (left sidebar) -->
-      <section id="plays-panel" class="md:col-span-1 md:flex md:flex-col md:overflow-hidden">
-        <h2 class="text-teal font-medium mb-2 flex items-center gap-2 shrink-0">
+      <section id="plays-panel" class="panel-shell p-3 md:col-span-1 md:flex md:flex-col md:overflow-hidden">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2 shrink-0 uppercase tracking-[0.14em] text-xs">
           <span>&#9654;</span>
           Play-by-Play
         </h2>
@@ -253,10 +269,10 @@
       </section>
 
       <!-- VIDEO (center, double-wide) -->
-      <section id="video-panel" class="hidden md:flex md:col-span-2 md:flex-col md:overflow-hidden">
+      <section id="video-panel" class="panel-shell p-3 hidden md:flex md:col-span-2 md:flex-col md:overflow-hidden">
         <iframe
           id="youtube-stream-iframe"
-          class="w-full aspect-video md:aspect-auto md:flex-1 rounded-xl"
+          class="w-full aspect-video md:aspect-auto md:flex-1 rounded-xl border border-teal/20"
           src=""
           title="Live Stream"
           frameborder="0"
@@ -270,8 +286,8 @@
       </section>
 
       <!-- STATS (right sidebar) -->
-      <section id="stats-panel" class="hidden md:flex md:col-span-1 md:flex-col md:overflow-hidden">
-        <h2 class="text-teal font-medium mb-2 flex items-center gap-2 shrink-0">
+      <section id="stats-panel" class="panel-shell p-3 hidden md:flex md:col-span-1 md:flex-col md:overflow-hidden">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2 shrink-0 uppercase tracking-[0.14em] text-xs">
           <span>&#9205;</span>
           Player Stats
         </h2>
@@ -299,7 +315,7 @@
         <span class="text-lg">&#128172;</span>
         Live Chat
       </h2>
-      <div id="chat-container" class="bg-slate/50 rounded-lg border border-teal/20 flex flex-col">
+      <div id="chat-container" class="panel-shell flex flex-col">
 
         <!-- Messages on top -->
         <div id="chat-messages" class="h-36 overflow-y-auto p-3 space-y-2"></div>
