@@ -88,14 +88,17 @@ function autoAdvanceByes(bracket) {
 
             const homeTeamId = game.homeSlot?.teamId || null;
             const awayTeamId = game.awaySlot?.teamId || null;
-            if (homeTeamId && !awayTeamId) {
+            const canAutoAdvanceHome = homeTeamId && !awayTeamId && game.awaySlot?.sourceType !== 'winner';
+            const canAutoAdvanceAway = !homeTeamId && awayTeamId && game.homeSlot?.sourceType !== 'winner';
+
+            if (canAutoAdvanceHome) {
                 game.status = 'completed';
                 game.winnerTeamId = homeTeamId;
                 game.loserTeamId = null;
                 game.completedBy = 'auto_bye';
                 applyWinnerToNextGame(bracket, game, homeTeamId, game.homeSlot.teamName || null);
                 changed = true;
-            } else if (!homeTeamId && awayTeamId) {
+            } else if (canAutoAdvanceAway) {
                 game.status = 'completed';
                 game.winnerTeamId = awayTeamId;
                 game.loserTeamId = null;

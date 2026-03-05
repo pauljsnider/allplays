@@ -901,11 +901,16 @@ export async function getBrackets(teamId, options = {}) {
     const bracketsRef = collection(db, `teams/${teamId}/brackets`);
     let brackets = [];
     try {
-        const q = query(bracketsRef, orderBy("createdAt", "desc"));
+        const q = onlyPublished
+            ? query(bracketsRef, where('status', '==', 'published'), orderBy("createdAt", "desc"))
+            : query(bracketsRef, orderBy("createdAt", "desc"));
         const snapshot = await getDocs(q);
         brackets = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
     } catch (error) {
-        const snapshot = await getDocs(bracketsRef);
+        const fallbackQuery = onlyPublished
+            ? query(bracketsRef, where('status', '==', 'published'))
+            : bracketsRef;
+        const snapshot = await getDocs(fallbackQuery);
         brackets = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
     }
 
@@ -942,27 +947,28 @@ export async function updateBracket(teamId, bracketId, bracketData) {
     });
 }
 
-export async function publishBracket(teamId, bracketId, options = {}) {
+export async function publishBracket(teamId, bracketId, options) {
     const bracketRef = doc(db, `teams/${teamId}/brackets`, bracketId);
     const bracketSnapshot = await getDoc(bracketRef);
     if (!bracketSnapshot.exists()) {
         throw new Error('Bracket not found');
     }
 
+    const publishOptions = options || {};
     const existingBracket = { id: bracketSnapshot.id, ...bracketSnapshot.data() };
     const publishedAt = Timestamp.now();
-    const publishedBy = options.publishedBy || auth?.currentUser?.uid || null;
+    const publishedBy = publishOptions.publishedBy || auth?.currentUser?.uid || null;
     const publishedBracket = {
         ...existingBracket,
         status: 'published',
         publishedBy,
-        publishedAt
+        publishedAt: publishedAt
     };
     const publishedView = buildPublishedBracketView(publishedBracket);
 
     await updateDoc(bracketRef, {
         status: 'published',
-        publishedAt,
+        publishedAt: publishedAt,
         publishedBy,
         publishedView,
         updatedAt: Timestamp.now()
