@@ -2758,6 +2758,10 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
         respondedAt: Timestamp.now(),
         note: note || null
     });
+    if (docId !== effectiveUserId) {
+        const legacyRsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
+        await deleteDoc(legacyRsvpRef);
+    }
 
     // Keep denormalized summary consistent with submitRsvp behavior.
     let summary = null;
