@@ -292,6 +292,7 @@
         async function init() {
             const { teamId } = getUrlParams();
             if (teamId) {
+                currentTeamId = teamId;
                 const team = await getTeam(teamId);
                 if (!team) {
                     alert('Team not found or no longer active.');
@@ -299,8 +300,6 @@
                     window.location.href = 'dashboard.html';
                     return;
                 }
-
-                currentTeamId = teamId;
                 document.getElementById('page-title').textContent = 'Edit Team';
                 if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
                     alert("You don't have permission to edit this team.");
