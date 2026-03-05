@@ -1562,6 +1562,8 @@ async function startStop() {
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
+        const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
+        await Promise.all(liveEventsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
         await updateGame(currentTeamId, currentGameId, { 
           homeScore: 0, 
