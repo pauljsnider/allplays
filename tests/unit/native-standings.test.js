@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest';
+import { computeNativeStandings } from '../../js/native-standings.js';
+
+const SAMPLE_GAMES = [
+  { homeTeam: 'Tigers', awayTeam: 'Lions', homeScore: 10, awayScore: 7, status: 'completed' },
+  { homeTeam: 'Lions', awayTeam: 'Bears', homeScore: 14, awayScore: 3, status: 'completed' },
+  { homeTeam: 'Bears', awayTeam: 'Tigers', homeScore: 12, awayScore: 2, status: 'completed' },
+  { homeTeam: 'Tigers', awayTeam: 'Bears', homeScore: 8, awayScore: 8, status: 'completed' }
+];
+
+describe('computeNativeStandings', () => {
+  it('ranks by points when ranking mode is points', () => {
+    const table = computeNativeStandings(SAMPLE_GAMES, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 }
+    });
+
+    expect(table.map((row) => row.team)).toEqual(['Bears', 'Tigers', 'Lions']);
+    expect(table[0]).toMatchObject({ points: 4, record: '1-1-1' });
+    expect(table[1]).toMatchObject({ points: 4, record: '1-1-1' });
+    expect(table[2]).toMatchObject({ points: 3, record: '1-1' });
+  });
+
+  it('ranks by win percentage when ranking mode is win_pct', () => {
+    const table = computeNativeStandings(SAMPLE_GAMES, {
+      rankingMode: 'win_pct',
+      tiebreakers: ['point_diff']
+    });
+
+    expect(table.map((row) => row.team)).toEqual(['Lions', 'Bears', 'Tigers']);
+    expect(table[0].winPct).toBeCloseTo(0.5, 5);
+    expect(table[1].winPct).toBeCloseTo(0.5, 5);
+  });
+
+  it('applies ordered tiebreakers in order', () => {
+    const games = [
+      { homeTeam: 'Alpha', awayTeam: 'Bravo', homeScore: 10, awayScore: 7, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Alpha', homeScore: 30, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Alpha', awayTeam: 'Comets', homeScore: 21, awayScore: 7, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Comets', homeScore: 14, awayScore: 0, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 2, tie: 1, loss: 0 },
+      tiebreakers: ['head_to_head', 'point_diff', 'name']
+    });
+
+    expect(table[0].team).toBe('Bravo');
+    expect(table[1].team).toBe('Alpha');
+    expect(table[0].points).toBe(table[1].points);
+  });
+
+  it('returns deterministic name ordering as final fallback', () => {
+    const games = [
+      { homeTeam: 'Beta', awayTeam: 'Alpha', homeScore: 7, awayScore: 7, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 2, tie: 1, loss: 0 },
+      tiebreakers: []
+    });
+
+    expect(table.map((row) => row.team)).toEqual(['Alpha', 'Beta']);
+  });
+});

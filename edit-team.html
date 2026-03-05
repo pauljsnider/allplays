@@ -96,6 +96,33 @@
                     <p class="text-xs text-gray-500 mt-1">Used to display external league standings (W/L/T) on the team page.</p>
                 </div>
 
+                <div class="rounded-lg border border-gray-200 p-4 space-y-3">
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            <input id="standingsEnabled" type="checkbox"
+                                class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="standingsEnabled" class="font-medium text-gray-700">Enable Native Standings</label>
+                            <p class="text-gray-500">Compute standings from completed in-app games.</p>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Standings Ranking Mode</label>
+                        <select id="standingsRankingMode"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <option value="points">Total points</option>
+                            <option value="win_pct">Win percentage</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Tiebreakers (ordered, comma-separated)</label>
+                        <input type="text" id="standingsTiebreakers"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="head_to_head, point_diff, points_for, fewest_points_against, name">
+                    </div>
+                </div>
+
                 <div>
                     <label class="block text-sm font-medium text-gray-700">
                         Live Stream <span class="font-normal text-gray-400">(optional)</span>
@@ -280,6 +307,11 @@
                     document.getElementById('sport').value = team.sport || '';
                     document.getElementById('notificationEmail').value = team.notificationEmail || '';
                     document.getElementById('leagueUrl').value = team.leagueUrl || '';
+                    document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
+                    document.getElementById('standingsRankingMode').value = team.standingsConfig?.rankingMode === 'win_pct' ? 'win_pct' : 'points';
+                    document.getElementById('standingsTiebreakers').value = Array.isArray(team.standingsConfig?.tiebreakers)
+                        ? team.standingsConfig.tiebreakers.join(', ')
+                        : '';
                     document.getElementById('zip').value = team.zip || '';
                     document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
                     // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
@@ -571,6 +603,10 @@
                 const zipRaw = document.getElementById('zip').value.trim();
                 const zipDigits = zipRaw ? zipRaw.replace(/[^0-9]/g, '') : '';
                 const zip = zipDigits.length >= 5 ? zipDigits.slice(0, 9) : '';
+                const standingsTiebreakers = document.getElementById('standingsTiebreakers').value
+                    .split(',')
+                    .map((value) => value.trim())
+                    .filter(Boolean);
 
                 const teamData = {
                     name: document.getElementById('name').value,
@@ -578,6 +614,11 @@
                     sport: document.getElementById('sport').value,
                     notificationEmail: document.getElementById('notificationEmail').value,
                     leagueUrl: document.getElementById('leagueUrl').value.trim(),
+                    standingsConfig: {
+                        enabled: document.getElementById('standingsEnabled').checked,
+                        rankingMode: document.getElementById('standingsRankingMode').value === 'win_pct' ? 'win_pct' : 'points',
+                        tiebreakers: standingsTiebreakers
+                    },
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
