@@ -32,6 +32,29 @@ export async function registerPushNotifications({
     }
 
     const registration = await navigator.serviceWorker.register(serviceWorkerPath);
+    const appConfig = getApp().options || {};
+    const firebaseConfig = {
+        apiKey: appConfig.apiKey,
+        authDomain: appConfig.authDomain,
+        projectId: appConfig.projectId,
+        storageBucket: appConfig.storageBucket,
+        messagingSenderId: appConfig.messagingSenderId,
+        appId: appConfig.appId
+    };
+    const workerMessage = {
+        type: 'ALLPLAYS_INIT_FIREBASE_CONFIG',
+        firebaseConfig
+    };
+
+    [registration.active, registration.waiting, registration.installing]
+        .filter(Boolean)
+        .forEach((worker) => worker.postMessage(workerMessage));
+
+    const readyRegistration = await navigator.serviceWorker.ready;
+    if (readyRegistration?.active) {
+        readyRegistration.active.postMessage(workerMessage);
+    }
+
     const messaging = getMessaging(getApp());
     const token = await getToken(messaging, {
         vapidKey,
