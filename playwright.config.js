@@ -1,4 +1,8 @@
 const { defineConfig, devices } = require('@playwright/test');
+const { resolveShard, resolveSuiteSelection } = require('./config/playwright-suite-strategy.cjs');
+
+const suiteSelection = resolveSuiteSelection(process.env);
+const shard = resolveShard(process.env);
 
 module.exports = defineConfig({
   testDir: './tests',
@@ -24,6 +28,8 @@ module.exports = defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 30_000
   },
+  grep: suiteSelection.grep,
+  shard,
   projects: [
     {
       name: 'chromium',

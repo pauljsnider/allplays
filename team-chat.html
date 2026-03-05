@@ -1109,18 +1109,19 @@
             const playersById = new Map(players.map(p => [p.id, p]));
 
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const gamesWithDates = games
                 .map(g => ({ ...g, _date: toDate(g.date) }))
                 .filter(g => g._date);
 
             const upcomingGames = gamesWithDates
-                .filter(g => g._date >= now)
+                .filter(g => g._date >= cutoff)
                 .sort((a, b) => a._date - b._date)
                 .slice(0, 10)
                 .map(serializeGame);
 
             const recentGames = gamesWithDates
-                .filter(g => g._date < now)
+                .filter(g => g._date < cutoff)
                 .sort((a, b) => b._date - a._date)
                 .slice(0, AI_GAMES_CONTEXT_LIMIT)
                 .map(serializeGame);

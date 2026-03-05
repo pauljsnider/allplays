@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Day Command Center - UI Mockup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: { primary: { 50:'#eef2ff',100:'#e0e7ff',200:'#c7d2fe',300:'#a5b4fc',400:'#818cf8',500:'#6366f1',600:'#4f46e5',700:'#4338ca',800:'#3730a3',900:'#312e81' } } } }
+        }
+    </script>
+    <style>
+        .chat-bubble-user{background:#e0e7ff;border-radius:16px 16px 4px 16px}
+        .chat-bubble-ai{background:#f1f5f9;border-radius:16px 16px 16px 4px}
+        .scroll-thin::-webkit-scrollbar{width:4px}
+        .scroll-thin::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:2px}
+        .scroll-dark::-webkit-scrollbar{width:4px}
+        .scroll-dark::-webkit-scrollbar-thumb{background:#374151;border-radius:2px}
+        .live-pulse{animation:blink 1.5s ease-in-out infinite}
+        @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+        .sub-pulse{animation:spulse 1s ease-in-out infinite}
+        @keyframes spulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}
+        .bar-track{height:6px;background:#374151;border-radius:3px}
+        .bar-fill{height:6px;border-radius:3px}
+        .rot-cell{min-width:72px;font-size:11px;text-align:center;padding:4px 5px;border:1px solid #e5e7eb;background:#fff;border-radius:6px;white-space:nowrap}
+        .rot-empty{min-width:72px;font-size:11px;text-align:center;padding:4px 5px;border:1px dashed #d1d5db;background:#f9fafb;border-radius:6px;color:#9ca3af}
+        .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:600;cursor:pointer}
+        .sBtn{font-size:11px;font-weight:700;padding:4px 7px;border-radius:6px;border:1px solid #374151;color:#d1d5db;background:#1f2937;cursor:pointer;transition:all .15s;white-space:nowrap}
+        .sBtn:hover{background:#4f46e5;border-color:#6366f1;color:#fff}
+        .on-field{background:rgba(99,102,241,.1);border-left:3px solid #6366f1}
+        .bench{opacity:.5}
+        .match-cell{background:#052e16;color:#86efac;border-color:#166534}
+        .diff-cell{background:#431407;color:#fdba74;border-color:#9a3412}
+        @keyframes fadein{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+        .vpane{animation:fadein .2s ease}
+        .ycard{color:#fbbf24;font-weight:700}
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- MOCKUP SWITCHER -->
+<div class="fixed top-0 left-0 right-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-screen-2xl mx-auto px-4 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span class="text-xs font-bold uppercase tracking-wider text-gray-400">MOCKUP</span>
+            <span class="text-sm text-gray-300">|</span>
+            <span class="text-sm font-medium text-gray-700" id="view-label">Pre-Game Mode</span>
+        </div>
+        <div class="flex gap-1.5">
+            <button onclick="show('pregame')"      id="b-pregame"      class="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary-500 text-white">Pre-Game</button>
+            <button onclick="show('gd-coach')"     id="b-gd-coach"     class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Game Day – Coach</button>
+            <button onclick="show('gd-stats')"     id="b-gd-stats"     class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Game Day – Stats</button>
+            <button onclick="show('wrapup')"        id="b-wrapup"       class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Wrap-Up</button>
+            <button onclick="show('mobile')"        id="b-mobile"       class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200">Mobile</button>
+        </div>
+    </div>
+</div>
+
+<!-- TEAM ADMIN BANNER -->
+<div class="pt-12">
+    <div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white">
+        <div class="max-w-screen-2xl mx-auto px-4 py-3">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center font-bold text-lg">S</div>
+                <div>
+                    <h1 class="font-bold text-lg">Shawnee FC U12</h1>
+                    <p class="text-primary-200 text-xs">Soccer &middot; Spring 2026</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-5 sm:grid-cols-9 gap-2 text-xs">
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>View</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>Roster</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>Schedule</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>Game Plan</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>Stats</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>Chat</a>
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/10 hover:bg-white/20 text-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>Drills</a>
+                <!-- GAME DAY active -->
+                <a href="#" class="flex flex-col items-center gap-1 py-2 px-1 rounded-lg bg-white/30 ring-2 ring-white/50 text-center font-semibold">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"/></svg>Game Day</a>
+            </div>
+        </div>
+    </div>
+    <!-- Game sub-banner -->
+    <div class="bg-gray-800 text-white">
+        <div class="max-w-screen-2xl mx-auto px-4 py-2 flex items-center justify-between flex-wrap gap-2 text-sm">
+            <div class="flex items-center gap-3 flex-wrap">
+                <span class="font-bold">vs Oak Grove United</span>
+                <span class="text-gray-400">&middot;</span>
+                <span class="text-gray-300">Feb 22 &middot; 4:00 PM</span>
+                <span class="text-gray-400">&middot;</span>
+                <span class="bg-green-700 text-green-100 text-xs font-bold px-2 py-0.5 rounded-full">HOME</span>
+                <span class="text-gray-400">&middot;</span>
+                <span class="text-gray-300 text-xs">Kit: <span class="font-semibold text-red-400">Red/White</span></span>
+                <span class="text-gray-400">&middot;</span>
+                <span class="text-gray-300 text-xs">Arrive: 3:30 PM</span>
+            </div>
+            <a href="#" class="text-xs text-primary-300 hover:text-primary-200">Edit Schedule →</a>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== PRE-GAME VIEW ==================== -->
+<div id="v-pregame" class="vpane max-w-screen-2xl mx-auto">
+
+    <!-- Mode bar -->
+    <div class="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-gray-300"></span>
+            <span class="text-sm font-semibold text-gray-700">Pre-Game Planning</span>
+            <span class="text-xs text-gray-400 ml-2">9 of 12 going</span>
+        </div>
+        <button onclick="show('gd-coach')" class="px-3 py-1.5 text-xs font-bold bg-primary-600 text-white rounded-lg hover:bg-primary-700 flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            Enter Game Day Mode
+        </button>
+    </div>
+
+    <div class="grid grid-cols-12 gap-0 min-h-[calc(100vh-270px)]">
+
+        <!-- LEFT RAIL col-span-3 -->
+        <div class="col-span-3 bg-gray-50 border-r border-gray-200 p-4 overflow-y-auto scroll-thin">
+
+            <!-- FROM LAST GAME -->
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-5">
+                <div class="flex items-center gap-2 mb-2">
+                    <svg class="w-3.5 h-3.5 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span class="text-[10px] font-bold uppercase tracking-wider text-amber-700">From Last Game &middot; vs Westside United (W 3–1)</span>
+                </div>
+                <div class="space-y-1.5 mb-2.5">
+                    <div class="flex items-start gap-1.5"><span class="text-amber-500 text-xs">⚠</span><span class="text-xs text-amber-800">Only 3/10 shots on target (30%) — finishing broke down after H1</span></div>
+                    <div class="flex items-start gap-1.5"><span class="text-amber-500 text-xs">⚠</span><span class="text-xs text-amber-800">Lost 60% of aerial duels in H2 — Oak Grove will press high</span></div>
+                    <div class="flex items-start gap-1.5"><span class="text-green-600 text-xs">✓</span><span class="text-xs text-gray-700">Maya #9 scored twice — build play through her</span></div>
+                </div>
+                <button class="w-full text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded-lg py-1.5 hover:bg-primary-100">Plan Practice Around This →</button>
+            </div>
+
+            <!-- RSVP -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">RSVP Roster</h3>
+            <div class="bg-white rounded-xl border border-gray-200 p-3 mb-5">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-gray-700">9 of 12 going</span>
+                    <button class="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5">Flag Missing</button>
+                </div>
+                <p class="text-[10px] font-bold text-green-600 uppercase tracking-wider mb-1">Going (9)</p>
+                <div class="flex flex-wrap gap-1 mb-2">
+                    <span class="chip bg-green-100 text-green-800">#5 Jake</span>
+                    <span class="chip bg-green-100 text-green-800">#3 Sam</span>
+                    <span class="chip bg-green-100 text-green-800">#12 Ana</span>
+                    <span class="chip bg-green-100 text-green-800">#7 Marcus</span>
+                    <span class="chip bg-green-100 text-green-800">#10 Zoe</span>
+                    <span class="chip bg-green-100 text-green-800">#8 Carlos</span>
+                    <span class="chip bg-green-100 text-green-800">#11 Ethan</span>
+                    <span class="chip bg-green-100 text-green-800">#9 Maya</span>
+                    <span class="chip bg-green-100 text-green-800">#6 Connor</span>
+                </div>
+                <p class="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-1">Maybe (2)</p>
+                <div class="flex flex-wrap gap-1 mb-2">
+                    <span class="chip bg-amber-100 text-amber-800">#4 Lily</span>
+                    <span class="chip bg-amber-100 text-amber-800">#2 Sofia</span>
+                </div>
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Not Going (1)</p>
+                <div class="flex flex-wrap gap-1"><span class="chip bg-gray-100 text-gray-500">#1 Noah</span></div>
+            </div>
+
+            <!-- OPPONENT -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Opponent Intel</h3>
+            <div class="bg-white rounded-xl border border-gray-200 p-3 mb-5">
+                <p class="text-xs font-semibold text-gray-700 mb-1">Oak Grove United</p>
+                <p class="text-[10px] text-gray-400 mb-2">No linked team — scouting notes below</p>
+                <textarea class="w-full text-xs border border-gray-200 rounded-lg p-2 focus:ring-1 focus:ring-primary-300 resize-none" rows="3">High press from kickoff — force mistakes in our half. #10 striker is fast. Weak on left side of their defense. Zone at set pieces.</textarea>
+            </div>
+
+            <!-- RECENT FORM -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Recent Form</h3>
+            <div class="space-y-2 mb-5">
+                <div class="bg-white rounded-lg p-2.5 border border-gray-100 shadow-sm">
+                    <div class="flex items-center justify-between mb-0.5">
+                        <span class="text-xs font-semibold text-gray-700">vs Westside United</span>
+                        <span class="text-xs font-bold text-green-600">W 3–1</span>
+                    </div>
+                    <p class="text-[10px] text-gray-500">Feb 15 · Good first half. Finishing and aerial work dropped in H2.</p>
+                </div>
+                <div class="bg-white rounded-lg p-2.5 border border-gray-100 shadow-sm">
+                    <div class="flex items-center justify-between mb-0.5">
+                        <span class="text-xs font-semibold text-gray-700">vs Blue Valley FC</span>
+                        <span class="text-xs font-bold text-red-600">L 0–2</span>
+                    </div>
+                    <p class="text-[10px] text-gray-500">Feb 8 · Struggled against their high press. Gave ball away too cheaply.</p>
+                </div>
+                <div class="bg-white rounded-lg p-2.5 border border-gray-100 shadow-sm">
+                    <div class="flex items-center justify-between mb-0.5">
+                        <span class="text-xs font-semibold text-gray-700">vs Olathe Stars</span>
+                        <span class="text-xs font-bold text-amber-600">D 1–1</span>
+                    </div>
+                    <p class="text-[10px] text-gray-500">Feb 1 · Good shape defensively. Needed more movement off the ball.</p>
+                </div>
+            </div>
+
+            <!-- STAT TRENDS -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Stat Trends</h3>
+            <div class="space-y-1.5 mb-5">
+                <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                    <span class="text-xs text-gray-600">Shots on target</span>
+                    <span class="text-xs font-bold text-red-500">30% (down)</span>
+                </div>
+                <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                    <span class="text-xs text-gray-600">Fouls conceded</span>
+                    <span class="text-xs font-bold text-red-500">8/game (up)</span>
+                </div>
+                <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                    <span class="text-xs text-gray-600">H2 pass completion</span>
+                    <span class="text-xs font-bold text-amber-600">68% (down)</span>
+                </div>
+                <div class="flex items-center justify-between bg-white rounded-lg p-2.5 border border-gray-100">
+                    <span class="text-xs text-gray-600">Maya #9 goals</span>
+                    <span class="text-xs font-bold text-green-600">5 in 3 games ↑</span>
+                </div>
+            </div>
+
+            <!-- AI COACH FOCUS -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">AI Coach Focus</h3>
+            <div class="bg-gradient-to-br from-primary-50 to-indigo-50 border border-primary-200 rounded-xl p-3">
+                <div class="flex items-start gap-2">
+                    <div class="w-7 h-7 bg-primary-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                    </div>
+                    <div>
+                        <p class="text-xs text-gray-700 leading-relaxed">Oak Grove will press high — play short passes out of the back and be patient. Maya #9 is your biggest weapon; make sure your midfielders feed the channels early. Avoid long balls today; 68% H2 pass completion tells us we lose the ball when we rush.</p>
+                        <button class="mt-1.5 text-[10px] text-primary-600 font-semibold hover:text-primary-800">↻ Refresh</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CENTER: AI Chat col-span-4 -->
+        <div class="col-span-4 bg-white border-r border-gray-200 flex flex-col">
+            <div class="p-4 border-b border-gray-100">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 bg-gradient-to-br from-primary-400 to-primary-600 rounded-full flex items-center justify-center">
+                            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800">AI Game Coach</h3>
+                            <p class="text-xs text-gray-400">Gemini 2.5 Flash</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center bg-gray-100 rounded-lg p-0.5 gap-0.5">
+                        <button class="px-3 py-1 text-xs font-semibold rounded-md bg-white text-gray-800 shadow-sm">Ask</button>
+                        <button class="px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-gray-700">Lineup</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-4 space-y-4 scroll-thin">
+                <div class="chat-bubble-ai px-4 py-3 max-w-[90%]">
+                    <p class="text-sm text-gray-700 font-medium mb-1">Ready for Oak Grove. 9 confirmed, 2 maybe.</p>
+                    <p class="text-sm text-gray-600 mb-2">Your 9 confirmed players fill the starting XI exactly. Want me to build a full rotation plan including Lily and Sofia if they confirm, or set the starting lineup for 9 first?</p>
+                    <div class="flex flex-wrap gap-1.5">
+                        <button class="text-xs bg-primary-50 text-primary-700 border border-primary-200 rounded-full px-2.5 py-1 hover:bg-primary-100">Suggest starting 9</button>
+                        <button class="text-xs bg-primary-50 text-primary-700 border border-primary-200 rounded-full px-2.5 py-1 hover:bg-primary-100">Plan rotation for 11</button>
+                        <button class="text-xs bg-primary-50 text-primary-700 border border-primary-200 rounded-full px-2.5 py-1 hover:bg-primary-100">How did we do vs high press?</button>
+                    </div>
+                </div>
+
+                <div class="chat-bubble-user px-4 py-3 max-w-[90%] ml-auto">
+                    <p class="text-sm text-gray-700">Plan a full rotation for 11 players across 2 halves. Sub times at 7, 14, 21 minutes. Balance playing time and put Maya up front every half.</p>
+                </div>
+
+                <div class="chat-bubble-ai px-4 py-3 max-w-[90%]">
+                    <p class="text-sm text-gray-700 mb-2">Here's a rotation keeping Maya at Striker all game and spreading the remaining 10 players across both halves. Everyone averages ~40 min.</p>
+                    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden text-xs mb-3">
+                        <div class="bg-gray-50 border-b border-gray-200 px-3 py-1.5 grid grid-cols-5 font-semibold text-gray-600">
+                            <div>Position</div><div class="text-center">Start</div><div class="text-center">7'</div><div class="text-center">14'</div><div class="text-center">21'</div>
+                        </div>
+                        <div class="divide-y divide-gray-100">
+                            <div class="px-3 py-1.5 grid grid-cols-5 text-gray-700"><span class="font-medium">Keeper</span><span class="text-center">Jake</span><span class="text-center">Jake</span><span class="text-center">Jake</span><span class="text-center">Jake</span></div>
+                            <div class="px-3 py-1.5 grid grid-cols-5 text-gray-700"><span class="font-medium">R-Def</span><span class="text-center">Sam</span><span class="text-center">Sam</span><span class="text-center">Connor</span><span class="text-center">Connor</span></div>
+                            <div class="px-3 py-1.5 grid grid-cols-5 text-gray-700"><span class="font-medium">Sweeper</span><span class="text-center">Ana</span><span class="text-center">Ana</span><span class="text-center">Ana</span><span class="text-center">Ana</span></div>
+                            <div class="px-3 py-1.5 grid grid-cols-5 text-gray-700"><span class="font-medium">L-Def</span><span class="text-center">Marcus</span><span class="text-center">Marcus</span><span class="text-center">Lily</span><span class="text-center">Lily</span></div>
+                            <div class="px-3 py-1.5 grid grid-cols-5 text-gray-700"><span class="font-medium">Striker</span><span class="text-center text-primary-700 font-bold">Maya</span><span class="text-center text-primary-700 font-bold">Maya</span><span class="text-center text-primary-700 font-bold">Maya</span><span class="text-center text-primary-700 font-bold">Maya</span></div>
+                        </div>
+                    </div>
+                    <p class="text-[10px] text-gray-400 mb-2">5 positions shown — full 9-position matrix loaded to canvas →</p>
+                    <div class="flex gap-2">
+                        <button class="flex-1 text-xs font-semibold bg-primary-600 text-white rounded-lg py-2 hover:bg-primary-700">✓ Accept to Canvas</button>
+                        <button class="text-xs font-medium text-gray-500 bg-gray-100 rounded-lg py-2 px-3 hover:bg-gray-200">✕ Reject</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-gray-100">
+                <div class="flex items-center gap-2">
+                    <input type="text" placeholder="Ask about lineup, tactics, or opponent…" class="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-500">
+                    <button class="p-2.5 bg-primary-600 text-white rounded-xl hover:bg-primary-700">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- RIGHT: Rotation Canvas col-span-5 -->
+        <div class="col-span-5 bg-white p-4 overflow-y-auto scroll-thin">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-bold text-gray-800">Rotation Canvas <span class="text-xs text-gray-400 font-normal">9v9 &middot; 2×25 min</span></h3>
+                <div class="flex gap-1.5">
+                    <button class="px-2 py-1 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200">From Game Plan</button>
+                    <button class="px-2 py-1 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 border border-gray-200">⚖ Balance</button>
+                    <button class="px-2 py-1 text-xs font-medium rounded-lg bg-primary-50 text-primary-700 hover:bg-primary-100 border border-primary-200">✦ AI Optimize</button>
+                </div>
+            </div>
+
+            <!-- Half tabs -->
+            <div class="flex gap-1 mb-3">
+                <button class="px-4 py-1.5 text-xs font-semibold rounded-t-lg bg-primary-500 text-white">H1</button>
+                <button class="px-4 py-1.5 text-xs font-medium rounded-t-lg bg-gray-100 text-gray-600 hover:bg-gray-200">H2</button>
+            </div>
+            <div class="flex items-center gap-2 mb-3 text-[10px] text-gray-500">
+                <span>H1 sub times:</span>
+                <span class="bg-gray-100 rounded px-1.5 py-0.5 font-mono">Start</span>
+                <span class="text-gray-300">→</span>
+                <span class="bg-gray-100 rounded px-1.5 py-0.5 font-mono">7'</span>
+                <span class="text-gray-300">→</span>
+                <span class="bg-gray-100 rounded px-1.5 py-0.5 font-mono">14'</span>
+                <span class="text-gray-300">→</span>
+                <span class="bg-gray-100 rounded px-1.5 py-0.5 font-mono">21'</span>
+            </div>
+
+            <!-- Rotation Matrix -->
+            <div class="overflow-x-auto mb-4">
+                <table class="w-full border-collapse text-xs">
+                    <thead>
+                        <tr class="text-gray-500 font-semibold">
+                            <th class="text-left p-1.5 w-24">Position</th>
+                            <th class="p-1.5 text-center">Start</th>
+                            <th class="p-1.5 text-center">7'</th>
+                            <th class="p-1.5 text-center">14'</th>
+                            <th class="p-1.5 text-center">21'</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">Keeper</td>
+                            <td class="p-1"><div class="rot-cell bg-blue-50 text-blue-800 border-blue-200 font-semibold">Jake #5</div></td>
+                            <td class="p-1"><div class="rot-cell bg-blue-50 text-blue-800 border-blue-200 font-semibold">Jake #5</div></td>
+                            <td class="p-1"><div class="rot-cell bg-blue-50 text-blue-800 border-blue-200 font-semibold">Jake #5</div></td>
+                            <td class="p-1"><div class="rot-cell bg-blue-50 text-blue-800 border-blue-200 font-semibold">Jake #5</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">R-Defense</td>
+                            <td class="p-1"><div class="rot-cell">Sam #3</div></td>
+                            <td class="p-1"><div class="rot-cell">Sam #3</div></td>
+                            <td class="p-1"><div class="rot-cell">Connor #6</div></td>
+                            <td class="p-1"><div class="rot-cell">Connor #6</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">Sweeper</td>
+                            <td class="p-1"><div class="rot-cell">Ana #12</div></td>
+                            <td class="p-1"><div class="rot-cell">Ana #12</div></td>
+                            <td class="p-1"><div class="rot-cell">Ana #12</div></td>
+                            <td class="p-1"><div class="rot-cell">Ana #12</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">L-Defense</td>
+                            <td class="p-1"><div class="rot-cell">Marcus #7</div></td>
+                            <td class="p-1"><div class="rot-cell">Marcus #7</div></td>
+                            <td class="p-1"><div class="rot-cell bg-amber-50 border-amber-300">Lily #4</div></td>
+                            <td class="p-1"><div class="rot-cell bg-amber-50 border-amber-300">Lily #4</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">L-Mid</td>
+                            <td class="p-1"><div class="rot-cell">Zoe #10</div></td>
+                            <td class="p-1"><div class="rot-cell">Zoe #10</div></td>
+                            <td class="p-1"><div class="rot-cell">Zoe #10</div></td>
+                            <td class="p-1"><div class="rot-cell">Sofia #2</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">Center Mid</td>
+                            <td class="p-1"><div class="rot-cell">Carlos #8</div></td>
+                            <td class="p-1"><div class="rot-cell">Carlos #8</div></td>
+                            <td class="p-1"><div class="rot-cell">Sofia #2</div></td>
+                            <td class="p-1"><div class="rot-cell">Carlos #8</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">Center Mid</td>
+                            <td class="p-1"><div class="rot-cell">Ethan #11</div></td>
+                            <td class="p-1"><div class="rot-cell">Ethan #11</div></td>
+                            <td class="p-1"><div class="rot-cell">Ethan #11</div></td>
+                            <td class="p-1"><div class="rot-cell">Ethan #11</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">R-Mid</td>
+                            <td class="p-1"><div class="rot-cell">Connor #6</div></td>
+                            <td class="p-1"><div class="rot-cell">Sam #3</div></td>
+                            <td class="p-1"><div class="rot-cell">Sam #3</div></td>
+                            <td class="p-1"><div class="rot-empty">drag player</div></td></tr>
+                        <tr><td class="p-1.5 font-bold text-gray-600 text-[11px]">Striker</td>
+                            <td class="p-1"><div class="rot-cell bg-primary-50 text-primary-800 border-primary-200 font-bold">Maya #9</div></td>
+                            <td class="p-1"><div class="rot-cell bg-primary-50 text-primary-800 border-primary-200 font-bold">Maya #9</div></td>
+                            <td class="p-1"><div class="rot-cell bg-primary-50 text-primary-800 border-primary-200 font-bold">Maya #9</div></td>
+                            <td class="p-1"><div class="rot-cell bg-primary-50 text-primary-800 border-primary-200 font-bold">Maya #9</div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Player Pool -->
+            <div class="bg-gray-50 border border-dashed border-gray-300 rounded-xl p-3 mb-4">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Bench / Unassigned — drag to grid</p>
+                <div class="flex flex-wrap gap-1.5">
+                    <span class="chip bg-indigo-100 text-indigo-800 cursor-grab">Lily #4</span>
+                    <span class="chip bg-indigo-100 text-indigo-800 cursor-grab">Sofia #2</span>
+                    <span class="chip bg-gray-200 text-gray-500 cursor-not-allowed">Noah #1 (out)</span>
+                </div>
+            </div>
+
+            <!-- Playing time balance bars -->
+            <div>
+                <p class="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Playing Time Balance (target: 41 min)</p>
+                <div class="space-y-2">
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Jake #5 GK</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:100%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">50 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Maya #9 ST</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:100%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">50 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Ana #12 SW</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:100%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">50 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Ethan #11</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:90%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">43 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Zoe #10</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:85%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">40 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Carlos #8</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:83%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">39 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Sam #3</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-green-500 rounded" style="height:6px;width:78%"></div></div><span class="text-xs font-mono text-green-600 w-12 text-right">37 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Marcus #7</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-amber-500 rounded" style="height:6px;width:60%"></div></div><span class="text-xs font-mono text-amber-600 w-12 text-right">29 min ⚠</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Connor #6</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-amber-500 rounded" style="height:6px;width:65%"></div></div><span class="text-xs font-mono text-amber-600 w-12 text-right">31 min ⚠</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Lily #4 (?)</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-gray-400 rounded" style="height:6px;width:30%"></div></div><span class="text-xs font-mono text-gray-500 w-12 text-right">14 min</span></div>
+                    <div class="flex items-center gap-2"><span class="text-xs text-gray-600 w-24 truncate">Sofia #2 (?)</span><div class="flex-1 bg-gray-200 rounded" style="height:6px"><div class="bg-gray-400 rounded" style="height:6px;width:24%"></div></div><span class="text-xs font-mono text-gray-500 w-12 text-right">11 min</span></div>
+                </div>
+                <p class="text-[10px] text-amber-600 mt-2">⚠ Marcus &amp; Connor under target — use ⚖ Balance or drag chips to fix.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== GAME DAY: COACH VIEW ==================== -->
+<div id="v-gd-coach" class="vpane hidden bg-gray-900 min-h-[calc(100vh-170px)]">
+
+    <!-- Top bar -->
+    <div class="bg-gray-950 border-b border-gray-700 px-4 py-3">
+        <div class="max-w-screen-2xl mx-auto flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <span class="live-pulse w-2.5 h-2.5 rounded-full bg-red-500 block"></span>
+                    <span class="text-xs font-bold text-red-400 uppercase tracking-wider">LIVE</span>
+                </div>
+                <div class="flex items-end gap-2">
+                    <div class="text-center">
+                        <div class="text-3xl font-black text-white leading-none">2</div>
+                        <div class="text-[10px] text-gray-500">Shawnee</div>
+                    </div>
+                    <div class="text-2xl font-black text-gray-600 mb-1">—</div>
+                    <div class="text-center">
+                        <div class="text-3xl font-black text-gray-300 leading-none">1</div>
+                        <div class="text-[10px] text-gray-500">Oak Grove</div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="bg-gray-700 text-gray-200 text-sm font-bold px-3 py-1.5 rounded-lg">H1 &middot; 18:20</span>
+                <span class="sub-pulse bg-red-950 border border-red-600 text-red-300 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Sub Due: 21'
+                </span>
+            </div>
+            <div class="flex items-center bg-gray-800 rounded-lg p-1 gap-1">
+                <button class="px-3 py-1.5 text-xs font-semibold rounded-md bg-gray-600 text-white">Coach View</button>
+                <button onclick="show('gd-stats')" class="px-3 py-1.5 text-xs font-medium rounded-md text-gray-400 hover:text-white hover:bg-gray-700">Stats View</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-screen-2xl mx-auto grid grid-cols-12 gap-0">
+
+        <!-- LEFT: Sub dashboard col-span-4 -->
+        <div class="col-span-4 border-r border-gray-700 p-4 overflow-y-auto scroll-dark">
+
+            <!-- On Field Now -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">On Field Now (9)</h3>
+            <div class="bg-gray-800 rounded-xl overflow-hidden mb-4">
+                <table class="w-full text-xs">
+                    <tbody class="divide-y divide-gray-700">
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0"></span><span class="font-semibold text-white">Jake #5</span><span class="text-gray-500 text-[10px] ml-1">GK</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Sam #3</span><span class="text-gray-500 text-[10px] ml-1">R-Def</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Ana #12</span><span class="text-gray-500 text-[10px] ml-1">Sweeper</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Marcus #7</span><span class="text-[10px] ml-1 text-amber-400">L-Def · ⚠YC</span></td><td class="px-3 py-2 text-right font-mono text-amber-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Zoe #10</span><span class="text-gray-500 text-[10px] ml-1">L-Mid</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Carlos #8</span><span class="text-gray-500 text-[10px] ml-1">C-Mid</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Ethan #11</span><span class="text-gray-500 text-[10px] ml-1">C-Mid</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Connor #6</span><span class="text-gray-500 text-[10px] ml-1">R-Mid</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                        <tr><td class="px-3 py-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-400 flex-shrink-0"></span><span class="font-semibold text-white">Maya #9</span><span class="text-gray-500 text-[10px] ml-1">Striker</span></td><td class="px-3 py-2 text-right font-mono text-green-400 text-[11px]">18:20</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Next Sub Block -->
+            <div class="bg-red-950 border border-red-700 rounded-xl p-3.5 mb-4">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-red-400 mb-3">⚠ Substitution Due at 21'</p>
+                <div class="flex items-center gap-2 mb-3">
+                    <div class="flex-1 bg-gray-800 rounded-lg p-2.5 text-center">
+                        <p class="text-[10px] text-gray-500 mb-0.5">OUT</p>
+                        <p class="text-sm font-bold text-red-300">Marcus #7</p>
+                        <p class="text-[10px] text-gray-400">L-Defense · 18:20 played · ⚠ YC</p>
+                    </div>
+                    <svg class="w-4 h-4 text-gray-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+                    <div class="flex-1 bg-gray-800 rounded-lg p-2.5 text-center">
+                        <p class="text-[10px] text-gray-500 mb-0.5">IN</p>
+                        <p class="text-sm font-bold text-green-300">Lily #4</p>
+                        <p class="text-[10px] text-gray-400">L-Defense · 18:20 rested</p>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button class="flex-1 text-sm font-bold bg-green-700 hover:bg-green-600 text-white rounded-lg py-2.5">✓ Apply Sub Now</button>
+                    <button class="text-sm font-medium text-gray-400 bg-gray-800 hover:bg-gray-700 rounded-lg py-2.5 px-3">Skip</button>
+                </div>
+                <button class="mt-2 w-full text-xs text-gray-500 hover:text-gray-300 flex items-center justify-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                    AI Sub Suggestion
+                </button>
+            </div>
+
+            <!-- Sub Queue H1 -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">H1 Sub Queue</h3>
+            <div class="space-y-1.5 mb-4">
+                <div class="bg-red-950 border border-red-800 rounded-lg px-3 py-2 flex items-center justify-between">
+                    <span class="text-xs font-mono text-red-400">21'</span>
+                    <span class="text-xs text-gray-300">Marcus #7 → Lily #4 (L-Def)</span>
+                    <span class="text-[10px] text-red-400 font-bold">SOON</span>
+                </div>
+                <div class="bg-gray-800 rounded-lg px-3 py-2 flex items-center justify-between opacity-60">
+                    <span class="text-xs font-mono text-gray-500">H2 7'</span>
+                    <span class="text-xs text-gray-400">Sam #3 → Connor #6 (R-Def)</span>
+                    <span class="text-[10px] text-gray-600">next half</span>
+                </div>
+            </div>
+
+            <!-- Playing Time H1 -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Playing Time (H1)</h3>
+            <div class="space-y-1.5">
+                <div class="flex items-center gap-2"><span class="text-[11px] text-gray-400 w-20 truncate">Jake #5</span><div class="flex-1 bar-track"><div class="bar-fill bg-green-500" style="width:73%"></div></div><span class="text-[11px] font-mono text-green-400 w-12 text-right">18:20</span></div>
+                <div class="flex items-center gap-2"><span class="text-[11px] text-gray-400 w-20 truncate">Maya #9</span><div class="flex-1 bar-track"><div class="bar-fill bg-green-500" style="width:73%"></div></div><span class="text-[11px] font-mono text-green-400 w-12 text-right">18:20</span></div>
+                <div class="flex items-center gap-2"><span class="text-[11px] text-gray-400 w-20 truncate">Marcus #7</span><div class="flex-1 bar-track"><div class="bar-fill bg-amber-500" style="width:73%"></div></div><span class="text-[11px] font-mono text-amber-400 w-12 text-right">18:20 ⚠</span></div>
+                <div class="flex items-center gap-2"><span class="text-[11px] text-gray-400 w-20 truncate">Lily #4</span><div class="flex-1 bar-track"><div class="bar-fill bg-gray-600" style="width:0%"></div></div><span class="text-[11px] font-mono text-gray-600 w-12 text-right">0:00 rest</span></div>
+            </div>
+        </div>
+
+        <!-- RIGHT: Box score + notes col-span-8 -->
+        <div class="col-span-8 p-4 overflow-y-auto scroll-dark">
+
+            <!-- Live Box Score -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Live Field Stats</h3>
+            <div class="bg-gray-800 rounded-xl overflow-hidden mb-5">
+                <table class="w-full text-xs">
+                    <thead><tr class="bg-gray-750 border-b border-gray-700 text-gray-400 font-semibold">
+                        <th class="text-left p-2.5">Player</th>
+                        <th class="p-2.5 text-center">G</th>
+                        <th class="p-2.5 text-center">A</th>
+                        <th class="p-2.5 text-center">SH</th>
+                        <th class="p-2.5 text-center">SV</th>
+                        <th class="p-2.5 text-center">YC</th>
+                        <th class="p-2.5 text-center">F</th>
+                    </tr></thead>
+                    <tbody class="divide-y divide-gray-700">
+                        <tr class="on-field"><td class="p-2.5 text-white font-semibold flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block"></span>Jake #5 <span class="text-gray-500 font-normal text-[10px]">GK</span></td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center text-white font-bold">3</td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-400">0</td></tr>
+                        <tr class="on-field"><td class="p-2.5 text-white font-semibold flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-primary-400 inline-block"></span>Maya #9 <span class="text-gray-500 font-normal text-[10px]">ST</span></td><td class="p-2.5 text-center text-green-400 font-bold">2</td><td class="p-2.5 text-center text-gray-300">0</td><td class="p-2.5 text-center text-gray-300">4</td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-300">1</td></tr>
+                        <tr class="on-field"><td class="p-2.5 text-white font-semibold flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-primary-400 inline-block"></span>Zoe #10 <span class="text-gray-500 font-normal text-[10px]">LM</span></td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-300">1</td><td class="p-2.5 text-center text-gray-300">2</td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-400">0</td></tr>
+                        <tr class="on-field"><td class="p-2.5 text-white font-semibold flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-primary-400 inline-block"></span>Marcus #7 <span class="text-gray-500 font-normal text-[10px]">LD</span></td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center ycard">1 ⚠</td><td class="p-2.5 text-center text-red-400">2</td></tr>
+                        <tr class="on-field"><td class="p-2.5 text-white font-semibold flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-primary-400 inline-block"></span>Connor #6 <span class="text-gray-500 font-normal text-[10px]">RM</span></td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-300">1</td><td class="p-2.5 text-center text-gray-300">1</td><td class="p-2.5 text-center text-gray-400">—</td><td class="p-2.5 text-center text-gray-400">0</td><td class="p-2.5 text-center text-gray-400">0</td></tr>
+                        <tr><td class="p-2.5 text-gray-500 flex items-center gap-2 opacity-50"><span class="w-1.5 h-1.5 rounded-full bg-gray-600 inline-block"></span>Lily #4 <span class="text-gray-600 text-[10px]">bench</span></td><td class="p-2.5 text-center text-gray-700">—</td><td class="p-2.5 text-center text-gray-700">—</td><td class="p-2.5 text-center text-gray-700">—</td><td class="p-2.5 text-center text-gray-700">—</td><td class="p-2.5 text-center text-gray-700">—</td><td class="p-2.5 text-center text-gray-700">—</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Rotation vs Actual -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Rotation vs Actual — H1</h3>
+            <div class="bg-gray-800 rounded-xl overflow-hidden mb-5">
+                <table class="w-full text-xs">
+                    <thead><tr class="border-b border-gray-700 text-gray-400 font-semibold">
+                        <th class="text-left p-2.5">Position</th>
+                        <th class="p-2.5 text-center">Planned</th>
+                        <th class="p-2.5 text-center">Actual</th>
+                        <th class="p-2.5 text-center">Status</th>
+                    </tr></thead>
+                    <tbody class="divide-y divide-gray-700">
+                        <tr><td class="p-2.5 text-gray-400 font-bold">Keeper</td><td class="p-2.5 text-center text-gray-300">Jake #5</td><td class="p-2.5 text-center text-gray-300">Jake #5</td><td class="p-2.5 text-center"><span class="match-cell text-[10px] font-bold px-2 py-0.5 rounded-full border">✓ Match</span></td></tr>
+                        <tr><td class="p-2.5 text-gray-400 font-bold">Sweeper</td><td class="p-2.5 text-center text-gray-300">Ana #12</td><td class="p-2.5 text-center text-gray-300">Ana #12</td><td class="p-2.5 text-center"><span class="match-cell text-[10px] font-bold px-2 py-0.5 rounded-full border">✓ Match</span></td></tr>
+                        <tr><td class="p-2.5 text-gray-400 font-bold">L-Defense</td><td class="p-2.5 text-center text-gray-300">Marcus #7</td><td class="p-2.5 text-center text-orange-300">Marcus #7 ⚠YC</td><td class="p-2.5 text-center"><span class="diff-cell text-[10px] font-bold px-2 py-0.5 rounded-full border">Sub early?</span></td></tr>
+                        <tr><td class="p-2.5 text-gray-400 font-bold">Striker</td><td class="p-2.5 text-center text-gray-300">Maya #9</td><td class="p-2.5 text-center text-gray-300">Maya #9</td><td class="p-2.5 text-center"><span class="match-cell text-[10px] font-bold px-2 py-0.5 rounded-full border">✓ Match</span></td></tr>
+                        <tr><td class="p-2.5 text-gray-400 font-bold">R-Mid</td><td class="p-2.5 text-center text-gray-300">Connor #6</td><td class="p-2.5 text-center text-gray-300">Connor #6</td><td class="p-2.5 text-center"><span class="match-cell text-[10px] font-bold px-2 py-0.5 rounded-full border">✓ Match</span></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Coach Log -->
+            <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Coach Log</h3>
+            <div class="bg-gray-800 rounded-xl p-4">
+                <div class="flex flex-wrap gap-2 mb-3">
+                    <button class="text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-200 px-3 py-1.5 rounded-lg">📋 Timeout</button>
+                    <button class="text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-200 px-3 py-1.5 rounded-lg">⬡ Formation Change</button>
+                    <button class="text-xs font-semibold bg-amber-900 hover:bg-amber-800 text-amber-200 px-3 py-1.5 rounded-lg">🟨 Yellow Card Logged</button>
+                </div>
+                <div class="flex items-center gap-2 mb-3">
+                    <input type="text" placeholder="Quick note… (e.g. Oak Grove switching to long ball)" class="flex-1 bg-gray-700 text-gray-200 text-xs rounded-lg px-3 py-2 border border-gray-600 focus:outline-none focus:ring-1 focus:ring-primary-500 placeholder-gray-500">
+                    <button class="bg-primary-600 hover:bg-primary-700 text-white rounded-lg px-3 py-2">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+                    </button>
+                </div>
+                <div class="space-y-1.5 text-[10px]">
+                    <div class="flex items-start gap-2"><span class="font-mono text-gray-600 flex-shrink-0">H1 17:32</span><span class="text-gray-400">Maya #9 goal — great channel run off Zoe's pass</span></div>
+                    <div class="flex items-start gap-2"><span class="font-mono text-gray-600 flex-shrink-0">H1 15:15</span><span class="text-amber-400">Marcus #7 yellow card — late tackle, 1 left before suspension</span></div>
+                    <div class="flex items-start gap-2"><span class="font-mono text-gray-600 flex-shrink-0">H1 12:40</span><span class="text-gray-400">Oak Grove equalized — defensive shape broke on corner kick</span></div>
+                    <div class="flex items-start gap-2"><span class="font-mono text-gray-600 flex-shrink-0">H1 08:15</span><span class="text-gray-400">Maya #9 goal — 1st goal, assist Connor #6</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== GAME DAY: STATS VIEW ==================== -->
+<div id="v-gd-stats" class="vpane hidden bg-gray-900 min-h-[calc(100vh-170px)]">
+
+    <!-- Same top bar, Stats View active -->
+    <div class="bg-gray-950 border-b border-gray-700 px-4 py-3">
+        <div class="max-w-screen-2xl mx-auto flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2"><span class="live-pulse w-2.5 h-2.5 rounded-full bg-red-500 block"></span><span class="text-xs font-bold text-red-400 uppercase tracking-wider">LIVE</span></div>
+                <div class="flex items-end gap-2">
+                    <div class="text-center"><div class="text-3xl font-black text-white leading-none">2</div><div class="text-[10px] text-gray-500">Shawnee</div></div>
+                    <div class="text-2xl font-black text-gray-600 mb-1">—</div>
+                    <div class="text-center"><div class="text-3xl font-black text-gray-300 leading-none">1</div><div class="text-[10px] text-gray-500">Oak Grove</div></div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <span class="bg-gray-700 text-gray-200 text-sm font-bold px-3 py-1.5 rounded-lg">H1 &middot; 18:20</span>
+                <span class="bg-amber-900 border border-amber-600 text-amber-300 text-xs font-bold px-3 py-1.5 rounded-lg">Sub Due: 21'</span>
+            </div>
+            <div class="flex items-center bg-gray-800 rounded-lg p-1 gap-1">
+                <button onclick="show('gd-coach')" class="px-3 py-1.5 text-xs font-medium rounded-md text-gray-400 hover:text-white hover:bg-gray-700">Coach View</button>
+                <button class="px-3 py-1.5 text-xs font-semibold rounded-md bg-primary-600 text-white">● Stats View</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="max-w-screen-2xl mx-auto p-4">
+
+        <!-- Half selector -->
+        <div class="flex items-center gap-3 mb-4">
+            <div class="flex bg-gray-800 rounded-lg p-0.5 gap-0.5">
+                <button class="px-4 py-1.5 text-xs font-semibold rounded-md bg-primary-600 text-white">H1</button>
+                <button class="px-4 py-1.5 text-xs font-medium rounded-md text-gray-400 hover:bg-gray-700 hover:text-white">H2</button>
+            </div>
+            <button class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-400 bg-gray-800 border border-gray-700 rounded-lg hover:bg-gray-700">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/></svg>
+                Undo Last
+            </button>
+            <span class="text-[10px] text-gray-600 ml-auto">Tap stat buttons to log — writes to Firestore in real time</span>
+        </div>
+
+        <!-- Stats table -->
+        <div class="bg-gray-800 rounded-2xl overflow-hidden mb-4">
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                    <thead><tr class="border-b border-gray-700 text-gray-400 font-semibold bg-gray-750">
+                        <th class="text-left p-3 min-w-[130px]">Player</th>
+                        <th class="p-3 text-center w-8">G</th>
+                        <th class="p-3 text-center w-8">A</th>
+                        <th class="p-3 text-center w-8">SH</th>
+                        <th class="p-3 text-center w-8">SV</th>
+                        <th class="p-3 text-center w-8">YC</th>
+                        <th class="p-3 text-center w-8">F</th>
+                        <th class="p-3 text-center min-w-[280px]">Log Stat</th>
+                    </tr></thead>
+                    <tbody class="divide-y divide-gray-700">
+                        <!-- ON FIELD players -->
+                        <tr class="on-field">
+                            <td class="p-3 text-white font-semibold"><span class="w-2 h-2 rounded-full bg-blue-400 inline-block mr-2"></span>Jake #5 <span class="text-gray-500 font-normal text-[10px]">GK</span></td>
+                            <td class="p-3 text-center text-gray-500">—</td><td class="p-3 text-center text-gray-500">—</td><td class="p-3 text-center text-gray-500">—</td>
+                            <td class="p-3 text-center text-white font-bold">3</td><td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">0</td>
+                            <td class="p-3"><div class="flex gap-1 flex-wrap">
+                                <button class="sBtn opacity-30 cursor-default">+Goal</button>
+                                <button class="sBtn opacity-30 cursor-default">+Assist</button>
+                                <button class="sBtn opacity-30 cursor-default">+Shot</button>
+                                <button class="sBtn bg-blue-900 border-blue-700 text-blue-300">+Save</button>
+                                <button class="sBtn">+YCard</button>
+                                <button class="sBtn">+Foul</button>
+                            </div></td>
+                        </tr>
+                        <tr class="on-field">
+                            <td class="p-3 text-white font-semibold"><span class="w-2 h-2 rounded-full bg-primary-400 inline-block mr-2"></span>Maya #9 <span class="text-gray-500 font-normal text-[10px]">ST</span></td>
+                            <td class="p-3 text-center text-green-400 font-bold">2</td><td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">4</td>
+                            <td class="p-3 text-center text-gray-600">—</td><td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">1</td>
+                            <td class="p-3"><div class="flex gap-1 flex-wrap">
+                                <button class="sBtn bg-green-900 border-green-700 text-green-300">+Goal</button>
+                                <button class="sBtn">+Assist</button>
+                                <button class="sBtn">+Shot</button>
+                                <button class="sBtn opacity-30 cursor-default">+Save</button>
+                                <button class="sBtn">+YCard</button>
+                                <button class="sBtn">+Foul</button>
+                            </div></td>
+                        </tr>
+                        <tr class="on-field">
+                            <td class="p-3 text-white font-semibold"><span class="w-2 h-2 rounded-full bg-primary-400 inline-block mr-2"></span>Zoe #10 <span class="text-gray-500 font-normal text-[10px]">LM</span></td>
+                            <td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300 font-bold">1</td><td class="p-3 text-center text-gray-300">2</td>
+                            <td class="p-3 text-center text-gray-600">—</td><td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">0</td>
+                            <td class="p-3"><div class="flex gap-1 flex-wrap">
+                                <button class="sBtn">+Goal</button><button class="sBtn">+Assist</button><button class="sBtn">+Shot</button>
+                                <button class="sBtn opacity-30 cursor-default">+Save</button><button class="sBtn">+YCard</button><button class="sBtn">+Foul</button>
+                            </div></td>
+                        </tr>
+                        <tr class="on-field">
+                            <td class="p-3 text-white font-semibold"><span class="w-2 h-2 rounded-full bg-primary-400 inline-block mr-2"></span>Marcus #7 <span class="text-amber-400 font-normal text-[10px]">LD · ⚠YC</span></td>
+                            <td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">0</td>
+                            <td class="p-3 text-center text-gray-600">—</td><td class="p-3 text-center ycard">1⚠</td><td class="p-3 text-center text-red-400 font-bold">2</td>
+                            <td class="p-3"><div class="flex gap-1 flex-wrap">
+                                <button class="sBtn">+Goal</button><button class="sBtn">+Assist</button><button class="sBtn">+Shot</button>
+                                <button class="sBtn opacity-30 cursor-default">+Save</button>
+                                <button class="sBtn bg-amber-900 border-amber-600 text-amber-300">+YCard</button>
+                                <button class="sBtn">+Foul</button>
+                            </div></td>
+                        </tr>
+                        <tr class="on-field">
+                            <td class="p-3 text-white font-semibold"><span class="w-2 h-2 rounded-full bg-primary-400 inline-block mr-2"></span>Connor #6 <span class="text-gray-500 font-normal text-[10px]">RM</span></td>
+                            <td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">1</td><td class="p-3 text-center text-gray-300">1</td>
+                            <td class="p-3 text-center text-gray-600">—</td><td class="p-3 text-center text-gray-300">0</td><td class="p-3 text-center text-gray-300">0</td>
+                            <td class="p-3"><div class="flex gap-1 flex-wrap">
+                                <button class="sBtn">+Goal</button><button class="sBtn">+Assist</button><button class="sBtn">+Shot</button>
+                                <button class="sBtn opacity-30 cursor-default">+Save</button><button class="sBtn">+YCard</button><button class="sBtn">+Foul</button>
+                            </div></td>
+                        </tr>
+                        <!-- Bench rows -->
+                        <tr class="bench">
+                            <td class="p-3 text-gray-500"><span class="w-2 h-2 rounded-full bg-gray-600 inline-block mr-2"></span>Lily #4 <span class="text-gray-600 text-[10px]">bench</span></td>
+                            <td class="p-3 text-center text-gray-700">—</td><td class="p-3 text-center text-gray-700">—</td><td class="p-3 text-center text-gray-700">—</td>
+                            <td class="p-3 text-center text-gray-700">—</td><td class="p-3 text-center text-gray-700">—</td><td class="p-3 text-center text-gray-700">—</td>
+                            <td class="p-3"><div class="flex gap-1 flex-wrap opacity-30">
+                                <button class="sBtn">+Goal</button><button class="sBtn">+Assist</button><button class="sBtn">+Shot</button>
+                                <button class="sBtn">+Save</button><button class="sBtn">+YCard</button><button class="sBtn">+Foul</button>
+                            </div></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Game log -->
+        <h3 class="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-2">Game Log — Last 10 Events</h3>
+        <div class="bg-gray-800 rounded-xl p-3 space-y-1.5">
+            <div class="flex items-center gap-3 text-[11px]"><span class="font-mono text-gray-600 w-14 flex-shrink-0">H1 17:32</span><span class="text-green-400 font-bold flex-shrink-0">GOAL</span><span class="text-gray-300">Maya #9 (assist: Zoe #10) — Shawnee 2–1</span></div>
+            <div class="flex items-center gap-3 text-[11px]"><span class="font-mono text-gray-600 w-14 flex-shrink-0">H1 15:15</span><span class="text-amber-400 font-bold flex-shrink-0">YC</span><span class="text-gray-300">Marcus #7 — late tackle, 1st yellow</span></div>
+            <div class="flex items-center gap-3 text-[11px]"><span class="font-mono text-gray-600 w-14 flex-shrink-0">H1 14:02</span><span class="text-red-400 font-bold flex-shrink-0">OG</span><span class="text-gray-300">Oak Grove goal — corner kick, Shawnee 1–1</span></div>
+            <div class="flex items-center gap-3 text-[11px]"><span class="font-mono text-gray-600 w-14 flex-shrink-0">H1 12:45</span><span class="text-blue-400 font-bold flex-shrink-0">SAVE</span><span class="text-gray-300">Jake #5 — diving save, top right corner</span></div>
+            <div class="flex items-center gap-3 text-[11px]"><span class="font-mono text-gray-600 w-14 flex-shrink-0">H1 08:15</span><span class="text-green-400 font-bold flex-shrink-0">GOAL</span><span class="text-gray-300">Maya #9 (assist: Connor #6) — Shawnee 1–0</span></div>
+            <div class="flex items-center gap-3 text-[11px]"><span class="font-mono text-gray-600 w-14 flex-shrink-0">H1 05:40</span><span class="text-gray-400 font-bold flex-shrink-0">SH</span><span class="text-gray-400">Zoe #10 — shot on target, saved</span></div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== WRAP-UP VIEW ==================== -->
+<div id="v-wrapup" class="vpane hidden bg-gray-900 min-h-[calc(100vh-170px)] flex items-center justify-center p-6">
+    <div class="w-full max-w-lg">
+        <div class="bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div class="bg-gradient-to-r from-green-600 to-emerald-700 px-6 py-5 text-white">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-bold">Final Whistle — Wrap Up</h2>
+                        <p class="text-green-100 text-xs">vs Oak Grove United &middot; Feb 22, 2026</p>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 space-y-5">
+                <!-- Score confirm -->
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Final Score — Confirm</label>
+                    <div class="flex items-center gap-4">
+                        <div class="flex-1 text-center">
+                            <p class="text-xs text-gray-500 mb-1">Shawnee FC</p>
+                            <input type="number" value="3" class="w-full text-center text-4xl font-black text-green-600 border-2 border-green-200 rounded-xl py-2 focus:outline-none focus:border-green-400">
+                        </div>
+                        <span class="text-3xl font-black text-gray-300 flex-shrink-0">—</span>
+                        <div class="flex-1 text-center">
+                            <p class="text-xs text-gray-500 mb-1">Oak Grove</p>
+                            <input type="number" value="2" class="w-full text-center text-4xl font-black text-gray-700 border-2 border-gray-200 rounded-xl py-2 focus:outline-none focus:border-gray-400">
+                        </div>
+                    </div>
+                </div>
+                <!-- Notes -->
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Post-Game Notes</label>
+                    <textarea class="w-full text-sm border border-gray-200 rounded-xl p-3 focus:ring-2 focus:ring-primary-500 resize-none" rows="3">Good win against a tough press. Maya was outstanding (2 goals). Marcus can't get another yellow next game. H2 we dropped deep too quickly — need to keep shape when protecting a lead.</textarea>
+                    <button class="mt-1 text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                        Voice note
+                    </button>
+                </div>
+                <!-- AI actions -->
+                <div class="flex gap-3">
+                    <button class="flex-1 flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white font-semibold text-sm rounded-xl py-3">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        Analyze Game
+                    </button>
+                    <button class="flex-1 flex items-center justify-center gap-2 border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium text-sm rounded-xl py-3">Generate Summary</button>
+                </div>
+                <!-- AI result -->
+                <div class="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <p class="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-2">AI Analysis — 3 Practice Items</p>
+                    <div class="space-y-1.5">
+                        <div class="flex items-start gap-1.5 text-xs"><span class="text-red-500 flex-shrink-0">⚠</span><span class="text-gray-700"><strong>High:</strong> Crossing accuracy — 2 of 16 crosses found a teammate</span></div>
+                        <div class="flex items-start gap-1.5 text-xs"><span class="text-amber-500 flex-shrink-0">⚠</span><span class="text-gray-700"><strong>Med:</strong> H2 defensive shape — dropped too deep, inviting pressure</span></div>
+                        <div class="flex items-start gap-1.5 text-xs"><span class="text-amber-500 flex-shrink-0">⚠</span><span class="text-gray-700"><strong>Med:</strong> Set-piece defending — 2 corners nearly conceded</span></div>
+                    </div>
+                </div>
+                <a href="#" class="block w-full text-center bg-gray-900 hover:bg-gray-800 text-white font-bold text-sm rounded-xl py-3">Done — See Match Report →</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MOBILE VIEW ==================== -->
+<div id="v-mobile" class="vpane hidden max-w-sm mx-auto px-3 pb-8">
+    <div class="bg-white border-b border-gray-200 px-3 py-2.5 flex items-center justify-between mb-3">
+        <span class="text-sm font-bold text-gray-700">Pre-Game</span>
+        <button class="px-3 py-1.5 text-xs font-bold bg-primary-600 text-white rounded-lg">Game Day Mode →</button>
+    </div>
+    <!-- From Last Game -->
+    <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
+        <p class="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-1.5">From Last Game · vs Westside W 3–1</p>
+        <p class="text-xs text-amber-800 mb-0.5">⚠ 30% shots on target — poor finishing in H2</p>
+        <p class="text-xs text-amber-800 mb-0.5">⚠ Lost aerial duels — Oak Grove will exploit this</p>
+        <p class="text-xs text-gray-700 mb-2">✓ Maya #9 scored twice</p>
+        <button class="w-full text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded-lg py-1.5">Plan Practice Around This →</button>
+    </div>
+    <!-- Game details -->
+    <div class="bg-white rounded-xl border border-gray-200 p-3 mb-3">
+        <p class="text-xs font-bold text-gray-800 mb-1.5">vs Oak Grove United</p>
+        <div class="space-y-1 text-xs text-gray-500">
+            <p>📅 Feb 22 · 4:00 PM</p>
+            <p>🏠 <span class="bg-green-100 text-green-700 font-semibold rounded px-1.5 py-0.5 text-[10px]">HOME</span> · Arrive 3:30 PM</p>
+            <p>👕 Kit: <span class="font-semibold text-red-600">Red/White</span></p>
+        </div>
+    </div>
+    <!-- RSVP -->
+    <div class="bg-white rounded-xl border border-gray-200 p-3 mb-3">
+        <div class="flex items-center justify-between mb-2"><p class="text-xs font-bold text-gray-700">RSVP</p><span class="text-xs font-semibold text-green-600">9 going</span></div>
+        <div class="flex flex-wrap gap-1 mb-1.5">
+            <span class="chip bg-green-100 text-green-800">#5 Jake</span><span class="chip bg-green-100 text-green-800">#3 Sam</span><span class="chip bg-green-100 text-green-800">#12 Ana</span>
+            <span class="chip bg-green-100 text-green-800">#7 Marcus</span><span class="chip bg-green-100 text-green-800">#10 Zoe</span><span class="chip bg-green-100 text-green-800">#9 Maya</span>
+            <span class="chip bg-amber-100 text-amber-800">#4 Lily</span><span class="chip bg-amber-100 text-amber-800">#2 Sofia</span>
+        </div>
+    </div>
+    <!-- AI Focus -->
+    <div class="bg-gradient-to-br from-primary-50 to-indigo-50 border border-primary-200 rounded-xl p-3 mb-3">
+        <p class="text-[10px] font-bold uppercase tracking-wider text-primary-600 mb-1.5">AI Coach Focus</p>
+        <p class="text-xs text-gray-700 leading-relaxed">Oak Grove presses high — play short passes out of the back, be patient. Build through Maya #9 in the channels. Avoid long balls.</p>
+    </div>
+    <!-- Starting 9 -->
+    <div class="bg-white rounded-xl border border-gray-200 p-3 mb-3">
+        <p class="text-xs font-bold text-gray-700 mb-2">Starting 9 — Kickoff</p>
+        <!-- Field visual: simple positional grid -->
+        <div class="space-y-2 text-center">
+            <div class="flex justify-center gap-2">
+                <div class="bg-primary-50 border border-primary-200 rounded-lg px-3 py-1.5"><p class="text-[10px] font-bold text-primary-800">Maya #9</p><p class="text-[9px] text-primary-600">Striker</p></div>
+            </div>
+            <div class="flex justify-center gap-1.5">
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Zoe #10</p><p class="text-[9px] text-gray-500">L-Mid</p></div>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Carlos #8</p><p class="text-[9px] text-gray-500">C-Mid</p></div>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Ethan #11</p><p class="text-[9px] text-gray-500">C-Mid</p></div>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Connor #6</p><p class="text-[9px] text-gray-500">R-Mid</p></div>
+            </div>
+            <div class="flex justify-center gap-1.5">
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Sam #3</p><p class="text-[9px] text-gray-500">R-Def</p></div>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Ana #12</p><p class="text-[9px] text-gray-500">Sweeper</p></div>
+                <div class="bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5"><p class="text-[10px] font-bold text-gray-700">Marcus #7</p><p class="text-[9px] text-gray-500">L-Def</p></div>
+            </div>
+            <div class="flex justify-center gap-2">
+                <div class="bg-blue-50 border border-blue-200 rounded-lg px-3 py-1.5"><p class="text-[10px] font-bold text-blue-800">Jake #5</p><p class="text-[9px] text-blue-600">Keeper</p></div>
+            </div>
+        </div>
+        <button class="mt-2.5 w-full text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded-lg py-1.5">View Full Rotation Canvas →</button>
+    </div>
+</div>
+
+<script>
+    const VIEWS = ['pregame','gd-coach','gd-stats','wrapup','mobile'];
+    const LABELS = {
+        'pregame':  'Pre-Game Mode',
+        'gd-coach': 'Game Day — Coach View',
+        'gd-stats': 'Game Day — Stats View',
+        'wrapup':   'Wrap-Up Panel',
+        'mobile':   'Mobile — Pre-Game'
+    };
+    function show(name) {
+        VIEWS.forEach(v => {
+            const el = document.getElementById('v-' + v);
+            const btn = document.getElementById('b-' + v);
+            if (el) el.classList.add('hidden');
+            if (btn) { btn.classList.remove('bg-primary-500','text-white'); btn.classList.add('bg-gray-100','text-gray-600'); }
+        });
+        const el = document.getElementById('v-' + name);
+        const btn = document.getElementById('b-' + name);
+        if (el) el.classList.remove('hidden');
+        if (btn) { btn.classList.remove('bg-gray-100','text-gray-600'); btn.classList.add('bg-primary-500','text-white'); }
+        document.getElementById('view-label').textContent = LABELS[name] || name;
+        document.body.style.background = ['gd-coach','gd-stats','wrapup'].includes(name) ? '#111827' : '';
+    }
+    show('pregame');
+</script>
+</body>
+</html>

@@ -264,6 +264,7 @@
         import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
+        import { getTeamAccessInfo } from './js/team-access.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -306,12 +307,7 @@
         const recentAssignments = new Map(); // cellKey -> timestamp
         let dragSourceCellKey = null;
         let combinedGames = [];
-        function hasAccess(team, user) {
-            if (!team || !user) return false;
-            if (team.ownerId === user.uid) return true;
-            const email = (user.email || '').toLowerCase();
-            return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
-        }
+        let plannerInitialized = false;
 
         // Game plan state
         let gamePlan = {
@@ -331,6 +327,10 @@
             }
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
+            if (!plannerInitialized) {
+                plannerInitialized = true;
+                loadGamePlanner();
+            }
         });
 
         async function loadGamePlanner() {
@@ -351,10 +351,26 @@
                     getTrackedCalendarEventUids(teamId)
                 ]);
 
-                currentTeam = team;
-                if (!hasAccess(currentTeam, currentUser)) {
-                    alert("You don't have permission to manage this team.");
+                if (!team) {
+                    alert('Team not found.');
                     window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                currentTeam = team;
+                const accessInfo = getTeamAccessInfo(currentUser, { ...currentTeam, id: teamId });
+                const hasManageAccess = accessInfo.hasAccess && accessInfo.accessLevel === 'full';
+                if (!hasManageAccess) {
+                    console.warn('[game-plan] Access denied', {
+                        teamId,
+                        userId: currentUser?.uid || null,
+                        userEmail: currentUser?.email || null,
+                        isAdmin: currentUser?.isAdmin === true,
+                        coachOf: currentUser?.coachOf || [],
+                        accessInfo
+                    });
+                    alert("You don't have permission to manage this team.");
+                    window.location.href = accessInfo.exitUrl || 'dashboard.html';
                     return;
                 }
                 players = allPlayers;
@@ -1019,7 +1035,6 @@
             }
         });
 
-        loadGamePlanner();
     </script>
 </body>
 

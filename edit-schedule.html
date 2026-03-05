@@ -132,6 +132,28 @@
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                         </div>
                         <div>
+                            <label class="block text-sm font-medium text-gray-700">Season Label</label>
+                            <input type="text" id="seasonLabel" placeholder="e.g. 2026 Spring"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <p class="text-xs text-gray-500 mt-1">Used to separate records by season.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Competition Type</label>
+                            <select id="competitionType"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                <option value="league">League</option>
+                                <option value="tournament">Tournament</option>
+                                <option value="scrimmage">Scrimmage</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                                <input type="checkbox" id="countsTowardSeasonRecord" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                Count this game toward season record
+                            </label>
+                        </div>
+                        <div>
                             <label class="block text-sm font-medium text-gray-700">Arrival Time</label>
                             <input type="datetime-local" id="arrivalTime"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
@@ -566,6 +588,7 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { getTeamAccessInfo } from './js/team-access.js';
         import { Timestamp } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -664,10 +687,8 @@
         let currentTeam = null;
         function hasAccess(team, user) {
             if (!team || !user) return false;
-            if (team.ownerId === user.uid) return true;
-            if (user.isAdmin) return true;
-            const email = (user.email || '').toLowerCase();
-            return (team.adminEmails || []).map(e => e.toLowerCase()).includes(email);
+            const accessInfo = getTeamAccessInfo(user, { ...team, id: team.id || currentTeamId });
+            return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
         }
 
         async function init() {
@@ -908,14 +929,22 @@
                         title: event.title,
                         location: event.location || 'TBD',
                         notes: event.notes,
+                        isHome: event.isHome ?? null,
+                        kitColor: event.kitColor || null,
+                        seasonLabel: event.seasonLabel || null,
+                        competitionType: event.competitionType || 'league',
+                        countsTowardSeasonRecord: event.countsTowardSeasonRecord !== false,
+                        arrivalTime: event.arrivalTime || null,
+                        assignments: Array.isArray(event.assignments) ? event.assignments : [],
+                        rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
-                            id: event.id,
-                            eventId: event.id,
-                            isPractice: eventType === 'practice',
-                            isRecurring: false
-                        });
+                        id: event.id,
+                        eventId: event.id,
+                        isPractice: eventType === 'practice',
+                        isRecurring: false
+                    });
                 }
             });
 
@@ -926,6 +955,7 @@
             console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
 
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
 
             // Filter by practice checkbox + schedule view
             const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
@@ -934,16 +964,16 @@
                 return true;
             });
             if (scheduleViewFilter === 'upcoming-all') {
-                filteredEvents = filteredEvents.filter(event => event.date >= now);
+                filteredEvents = filteredEvents.filter(event => event.date >= cutoff);
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-games') {
-                filteredEvents = filteredEvents.filter(event => !event.isPractice && event.date >= now);
+                filteredEvents = filteredEvents.filter(event => !event.isPractice && event.date >= cutoff);
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-practices') {
-                filteredEvents = filteredEvents.filter(event => event.isPractice && event.date >= now);
+                filteredEvents = filteredEvents.filter(event => event.isPractice && event.date >= cutoff);
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'past-all') {
-                filteredEvents = filteredEvents.filter(event => event.date < now);
+                filteredEvents = filteredEvents.filter(event => event.date < cutoff);
                 filteredEvents.sort((a, b) => b.date - a.date);
             }
 
@@ -958,7 +988,7 @@
                 return;
             }
 
-            const nextUpcomingIndex = filteredEvents.findIndex(event => event.date >= now);
+            const nextUpcomingIndex = filteredEvents.findIndex(event => event.date >= cutoff);
             container.innerHTML = practiceNotice + filteredEvents.map((event, index) => {
                 const cardHtml = (() => {
                 if (event.source === 'calendar') {
@@ -1117,7 +1147,7 @@
                 actions = `
                     <a href="${planHref}"
                         class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Plan Practice</a>
-                    <button data-game-id="${practice.masterId}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Availability</button>
+                    <button data-game-id="${practicePlanEventId}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Availability</button>
                     <button onclick="editOccurrence('${practice.masterId}', '${practice.instanceDate}')"
                         class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Manage</button>
                 `;
@@ -1305,6 +1335,9 @@
                             ${game.isHome === true ? '<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
                             ${game.isHome === false ? '<span class="inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
                             ${game.kitColor ? `<span class="inline-block bg-purple-100 text-purple-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
+                            ${game.seasonLabel ? `<span class="inline-block bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold">Season: ${escapeHtml(game.seasonLabel)}</span>` : ''}
+                            ${game.competitionType ? `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(String(game.competitionType).replace(/_/g, ' '))}</span>` : ''}
+                            ${game.countsTowardSeasonRecord === false ? '<span class="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-semibold">No record impact</span>' : ''}
                         </div>
                         ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${formatTime(game.arrivalTime)}</div>` : ''}
                         ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
@@ -1321,6 +1354,7 @@
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
                         ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
+                        ${game.status !== 'cancelled' ? `<a href="game-day.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-orange-100 text-orange-700 rounded text-sm hover:bg-orange-200">Command Center</a>` : ''}
                         <button data-game-id="${game.id}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">RSVPs</button>
                         ${game.status !== 'cancelled' ? `<button data-game-id="${game.id}" class="cancel-game-btn px-3 py-1 border border-orange-300 text-orange-600 rounded text-sm hover:bg-orange-50">Cancel</button>` : '<span class="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-semibold">Cancelled</span>'}
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
@@ -1360,6 +1394,9 @@
             // Populate new fields
             setHomeAway(game.isHome === true ? 'home' : (game.isHome === false ? 'away' : null));
             document.getElementById('kitColor').value = game.kitColor || '';
+            document.getElementById('seasonLabel').value = game.seasonLabel || inferSeasonLabel(date);
+            document.getElementById('competitionType').value = game.competitionType || 'league';
+            document.getElementById('countsTowardSeasonRecord').checked = game.countsTowardSeasonRecord !== false;
             if (game.arrivalTime) {
                 const at = game.arrivalTime.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime);
                 const atStr = new Date(at.getTime() - at.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -1384,6 +1421,14 @@
             document.getElementById('homeAwayHome').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'home' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
             document.getElementById('homeAwayAway').className = `flex-1 px-3 py-2 border rounded-md text-sm font-medium focus:outline-none transition ${val === 'away' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-indigo-50'}`;
         };
+
+        function inferSeasonLabel(dateLike) {
+            const d = dateLike instanceof Date
+                ? dateLike
+                : (dateLike?.toDate ? dateLike.toDate() : new Date(dateLike || Date.now()));
+            if (Number.isNaN(d.getTime())) return String(new Date().getFullYear());
+            return String(d.getFullYear());
+        }
 
         // ===== ASSIGNMENT ROWS =====
         function addAssignmentRow(role = '', value = '') {
@@ -1427,6 +1472,9 @@
             clearLinkedOpponent();
             setHomeAway(null);
             document.getElementById('kitColor').value = '';
+            document.getElementById('seasonLabel').value = inferSeasonLabel(new Date());
+            document.getElementById('competitionType').value = 'league';
+            document.getElementById('countsTowardSeasonRecord').checked = true;
             document.getElementById('arrivalTime').value = '';
             document.getElementById('gameNotes').value = '';
             document.getElementById('assignment-rows').innerHTML = '';
@@ -1446,6 +1494,7 @@
         }
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
+        resetGameForm();
 
         document.getElementById('add-game-form').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1459,9 +1508,10 @@
             try {
                 const isHomeVal = document.getElementById('isHome').value;
                 const arrivalVal = document.getElementById('arrivalTime').value;
+                const parsedGameDate = new Date(dateVal);
                 const gameData = {
                     type: 'game',
-                    date: Timestamp.fromDate(new Date(dateVal)),
+                    date: Timestamp.fromDate(parsedGameDate),
                     opponent,
                     location,
                     statTrackerConfigId: configId || null,
@@ -1470,6 +1520,9 @@
                     opponentTeamPhoto: selectedOpponentTeam ? selectedOpponentTeam.photoUrl || null : null,
                     isHome: isHomeVal === 'home' ? true : (isHomeVal === 'away' ? false : null),
                     kitColor: document.getElementById('kitColor').value.trim() || null,
+                    seasonLabel: document.getElementById('seasonLabel').value.trim() || inferSeasonLabel(parsedGameDate),
+                    competitionType: document.getElementById('competitionType').value || 'league',
+                    countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked,
                     arrivalTime: arrivalVal ? Timestamp.fromDate(new Date(arrivalVal)) : null,
                     notes: document.getElementById('gameNotes').value.trim() || null,
                     assignments: getAssignmentsFromForm()
@@ -1902,6 +1955,9 @@
                     status: 'scheduled',
                     homeScore: 0,
                     awayScore: 0,
+                    seasonLabel: inferSeasonLabel(eventDate),
+                    competitionType: 'league',
+                    countsTowardSeasonRecord: true,
                     calendarEventUid: calendarEvent.uid
                 });
 

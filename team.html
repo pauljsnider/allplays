@@ -231,6 +231,8 @@
     <script type="module">
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { fetchLeagueStandings } from './js/league-standings.js?v=1';
+        import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -269,6 +271,7 @@
         let scheduleViewMode = 'list';
         let scheduleCalendarMonth = new Date().getMonth();
         let scheduleCalendarYear = new Date().getFullYear();
+        let seasonFilterLabel = String(new Date().getFullYear());
 
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -282,6 +285,37 @@
                 <div id="next-game-countdown" class="mb-2"></div>
                 <p class="text-xs text-gray-600 truncate">vs. ${escapeHtml(nextGame.opponent)}</p>
                 <p class="text-xs text-gray-500">${formatDate(nextGame.date)} • ${formatTime(nextGame.date)}</p>
+            `;
+        }
+
+        function renderLeagueOverviewBody(leagueSnapshot, team) {
+            const sourceUrl = team?.leagueUrl ? escapeHtml(team.leagueUrl) : '';
+            if (!sourceUrl) {
+                return '<p class="text-sm text-gray-500">No league link configured</p>';
+            }
+
+            if (!leagueSnapshot || !leagueSnapshot.ok) {
+                return `
+                    <p class="text-sm text-amber-700">Could not load standings</p>
+                    <a class="text-xs text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+                `;
+            }
+
+            const row = leagueSnapshot.match || leagueSnapshot.rows[0];
+            if (!row) {
+                return `
+                    <p class="text-sm text-amber-700">No W/L rows found</p>
+                    <a class="text-xs text-primary-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
+                `;
+            }
+
+            return `
+                <div class="mb-2">
+                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
+                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • PCT ${escapeHtml(row.pct || 'N/A')}</div>
+                </div>
+                <div class="text-xs text-gray-500">PF ${row.pf} · PA ${row.pa} · PD ${row.pd}</div>
+                <a class="text-xs text-primary-600 hover:underline mt-2 inline-block" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
             `;
         }
 
@@ -312,24 +346,27 @@
             return Number.isNaN(d?.getTime?.()) ? null : d;
         }
 
-        function calculateSeasonRecord(games) {
-            let wins = 0;
-            let losses = 0;
-            let ties = 0;
+        function getSeasonRecordMeta(games, selectedSeason) {
+            const record = calculateSeasonRecord(games, { seasonLabel: selectedSeason });
+            const totalGames = record.wins + record.losses + record.ties;
+            const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+            return { record, totalGames, winPercentage };
+        }
 
-            games.forEach(game => {
-                if (game.status === 'completed' && game.homeScore !== undefined && game.awayScore !== undefined) {
-                    if (game.homeScore > game.awayScore) {
-                        wins++;
-                    } else if (game.homeScore < game.awayScore) {
-                        losses++;
-                    } else {
-                        ties++;
-                    }
-                }
-            });
+        function updateSeasonRecordCard(games, selectedSeason) {
+            const titleEl = document.getElementById('season-record-title');
+            const valueEl = document.getElementById('season-record-value');
+            const pctEl = document.getElementById('season-record-pct');
+            const playedEl = document.getElementById('season-record-played');
+            if (!titleEl || !valueEl || !pctEl || !playedEl) return;
 
-            return { wins, losses, ties };
+            const { record, totalGames, winPercentage } = getSeasonRecordMeta(games, selectedSeason);
+            titleEl.textContent = `Season Record (${selectedSeason})`;
+            valueEl.textContent = `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}`;
+            pctEl.textContent = totalGames > 0 ? `(${winPercentage}%)` : '';
+            playedEl.textContent = totalGames === 0
+                ? 'No countable games completed yet'
+                : `${totalGames} game${totalGames === 1 ? '' : 's'} played`;
         }
 
         function formatMMSS(ms) {
@@ -481,11 +518,12 @@
 
         function getNextGame(allEvents) {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const upcomingEvents = allEvents
                 .filter(event => {
                     if (event.type === 'db' && event.status === 'completed') return false;
                     if (event.isPractice && !showPractices) return false;
-                    return event.date > now;
+                    return event.date > cutoff;
                 })
                 .sort((a, b) => a.date - b.date);
 
@@ -600,8 +638,15 @@
                     }
                 }
 
-                // Calculate season record
-                const record = calculateSeasonRecord(dbGames);
+                const seasonLabels = listSeasonLabels(dbGames);
+                if (!seasonLabels.length) {
+                    seasonLabels.push(String(new Date().getFullYear()));
+                }
+                if (!seasonLabels.includes(seasonFilterLabel)) {
+                    const currentYearLabel = String(new Date().getFullYear());
+                    seasonFilterLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0];
+                }
+                const seasonMeta = getSeasonRecordMeta(dbGames, seasonFilterLabel);
 
                 // Render Header
                 document.getElementById('team-header').innerHTML = `
@@ -628,6 +673,15 @@
                                     </a>`
                         : ''
                     }
+                                ${team.leagueUrl
+                        ? `<a class="inline-flex items-center gap-1 text-sm text-primary-700 hover:text-primary-800 transition" target="_blank" rel="noopener noreferrer" href="${escapeHtml(team.leagueUrl)}">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 000 5.656m-3.656-9.192l-3.536 3.536a4 4 0 000 5.656 4 4 0 005.656 0l1.414-1.414m-3.536-3.536l1.414-1.414a4 4 0 015.656 0 4 4 0 010 5.656l-3.536 3.536"></path>
+                                        </svg>
+                                        League Page
+                                    </a>`
+                        : ''
+                    }
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
                         </div>
@@ -635,8 +689,12 @@
                 `;
 
                 // Render Season Overview Cards
-                const totalGames = dbGames.filter(g => g.status === 'completed').length;
-                const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+                const totalGames = seasonMeta.totalGames;
+                const winPercentage = seasonMeta.winPercentage;
+                const record = seasonMeta.record;
+                const leagueSnapshot = team.leagueUrl
+                    ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
+                    : { ok: false, reason: 'missing-url', rows: [], match: null };
 
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
@@ -649,21 +707,26 @@
                     <!-- Season Record -->
                     <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
                         <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record</h3>
+                            <div class="flex flex-col gap-1">
+                                <h3 id="season-record-title" class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record (${seasonFilterLabel})</h3>
+                                <select id="season-record-filter" class="text-xs border border-gray-200 rounded px-2 py-0.5 text-gray-700">
+                                    ${seasonLabels.map((label) => `<option value="${escapeHtml(label)}" ${label === seasonFilterLabel ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                                </select>
+                            </div>
                             <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                             </svg>
                         </div>
                         <div class="flex items-baseline gap-2">
-                            <span class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
+                            <span id="season-record-value" class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
                             ${totalGames > 0
-                            ? `<span class="text-sm text-gray-500">(${winPercentage}%)</span>`
-                            : ''
+                            ? `<span id="season-record-pct" class="text-sm text-gray-500">(${winPercentage}%)</span>`
+                            : '<span id="season-record-pct" class="text-sm text-gray-500"></span>'
                         }
                         </div>
                         ${totalGames === 0
-                            ? `<p class="text-xs text-gray-500 mt-2">No games completed yet</p>`
-                            : `<p class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
+                            ? `<p id="season-record-played" class="text-xs text-gray-500 mt-2">No countable games completed yet</p>`
+                            : `<p id="season-record-played" class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
                         }
                     </div>
 
@@ -689,7 +752,26 @@
                         <div class="text-3xl md:text-4xl font-bold text-gray-900">${players.length}</div>
                         <p class="text-xs text-gray-500 mt-2">Active player${players.length === 1 ? '' : 's'}</p>
                     </div>
+
+                    <!-- League Standings -->
+                    <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">League Standings</h3>
+                            <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-5m3 5V7m3 10v-3m4 8H5a2 2 0 01-2-2V4a2 2 0 012-2h14a2 2 0 012 2v16a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                        ${renderLeagueOverviewBody(leagueSnapshot, team)}
+                    </div>
                 `;
+
+                const seasonFilterEl = document.getElementById('season-record-filter');
+                if (seasonFilterEl) {
+                    seasonFilterEl.addEventListener('change', () => {
+                        seasonFilterLabel = seasonFilterEl.value;
+                        updateSeasonRecordCard(dbGames, seasonFilterLabel);
+                    });
+                }
 
                 // Start countdown updates
                 if (nextGame) {
@@ -973,6 +1055,7 @@
 
         function getFilteredScheduleEvents() {
             const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
             const events = (allScheduleEvents || []).filter((event) => {
                 if (!showPractices && event.isPractice) return false;
                 return true;
@@ -987,19 +1070,19 @@
                 return filtered;
             }
             if (scheduleViewFilter === 'upcoming-games') {
-                filtered = events.filter((event) => !event.isPractice && event.date >= now && !event.isCancelled);
+                filtered = events.filter((event) => !event.isPractice && event.date >= cutoff && !event.isCancelled);
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'upcoming-practices') {
-                filtered = events.filter((event) => event.isPractice && event.date >= now && !event.isCancelled);
+                filtered = events.filter((event) => event.isPractice && event.date >= cutoff && !event.isCancelled);
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'all-upcoming') {
-                filtered = events.filter((event) => event.date >= now && !event.isCancelled);
+                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled);
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'past-events') {
-                filtered = events.filter((event) => event.date < now || event.isCancelled);
+                filtered = events.filter((event) => event.date < cutoff || event.isCancelled);
                 return filtered.sort((a, b) => b.date - a.date);
             }
 
@@ -1221,7 +1304,7 @@
         function renderCalendarEvent(event) {
             const isPractice = event.isPractice;
             const isCancelled = event.isCancelled;
-            const isUpcoming = !isCancelled && event.date > new Date();
+            const isUpcoming = !isCancelled && event.date > new Date(Date.now() - 3 * 60 * 60 * 1000);
 
             // Determine border color: cancelled = gray, practice = yellow, upcoming = primary, past = gray
             const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-400' : (isUpcoming ? 'border-primary-500' : 'border-gray-300'));

@@ -189,20 +189,20 @@ Success metric:
 - [x] `data-testid` selector convention documented in `docs/playwright-setup.md`
 
 ### Integration (Playwright)
-- [ ] Auth + signup guardrails suite complete
-- [ ] Role/access-control suite complete
-- [ ] Schedule/tracker routing suite complete
-- [ ] Practice + parent workflow suite complete
-- [ ] Security/isolation negative suite complete
+- [x] Auth + signup guardrails suite complete
+- [x] Role/access-control suite complete
+- [x] Schedule/tracker routing suite complete
+- [x] Practice + parent workflow suite complete
+- [x] Security/isolation negative suite complete
 
 ### Unit Tests
-- [ ] `vitest` harness and coverage configured
-- [ ] `js/utils.js` unit tests complete
-- [ ] Extracted tracker logic unit tests complete
-- [ ] Query/payload helper unit tests complete
+- [x] `vitest` harness and coverage configured
+- [x] `js/utils.js` unit tests complete
+- [x] Extracted tracker logic unit tests complete
+- [x] Query/payload helper unit tests complete
 
 ### Reliability and Reporting
-- [ ] Suite tags and shard strategy finalized
+- [x] Suite tags and shard strategy finalized
 - [ ] Flake rate under 2%
 - [ ] Runtime targets met
 - [ ] Weekly evidence report published

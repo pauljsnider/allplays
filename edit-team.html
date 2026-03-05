@@ -87,6 +87,14 @@
                         placeholder="For game summaries">
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">League Link (optional)</label>
+                    <input type="url" id="leagueUrl"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                        placeholder="https://teamsideline.com/sites/.../schedule/...">
+                    <p class="text-xs text-gray-500 mt-1">Used to display external league standings (W/L/T) on the team page.</p>
+                </div>
+
                 <div class="flex items-start">
                     <div class="flex items-center h-5">
                         <input id="isPublic" type="checkbox"
@@ -184,6 +192,7 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { hasFullTeamAccess } from './js/team-access.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -231,10 +240,7 @@
                 document.getElementById('page-title').textContent = 'Edit Team';
                 const team = await getTeam(teamId);
                 if (team) {
-                    // Check ownership
-                    const isAdmin = (team.adminEmails || []).map(e => e.toLowerCase()).includes((currentUser.email || '').toLowerCase());
-
-                    if (team.ownerId !== currentUser.uid && !isAdmin && !currentUser.isAdmin) {
+                    if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
                         alert("You don't have permission to edit this team.");
                         window.location.href = 'dashboard.html';
                         return;
@@ -244,6 +250,7 @@
                     document.getElementById('description').value = team.description || '';
                     document.getElementById('sport').value = team.sport || '';
                     document.getElementById('notificationEmail').value = team.notificationEmail || '';
+                    document.getElementById('leagueUrl').value = team.leagueUrl || '';
                     document.getElementById('zip').value = team.zip || '';
                     document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
                     adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
@@ -414,7 +421,7 @@
         // Copy admin signup link button
         document.getElementById('copy-admin-link-btn').addEventListener('click', async () => {
             const code = document.getElementById('admin-code-text').textContent;
-            const signupUrl = `${window.location.origin}/login.html?code=${code}`;
+            const signupUrl = `${window.location.origin}/login.html?code=${code}&type=admin`;
             try {
                 await navigator.clipboard.writeText(signupUrl);
                 const btn = document.getElementById('copy-admin-link-btn');
@@ -458,6 +465,7 @@
                     description: document.getElementById('description').value,
                     sport: document.getElementById('sport').value,
                     notificationEmail: document.getElementById('notificationEmail').value,
+                    leagueUrl: document.getElementById('leagueUrl').value.trim(),
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,

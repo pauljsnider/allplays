@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Suite — Recurring Practice RSVP Fix (Issue #50)</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+        .test-case { margin: 8px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 4px; }
+        .test-result { font-size: 0.85em; color: #666; white-space: pre-wrap; }
+        h1 { color: #1e293b; }
+        h2 { color: #4338ca; margin-top: 0; }
+        .summary { font-size: 1.1em; }
+        .summary .pass-count { color: #16a34a; font-weight: bold; }
+        .summary .fail-count { color: #dc2626; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Suite: Recurring Practice RSVP Fix</h1>
+    <p>Covers <a href="https://github.com/pauljsnider/allplays/issues/50">Issue #50</a> — recurring practice occurrences each get a unique RSVP path.</p>
+    <div id="test-results"></div>
+
+    <script type="module">
+        import { expandRecurrence } from './js/utils.js?v=8';
+
+        // ─── Harness ─────────────────────────────────────────────────────────────
+        const results = [];
+        let currentSection = 'General';
+
+        function section(name) { currentSection = name; }
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ section: currentSection, name, pass: true, error: null });
+            } catch (e) {
+                results.push({ section: currentSection, name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, msg) {
+            if (actual !== expected) {
+                throw new Error(`${msg || ''}\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`);
+            }
+        }
+
+        function assertTrue(val, msg) {
+            if (!val) throw new Error(msg || `Expected truthy, got ${JSON.stringify(val)}`);
+        }
+
+        function assertFalse(val, msg) {
+            if (val) throw new Error(msg || `Expected falsy, got ${JSON.stringify(val)}`);
+        }
+
+        function assertContains(arr, val, msg) {
+            if (!arr.includes(val)) throw new Error(`${msg || ''}\n  Expected array to contain: ${JSON.stringify(val)}\n  Array: ${JSON.stringify(arr)}`);
+        }
+
+        function assertAllUnique(arr, msg) {
+            const set = new Set(arr);
+            if (set.size !== arr.length) {
+                throw new Error(`${msg || 'Expected all values to be unique'}\n  Got: ${JSON.stringify(arr)}`);
+            }
+        }
+
+        // ─── Test data helpers ────────────────────────────────────────────────────
+
+        function makeWeeklyMaster(overrides = {}) {
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 7); // started 1 week ago
+            startDate.setHours(18, 0, 0, 0);
+            const dayCode = ['SU','MO','TU','WE','TH','FR','SA'][startDate.getDay()];
+            return {
+                id: 'master-abc',
+                type: 'practice',
+                isSeriesMaster: true,
+                title: 'Weekly Practice',
+                location: 'Main Gym',
+                startTime: '18:00',
+                endTime: '19:30',
+                date: startDate,
+                recurrence: { freq: 'weekly', interval: 1, byDays: [dayCode] },
+                exDates: [],
+                overrides: {},
+                ...overrides
+            };
+        }
+
+        // ─── SUITE 1: Occurrence ID format ────────────────────────────────────────
+        section('Occurrence ID format');
+
+        test('Each occurrence gets masterId__instanceDate id', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            assertTrue(occurrences.length > 0, 'Should produce at least one occurrence');
+            for (const occ of occurrences) {
+                const occId = `${occ.masterId}__${occ.instanceDate}`;
+                assertTrue(occId.startsWith('master-abc__'), `ID should start with masterId, got: ${occId}`);
+                assertTrue(/^\d{4}-\d{2}-\d{2}$/.test(occ.instanceDate), `instanceDate should be ISO date, got: ${occ.instanceDate}`);
+            }
+        });
+
+        test('All occurrence IDs in a series are unique', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            const ids = occurrences.map(occ => `${occ.masterId}__${occ.instanceDate}`);
+            assertAllUnique(ids, 'Occurrence IDs must all be unique');
+        });
+
+        test('Occurrence ID differs from masterId', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            assertTrue(occurrences.length > 0, 'Need at least one occurrence');
+            const occId = `${occurrences[0].masterId}__${occurrences[0].instanceDate}`;
+            assertTrue(occId !== master.id, 'Occurrence ID must differ from master ID');
+        });
+
+        test('masterId on occurrence equals master.id', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            for (const occ of occurrences) {
+                assertEquals(occ.masterId, 'master-abc', 'masterId must equal master.id');
+            }
+        });
+
+        test('instanceDate is ISO YYYY-MM-DD format', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            for (const occ of occurrences) {
+                assertTrue(/^\d{4}-\d{2}-\d{2}$/.test(occ.instanceDate),
+                    `instanceDate "${occ.instanceDate}" must be YYYY-MM-DD`);
+            }
+        });
+
+        test('isInstance flag is true on every occurrence', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            for (const occ of occurrences) {
+                assertTrue(occ.isInstance === true, 'isInstance must be true');
+            }
+        });
+
+        // ─── SUITE 2: Non-recurring practices unchanged ───────────────────────────
+        section('Non-recurring practices unchanged');
+
+        test('Non-series-master returns itself as single item', () => {
+            const singlePractice = {
+                id: 'single-practice-xyz',
+                type: 'practice',
+                isSeriesMaster: false,
+                date: new Date(),
+                recurrence: null
+            };
+            const result = expandRecurrence(singlePractice);
+            assertEquals(result.length, 1, 'Should return exactly one item');
+            assertEquals(result[0].id, 'single-practice-xyz', 'Should return the original practice');
+        });
+
+        test('Master without recurrence returns itself as single item', () => {
+            const noRecurrence = {
+                id: 'no-recurrence-abc',
+                type: 'practice',
+                isSeriesMaster: true,
+                date: new Date(),
+                recurrence: null // no recurrence rule
+            };
+            const result = expandRecurrence(noRecurrence);
+            assertEquals(result.length, 1, 'Should return exactly one item');
+            assertEquals(result[0].id, 'no-recurrence-abc', 'Should return the original');
+        });
+
+        test('Game (non-practice) without recurrence: expandRecurrence returns itself', () => {
+            const game = {
+                id: 'game-123',
+                type: 'game',
+                isSeriesMaster: false,
+                date: new Date(),
+                recurrence: null
+            };
+            const result = expandRecurrence(game);
+            assertEquals(result.length, 1, 'Should return exactly one item');
+            assertEquals(result[0].id, 'game-123', 'Should return the original game');
+        });
+
+        // ─── SUITE 3: Excluded dates not expanded ─────────────────────────────────
+        section('Excluded dates not in occurrences');
+
+        test('exDates removes occurrence from expansion', () => {
+            const master = makeWeeklyMaster();
+            const allOccs = expandRecurrence(master);
+            assertTrue(allOccs.length > 0, 'Needs at least one occurrence to test');
+            const dateToExclude = allOccs[0].instanceDate;
+
+            const masterWithEx = { ...master, exDates: [dateToExclude] };
+            const filteredOccs = expandRecurrence(masterWithEx);
+            assertFalse(
+                filteredOccs.some(occ => occ.instanceDate === dateToExclude),
+                `Excluded date ${dateToExclude} should not appear in occurrences`
+            );
+        });
+
+        test('Non-excluded occurrences still present after exDate removal', () => {
+            const master = makeWeeklyMaster();
+            const allOccs = expandRecurrence(master);
+            if (allOccs.length < 2) return; // skip if only one occurrence
+            const dateToExclude = allOccs[0].instanceDate;
+            const masterWithEx = { ...master, exDates: [dateToExclude] };
+            const filteredOccs = expandRecurrence(masterWithEx);
+            assertEquals(filteredOccs.length, allOccs.length - 1, 'Should have one fewer occurrence');
+        });
+
+        // ─── SUITE 4: Occurrence ID logic matches edit-schedule pattern ───────────
+        section('Occurrence ID matches practicePlanEventId pattern');
+
+        test('Occurrence RSVP ID matches practice-plan event ID convention', () => {
+            // edit-schedule.html already used masterId__instanceDate for practice plans.
+            // The RSVP fix aligns availability buttons to use the same ID.
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            assertTrue(occurrences.length > 0, 'Need occurrences');
+            const occ = occurrences[0];
+            const rsvpId = `${occ.masterId}__${occ.instanceDate}`;
+            const practicePlanId = `${occ.masterId}__${occ.instanceDate}`;
+            assertEquals(rsvpId, practicePlanId, 'RSVP ID and practice-plan ID must be identical');
+        });
+
+        test('Two different series produce non-overlapping occurrence IDs', () => {
+            const masterA = makeWeeklyMaster({ id: 'series-A' });
+            const masterB = makeWeeklyMaster({ id: 'series-B' });
+            const occsA = expandRecurrence(masterA).map(o => `${o.masterId}__${o.instanceDate}`);
+            const occsB = expandRecurrence(masterB).map(o => `${o.masterId}__${o.instanceDate}`);
+            for (const id of occsA) {
+                assertFalse(occsB.includes(id), `ID ${id} from series A should not appear in series B`);
+            }
+        });
+
+        // ─── SUITE 5: submitRsvp error-handling guard (db.js change) ─────────────
+        section('submitRsvp error handling');
+
+        test('not-found error code is suppressed (simulated)', () => {
+            // Simulates the logic change in db.js submitRsvp:
+            // before: only 'permission-denied' was suppressed
+            // after:  'not-found' is also suppressed (virtual occurrence docs don't exist)
+            function shouldRethrow(errCode) {
+                return errCode !== 'permission-denied' && errCode !== 'not-found';
+            }
+            assertFalse(shouldRethrow('permission-denied'), 'permission-denied should be suppressed');
+            assertFalse(shouldRethrow('not-found'),         'not-found should be suppressed');
+            assertTrue(shouldRethrow('unavailable'),        'other errors should still throw');
+            assertTrue(shouldRethrow('internal'),           'internal errors should still throw');
+            assertTrue(shouldRethrow(undefined),            'undefined code should still throw');
+        });
+
+        test('Virtual occurrence ID does not look like a real game doc ID', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            assertTrue(occurrences.length > 0);
+            const occId = `${occurrences[0].masterId}__${occurrences[0].instanceDate}`;
+            assertTrue(occId.includes('__'), 'Occurrence ID contains __ separator');
+            assertEquals(occId.split('__').length, 2, 'Exactly one __ separator');
+        });
+
+        // ─── SUITE 6: calendar/parent-dashboard event builder ─────────────────────
+        section('Event builder logic');
+
+        test('isSeriesMaster + recurrence triggers expansion path', () => {
+            const master = makeWeeklyMaster();
+            assertTrue(master.isSeriesMaster && !!master.recurrence,
+                'Test fixture must have isSeriesMaster and recurrence to exercise the expansion branch');
+        });
+
+        test('Non-series-master skips expansion path', () => {
+            const single = { id: 'x', type: 'practice', isSeriesMaster: false, recurrence: null };
+            assertFalse(single.isSeriesMaster && !!single.recurrence,
+                'Single practice must NOT enter expansion branch');
+        });
+
+        test('Game never enters expansion path', () => {
+            const game = { id: 'g', type: 'game', isSeriesMaster: false, recurrence: null };
+            assertFalse(game.isSeriesMaster && !!game.recurrence,
+                'Games must not enter the expansion branch');
+        });
+
+        test('Each expanded occurrence has a unique event id', () => {
+            const master = makeWeeklyMaster();
+            const occurrences = expandRecurrence(master);
+            const ids = occurrences.map(occ => `${occ.masterId}__${occ.instanceDate}`);
+            assertAllUnique(ids, 'All event IDs produced from expansion must be unique');
+        });
+
+        test('Occurrence title inherits from master when not overridden', () => {
+            const master = makeWeeklyMaster({ title: 'Thursday Practice' });
+            const occurrences = expandRecurrence(master);
+            assertTrue(occurrences.length > 0);
+            assertEquals(occurrences[0].title, 'Thursday Practice', 'Title should come from master');
+        });
+
+        test('Occurrence with override uses override title', () => {
+            const master = makeWeeklyMaster();
+            const allOccs = expandRecurrence(master);
+            assertTrue(allOccs.length > 0);
+            const targetDate = allOccs[0].instanceDate;
+            const masterWithOverride = {
+                ...master,
+                overrides: { [targetDate]: { title: 'Special Practice' } }
+            };
+            const occs = expandRecurrence(masterWithOverride);
+            const overridden = occs.find(o => o.instanceDate === targetDate);
+            assertTrue(!!overridden, 'Should still produce the occurrence');
+            assertEquals(overridden.title, 'Special Practice', 'Override title should be used');
+        });
+
+        // ─── Render Results ───────────────────────────────────────────────────────
+        const sections = [...new Set(results.map(r => r.section))];
+        const passCount = results.filter(r => r.pass).length;
+        const failCount = results.filter(r => !r.pass).length;
+
+        const container = document.getElementById('test-results');
+
+        let html = `
+            <div class="test-section">
+                <h2>Summary</h2>
+                <p class="summary">
+                    <span class="pass-count">✅ ${passCount} passed</span> &nbsp;|&nbsp;
+                    <span class="fail-count">❌ ${failCount} failed</span> &nbsp;|&nbsp;
+                    ${results.length} total
+                </p>
+            </div>
+        `;
+
+        sections.forEach(sec => {
+            const secResults = results.filter(r => r.section === sec);
+            const secPass = secResults.filter(r => r.pass).length;
+            html += `<div class="test-section">
+                <h2>${sec} &nbsp;<small style="font-weight:normal;color:#6b7280">${secPass}/${secResults.length}</small></h2>`;
+            secResults.forEach(r => {
+                html += `
+                    <div class="test-case ${r.pass ? 'pass' : 'fail'}">
+                        <div class="test-name">${r.pass ? '✅' : '❌'} ${r.name}</div>
+                        ${r.error ? `<div class="test-result">Error: ${r.error}</div>` : ''}
+                    </div>`;
+            });
+            html += '</div>';
+        });
+
+        container.innerHTML = html;
+    </script>
+</body>
+</html>

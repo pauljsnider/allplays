@@ -56,6 +56,8 @@ slack_api_post() {
     return 0
   else
     curl_exit=$?
+  fi
+  if [[ "$curl_exit" -ne 0 ]]; then
     curl_err="$(cat "$stderr_file" 2>/dev/null || true)"
     rm -f "$stderr_file" "$resp_file"
     if [[ -n "$curl_err" ]]; then
