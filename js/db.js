@@ -956,7 +956,7 @@ export async function publishBracket(teamId, bracketId, options = {}) {
         ...existingBracket,
         status: 'published',
         publishedBy,
-        publishedAt: publishedAt.toDate().toISOString()
+        publishedAt
     };
     const publishedView = buildPublishedBracketView(publishedBracket);
 
