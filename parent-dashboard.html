@@ -445,6 +445,7 @@
                 const directionEl = document.getElementById(`ride-direction-${eventKey}`);
                 const noteEl = document.getElementById(`ride-note-${eventKey}`);
                 const seatCapacity = Number.parseInt(seatsEl?.value || '0', 10);
+                await ensureParentTeamAccess(currentUserId, [teamId], { strict: true });
                 await createRideOffer(teamId, gameId, {
                     seatCapacity,
                     direction: directionEl?.value || 'to',
@@ -697,7 +698,8 @@
             }
         }
 
-        async function ensureParentTeamAccess(userId, teamIds) {
+        async function ensureParentTeamAccess(userId, teamIds, options = {}) {
+            const strict = !!options?.strict;
             if (!userId || !Array.isArray(teamIds) || teamIds.length === 0) return;
             try {
                 const profile = await getUserProfile(userId);
@@ -719,6 +721,9 @@
                 }
             } catch (err) {
                 console.warn('Failed to ensure parent team access:', err);
+                if (strict) {
+                    throw err;
+                }
             }
         }
 
