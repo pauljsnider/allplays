@@ -288,11 +288,14 @@ async function getUserIdsByEmails(emails) {
   if (!uniqueEmails.length) return [];
 
   const ids = new Set();
-  for (let i = 0; i < uniqueEmails.length; i += 10) {
-    const chunk = uniqueEmails.slice(i, i + 10);
-    const usersSnap = await firestore.collection('users').where('email', 'in', chunk).get();
-    usersSnap.forEach((docSnap) => ids.add(docSnap.id));
-  }
+  const lookupResults = await Promise.allSettled(
+    uniqueEmails.map((email) => admin.auth().getUserByEmail(email))
+  );
+  lookupResults.forEach((result) => {
+    if (result.status === 'fulfilled' && result.value?.uid) {
+      ids.add(result.value.uid);
+    }
+  });
   return Array.from(ids);
 }
 
@@ -382,22 +385,37 @@ async function sendCategoryNotification({
   if (!targets.length) return null;
 
   const link = buildNotificationLink({ category, teamId, gameId });
-  const sendResult = await admin.messaging().sendEachForMulticast({
-    tokens: targets.map((target) => target.token),
-    notification: { title, body },
-    data: {
-      teamId: String(teamId),
-      gameId: String(gameId || ''),
-      category: String(category),
-      link
-    },
-    webpush: {
-      fcmOptions: { link }
-    }
-  });
+  const maxMulticastTokens = 500;
+  const allResponses = [];
+  let successCount = 0;
+  let failureCount = 0;
 
-  await pruneInvalidTokens(sendResult, targets);
-  return sendResult;
+  for (let i = 0; i < targets.length; i += maxMulticastTokens) {
+    const targetChunk = targets.slice(i, i + maxMulticastTokens);
+    const sendResult = await admin.messaging().sendEachForMulticast({
+      tokens: targetChunk.map((target) => target.token),
+      notification: { title, body },
+      data: {
+        teamId: String(teamId),
+        gameId: String(gameId || ''),
+        category: String(category),
+        link
+      },
+      webpush: {
+        fcmOptions: { link }
+      }
+    });
+    allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
+    successCount += Number(sendResult.successCount || 0);
+    failureCount += Number(sendResult.failureCount || 0);
+    await pruneInvalidTokens(sendResult, targetChunk);
+  }
+
+  return {
+    responses: allResponses,
+    successCount,
+    failureCount
+  };
 }
 
 exports.notifyTeamChatMessageCreated = functions.firestore
@@ -405,12 +423,15 @@ exports.notifyTeamChatMessageCreated = functions.firestore
   .onCreate(async (snapshot, context) => {
     const data = snapshot.data() || {};
     const text = String(data.text || '').trim();
-    if (!text) return null;
+    const imageUrl = String(data.imageUrl || '').trim();
+    if (!text && !imageUrl) return null;
 
     const teamId = context.params.teamId;
     const actorUid = data.senderId || null;
     const senderName = String(data.senderName || 'Team').trim();
-    const body = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+    const body = text
+      ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
+      : 'Sent a photo';
 
     return sendCategoryNotification({
       teamId,
