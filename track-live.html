@@ -1556,6 +1556,25 @@
                     el.textContent = '0';
                 });
 
+                // Apply local reset immediately so UI always clears even if network writes stall/fail.
+                liveState.isLive = false;
+                liveState.lastClockSyncAt = 0;
+                if (currentGame) {
+                    currentGame.liveStatus = 'scheduled';
+                    currentGame.liveHasData = false;
+                    currentGame.homeScore = 0;
+                    currentGame.awayScore = 0;
+                    currentGame.opponentStats = {};
+                }
+                updateScoreDisplay();
+                renderGameLog();
+                renderStatsTable();
+                renderOpponentTable();
+                document.getElementById('liveBadge').classList.add('hidden');
+                document.getElementById('shareLiveBtn').classList.add('hidden');
+                document.getElementById('shareLiveShareBtn').classList.add('hidden');
+                updateTimer();
+
                 // Clear aggregated stats in Firebase
                 try {
                     const eventsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
@@ -1588,26 +1607,9 @@
                         opponentStats: gameState.opponentStats
                     });
                     await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
-                    if (currentGame) {
-                        currentGame.liveStatus = 'scheduled';
-                        currentGame.liveHasData = false;
-                        currentGame.homeScore = 0;
-                        currentGame.awayScore = 0;
-                        currentGame.opponentStats = {};
-                    }
                 } catch (error) {
                     console.error('Error clearing stats:', error);
                 }
-
-                updateScoreDisplay();
-                renderGameLog();
-                renderStatsTable();
-                renderOpponentTable();
-                document.getElementById('liveBadge').classList.add('hidden');
-                document.getElementById('shareLiveBtn').classList.add('hidden');
-                document.getElementById('shareLiveShareBtn').classList.add('hidden');
-                liveState.isLive = false;
-                updateTimer();
             }
         }
 
