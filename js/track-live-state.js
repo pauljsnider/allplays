@@ -25,7 +25,8 @@ export function summarizePersistedTrackingState({
 export function buildTrackLiveResetUpdate({
   currentGame = {},
   period = 'Q1',
-  liveLineup = { onCourt: [], bench: [] }
+  liveLineup = { onCourt: [], bench: [] },
+  liveResetAt = Date.now()
 } = {}) {
   const onCourt = Array.isArray(liveLineup?.onCourt) ? [...liveLineup.onCourt] : [];
   const bench = Array.isArray(liveLineup?.bench) ? [...liveLineup.bench] : [];
@@ -37,6 +38,7 @@ export function buildTrackLiveResetUpdate({
     opponentStats: {},
     liveStatus: 'scheduled',
     liveHasData: false,
+    liveResetAt,
     opponent: currentGame?.opponent,
     opponentTeamId: currentGame?.opponentTeamId || '',
     opponentTeamName: currentGame?.opponentTeamName || '',
