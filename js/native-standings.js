@@ -38,6 +38,11 @@ function compareNumbersAsc(a, b) {
     return a < b ? -1 : 1;
 }
 
+function isFinalGameStatus(game) {
+    const status = String(game?.status || '').toLowerCase();
+    return status === 'completed' || status === 'final';
+}
+
 function getHeadToHeadSummary(games, teamA, teamB) {
     let winsA = 0;
     let winsB = 0;
@@ -93,16 +98,14 @@ function buildRecordString(entry) {
 
 export function computeNativeStandings(gamesInput, configInput = {}) {
     const games = Array.isArray(gamesInput) ? gamesInput : [];
+    const completedGames = games.filter(isFinalGameStatus);
     const rankingMode = safeRankingMode(configInput.rankingMode);
     const pointsSchema = safePointsSchema(configInput.points);
     const tiebreakers = safeTiebreakers(configInput.tiebreakers);
 
     const tableByTeam = new Map();
 
-    for (const game of games) {
-        const status = String(game?.status || '').toLowerCase();
-        if (status && status !== 'completed' && status !== 'final') continue;
-
+    for (const game of completedGames) {
         const homeTeam = normalizeTeamName(game?.homeTeam);
         const awayTeam = normalizeTeamName(game?.awayTeam);
         const homeScore = Number(game?.homeScore);
@@ -165,7 +168,7 @@ export function computeNativeStandings(gamesInput, configInput = {}) {
         if (primary !== 0) return primary;
 
         for (const tiebreaker of tiebreakers) {
-            const decision = compareByTiebreaker(tiebreaker, a, b, games);
+            const decision = compareByTiebreaker(tiebreaker, a, b, completedGames);
             if (decision !== 0) return decision;
         }
 
