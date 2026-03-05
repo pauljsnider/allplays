@@ -431,7 +431,7 @@ exports.notifyTeamChatMessageCreated = functions.firestore
     const senderName = String(data.senderName || 'Team').trim();
     const body = text
       ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
-      : 'Sent a photo';
+      : 'sent a photo';
 
     return sendCategoryNotification({
       teamId,
