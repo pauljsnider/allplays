@@ -318,13 +318,16 @@ async function getTargetsForCategory(teamId, category, actorUid = null) {
   const queryTasks = userIds
     .filter((uid) => uid && uid !== actorUid)
     .map(async (uid) => {
-      const prefSnap = await firestore.doc(`users/${uid}/notificationPreferences/${teamId}`).get();
+      const prefRef = firestore.doc(`users/${uid}/notificationPreferences/${teamId}`);
+      const devicesRef = firestore.collection(`users/${uid}/notificationDevices`);
+      const [prefSnap, devicesSnap] = await Promise.all([
+        prefRef.get(),
+        devicesRef.get()
+      ]);
       const prefs = prefSnap.exists
         ? normalizeNotificationPreferences(prefSnap.data())
         : DEFAULT_NOTIFICATION_PREFERENCES;
       if (prefs[category] !== true) return [];
-
-      const devicesSnap = await firestore.collection(`users/${uid}/notificationDevices`).get();
       return devicesSnap.docs
         .map((docSnap) => {
           const data = docSnap.data() || {};

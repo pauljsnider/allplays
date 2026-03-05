@@ -73,15 +73,18 @@ function normalizeNotificationLink(rawLink) {
     const link = typeof rawLink === 'string' ? rawLink.trim() : '';
     if (!link) return '/';
 
+    if (link.startsWith('/')) {
+        return link;
+    }
+
     try {
-        const parsed = new URL(link, self.location.origin);
-        const protocolAllowed = parsed.protocol === 'https:' || parsed.protocol === 'http:';
-        const hostAllowed = ALLOWED_CLICK_HOSTS.has(parsed.hostname.toLowerCase());
+        const parsed = new URL(link);
+        const host = parsed.hostname.toLowerCase();
+        const hostAllowed = ALLOWED_CLICK_HOSTS.has(host);
+        const isLocalDevHost = host === 'localhost' || host === '127.0.0.1';
+        const protocolAllowed = parsed.protocol === 'https:' || (isLocalDevHost && parsed.protocol === 'http:');
         if (!protocolAllowed || !hostAllowed) return '/';
 
-        if (parsed.origin === self.location.origin) {
-            return `${parsed.pathname}${parsed.search}${parsed.hash}` || '/';
-        }
         return parsed.toString();
     } catch {
         return '/';
