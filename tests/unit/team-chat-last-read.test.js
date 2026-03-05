@@ -56,13 +56,15 @@ describe('team chat last-read snapshot policy', () => {
 });
 
 describe('team chat last-read lifecycle retry policy', () => {
-    it('retries last-read when user returns to an active chat view with messages loaded', () => {
+    it('retries last-read when user returns to an active chat view with a fresh loaded snapshot and messages', () => {
         expect(shouldRetryChatLastReadOnViewReturn({
             hasCurrentUser: true,
             hasTeamId: true,
             isPageVisible: true,
             isWindowFocused: true,
-            hasMessages: true
+            hasMessages: true,
+            hasLoadedSnapshot: true,
+            isAwaitingPostResumeSnapshot: false
         })).toBe(true);
     });
 
@@ -72,7 +74,33 @@ describe('team chat last-read lifecycle retry policy', () => {
             hasTeamId: true,
             isPageVisible: true,
             isWindowFocused: true,
-            hasMessages: false
+            hasMessages: false,
+            hasLoadedSnapshot: true,
+            isAwaitingPostResumeSnapshot: false
+        })).toBe(false);
+    });
+
+    it('does not retry last-read while waiting for post-resume snapshot freshness', () => {
+        expect(shouldRetryChatLastReadOnViewReturn({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true,
+            hasMessages: true,
+            hasLoadedSnapshot: true,
+            isAwaitingPostResumeSnapshot: true
+        })).toBe(false);
+    });
+
+    it('does not retry last-read before any realtime snapshot has loaded', () => {
+        expect(shouldRetryChatLastReadOnViewReturn({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true,
+            hasMessages: true,
+            hasLoadedSnapshot: false,
+            isAwaitingPostResumeSnapshot: false
         })).toBe(false);
     });
 });
