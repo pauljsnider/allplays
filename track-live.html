@@ -40,7 +40,10 @@
     <style>
         body {
             font-family: 'Montserrat', 'Roboto', sans-serif;
-            background: #f4f4f4;
+            background:
+                radial-gradient(circle at 10% 10%, rgba(56, 189, 248, 0.14), transparent 35%),
+                radial-gradient(circle at 90% 0%, rgba(16, 185, 129, 0.10), transparent 32%),
+                #eef3f8;
             font-size: 14px;
         }
 
@@ -105,12 +108,12 @@
     </style>
 </head>
 
-<body class="bg-gray-50 text-gray-900">
+<body class="bg-transparent text-gray-900">
     <div id="header-container"></div>
 
     <div class="p-2">
         <!-- Game Tracking Header -->
-        <div class="bg-blue-600 text-white p-3 rounded-lg mb-3 shadow-md">
+        <div class="bg-slate-900 text-white p-3 rounded-lg mb-3 shadow-lg border border-sky-400/30">
             <div class="flex justify-between items-center mb-2">
                 <div>
                     <div class="flex items-center gap-2 mb-1">
@@ -167,12 +170,12 @@
         </div>
 
         <!-- Team Stats Table -->
-        <div class="bg-white rounded-lg shadow-md overflow-hidden border-2 border-blue-600 mb-3">
-            <div class="bg-blue-600 text-white p-3 font-bold text-center">Team Stats</div>
+        <div class="bg-white rounded-lg shadow-md overflow-hidden border-2 border-slate-800 mb-3">
+            <div class="bg-slate-800 text-white p-3 font-bold text-center">Team Stats</div>
             <div class="overflow-x-auto">
                 <table class="w-full text-center text-xs" id="statsTable">
                     <thead>
-                        <tr class="bg-gray-100 border-b-2 border-blue-600">
+                        <tr class="bg-gray-100 border-b-2 border-slate-800">
                             <th class="player-name text-left p-1">Player</th>
                             <!-- Column headers will be injected -->
                         </tr>
@@ -226,8 +229,8 @@
         </div>
 
         <!-- Game Log -->
-        <div class="bg-white rounded-lg shadow-md border-2 border-blue-600 p-3 max-h-48 overflow-y-auto">
-            <h3 class="font-bold text-sm text-blue-600 mb-2">Game Log</h3>
+        <div class="bg-white rounded-lg shadow-md border-2 border-slate-800 p-3 max-h-48 overflow-y-auto">
+            <h3 class="font-bold text-sm text-slate-800 mb-2">Game Log</h3>
             <div id="gameLog" class="text-xs">
                 <div class="p-2 bg-gray-100 rounded text-gray-500 text-center">Game log will appear here</div>
             </div>
@@ -337,6 +340,8 @@
         import { db } from './js/firebase.js?v=9';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=9';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
+        import { resolveOpponentDisplayName } from './js/live-game-state.js?v=1';
+        import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { checkAuth } from './js/auth.js?v=9';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
@@ -381,7 +386,8 @@
             gameLog: [],
             playerStats: {}, // In-memory player stats (replaces real-time DB writes)
             opponentStats: {},
-            currentPeriod: 'Q1'
+            currentPeriod: 'Q1',
+            playerFieldStatus: {}
         };
 
         const chatEls = {
@@ -473,11 +479,14 @@
                     });
                 }
 
-                document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
+                document.getElementById('game-title').textContent = `vs. ${escapeHtml(resolveOpponentDisplayName(game))}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
                 homeScore = game.homeScore || 0;
                 awayScore = game.awayScore || 0;
                 updateScoreDisplay();
+                gameState.playerFieldStatus = createFieldState(players);
+                const existingOnField = Array.isArray(game.liveLineup?.onCourt) ? game.liveLineup.onCourt : [];
+                existingOnField.forEach((playerId) => setPlayerFieldStatus(gameState.playerFieldStatus, playerId, 'onField', null));
 
                 // Load Config
                 if (game.statTrackerConfigId) {
@@ -571,12 +580,54 @@
             document.getElementById('away-score').textContent = awayScore;
         }
 
+        function formatFieldTime(ms) {
+            const totalSeconds = Math.floor((ms || 0) / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function getFieldStatus(playerId) {
+            return gameState.playerFieldStatus[playerId]?.status === 'onField' ? 'onField' : 'bench';
+        }
+
+        async function syncLiveLineup() {
+            if (!currentTeamId || !currentGameId) return;
+            const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
+            try {
+                await updateGame(currentTeamId, currentGameId, { liveLineup });
+            } catch (error) {
+                console.warn('Failed to sync live lineup:', error);
+            }
+            if (gameState.isRunning) {
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'lineup',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    onCourt: liveLineup.onCourt,
+                    bench: liveLineup.bench,
+                    description: 'Lineup updated',
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
+            }
+        }
+
+        window.setPlayerFieldStatus = function (playerId, status) {
+            const now = gameState.isRunning ? Date.now() : null;
+            setPlayerFieldStatus(gameState.playerFieldStatus, playerId, status, now);
+            renderStatsTable();
+            syncLiveLineup().catch(console.warn);
+        };
+
         function renderStatsTable() {
             const thead = document.querySelector('#statsTable thead tr');
             const tbody = document.getElementById('statsTableBody');
 
             // Render column headers
             let headersHTML = '<th class="player-name text-left p-1">Player</th>';
+            headersHTML += '<th class="stat-cell-wide p-1">Status</th>';
             currentConfig.columns.forEach(col => {
                 const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
                 headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
@@ -598,6 +649,19 @@
                             <span>#${escapeHtml(player.number || '-')} ${escapeHtml(player.name)}</span>
                         </div>
                     </td>`;
+                const fieldMs = getPlayerFieldElapsedMs(gameState.playerFieldStatus, player.id, gameState.isRunning ? Date.now() : null);
+                const onField = getFieldStatus(player.id) === 'onField';
+                rowHTML += `<td class="stat-cell-wide p-1">
+                    <div class="flex flex-col items-center gap-1">
+                        <div id="field-time-${player.id}" class="text-[10px] font-semibold text-slate-700">${formatFieldTime(fieldMs)}</div>
+                        <div class="flex gap-0.5">
+                            <button class="stat-btn rounded px-1.5 h-5 text-[10px] font-bold border ${onField ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-300'}"
+                                onclick="setPlayerFieldStatus('${player.id}', 'onField')">On</button>
+                            <button class="stat-btn rounded px-1.5 h-5 text-[10px] font-bold border ${onField ? 'bg-white text-gray-600 border-gray-300' : 'bg-gray-700 text-white border-gray-700'}"
+                                onclick="setPlayerFieldStatus('${player.id}', 'bench')">Bench</button>
+                        </div>
+                    </div>
+                </td>`;
 
                 currentConfig.columns.forEach(col => {
                     const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
@@ -1010,6 +1074,7 @@
 
                 gameState.startTime = Date.now() - gameState.elapsed;
                 gameState.isRunning = true;
+                startFieldClock(gameState.playerFieldStatus, Date.now());
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
                 addLogEntry('Game started');
@@ -1028,25 +1093,41 @@
                 }).catch(console.warn);
                 document.getElementById('liveBadge').classList.remove('hidden');
                 document.getElementById('shareLiveBtn').classList.remove('hidden');
+                syncLiveLineup().catch(console.warn);
             }
         }
 
         function stopTimer() {
             if (gameState.isRunning) {
                 gameState.isRunning = false;
+                pauseFieldClock(gameState.playerFieldStatus, Date.now());
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
                 addLogEntry('Game stopped');
+                renderStatsTable();
             }
         }
 
         async function resetTimer() {
             if (confirm('Reset timer and clear all stats? This will also clear saved stats in the database.')) {
+                pauseFieldClock(gameState.playerFieldStatus, Date.now());
                 gameState.startTime = null;
                 gameState.elapsed = 0;
                 gameState.isRunning = false;
                 gameState.gameLog = [];
                 gameState.playerStats = {}; // Clear in-memory player stats
+                gameState.playerFieldStatus = createFieldState(players);
+                opponentPlayers.forEach((opp) => {
+                    const existing = gameState.opponentStats[opp.id] || {};
+                    gameState.opponentStats[opp.id] = {
+                        ...existing,
+                        name: existing.name || opp.name || '',
+                        number: existing.number || '',
+                    };
+                    currentConfig.columns.forEach((col) => {
+                        gameState.opponentStats[opp.id][col.toLowerCase()] = 0;
+                    });
+                });
                 homeScore = 0;
                 awayScore = 0;
 
@@ -1059,14 +1140,45 @@
 
                 // Clear aggregated stats in Firebase
                 try {
+                    const eventsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                    await Promise.all(eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)));
+
                     const statsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
                     await Promise.all(statsSnapshot.docs.map(doc => deleteDoc(doc.ref)));
+
+                    const liveEventsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
+                    await Promise.all(liveEventsSnapshot.docs.map(liveDoc => deleteDoc(liveDoc.ref)));
+
+                    const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
+                    await updateGame(currentTeamId, currentGameId, {
+                        homeScore: 0,
+                        awayScore: 0,
+                        period: gameState.currentPeriod,
+                        liveLineup,
+                        opponentStats: gameState.opponentStats
+                    });
+                    await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
+                    await broadcastLiveEvent(currentTeamId, currentGameId, {
+                        type: 'reset',
+                        period: gameState.currentPeriod,
+                        gameClockMs: 0,
+                        homeScore: 0,
+                        awayScore: 0,
+                        onCourt: liveLineup.onCourt,
+                        bench: liveLineup.bench,
+                        description: 'Game reset',
+                        createdBy: currentUser?.uid || null
+                    }).catch(console.warn);
                 } catch (error) {
                     console.error('Error clearing stats:', error);
                 }
 
                 updateScoreDisplay();
                 renderGameLog();
+                renderStatsTable();
+                renderOpponentTable();
+                document.getElementById('liveBadge').classList.add('hidden');
+                document.getElementById('shareLiveBtn').classList.add('hidden');
                 updateTimer();
             }
         }
@@ -1122,6 +1234,12 @@
 
             document.getElementById('timer').textContent =
                 `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            players.forEach((player) => {
+                const timeEl = document.getElementById(`field-time-${player.id}`);
+                if (!timeEl) return;
+                const elapsedMs = getPlayerFieldElapsedMs(gameState.playerFieldStatus, player.id, gameState.isRunning ? Date.now() : null);
+                timeEl.textContent = formatFieldTime(elapsedMs);
+            });
         }
 
         function getGameTime() {
@@ -1338,7 +1456,7 @@
         // Email Summary Function
         function generateEmailBody(finalHomeScore, finalAwayScore, summary = '') {
             const gameData = {
-                opponent: currentGame.opponent || 'Unknown Opponent',
+                opponent: resolveOpponentDisplayName(currentGame),
                 date: currentGame.date ? new Date(currentGame.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString(),
                 gameTime: getGameTime(),
                 homeScore: finalHomeScore,
@@ -1407,7 +1525,7 @@
 
         function emailSummary() {
             const gameData = {
-                opponent: currentGame.opponent || 'Unknown Opponent'
+                opponent: resolveOpponentDisplayName(currentGame)
             };
             const subject = `${currentTeam.name} vs ${gameData.opponent} - Game Summary`;
             const body = generateEmailBody(homeScore, awayScore, '');
@@ -1438,7 +1556,7 @@
                 const finalAwayScore = parseInt(document.getElementById('finalAwayScore').value) || awayScore;
 
                 // Build comprehensive game context
-                let context = `Game: ${currentTeam.name} vs ${currentGame.opponent}\n`;
+                let context = `Game: ${currentTeam.name} vs ${resolveOpponentDisplayName(currentGame)}\n`;
                 context += `Final Score: ${finalHomeScore} - ${finalAwayScore}\n`;
                 context += `Date: ${currentGame.date ? new Date(currentGame.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString()}\n`;
                 context += `Sport: ${currentTeam.sport || 'Unknown'}\n\n`;
@@ -1630,7 +1748,7 @@ Write the match report now:`;
 
                 // Send email if checkbox is checked
                 if (sendEmail) {
-                    const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
+                    const subject = `${currentTeam.name} vs ${resolveOpponentDisplayName(currentGame)} - Game Summary`;
                     const body = generateEmailBody(finalHome, finalAway, summary);
                     const userEmail = currentUser.email || '';
                     const mailto = `mailto:${userEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
