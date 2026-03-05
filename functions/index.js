@@ -315,31 +315,32 @@ async function getCandidateUserIdsForTeam(teamId) {
 
 async function getTargetsForCategory(teamId, category, actorUid = null) {
   const userIds = await getCandidateUserIdsForTeam(teamId);
-  const targets = [];
+  const queryTasks = userIds
+    .filter((uid) => uid && uid !== actorUid)
+    .map(async (uid) => {
+      const prefSnap = await firestore.doc(`users/${uid}/notificationPreferences/${teamId}`).get();
+      const prefs = prefSnap.exists
+        ? normalizeNotificationPreferences(prefSnap.data())
+        : DEFAULT_NOTIFICATION_PREFERENCES;
+      if (prefs[category] !== true) return [];
 
-  for (const uid of userIds) {
-    if (!uid || uid === actorUid) continue;
-
-    const prefSnap = await firestore.doc(`users/${uid}/notificationPreferences/${teamId}`).get();
-    const prefs = prefSnap.exists
-      ? normalizeNotificationPreferences(prefSnap.data())
-      : DEFAULT_NOTIFICATION_PREFERENCES;
-    if (prefs[category] !== true) continue;
-
-    const devicesSnap = await firestore.collection(`users/${uid}/notificationDevices`).get();
-    devicesSnap.forEach((docSnap) => {
-      const data = docSnap.data() || {};
-      const token = String(data.token || '').trim();
-      if (!token) return;
-      targets.push({
-        uid,
-        deviceId: docSnap.id,
-        token
-      });
+      const devicesSnap = await firestore.collection(`users/${uid}/notificationDevices`).get();
+      return devicesSnap.docs
+        .map((docSnap) => {
+          const data = docSnap.data() || {};
+          const token = String(data.token || '').trim();
+          if (!token) return null;
+          return {
+            uid,
+            deviceId: docSnap.id,
+            token
+          };
+        })
+        .filter(Boolean);
     });
-  }
 
-  return targets;
+  const targetGroups = await Promise.all(queryTasks);
+  return targetGroups.flat();
 }
 
 async function pruneInvalidTokens(sendResult, targets) {
