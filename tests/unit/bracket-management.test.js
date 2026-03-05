@@ -89,6 +89,8 @@ describe('bracket management helpers', () => {
 
         const final = bracket.games.find((game) => game.id === 'R2G1');
         expect(final.homeSlot.teamId).toBe('t1');
+        expect(final.status).toBe('pending');
+        expect(final.winnerTeamId).toBeNull();
     });
 
     it('publishes brackets and exposes public-safe read model', () => {
