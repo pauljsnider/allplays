@@ -1,6 +1,13 @@
 const functions = require('firebase-functions');
+const admin = require('firebase-admin');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+
+if (admin.apps.length === 0) {
+  admin.initializeApp();
+}
+
+const firestore = admin.firestore();
 
 function normalizeIcsText(text) {
   const marker = 'BEGIN:VCALENDAR';
@@ -221,4 +228,224 @@ exports.fetchCalendarIcs = functions
         error: error?.message || 'Unknown error'
       });
     }
+  });
+
+const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
+  liveChat: false,
+  liveScore: false,
+  schedule: false
+});
+
+function normalizeNotificationPreferences(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  return {
+    liveChat: source.liveChat === true,
+    liveScore: source.liveScore === true,
+    schedule: source.schedule === true
+  };
+}
+
+function toNumericScore(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function detectGameNotificationCategory(beforeGame, afterGame) {
+  const beforeHome = toNumericScore(beforeGame?.homeScore);
+  const beforeAway = toNumericScore(beforeGame?.awayScore);
+  const afterHome = toNumericScore(afterGame?.homeScore);
+  const afterAway = toNumericScore(afterGame?.awayScore);
+  if (beforeHome !== afterHome || beforeAway !== afterAway) {
+    return 'liveScore';
+  }
+
+  const scheduleFields = ['date', 'location', 'status', 'opponent', 'title'];
+  const scheduleChanged = scheduleFields.some((field) => {
+    const before = beforeGame?.[field] ?? null;
+    const after = afterGame?.[field] ?? null;
+    return before !== after;
+  });
+
+  return scheduleChanged ? 'schedule' : null;
+}
+
+function buildNotificationLink({ category, teamId, gameId }) {
+  if (category === 'liveChat') {
+    return `https://allplays.ai/team-chat.html?teamId=${encodeURIComponent(teamId)}`;
+  }
+  if (category === 'liveScore' && gameId) {
+    return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
+  }
+  return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
+}
+
+async function getUserIdsByEmails(emails) {
+  const uniqueEmails = Array.from(new Set(
+    (Array.isArray(emails) ? emails : [])
+      .map((email) => String(email || '').trim().toLowerCase())
+      .filter(Boolean)
+  ));
+  if (!uniqueEmails.length) return [];
+
+  const ids = new Set();
+  for (let i = 0; i < uniqueEmails.length; i += 10) {
+    const chunk = uniqueEmails.slice(i, i + 10);
+    const usersSnap = await firestore.collection('users').where('email', 'in', chunk).get();
+    usersSnap.forEach((docSnap) => ids.add(docSnap.id));
+  }
+  return Array.from(ids);
+}
+
+async function getCandidateUserIdsForTeam(teamId) {
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) return [];
+  const team = teamSnap.data() || {};
+
+  const userIds = new Set();
+  if (team.ownerId) userIds.add(team.ownerId);
+
+  const parentSnap = await firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get();
+  parentSnap.forEach((docSnap) => userIds.add(docSnap.id));
+
+  const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
+  adminUserIds.forEach((id) => userIds.add(id));
+
+  return Array.from(userIds);
+}
+
+async function getTargetsForCategory(teamId, category, actorUid = null) {
+  const userIds = await getCandidateUserIdsForTeam(teamId);
+  const targets = [];
+
+  for (const uid of userIds) {
+    if (!uid || uid === actorUid) continue;
+
+    const prefSnap = await firestore.doc(`users/${uid}/notificationPreferences/${teamId}`).get();
+    const prefs = prefSnap.exists
+      ? normalizeNotificationPreferences(prefSnap.data())
+      : DEFAULT_NOTIFICATION_PREFERENCES;
+    if (prefs[category] !== true) continue;
+
+    const devicesSnap = await firestore.collection(`users/${uid}/notificationDevices`).get();
+    devicesSnap.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      const token = String(data.token || '').trim();
+      if (!token) return;
+      targets.push({
+        uid,
+        deviceId: docSnap.id,
+        token
+      });
+    });
+  }
+
+  return targets;
+}
+
+async function pruneInvalidTokens(sendResult, targets) {
+  if (!sendResult || !Array.isArray(sendResult.responses)) return;
+  const removableCodes = new Set([
+    'messaging/invalid-registration-token',
+    'messaging/registration-token-not-registered'
+  ]);
+
+  const removals = [];
+  sendResult.responses.forEach((response, index) => {
+    if (response.success) return;
+    const code = response.error?.code;
+    if (!removableCodes.has(code)) return;
+    const target = targets[index];
+    if (!target?.uid || !target?.deviceId) return;
+    removals.push(
+      firestore.doc(`users/${target.uid}/notificationDevices/${target.deviceId}`).delete()
+    );
+  });
+
+  if (removals.length) {
+    await Promise.allSettled(removals);
+  }
+}
+
+async function sendCategoryNotification({
+  teamId,
+  gameId = null,
+  category,
+  title,
+  body,
+  actorUid = null
+}) {
+  const targets = await getTargetsForCategory(teamId, category, actorUid);
+  if (!targets.length) return null;
+
+  const link = buildNotificationLink({ category, teamId, gameId });
+  const sendResult = await admin.messaging().sendEachForMulticast({
+    tokens: targets.map((target) => target.token),
+    notification: { title, body },
+    data: {
+      teamId: String(teamId),
+      gameId: String(gameId || ''),
+      category: String(category),
+      link
+    },
+    webpush: {
+      fcmOptions: { link }
+    }
+  });
+
+  await pruneInvalidTokens(sendResult, targets);
+  return sendResult;
+}
+
+exports.notifyTeamChatMessageCreated = functions.firestore
+  .document('teams/{teamId}/chatMessages/{messageId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data() || {};
+    const text = String(data.text || '').trim();
+    if (!text) return null;
+
+    const teamId = context.params.teamId;
+    const actorUid = data.senderId || null;
+    const senderName = String(data.senderName || 'Team').trim();
+    const body = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+
+    return sendCategoryNotification({
+      teamId,
+      category: 'liveChat',
+      title: `${senderName}: Team Chat`,
+      body,
+      actorUid
+    });
+  });
+
+exports.notifyGameUpdated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() || {};
+    const after = change.after.data() || {};
+    const category = detectGameNotificationCategory(before, after);
+    if (!category) return null;
+
+    const teamId = context.params.teamId;
+    const gameId = context.params.gameId;
+    const actorUid = after.updatedBy || null;
+
+    if (category === 'liveScore') {
+      return sendCategoryNotification({
+        teamId,
+        gameId,
+        category,
+        title: 'Live score update',
+        body: `Score is now ${toNumericScore(after.homeScore)}-${toNumericScore(after.awayScore)}`,
+        actorUid
+      });
+    }
+
+    return sendCategoryNotification({
+      teamId,
+      gameId,
+      category,
+      title: 'Schedule update',
+      body: 'A team event was updated. Tap to review the latest details.',
+      actorUid
+    });
   });
