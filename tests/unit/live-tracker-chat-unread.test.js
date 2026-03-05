@@ -100,4 +100,39 @@ describe('live tracker chat unread state', () => {
     expect(state.lastChatSnapshotAt).toBe(1000);
     expect(state.lastChatSnapshotIds.sort()).toEqual(['existing-1000', 'new-1000']);
   });
+
+  it('counts new same-millisecond messages after snapshot timestamp advances', () => {
+    let state = {
+      chatInitialized: true,
+      chatExpanded: false,
+      unreadChatCount: 0,
+      lastChatSeenAt: 900,
+      lastChatSnapshotAt: 900,
+      lastChatSnapshotIds: []
+    };
+
+    state = {
+      ...state,
+      ...advanceLiveChatUnreadState({
+        ...state,
+        messages: [message(1000, 'first-1000')],
+        now: 1001
+      })
+    };
+    expect(state.unreadChatCount).toBe(1);
+    expect(state.lastChatSnapshotAt).toBe(1000);
+    expect(state.lastChatSnapshotIds).toEqual(['first-1000']);
+
+    state = {
+      ...state,
+      ...advanceLiveChatUnreadState({
+        ...state,
+        messages: [message(1000, 'first-1000'), message(1000, 'second-1000')],
+        now: 1002
+      })
+    };
+    expect(state.unreadChatCount).toBe(2);
+    expect(state.lastChatSnapshotAt).toBe(1000);
+    expect(state.lastChatSnapshotIds.sort()).toEqual(['first-1000', 'second-1000']);
+  });
 });
