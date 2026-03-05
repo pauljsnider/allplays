@@ -28,6 +28,8 @@ export function shouldUpdateChatLastRead({
  * @param {boolean} params.isPageVisible
  * @param {boolean} params.isWindowFocused
  * @param {boolean} params.hasMessages
+ * @param {boolean} params.hasLoadedSnapshot
+ * @param {boolean} params.isAwaitingPostResumeSnapshot
  * @returns {boolean}
  */
 export function shouldRetryChatLastReadOnViewReturn({
@@ -35,10 +37,14 @@ export function shouldRetryChatLastReadOnViewReturn({
     hasTeamId,
     isPageVisible,
     isWindowFocused,
-    hasMessages
+    hasMessages,
+    hasLoadedSnapshot,
+    isAwaitingPostResumeSnapshot
 }) {
     return Boolean(
         hasMessages &&
+        hasLoadedSnapshot &&
+        !isAwaitingPostResumeSnapshot &&
         shouldUpdateChatLastRead({
             hasCurrentUser,
             hasTeamId,
