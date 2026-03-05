@@ -18,6 +18,9 @@ export function applyResetEventState(currentState, event) {
   const period = event?.period || currentState?.period || 'Q1';
   const onCourt = Array.isArray(event?.onCourt) ? [...event.onCourt] : [];
   const bench = Array.isArray(event?.bench) ? [...event.bench] : [];
+  const priorEventIds = currentState?.eventIds instanceof Set
+    ? new Set(currentState.eventIds)
+    : new Set();
   return {
     ...currentState,
     homeScore: Number.isFinite(event?.homeScore) ? event.homeScore : 0,
@@ -25,7 +28,8 @@ export function applyResetEventState(currentState, event) {
     period,
     gameClockMs: Number.isFinite(event?.gameClockMs) ? event.gameClockMs : 0,
     events: [],
-    eventIds: new Set(),
+    // Keep already-seen ids so pre-reset events are not replayed into fresh state.
+    eventIds: priorEventIds,
     stats: {},
     opponentStats: {},
     onCourt,

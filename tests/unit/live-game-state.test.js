@@ -37,10 +37,22 @@ describe('live game state helpers', () => {
     expect(next.awayScore).toBe(0);
     expect(next.gameClockMs).toBe(0);
     expect(next.events).toEqual([]);
-    expect(Array.from(next.eventIds)).toEqual([]);
+    expect(Array.from(next.eventIds)).toEqual(['e1']);
     expect(next.stats).toEqual({});
     expect(next.opponentStats).toEqual({});
     expect(next.onCourt).toEqual([]);
     expect(next.bench).toEqual(['p1', 'p2']);
+  });
+
+  it('clones prior event ids during reset to avoid mutating source state', () => {
+    const current = {
+      eventIds: new Set(['e1'])
+    };
+
+    const next = applyResetEventState(current, { homeScore: 0, awayScore: 0 });
+    next.eventIds.add('e2');
+
+    expect(Array.from(current.eventIds)).toEqual(['e1']);
+    expect(Array.from(next.eventIds)).toEqual(['e1', 'e2']);
   });
 });
