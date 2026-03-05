@@ -43,7 +43,8 @@ describe('track live state helpers', () => {
       liveLineup: {
         onCourt: ['p1'],
         bench: ['p2', 'p3']
-      }
+      },
+      liveResetAt: 1700000000000
     });
 
     expect(payload).toEqual({
@@ -54,6 +55,7 @@ describe('track live state helpers', () => {
       opponentStats: {},
       liveStatus: 'scheduled',
       liveHasData: false,
+      liveResetAt: 1700000000000,
       opponent: 'Lions',
       opponentTeamId: 'opp-team-1',
       opponentTeamName: 'Lions Academy',
@@ -75,6 +77,7 @@ describe('track live state helpers', () => {
     expect(payload.opponentTeamId).toBe('');
     expect(payload.opponentTeamName).toBe('');
     expect(payload.opponentTeamPhoto).toBe('');
+    expect(payload.liveResetAt).toEqual(expect.any(Number));
     expect(payload.liveLineup).toEqual({ onCourt: ['p1'], bench: ['p2'] });
 
     input.onCourt.push('p3');

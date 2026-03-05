@@ -863,10 +863,12 @@
 
         function scheduleLiveHasData() {
             if (!currentTeamId || !currentGameId) return;
+            if (!liveState.isLive || !gameState.isRunning) return;
             if (currentGame?.liveHasData) return;
             if (liveSync.liveFlagTimeout) return;
             liveSync.liveFlagTimeout = setTimeout(async () => {
                 liveSync.liveFlagTimeout = null;
+                if (!liveState.isLive || !gameState.isRunning) return;
                 try {
                     await updateGame(currentTeamId, currentGameId, { liveHasData: true });
                     if (currentGame) currentGame.liveHasData = true;
