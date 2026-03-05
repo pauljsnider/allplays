@@ -47,23 +47,9 @@ import {
     runTransaction
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
+import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js";
 
-const firebaseConfig = {
-    apiKey: "AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc",
-    authDomain: "game-flow-c6311.firebaseapp.com",
-    projectId: "game-flow-c6311",
-    storageBucket: "game-flow-c6311.firebasestorage.app",
-    messagingSenderId: "1030107289033",
-    appId: "1:1030107289033:web:7154238712942475143046",
-    measurementId: "G-E48D0L8L40"
-};
-
-// SECURITY NOTE: This API key is public by design for Firebase web apps.
-// To secure your app, you MUST restrict this key in the Google Cloud Console:
-// 1. Go to https://console.cloud.google.com/apis/credentials
-// 2. Click on the API key used here.
-// 3. Under "Application restrictions", select "HTTP referrers (web sites)" and add your domain(s).
-// 4. Under "API restrictions", select "Restrict key" and select only the Firebase APIs you use (Auth, Firestore, Storage, etc.).
+const firebaseConfig = await resolvePrimaryFirebaseConfig();
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
