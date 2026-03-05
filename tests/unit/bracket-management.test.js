@@ -93,6 +93,31 @@ describe('bracket management helpers', () => {
         expect(final.winnerTeamId).toBeNull();
     });
 
+    it('does not auto-complete downstream rounds before unresolved upstream winners are known', () => {
+        const bracket = createSingleEliminationBracket({
+            teamId: 'team-1',
+            name: 'Three Team Cup',
+            seeds: [
+                { seed: 1, teamId: 't1', teamName: 'Seed 1' },
+                { seed: 2, teamId: 't2', teamName: 'Seed 2' },
+                { seed: 3, teamId: 't3', teamName: 'Seed 3' }
+            ]
+        });
+
+        const afterRoundOne = reportBracketGameResult(bracket, {
+            gameId: 'R1G2',
+            winnerSlot: 'home',
+            scores: { home: 2, away: 1 }
+        });
+
+        const final = afterRoundOne.games.find((game) => game.id === 'R2G1');
+        expect(final.homeSlot.teamId).toBe('t1');
+        expect(final.awaySlot.teamId).toBe('t2');
+        expect(final.status).toBe('scheduled');
+        expect(final.winnerTeamId).toBeNull();
+        expect(final.completedBy).toBeUndefined();
+    });
+
     it('publishes brackets and exposes public-safe read model', () => {
         const bracket = createSingleEliminationBracket({
             teamId: 'team-1',

@@ -80,6 +80,8 @@ function applyLoserToNextGame(bracket, game, loserTeamId, loserTeamName = null) 
 }
 
 function autoAdvanceByes(bracket) {
+    const isAutoAdvanceByeSlot = (slot) => !slot?.teamId && slot?.sourceType === 'seed';
+
     let changed = true;
     while (changed) {
         changed = false;
@@ -88,8 +90,8 @@ function autoAdvanceByes(bracket) {
 
             const homeTeamId = game.homeSlot?.teamId || null;
             const awayTeamId = game.awaySlot?.teamId || null;
-            const canAutoAdvanceHome = homeTeamId && !awayTeamId && game.awaySlot?.sourceType !== 'winner';
-            const canAutoAdvanceAway = !homeTeamId && awayTeamId && game.homeSlot?.sourceType !== 'winner';
+            const canAutoAdvanceHome = homeTeamId && isAutoAdvanceByeSlot(game.awaySlot);
+            const canAutoAdvanceAway = awayTeamId && isAutoAdvanceByeSlot(game.homeSlot);
 
             if (canAutoAdvanceHome) {
                 game.status = 'completed';
