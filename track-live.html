@@ -876,6 +876,25 @@
             }, 500);
         }
 
+        function clearLiveSyncTimeouts() {
+            if (liveSync.scoreSyncTimeout) {
+                clearTimeout(liveSync.scoreSyncTimeout);
+                liveSync.scoreSyncTimeout = null;
+            }
+            if (liveSync.opponentTimeout) {
+                clearTimeout(liveSync.opponentTimeout);
+                liveSync.opponentTimeout = null;
+            }
+            if (liveSync.liveFlagTimeout) {
+                clearTimeout(liveSync.liveFlagTimeout);
+                liveSync.liveFlagTimeout = null;
+            }
+            liveSync.playerTimeouts.forEach((timeoutId) => {
+                clearTimeout(timeoutId);
+            });
+            liveSync.playerTimeouts.clear();
+        }
+
         async function syncClockToGameDoc() {
             if (!currentTeamId || !currentGameId) return;
             try {
@@ -1382,6 +1401,7 @@
                     if (persistedState.hasPersistedData) {
                         const shouldResume = confirm('This game already has tracked data. Continue where you left off?\n\nClick Cancel to start over and clear previous stats.');
                         if (!shouldResume) {
+                            clearLiveSyncTimeouts();
                             const deletions = [
                                 ...eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)),
                                 ...statsSnap.docs.map(docItem => deleteDoc(docItem.ref)),
@@ -1503,6 +1523,7 @@
 
         async function resetTimer() {
             if (confirm('Reset timer and clear all stats? This will also clear saved stats in the database.')) {
+                clearLiveSyncTimeouts();
                 pauseFieldClock(gameState.playerFieldStatus, Date.now());
                 gameState.startTime = null;
                 gameState.elapsed = 0;
@@ -1549,8 +1570,10 @@
                         awayScore: 0,
                         period: gameState.currentPeriod,
                         liveLineup,
+                        liveHasData: false,
                         opponentStats: gameState.opponentStats
                     });
+                    if (currentGame) currentGame.liveHasData = false;
                     await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     await broadcastLiveEvent(currentTeamId, currentGameId, {
                         type: 'reset',
@@ -1586,6 +1609,7 @@
             }
 
             try {
+                clearLiveSyncTimeouts();
                 // Delete all events
                 const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
                 const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
@@ -1596,12 +1620,13 @@
                 const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
                 await Promise.all(deleteStatsPromises);
 
-                // Reset game status to scheduled if it was started
-                if (currentGame.status !== 'scheduled') {
+                // Reset game status/flags when needed after deleting tracked records
+                if (currentGame.status !== 'scheduled' || currentGame.liveHasData) {
                     await updateGame(currentTeamId, currentGameId, {
                         status: 'scheduled',
                         homeScore: 0,
                         awayScore: 0,
+                        liveHasData: false,
                         // Preserve opponent fields
                         opponent: currentGame.opponent,
                         opponentTeamId: currentGame.opponentTeamId,
@@ -1609,6 +1634,7 @@
                         opponentTeamPhoto: currentGame.opponentTeamPhoto
                     });
                 }
+                if (currentGame) currentGame.liveHasData = false;
                 liveState.isLive = false;
                 liveState.lastClockSyncAt = 0;
 
