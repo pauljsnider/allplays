@@ -39,3 +39,20 @@ export function applyResetEventState(currentState, event) {
     lastRunAnnounced: 0
   };
 }
+
+export function shouldResetViewerFromGameDoc(gameDoc = {}, currentState = {}) {
+  const isScheduledReset =
+    gameDoc?.liveStatus === 'scheduled' &&
+    !gameDoc?.liveHasData &&
+    (Number(gameDoc?.homeScore) || 0) === 0 &&
+    (Number(gameDoc?.awayScore) || 0) === 0;
+
+  if (!isScheduledReset) return false;
+
+  const hasEvents = Array.isArray(currentState?.events) && currentState.events.length > 0;
+  const hasHomeStats = !!(currentState?.stats && Object.keys(currentState.stats).length > 0);
+  const hasOpponentStats = !!(currentState?.opponentStats && Object.keys(currentState.opponentStats).length > 0);
+  const hasScore = (Number(currentState?.homeScore) || 0) > 0 || (Number(currentState?.awayScore) || 0) > 0;
+
+  return hasEvents || hasHomeStats || hasOpponentStats || hasScore;
+}

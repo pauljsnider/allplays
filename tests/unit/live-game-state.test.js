@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -54,5 +54,21 @@ describe('live game state helpers', () => {
 
     expect(Array.from(current.eventIds)).toEqual(['e1']);
     expect(Array.from(next.eventIds)).toEqual(['e1', 'e2']);
+  });
+
+  it('detects scheduled reset from game doc when tracked state exists', () => {
+    const shouldReset = shouldResetViewerFromGameDoc(
+      { liveStatus: 'scheduled', liveHasData: false, homeScore: 0, awayScore: 0 },
+      { events: [{ id: 'e1' }], stats: {}, opponentStats: {}, homeScore: 2, awayScore: 0 }
+    );
+    expect(shouldReset).toBe(true);
+  });
+
+  it('does not force reset from game doc when no tracked state exists', () => {
+    const shouldReset = shouldResetViewerFromGameDoc(
+      { liveStatus: 'scheduled', liveHasData: false, homeScore: 0, awayScore: 0 },
+      { events: [], stats: {}, opponentStats: {}, homeScore: 0, awayScore: 0 }
+    );
+    expect(shouldReset).toBe(false);
   });
 });
