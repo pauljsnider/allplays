@@ -1569,11 +1569,15 @@
                         homeScore: 0,
                         awayScore: 0,
                         period: gameState.currentPeriod,
+                        liveStatus: 'scheduled',
                         liveLineup,
                         liveHasData: false,
                         opponentStats: gameState.opponentStats
                     });
-                    if (currentGame) currentGame.liveHasData = false;
+                    if (currentGame) {
+                        currentGame.liveHasData = false;
+                        currentGame.liveStatus = 'scheduled';
+                    }
                     await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     await broadcastLiveEvent(currentTeamId, currentGameId, {
                         type: 'reset',
@@ -1620,21 +1624,32 @@
                 const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
                 await Promise.all(deleteStatsPromises);
 
-                // Reset game status/flags when needed after deleting tracked records
-                if (currentGame.status !== 'scheduled' || currentGame.liveHasData) {
-                    await updateGame(currentTeamId, currentGameId, {
-                        status: 'scheduled',
-                        homeScore: 0,
-                        awayScore: 0,
-                        liveHasData: false,
-                        // Preserve opponent fields
-                        opponent: currentGame.opponent,
-                        opponentTeamId: currentGame.opponentTeamId,
-                        opponentTeamName: currentGame.opponentTeamName,
-                        opponentTeamPhoto: currentGame.opponentTeamPhoto
-                    });
+                // Delete all live events
+                const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
+                const deleteLiveEventPromises = liveEventsSnap.docs.map(doc => deleteDoc(doc.ref));
+                await Promise.all(deleteLiveEventPromises);
+
+                // Reset game status/flags after deleting tracked records
+                await updateGame(currentTeamId, currentGameId, {
+                    status: 'scheduled',
+                    liveStatus: 'scheduled',
+                    homeScore: 0,
+                    awayScore: 0,
+                    opponentStats: {},
+                    liveHasData: false,
+                    // Preserve opponent fields
+                    opponent: currentGame.opponent,
+                    opponentTeamId: currentGame.opponentTeamId,
+                    opponentTeamName: currentGame.opponentTeamName,
+                    opponentTeamPhoto: currentGame.opponentTeamPhoto
+                });
+                if (currentGame) {
+                    currentGame.liveHasData = false;
+                    currentGame.liveStatus = 'scheduled';
+                    currentGame.homeScore = 0;
+                    currentGame.awayScore = 0;
+                    currentGame.opponentStats = {};
                 }
-                if (currentGame) currentGame.liveHasData = false;
                 liveState.isLive = false;
                 liveState.lastClockSyncAt = 0;
 
