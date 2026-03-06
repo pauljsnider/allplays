@@ -33,7 +33,7 @@ import {
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
-import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
+import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import {
     isTeamActive,
@@ -2794,7 +2794,15 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
     });
     if (docId !== effectiveUserId) {
         const legacyRsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
-        await deleteDoc(legacyRsvpRef);
+        let legacySnap = null;
+        try {
+            legacySnap = await getDoc(legacyRsvpRef);
+        } catch (err) {
+            if (err?.code !== 'permission-denied') throw err;
+        }
+        if (legacySnap?.exists() && shouldDeleteLegacyRsvpForOverride(legacySnap.data(), normalizedPlayerId)) {
+            await deleteDoc(legacyRsvpRef);
+        }
     }
 
     // Keep denormalized summary consistent with submitRsvp behavior.
