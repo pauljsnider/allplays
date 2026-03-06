@@ -1,7 +1,7 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=14';
 import { db } from './firebase.js?v=9';
-import { getUrlParams, escapeHtml } from './utils.js?v=8';
+import { getUrlParams, escapeHtml } from './utils.js?v=9';
 import { checkAuth } from './auth.js?v=9';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
@@ -845,6 +845,23 @@ function undo() {
   }
 }
 
+async function syncClockToGameDoc() {
+  if (!currentTeamId || !currentGameId) return;
+
+  const updates = {
+    liveClockMs: state.clock,
+    liveClockRunning: state.running,
+    liveClockPeriod: state.period,
+    liveClockUpdatedAt: Date.now()
+  };
+
+  try {
+    await updateGame(currentTeamId, currentGameId, updates);
+  } catch (error) {
+    console.warn('Failed to sync live clock to game doc:', error);
+  }
+}
+
 function renderAll() {
   renderHeader();
   renderLineup();
@@ -1193,6 +1210,7 @@ async function startLiveBroadcast() {
   } catch (error) {
     console.warn('Failed to set live status:', error);
   }
+  syncClockToGameDoc();
   scheduleScoreSync();
   initChat();
   initViewerCount();
@@ -1550,6 +1568,7 @@ async function startStop() {
       type: 'clock_pause',
       description: 'Game paused'
     }));
+    syncClockToGameDoc();
   } else {
     // If no local activity yet, check for existing tracked data and offer to clear
     const hasLocalActivity = state.clock > 0 || state.home > 0 || state.away > 0 || (state.log && state.log.length > 0);
@@ -1568,8 +1587,6 @@ async function startStop() {
         await updateGame(currentTeamId, currentGameId, { 
           homeScore: 0, 
           awayScore: 0, 
-          liveStatus: 'scheduled',
-          liveHasData: false,
           opponentStats: {},
           // Preserve opponent fields
           opponent: currentGame.opponent,
@@ -1624,6 +1641,7 @@ function tick() {
       type: 'clock_sync',
       description: 'Clock sync'
     }));
+    syncClockToGameDoc();
   }
 }
 
@@ -2395,21 +2413,10 @@ async function init() {
       }
 
       if (!shouldResume) {
-        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
+        const [eventsSnapshot, statsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats')
         ]);
-        const deletions = [
-          ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...statsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...liveEventsSnapshot.docs.map(d => deleteDoc(d.ref))
-        ];
-        const results = await Promise.allSettled(deletions);
-        const failedDeletes = results.filter(r => r.status === 'rejected');
-        if (failedDeletes.length) {
-          console.warn('Some live data could not be deleted:', failedDeletes);
-        }
         try {
           await updateGame(teamId, gameId, {
             homeScore: 0,
@@ -2417,6 +2424,7 @@ async function init() {
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
+            liveResetAt: Date.now(),
             liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
             // Preserve opponent fields
             opponent: game.opponent,
@@ -2428,6 +2436,15 @@ async function init() {
           currentGame.liveHasData = false;
         } catch (error) {
           console.warn('Failed to reset game metadata:', error);
+        }
+        const deletions = [
+          ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
+          ...statsSnapshot.docs.map(d => deleteDoc(d.ref))
+        ];
+        const results = await Promise.allSettled(deletions);
+        const failedDeletes = results.filter(r => r.status === 'rejected');
+        if (failedDeletes.length) {
+          console.warn('Some live data could not be deleted:', failedDeletes);
         }
         state.home = 0;
         state.away = 0;

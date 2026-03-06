@@ -56,3 +56,20 @@ export function shouldResetViewerFromGameDoc(gameDoc = {}, currentState = {}) {
 
   return hasEvents || hasHomeStats || hasOpponentStats || hasScore;
 }
+
+export function isLiveEventVisibleForResetBoundary(event = {}, resetBoundaryMs = 0) {
+  if (!resetBoundaryMs) return true;
+
+  if (event?.type === 'reset') return true;
+
+  const createdAt = event?.createdAt;
+  let eventMs = null;
+  if (typeof createdAt === 'number') {
+    eventMs = createdAt;
+  } else if (createdAt && typeof createdAt.toMillis === 'function') {
+    eventMs = createdAt.toMillis();
+  }
+
+  if (!Number.isFinite(eventMs)) return true;
+  return eventMs >= resetBoundaryMs;
+}
