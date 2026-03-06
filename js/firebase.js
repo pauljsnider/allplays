@@ -43,7 +43,8 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
-    writeBatch
+    writeBatch,
+    runTransaction
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "./vendor/firebase-storage.js";
 
@@ -92,7 +93,8 @@ export {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
-    writeBatch
+    writeBatch,
+    runTransaction
 };
 
 export {

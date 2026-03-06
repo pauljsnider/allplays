@@ -1,21 +1,30 @@
-# Code Role Notes (Parent Take-Home Packet Visibility)
+# Code Role Notes (Issue #53 Rideshare)
+
+## Objective
+Implement issue #53 end-to-end with DB helpers, rules, parent dashboard UX, and tests.
 
 ## Implementation Summary
-- Enhanced resolver module to provide packet context fallback:
-  - `resolvePracticePacketContextForEvent(event, sessions)` in `js/parent-dashboard-packets.js`
-- Updated parent dashboard rendering to use packet context fallback in:
-  - schedule list cards
-  - calendar day modal
-- Bumped module import cache key to ensure clients pull updated resolver:
-  - `parent-dashboard.html` imports `parent-dashboard-packets.js?v=2`
+- Added Firestore transaction export plumbing:
+  - `js/firebase.js`
+- Added rideshare DB operations:
+  - `createRideOffer`
+  - `listRideOffersForEvent`
+  - `requestRideSpot`
+  - `updateRideRequestStatus` (transaction seat guard)
+  - `closeRideOffer`
+  - `cancelRideRequest`
+  - in `js/db.js`
+- Added rideshare helper module for deterministic UI state rendering:
+  - `js/rideshare-helpers.js`
+- Added unit coverage for rideshare helper logic:
+  - `tests/unit/rideshare-helpers.test.js`
+- Integrated rideshare UI/actions into parent dashboard schedule list + day modal:
+  - `parent-dashboard.html`
+- Added Firestore rules for `rideOffers` and nested `requests`:
+  - `firestore.rules`
 
-## Tests Updated
-- `tests/unit/parent-dashboard-packets.test.js`
-  - added fallback-by-team/date case
-  - added cross-team safety case
-
-## Firebase / Rules
-- Verified `firestore.rules` already permits required reads/writes for parent packet flows:
-  - `practiceSessions`
-  - `practiceSessions/{sessionId}/packetCompletions`
-- No rules changes required for this feature fix.
+## Success Criteria
+- Offer/request/decision flows work in-page without full page navigation.
+- Seat count cannot exceed capacity under concurrent confirmation attempts.
+- Parent can only request for linked child (rules constrained).
+- Driver/admin decision flow updates status and seat counts consistently.

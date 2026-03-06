@@ -3,7 +3,9 @@ import {
   applySubstitution,
   canApplySubstitution,
   canTrustScoreLogForFinalization,
-  reconcileFinalScoreFromLog
+  reconcileFinalScoreFromLog,
+  acquireSingleFlightLock,
+  releaseSingleFlightLock
 } from '../../js/live-tracker-integrity.js';
 
 describe('live tracker integrity helpers', () => {
@@ -112,5 +114,15 @@ describe('live tracker integrity helpers', () => {
       liveAway: 0,
       log
     })).toBe(false);
+  });
+
+  it('allows only one finish submission at a time and supports retry after release', () => {
+    const lock = { active: false };
+
+    expect(acquireSingleFlightLock(lock)).toBe(true);
+    expect(acquireSingleFlightLock(lock)).toBe(false);
+
+    releaseSingleFlightLock(lock);
+    expect(acquireSingleFlightLock(lock)).toBe(true);
   });
 });

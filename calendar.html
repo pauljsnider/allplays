@@ -13,6 +13,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Calendar - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -133,9 +134,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=22';
-        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence } from './js/utils.js?v=8';
+        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, getMyRsvp, getRsvpSummaries } from './js/db.js?v=23';
+        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, getCalendarEventType, getCalendarEventStatus } from './js/utils.js?v=9';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
+        import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -328,11 +330,11 @@
                                         teamId: team.id,
                                         teamName: team.name,
                                         teamColor: teamColors[team.id],
-                                        type: ev.isPractice ? 'practice' : 'game',
+                                        type: getCalendarEventType(ev),
                                         title: ev.summary || 'Event',
                                         date: evDate,
                                         location: ev.location || 'TBD',
-                                        status: 'scheduled',
+                                        status: getCalendarEventStatus(ev),
                                         source: 'ics'
                                     });
                                 }
@@ -351,15 +353,33 @@
                 // Fetch current user's RSVP for DB schedule events (games + practices).
                 const dbEvents = allEvents.filter(ev => ev.source === 'db' && (ev.type === 'game' || ev.type === 'practice') && ev.status !== 'cancelled');
                 const uniqueGameKeys = [...new Set(dbEvents.map(ev => `${ev.teamId}::${ev.id}`))];
+                const unsummarizedByTeam = new Map();
+                uniqueGameKeys.forEach((key) => {
+                    const [teamId, gameId] = key.split('::');
+                    const shouldLoadSummary = allEvents.some((ev) => ev.teamId === teamId && ev.id === gameId && !ev.rsvpSummary);
+                    if (!shouldLoadSummary) return;
+                    if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
+                    unsummarizedByTeam.get(teamId).push(gameId);
+                });
+
+                const summaryMapsByTeam = new Map();
+                await Promise.all(Array.from(unsummarizedByTeam.entries()).map(async ([teamId, gameIds]) => {
+                    try {
+                        summaryMapsByTeam.set(teamId, await getRsvpSummaries(teamId, gameIds));
+                    } catch (_) {
+                        summaryMapsByTeam.set(teamId, new Map());
+                    }
+                }));
+
                 await Promise.all(uniqueGameKeys.map(async (key) => {
                     const [teamId, gameId] = key.split('::');
                     try {
                         const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
-                        if (myRsvp?.response) {
-                            allEvents.forEach(ev => {
-                                if (ev.teamId === teamId && ev.id === gameId) ev.myRsvp = myRsvp.response;
-                            });
-                        }
+                        const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
+                        applyRsvpHydration(allEvents, teamId, gameId, {
+                            myRsvp: myRsvp ? myRsvp.response : null,
+                            summary
+                        });
                     } catch (_) {}
                 }));
 

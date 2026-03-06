@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <title>Game Day Command Center — ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -478,11 +479,12 @@
             getRsvpBreakdownByPlayer, getGames, getAggregatedStatsForGames,
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
-            setGameLiveStatus
-        } from './js/db.js?v=14';
+            setGameLiveStatus, submitRsvpForPlayer
+        } from './js/db.js?v=15';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
+        import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1177,7 +1179,7 @@
         async function loadRsvps() {
             try {
                 const breakdown = await getRsvpBreakdownByPlayer(state.teamId, state.gameId);
-                state.rsvpBreakdown = breakdown;
+                state.rsvpBreakdown = breakdown?.grouped || breakdown || null;
                 markAiChatContextDirty();
                 renderRsvpPanel();
             } catch (err) {
@@ -1197,13 +1199,34 @@
             const notGoing = Array.isArray(breakdown.not_going) ? breakdown.not_going : [];
             const noResponse = Array.isArray(breakdown.not_responded) ? breakdown.not_responded : [];
 
-            const chip = (p) => `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-full text-xs font-medium">${p.playerNumber ? `#${p.playerNumber} ` : ''}${escapeHtml(p.playerName)}</span>`;
+            const rowActions = (p, currentResponse) => {
+                const mkBtn = (label, response, activeClass, idleClass) => `
+                    <button
+                        onclick="setCoachPlayerRsvp(decodeURIComponent('${encodeURIComponent(p.playerId || '')}'),'${response}')"
+                        class="px-1.5 py-0.5 rounded border text-[10px] font-semibold ${currentResponse === response ? activeClass : idleClass}">
+                        ${label}
+                    </button>`;
+                return `
+                    <span class="ml-1 inline-flex items-center gap-1">
+                        ${mkBtn('Going', 'going', 'bg-green-600 text-white border-green-600', 'bg-white text-green-700 border-green-300 hover:bg-green-50')}
+                        ${mkBtn('Maybe', 'maybe', 'bg-amber-500 text-white border-amber-500', 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50')}
+                        ${mkBtn('Out', 'not_going', 'bg-red-500 text-white border-red-500', 'bg-white text-red-700 border-red-300 hover:bg-red-50')}
+                    </span>
+                `;
+            };
+
+            const chip = (p, responseKey) => `
+                <span class="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded-full text-xs font-medium">
+                    ${p.playerNumber ? `#${p.playerNumber} ` : ''}${escapeHtml(p.playerName)}
+                    ${rowActions(p, responseKey)}
+                </span>
+            `;
 
             const section = (label, color, players) => {
                 if (!players.length) return '';
                 return `<div class="mb-2">
                     <div class="text-xs font-semibold ${color} mb-1">${label} (${players.length})</div>
-                    <div class="flex flex-wrap gap-1">${players.map(chip).join('')}</div>
+                    <div class="flex flex-wrap gap-1">${players.map((p) => chip(p, p.response)).join('')}</div>
                 </div>`;
             };
 
@@ -1211,8 +1234,31 @@
                 section('Going', 'text-green-600', going) +
                 section('Maybe', 'text-amber-600', maybe) +
                 section('Not Going', 'text-red-500', notGoing) +
-                section('No Response', 'text-gray-400', noResponse);
+                section('No Response', 'text-gray-400', noResponse) +
+                '<div id="coach-rsvp-status" class="text-[11px] text-gray-400 mt-2"></div>';
         }
+
+        window.setCoachPlayerRsvp = async function(playerId, response) {
+            const statusEl = document.getElementById('coach-rsvp-status');
+            if (!playerId || !response) return;
+            try {
+                if (statusEl) statusEl.textContent = 'Saving availability…';
+                await submitRsvpForPlayer(state.teamId, state.gameId, state.user?.uid, {
+                    displayName: state.user?.displayName || state.user?.email || null,
+                    playerId,
+                    response
+                });
+                await loadRsvps();
+                if (statusEl) statusEl.textContent = 'Saved';
+                setTimeout(() => {
+                    const nextStatusEl = document.getElementById('coach-rsvp-status');
+                    if (nextStatusEl) nextStatusEl.textContent = '';
+                }, 1800);
+            } catch (err) {
+                console.error('setCoachPlayerRsvp error', err);
+                if (statusEl) statusEl.textContent = 'Save failed';
+            }
+        };
 
         function renderScoutingNotes() {
             const ta = document.getElementById('scouting-notes');
@@ -1861,18 +1907,7 @@ Respond ONLY with valid JSON.`;
         }
 
         function buildRotationFromGamePlan(gamePlan) {
-            if (!gamePlan?.lineups) return {};
-            const plan = {};
-            Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
-                // key format: "H1-positionId" or "Q1-positionId"
-                const dashIdx = key.indexOf('-');
-                if (dashIdx === -1) return;
-                const period = key.substring(0, dashIdx);
-                const posId = key.substring(dashIdx + 1);
-                if (!plan[period]) plan[period] = {};
-                plan[period][posId] = playerId;
-            });
-            return plan;
+            return buildRotationPlanFromGamePlan(gamePlan);
         }
 
         // ==================== GAME DAY ====================

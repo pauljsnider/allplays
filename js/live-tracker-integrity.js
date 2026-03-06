@@ -37,6 +37,17 @@ export function applySubstitution(onCourt = [], bench = [], outId, inId) {
   return { applied: true, onCourt: nextOnCourt, bench: nextBench };
 }
 
+export function acquireSingleFlightLock(lock) {
+  if (!lock || lock.active) return false;
+  lock.active = true;
+  return true;
+}
+
+export function releaseSingleFlightLock(lock) {
+  if (!lock) return;
+  lock.active = false;
+}
+
 export function deriveScoreFromLog(log = []) {
   return log.reduce((totals, entry) => {
     const undoData = entry?.undoData;

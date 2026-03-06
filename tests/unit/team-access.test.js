@@ -20,8 +20,20 @@ describe('team access helpers', () => {
     expect(hasFullTeamAccess({ uid: 'u2', isAdmin: true }, TEAM)).toBe(true);
   });
 
-  it('grants full access to assigned coach', () => {
-    expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toBe(true);
+  it('does not grant full access from coachOf assignment alone', () => {
+    expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toBe(false);
+  });
+
+  it('does not grant coach access when team id is missing', () => {
+    expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, { ownerId: 'owner-1' })).toBe(false);
+  });
+
+  it('does not return full access level for coach-assigned users', () => {
+    expect(getTeamAccessInfo({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
+    });
   });
 
   it('returns parent access level for parent-linked users', () => {

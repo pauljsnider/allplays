@@ -24,12 +24,23 @@ import {
     onSnapshot,
     serverTimestamp,
     collectionGroup,
+    writeBatch,
+    runTransaction,
     ref,
     uploadBytes,
     getDownloadURL
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
+import { isAccessCodeExpired } from './access-code-utils.js?v=1';
+import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
+import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
+import {
+    isTeamActive,
+    filterTeamsByActive,
+    shouldIncludeTeamInLiveOrUpcoming,
+    shouldIncludeTeamInReplay
+} from './team-visibility.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -176,30 +187,38 @@ export async function uploadStatSheetPhoto(file) {
 }
 
 // Teams
-export async function getTeams() {
+export async function getTeams(options = {}) {
+    const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), orderBy("name"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
-export async function getTeam(teamId) {
+export async function getTeam(teamId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const docRef = doc(db, "teams", teamId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-        return { id: docSnap.id, ...docSnap.data() };
+        const team = { id: docSnap.id, ...docSnap.data() };
+        if (!includeInactive && !isTeamActive(team)) return null;
+        return team;
     } else {
         return null;
     }
 }
 
-export async function getUserTeams(userId) {
+export async function getUserTeams(userId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), where("ownerId", "==", userId));
     const snapshot = await getDocs(q);
     // Sort in memory instead of query to avoid composite index requirement
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
-export async function getUserTeamsWithAccess(userId, email) {
+export async function getUserTeamsWithAccess(userId, email, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const [ownedSnap, adminSnap] = await Promise.all([
         getDocs(query(collection(db, "teams"), where("ownerId", "==", userId))),
         email ? getDocs(query(collection(db, "teams"), where("adminEmails", "array-contains", email.toLowerCase()))) : Promise.resolve({ docs: [] })
@@ -209,14 +228,16 @@ export async function getUserTeamsWithAccess(userId, email) {
     ownedSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
     adminSnap.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
 
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const teams = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return filterTeamsByActive(teams, includeInactive);
 }
 
 /**
  * Get teams where the user is connected as a parent (via parentOf)
  * This is used to power the "My Teams" view for parents, in a read-only way.
  */
-export async function getParentTeams(userId) {
+export async function getParentTeams(userId, options = {}) {
+    const includeInactive = !!options.includeInactive;
     const profile = await getUserProfile(userId);
     if (!profile || !Array.isArray(profile.parentOf) || profile.parentOf.length === 0) {
         return [];
@@ -227,7 +248,7 @@ export async function getParentTeams(userId) {
 
     const teams = [];
     for (const teamId of teamIds) {
-        const team = await getTeam(teamId);
+        const team = await getTeam(teamId, { includeInactive });
         if (team) {
             teams.push(team);
         }
@@ -266,6 +287,15 @@ export async function getUserByEmail(email) {
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'active')) {
+        teamData.active = true;
+    }
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'deactivatedAt')) {
+        teamData.deactivatedAt = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(teamData, 'deactivatedBy')) {
+        teamData.deactivatedBy = null;
+    }
     const docRef = await addDoc(collection(db, "teams"), teamData);
     return docRef.id;
 }
@@ -276,30 +306,27 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
-export async function deleteTeam(teamId) {
-    // Delete games and their subcollections
-    const gamesSnapshot = await getDocs(collection(db, `teams/${teamId}/games`));
-    for (const gameDoc of gamesSnapshot.docs) {
-        const gameId = gameDoc.id;
-        // Remove events
-        const eventsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/events`));
-        await Promise.all(eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-        // Remove aggregated stats
-        const statsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
-        await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
-        await deleteDoc(gameDoc.ref);
+export async function addTeamAdminEmail(teamId, email) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Admin email is required');
     }
 
-    // Delete players
-    const playersSnapshot = await getDocs(collection(db, `teams/${teamId}/players`));
-    await Promise.all(playersSnapshot.docs.map(docItem => deleteDoc(docItem.ref)));
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        adminEmails: arrayUnion(normalizedEmail),
+        updatedAt: Timestamp.now()
+    });
+}
 
-    // Delete configs
-    const configsSnapshot = await getDocs(collection(db, `teams/${teamId}/statTrackerConfigs`));
-    await Promise.all(configsSnapshot.docs.map(docItem => deleteDoc(docItem.ref)));
-
-    // Finally delete team document
-    await deleteDoc(doc(db, "teams", teamId));
+export async function deleteTeam(teamId) {
+    const userId = auth.currentUser?.uid || null;
+    await updateDoc(doc(db, "teams", teamId), {
+        active: false,
+        deactivatedAt: Timestamp.now(),
+        deactivatedBy: userId,
+        updatedAt: Timestamp.now()
+    });
 }
 
 // Players
@@ -362,7 +389,11 @@ export async function updatePlayer(teamId, playerId, playerData) {
 }
 
 export async function deletePlayer(teamId, playerId) {
-    await deleteDoc(doc(db, `teams/${teamId}/players`, playerId));
+    await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
+        active: false,
+        deactivatedAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
 }
 
 export async function deactivatePlayer(teamId, playerId) {
@@ -826,12 +857,8 @@ export async function validateAccessCode(code) {
         return { valid: false, message: "Code already used" };
     }
 
-    // Check expiration for codes that have expiresAt
-    if (data.expiresAt) {
-        const expiresAtMs = data.expiresAt.toMillis ? data.expiresAt.toMillis() : data.expiresAt;
-        if (Date.now() > expiresAtMs) {
-            return { valid: false, message: "Code has expired" };
-        }
+    if (isAccessCodeExpired(data.expiresAt)) {
+        return { valid: false, message: "Code has expired" };
     }
 
     // Code exists, not used, and not expired
@@ -844,11 +871,230 @@ export async function validateAccessCode(code) {
 }
 
 export async function markAccessCodeAsUsed(codeId, userId) {
-    const docRef = doc(db, "accessCodes", codeId);
-    await updateDoc(docRef, {
-        used: true,
-        usedBy: userId,
-        usedAt: Timestamp.now()
+    const codeRef = doc(db, "accessCodes", codeId);
+    await runTransaction(db, async (transaction) => {
+        const codeSnapshot = await transaction.get(codeRef);
+        if (!codeSnapshot.exists()) {
+            throw new Error("Invalid access code");
+        }
+
+        const codeData = codeSnapshot.data() || {};
+        if (codeData.used) {
+            throw new Error("Code already used");
+        }
+
+        if (isAccessCodeExpired(codeData.expiresAt)) {
+            throw new Error("Code has expired");
+        }
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+    });
+}
+
+export async function redeemAdminInviteAtomicPersistence({
+    teamId,
+    userId,
+    userEmail,
+    codeId
+}) {
+    if (!teamId) {
+        throw new Error('Missing teamId for admin invite persistence');
+    }
+    if (!userId) {
+        throw new Error('Missing userId for admin invite persistence');
+    }
+    if (!codeId) {
+        throw new Error('Missing codeId for admin invite persistence');
+    }
+
+    const normalizedEmail = String(userEmail || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Missing user email for admin invite persistence');
+    }
+
+    const teamRef = doc(db, "teams", teamId);
+    const userRef = doc(db, "users", userId);
+    const codeRef = doc(db, "accessCodes", codeId);
+    let userGrantApplied = false;
+    let userAlreadyCoachedTeam = false;
+    let userAlreadyHadCoachRole = false;
+    try {
+        const [teamSnapshot, codeSnapshot, userSnapshot] = await Promise.all([
+            getDoc(teamRef),
+            getDoc(codeRef),
+            getDoc(userRef)
+        ]);
+
+        if (!teamSnapshot.exists()) {
+            throw new Error('Team not found for admin invite persistence');
+        }
+        if (!codeSnapshot.exists()) {
+            throw new Error('Access code not found for admin invite persistence');
+        }
+
+        const codeData = codeSnapshot.data() || {};
+        if (codeData.type !== 'admin_invite') {
+            throw new Error('Access code is not an admin invite');
+        }
+
+        if ((codeData.teamId || null) !== teamId) {
+            throw new Error('Access code team does not match admin invite target');
+        }
+
+        if (codeData.used === true) {
+            throw new Error('Access code has already been used');
+        }
+
+        const existingUserData = userSnapshot.exists() ? (userSnapshot.data() || {}) : {};
+        const existingCoachOf = Array.isArray(existingUserData.coachOf) ? existingUserData.coachOf : [];
+        const existingRoles = Array.isArray(existingUserData.roles) ? existingUserData.roles : [];
+        userAlreadyCoachedTeam = existingCoachOf.includes(teamId);
+        userAlreadyHadCoachRole = existingRoles.includes('coach');
+
+        const userGrantTimestamp = Timestamp.now();
+        await setDoc(userRef, {
+            coachOf: arrayUnion(teamId),
+            roles: arrayUnion('coach'),
+            updatedAt: userGrantTimestamp
+        }, { merge: true });
+        userGrantApplied = true;
+
+        await runTransaction(db, async (transaction) => {
+            const [teamSnapshotAfterGrant, codeSnapshotAfterGrant] = await Promise.all([
+                transaction.get(teamRef),
+                transaction.get(codeRef)
+            ]);
+
+            if (!teamSnapshotAfterGrant.exists()) {
+                throw new Error('Team not found for admin invite persistence');
+            }
+            if (!codeSnapshotAfterGrant.exists()) {
+                throw new Error('Access code not found for admin invite persistence');
+            }
+
+            const latestCodeData = codeSnapshotAfterGrant.data() || {};
+            if (latestCodeData.type !== 'admin_invite') {
+                throw new Error('Access code is not an admin invite');
+            }
+            if ((latestCodeData.teamId || null) !== teamId) {
+                throw new Error('Access code team does not match admin invite target');
+            }
+            if (latestCodeData.used === true) {
+                throw new Error('Access code has already been used');
+            }
+
+            const now = Timestamp.now();
+            transaction.update(teamRef, {
+                adminEmails: arrayUnion(normalizedEmail),
+                updatedAt: now
+            });
+            transaction.update(codeRef, {
+                used: true,
+                usedBy: userId,
+                usedAt: now
+            });
+        });
+    } catch (error) {
+        let rollbackError = null;
+        if (userGrantApplied) {
+            const rollbackUpdate = {
+                updatedAt: Timestamp.now()
+            };
+
+            if (!userAlreadyCoachedTeam) {
+                rollbackUpdate.coachOf = arrayRemove(teamId);
+            }
+            if (!userAlreadyHadCoachRole) {
+                rollbackUpdate.roles = arrayRemove('coach');
+            }
+
+            if (rollbackUpdate.coachOf || rollbackUpdate.roles) {
+                try {
+                    await updateDoc(userRef, rollbackUpdate);
+                } catch (rollbackFailure) {
+                    rollbackError = rollbackFailure;
+                }
+            }
+        }
+
+        const baseMessage = `Admin invite atomic persistence failed: ${error?.message || error}`;
+        if (rollbackError) {
+            throw new Error(`${baseMessage}. Rollback failed: ${rollbackError?.message || rollbackError}`);
+        }
+        throw new Error(baseMessage);
+    }
+}
+
+export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail = null) {
+    return runTransaction(db, async (transaction) => {
+        const codeRef = doc(db, "accessCodes", codeId);
+        const codeSnap = await transaction.get(codeRef);
+
+        if (!codeSnap.exists()) {
+            throw new Error("Invalid access code");
+        }
+
+        const codeData = codeSnap.data() || {};
+        if (codeData.used) {
+            throw new Error("Code already used");
+        }
+
+        if (codeData.type !== 'admin_invite') {
+            throw new Error("Not an admin invite code");
+        }
+
+        if (codeData.expiresAt) {
+            const expiresAtMs = codeData.expiresAt.toMillis ? codeData.expiresAt.toMillis() : codeData.expiresAt;
+            if (Date.now() > expiresAtMs) {
+                throw new Error("Code has expired");
+            }
+        }
+
+        const teamId = codeData.teamId;
+        const teamRef = doc(db, "teams", teamId);
+        const userRef = doc(db, "users", userId);
+
+        const [teamSnap, userSnap] = await Promise.all([
+            transaction.get(teamRef),
+            transaction.get(userRef)
+        ]);
+
+        if (!teamSnap.exists()) {
+            throw new Error("Team not found");
+        }
+
+        const teamData = teamSnap.data() || {};
+        const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+        const authEmail = auth.currentUser?.email || '';
+        const userEmail = (userData.email || authEmail || fallbackEmail || '').toLowerCase().trim();
+        if (!userEmail) {
+            throw new Error('Unable to determine user email for admin invite');
+        }
+
+        transaction.set(teamRef, {
+            adminEmails: arrayUnion(userEmail)
+        }, { merge: true });
+
+        transaction.set(userRef, {
+            coachOf: arrayUnion(teamId),
+            roles: arrayUnion('coach')
+        }, { merge: true });
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        return {
+            success: true,
+            teamId,
+            teamName: teamData.name || null
+        };
     });
 }
 
@@ -953,17 +1199,52 @@ export async function inviteAdmin(teamId, adminEmail) {
 export async function redeemParentInvite(userId, code) {
     console.log('[redeemParentInvite] start', { userId, code });
 
-    // 1. Validate Code
+    // 1. Find candidate code document
     const q = query(
         collection(db, "accessCodes"),
-        where("code", "==", code.toUpperCase()),
-        where("used", "==", false)
+        where("code", "==", code.toUpperCase())
     );
     const snapshot = await getDocs(q);
     if (snapshot.empty) throw new Error("Invalid or used code");
-    
-    const codeDoc = snapshot.docs[0];
-    const codeData = codeDoc.data() || {};
+
+    const parentInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'parent_invite');
+    if (parentInviteDocs.length === 0) throw new Error("Invalid or used code");
+
+    // Duplicates can exist; prefer a currently redeemable parent invite doc.
+    const codeDoc = parentInviteDocs.find((d) => {
+        const invite = d.data() || {};
+        return invite.used !== true && !isAccessCodeExpired(invite.expiresAt);
+    }) || parentInviteDocs[0];
+    const codeRef = codeDoc.ref;
+    let codeData;
+
+    // 2. Atomically claim code before side effects
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) {
+            throw new Error("Invalid or used code");
+        }
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.type !== 'parent_invite') {
+            throw new Error("Not a parent invite code");
+        }
+        if (latestCodeData.used) {
+            throw new Error("Invalid or used code");
+        }
+        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+            throw new Error("Code has expired");
+        }
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        codeData = latestCodeData;
+    });
+
     console.log('[redeemParentInvite] code loaded', {
         codeId: codeDoc.id,
         type: codeData.type,
@@ -971,111 +1252,211 @@ export async function redeemParentInvite(userId, code) {
         playerId: codeData.playerId,
         generatedBy: codeData.generatedBy
     });
-    
-    if (codeData.type !== 'parent_invite') throw new Error("Not a parent invite code");
-
-    // 2. Get Team & Player details for caching
-    console.log('[redeemParentInvite] fetching team & player', {
-        teamId: codeData.teamId,
-        playerId: codeData.playerId
-    });
-    const [team, player] = await Promise.all([
-        getTeam(codeData.teamId),
-        getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
-    ]);
-
-    if (!team || !player) {
-        console.error('[redeemParentInvite] missing team or player', { teamExists: !!team, playerExists: !!player });
-        throw new Error("Team or Player not found");
-    }
-    console.log('[redeemParentInvite] team & player resolved', {
-        teamName: team.name,
-        playerName: player.name,
-        playerNumber: player.number
-    });
-
-    // 3. Update User Profile (parentOf + parentTeamIds for Firestore rules)
     try {
-        const userRef = doc(db, "users", userId);
-        await setDoc(userRef, {
-            parentOf: arrayUnion({
-                teamId: codeData.teamId,
-                playerId: codeData.playerId,
-                teamName: team.name,
-                playerName: player.name,
-                playerNumber: player.number,
-                playerPhotoUrl: player.photoUrl || null,
-                relation: codeData.relation || null
-            }),
-            // Denormalized array for fast Firestore rules lookup
-            parentTeamIds: arrayUnion(codeData.teamId),
-            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
-            roles: arrayUnion('parent')
-        }, { merge: true });
-        console.log('[redeemParentInvite] user profile updated');
-    } catch (err) {
-        console.error('redeemParentInvite: error updating user profile', err);
-        throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
-    }
+        // 3. Get Team & Player details for caching
+        console.log('[redeemParentInvite] fetching team & player', {
+            teamId: codeData.teamId,
+            playerId: codeData.playerId
+        });
+        const [team, player] = await Promise.all([
+            getTeam(codeData.teamId),
+            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
+        ]);
 
-    // 4. Update Player Doc (parents list)
-    try {
-        const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+        if (!team || !player) {
+            console.error('[redeemParentInvite] missing team or player', { teamExists: !!team, playerExists: !!player });
+            throw new Error("Team or Player not found");
+        }
+        console.log('[redeemParentInvite] team & player resolved', {
+            teamName: team.name,
+            playerName: player.name,
+            playerNumber: player.number
+        });
 
-        // Log current parents state for debugging
+        // 4. Update User Profile (parentOf + parentTeamIds for Firestore rules)
         try {
-            const snap = await getDoc(playerRef);
-            if (snap.exists()) {
-                const data = snap.data() || {};
-                console.log('[redeemParentInvite] current player parents before update', {
+            const userRef = doc(db, "users", userId);
+            await setDoc(userRef, {
+                parentOf: arrayUnion({
                     teamId: codeData.teamId,
                     playerId: codeData.playerId,
-                    parents: data.parents || []
-                });
-            } else {
-                console.log('[redeemParentInvite] player doc not found before parents update', {
-                    teamId: codeData.teamId,
-                    playerId: codeData.playerId
-                });
-            }
-        } catch (innerErr) {
-            console.warn('[redeemParentInvite] failed to read player before update (non-fatal)', innerErr);
+                    teamName: team.name,
+                    playerName: player.name,
+                    playerNumber: player.number,
+                    playerPhotoUrl: player.photoUrl || null,
+                    relation: codeData.relation || null
+                }),
+                // Denormalized array for fast Firestore rules lookup
+                parentTeamIds: arrayUnion(codeData.teamId),
+                parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
+                roles: arrayUnion('parent')
+            }, { merge: true });
+            console.log('[redeemParentInvite] user profile updated');
+        } catch (err) {
+            console.error('redeemParentInvite: error updating user profile', err);
+            throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
         }
 
-        await updateDoc(playerRef, {
-            parents: arrayUnion({
-                userId,
-                email: codeData.email || 'pending', // Will be updated if email not provided in invite
-                relation: codeData.relation,
-                addedAt: Timestamp.now()
-            })
-        });
-        console.log('[redeemParentInvite] player parents updated');
+        // 5. Update Player Doc (parents list)
+        try {
+            const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+
+            // Log current parents state for debugging
+            try {
+                const snap = await getDoc(playerRef);
+                if (snap.exists()) {
+                    const data = snap.data() || {};
+                    console.log('[redeemParentInvite] current player parents before update', {
+                        teamId: codeData.teamId,
+                        playerId: codeData.playerId,
+                        parents: data.parents || []
+                    });
+                } else {
+                    console.log('[redeemParentInvite] player doc not found before parents update', {
+                        teamId: codeData.teamId,
+                        playerId: codeData.playerId
+                    });
+                }
+            } catch (innerErr) {
+                console.warn('[redeemParentInvite] failed to read player before update (non-fatal)', innerErr);
+            }
+
+            await updateDoc(playerRef, {
+                parents: arrayUnion({
+                    userId,
+                    email: codeData.email || 'pending', // Will be updated if email not provided in invite
+                    relation: codeData.relation,
+                    addedAt: Timestamp.now()
+                })
+            });
+            console.log('[redeemParentInvite] player parents updated');
+        } catch (err) {
+            // If this fails (e.g., due to stricter live rules), we still
+            // consider the parent linked via their user profile. Coaches
+            // simply won't see the connection until rules are updated.
+            console.error('redeemParentInvite: error updating player parents (non-fatal)', {
+                message: err?.message,
+                code: err?.code,
+                name: err?.name
+            });
+        }
     } catch (err) {
-        // If this fails (e.g., due to stricter live rules), we still
-        // consider the parent linked via their user profile. Coaches
-        // simply won't see the connection until rules are updated.
-        console.error('redeemParentInvite: error updating player parents (non-fatal)', {
-            message: err?.message,
-            code: err?.code,
-            name: err?.name
-        });
+        try {
+            await runTransaction(db, async (transaction) => {
+                const latestCodeSnapshot = await transaction.get(codeRef);
+                if (!latestCodeSnapshot.exists()) {
+                    return;
+                }
+
+                const latestCodeData = latestCodeSnapshot.data() || {};
+                if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
+                    transaction.update(codeRef, {
+                        used: false,
+                        usedBy: null,
+                        usedAt: null
+                    });
+                }
+            });
+        } catch (rollbackErr) {
+            console.error('redeemParentInvite: failed to rollback code claim', rollbackErr);
+        }
+        throw err;
     }
 
-    // 5. Mark Code Used
-    try {
-        await updateDoc(codeDoc.ref, {
-            used: true,
-            usedBy: userId,
-            usedAt: Timestamp.now()
-        });
-        console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
-    } catch (err) {
-        console.error('redeemParentInvite: error marking code used', err);
-        throw new Error('Unable to link parent (access code). ' + (err?.message || ''));
-    }
-
+    console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
     return { success: true, teamId: codeData.teamId };
+}
+
+export async function rollbackParentInviteRedemption(userId, code) {
+    console.log('[rollbackParentInviteRedemption] start', { userId, code });
+
+    const normalizedCode = String(code || '').toUpperCase();
+    if (!userId || !normalizedCode) {
+        throw new Error('User and code are required to rollback parent invite redemption');
+    }
+
+    const q = query(
+        collection(db, "accessCodes"),
+        where("code", "==", normalizedCode)
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+        throw new Error('Invite code not found for rollback');
+    }
+
+    const codeDoc = snapshot.docs.find(d => (d.data() || {}).type === 'parent_invite') || snapshot.docs[0];
+    const codeData = codeDoc.data() || {};
+    if (codeData.type !== 'parent_invite') {
+        throw new Error('Rollback target is not a parent invite code');
+    }
+
+    if (!codeData.used || codeData.usedBy !== userId) {
+        console.warn('[rollbackParentInviteRedemption] skipping rollback; code not used by user', {
+            codeId: codeDoc.id,
+            used: codeData.used,
+            usedBy: codeData.usedBy
+        });
+        return;
+    }
+
+    const teamId = codeData.teamId || null;
+    const playerId = codeData.playerId || null;
+
+    try {
+        const userRef = doc(db, "users", userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+            const userData = userSnap.data() || {};
+            const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+            const filteredParentOf = parentOf.filter(link =>
+                !(link?.teamId === teamId && link?.playerId === playerId)
+            );
+            const filteredParentTeamIds = [...new Set(
+                filteredParentOf.map(link => link?.teamId).filter(Boolean)
+            )];
+            const filteredParentPlayerKeys = [...new Set(
+                filteredParentOf
+                    .map(link => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : null))
+                    .filter(Boolean)
+            )];
+            const existingRoles = Array.isArray(userData.roles) ? userData.roles : [];
+            const filteredRoles = filteredParentOf.length === 0
+                ? existingRoles.filter(role => role !== 'parent')
+                : existingRoles;
+
+            await setDoc(userRef, {
+                parentOf: filteredParentOf,
+                parentTeamIds: filteredParentTeamIds,
+                parentPlayerKeys: filteredParentPlayerKeys,
+                roles: filteredRoles
+            }, { merge: true });
+        }
+    } catch (error) {
+        console.warn('[rollbackParentInviteRedemption] failed to rollback user profile links (non-fatal)', error);
+    }
+
+    if (teamId && playerId) {
+        try {
+            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
+            const playerSnap = await getDoc(playerRef);
+            if (playerSnap.exists()) {
+                const playerData = playerSnap.data() || {};
+                const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
+                const filteredParents = parents.filter(parent => parent?.userId !== userId);
+                await updateDoc(playerRef, { parents: filteredParents });
+            }
+        } catch (error) {
+            console.warn('[rollbackParentInviteRedemption] failed to rollback player parent link (non-fatal)', error);
+        }
+    }
+
+    await updateDoc(codeDoc.ref, {
+        used: false,
+        usedBy: null,
+        usedAt: null
+    });
+
+    console.log('[rollbackParentInviteRedemption] completed', { codeId: codeDoc.id });
 }
 
 export async function getParentDashboardData(userId) {
@@ -1090,6 +1471,7 @@ export async function getParentDashboardData(userId) {
     // parents[] entry, because production rules may block that
     // write even when the profile is updated successfully.
     const children = userProfile.parentOf;
+    const activeChildren = [];
     const upcomingGames = [];
 
     // Cache events per team to avoid duplicate reads when a parent
@@ -1102,6 +1484,9 @@ export async function getParentDashboardData(userId) {
 
     for (const child of children) {
         if (!child.teamId) continue;
+        const team = await getTeam(child.teamId);
+        if (!team) continue;
+        activeChildren.push(child);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
@@ -1131,7 +1516,7 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    return { upcomingGames, children };
+    return { upcomingGames, children: activeChildren };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
@@ -1624,6 +2009,11 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2082,6 +2472,11 @@ export async function getLiveGamesNow() {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2115,6 +2510,11 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
         if (teamSnap.exists()) {
             gameData.team = { id: teamSnap.id, ...teamSnap.data() };
             gameData.teamId = teamSnap.id;
+            if (!shouldIncludeTeamInReplay(gameData.team)) {
+                continue;
+            }
+        } else {
+            continue;
         }
         games.push(gameData);
     }
@@ -2168,6 +2568,55 @@ function uniqueNonEmptyIds(ids) {
     return Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.trim())));
 }
 
+const rsvpSummaryHydrationCacheByTeam = new Map();
+
+function getRsvpSummaryHydrationCache(teamId) {
+    if (!rsvpSummaryHydrationCacheByTeam.has(teamId)) {
+        rsvpSummaryHydrationCacheByTeam.set(teamId, {
+            rosterPromise: null,
+            playerIdsByUserPromise: new Map()
+        });
+    }
+    return rsvpSummaryHydrationCacheByTeam.get(teamId);
+}
+
+function getCachedRsvpRoster(teamId, { forceRefresh = false } = {}) {
+    const cache = getRsvpSummaryHydrationCache(teamId);
+    if (forceRefresh || !cache.rosterPromise) {
+        cache.rosterPromise = getPlayers(teamId).catch((err) => {
+            cache.rosterPromise = null;
+            throw err;
+        });
+    }
+    return cache.rosterPromise;
+}
+
+function getCachedFallbackPlayerIdsForUser(teamId, userId) {
+    if (!userId) return Promise.resolve([]);
+    const cache = getRsvpSummaryHydrationCache(teamId);
+    if (!cache.playerIdsByUserPromise.has(userId)) {
+        const playerIdsPromise = (async () => {
+            try {
+                const profile = await getUserProfile(userId);
+                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+                return uniqueNonEmptyIds(
+                    parentLinks
+                        .filter((link) => link?.teamId === teamId)
+                        .map((link) => link?.playerId)
+                );
+            } catch (err) {
+                if (err?.code === 'permission-denied') return [];
+                throw err;
+            }
+        })().catch((err) => {
+            cache.playerIdsByUserPromise.delete(userId);
+            throw err;
+        });
+        cache.playerIdsByUserPromise.set(userId, playerIdsPromise);
+    }
+    return cache.playerIdsByUserPromise.get(userId);
+}
+
 function extractDirectRsvpPlayerIds(rsvp) {
     const direct = uniqueNonEmptyIds(rsvp?.playerIds);
     if (direct.length) return direct;
@@ -2177,7 +2626,24 @@ function extractDirectRsvpPlayerIds(rsvp) {
     return uniqueNonEmptyIds(legacy);
 }
 
-async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
+async function buildFallbackPlayerIdsByUser(teamId, rsvps, options = {}) {
+    const resolveIdsForUser = typeof options.resolveIdsForUser === 'function'
+        ? options.resolveIdsForUser
+        : async (uid) => {
+            try {
+                const profile = await getUserProfile(uid);
+                const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+                return uniqueNonEmptyIds(
+                    parentLinks
+                        .filter((link) => link?.teamId === teamId)
+                        .map((link) => link?.playerId)
+                );
+            } catch (err) {
+                if (err?.code === 'permission-denied') return [];
+                throw err;
+            }
+        };
+
     const fallbackByUser = new Map();
     const unresolvedUserIds = Array.from(new Set(
         rsvps
@@ -2188,22 +2654,8 @@ async function buildFallbackPlayerIdsByUser(teamId, rsvps) {
     if (unresolvedUserIds.length === 0) return fallbackByUser;
 
     await Promise.all(unresolvedUserIds.map(async (uid) => {
-        try {
-            const profile = await getUserProfile(uid);
-            const parentLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
-            const idsForTeam = uniqueNonEmptyIds(
-                parentLinks
-                    .filter((link) => link?.teamId === teamId)
-                    .map((link) => link?.playerId)
-            );
-            fallbackByUser.set(uid, idsForTeam);
-        } catch (err) {
-            if (err?.code === 'permission-denied') {
-                fallbackByUser.set(uid, []);
-                return;
-            }
-            throw err;
-        }
+        const idsForTeam = await resolveIdsForUser(uid);
+        fallbackByUser.set(uid, idsForTeam);
     }));
 
     return fallbackByUser;
@@ -2214,6 +2666,62 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
     if (direct.length) return direct;
     const uid = rsvp?.userId || rsvp?.id;
     return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
+}
+export { buildCoachOverrideRsvpDocId };
+
+async function computeRsvpSummary(teamId, gameId, options = {}) {
+    const { freshRoster = false } = options;
+    const [rsvps, roster] = await Promise.all([
+        getRsvps(teamId, gameId),
+        getCachedRsvpRoster(teamId, { forceRefresh: freshRoster })
+    ]);
+    const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+        resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
+    });
+    const activeRosterIds = new Set(roster.map((player) => player.id));
+    return computeEffectiveRsvpSummary({
+        rsvps,
+        activeRosterIds,
+        fallbackByUser,
+        normalizeResponse: normalizeRsvpResponse,
+        resolvePlayerIds: resolveRsvpPlayerIds
+    });
+}
+
+export async function getRsvpSummaries(teamId, gameIds) {
+    const uniqueGameIds = uniqueNonEmptyIds(gameIds);
+    const summaries = new Map();
+    if (!teamId || uniqueGameIds.length === 0) return summaries;
+
+    const roster = await getCachedRsvpRoster(teamId);
+    const activeRosterIds = new Set(roster.map((player) => player.id));
+
+    const rsvpResults = await Promise.allSettled(
+        uniqueGameIds.map((gameId) => getRsvps(teamId, gameId))
+    );
+
+    await Promise.all(rsvpResults.map(async (result, index) => {
+        const gameId = uniqueGameIds[index];
+        if (result.status !== 'fulfilled') {
+            summaries.set(gameId, null);
+            return;
+        }
+
+        const rsvps = result.value;
+        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps, {
+            resolveIdsForUser: (uid) => getCachedFallbackPlayerIdsForUser(teamId, uid)
+        });
+        const summary = computeEffectiveRsvpSummary({
+            rsvps,
+            activeRosterIds,
+            fallbackByUser,
+            normalizeResponse: normalizeRsvpResponse,
+            resolvePlayerIds: resolveRsvpPlayerIds
+        });
+        summaries.set(gameId, summary);
+    }));
+
+    return summaries;
 }
 
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
@@ -2241,29 +2749,7 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // depending on team linkage state in profile claims/data.
     let summary = null;
     try {
-        const [rsvps, roster] = await Promise.all([
-            getRsvps(teamId, gameId),
-            getPlayers(teamId)
-        ]);
-        const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-        const activeRosterIds = new Set(roster.map((player) => player.id));
-        summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-        rsvps.forEach((rsvp) => {
-            const responseKey = normalizeRsvpResponse(rsvp.response);
-            if (responseKey === 'not_responded') return;
-
-            const playerCount = resolveRsvpPlayerIds(rsvp, fallbackByUser)
-                .filter((id) => activeRosterIds.has(id))
-                .length;
-            if (playerCount === 0) return;
-
-            if (responseKey === 'going') summary.going += playerCount;
-            else if (responseKey === 'maybe') summary.maybe += playerCount;
-            else if (responseKey === 'not_going') summary.notGoing += playerCount;
-        });
-        summary.total = summary.going + summary.maybe + summary.notGoing;
-        summary.notResponded = Math.max(0, roster.length - summary.total);
-        summary.total = roster.length;
+        summary = await computeRsvpSummary(teamId, gameId);
     } catch (err) {
         if (err?.code !== 'permission-denied') throw err;
     }
@@ -2271,6 +2757,63 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // Best effort: write denormalized summary if caller is allowed to update game doc.
     // For recurring-occurrence IDs (masterId__instanceDate) the virtual game doc may not
     // exist, so we also suppress 'not-found' rather than crashing the submission.
+    if (summary) {
+        try {
+            await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
+        } catch (err) {
+            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
+        }
+    }
+
+    return summary;
+}
+
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
+    const authUid = auth.currentUser?.uid || null;
+    if (userId && authUid && userId !== authUid) {
+        throw new Error('RSVP user mismatch. Please refresh and try again.');
+    }
+    const effectiveUserId = userId || authUid || null;
+    if (!effectiveUserId) {
+        throw new Error('You must be signed in to submit RSVP');
+    }
+
+    const normalizedPlayerId = String(playerId || '').trim();
+    if (!normalizedPlayerId) {
+        throw new Error('Missing player for RSVP override');
+    }
+
+    const docId = buildCoachOverrideRsvpDocId(effectiveUserId, normalizedPlayerId);
+    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, docId);
+    await setDoc(rsvpRef, {
+        userId: effectiveUserId,
+        displayName: displayName || null,
+        playerIds: [normalizedPlayerId],
+        response, // 'going' | 'maybe' | 'not_going'
+        respondedAt: Timestamp.now(),
+        note: note || null
+    });
+    if (docId !== effectiveUserId) {
+        const legacyRsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
+        let legacySnap = null;
+        try {
+            legacySnap = await getDoc(legacyRsvpRef);
+        } catch (err) {
+            if (err?.code !== 'permission-denied') throw err;
+        }
+        if (legacySnap?.exists() && shouldDeleteLegacyRsvpForOverride(legacySnap.data(), normalizedPlayerId)) {
+            await deleteDoc(legacyRsvpRef);
+        }
+    }
+
+    // Keep denormalized summary consistent with submitRsvp behavior.
+    let summary = null;
+    try {
+        summary = await computeRsvpSummary(teamId, gameId, { freshRoster: true });
+    } catch (err) {
+        if (err?.code !== 'permission-denied') throw err;
+    }
+
     if (summary) {
         try {
             await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
@@ -2292,6 +2835,213 @@ export async function getMyRsvp(teamId, gameId, userId) {
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
     const snap = await getDoc(rsvpRef);
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function getRsvpSummary(teamId, gameId) {
+    return computeRsvpSummary(teamId, gameId);
+}
+
+const RIDE_OFFER_STATUS = {
+    OPEN: 'open',
+    CLOSED: 'closed',
+    CANCELLED: 'cancelled'
+};
+
+const RIDE_REQUEST_STATUS = {
+    PENDING: 'pending',
+    CONFIRMED: 'confirmed',
+    WAITLISTED: 'waitlisted',
+    DECLINED: 'declined'
+};
+
+function normalizeRideOfferStatus(status) {
+    const value = (status || '').toString().toLowerCase();
+    if (value === RIDE_OFFER_STATUS.CLOSED || value === RIDE_OFFER_STATUS.CANCELLED) return value;
+    return RIDE_OFFER_STATUS.OPEN;
+}
+
+function normalizeRideRequestStatus(status) {
+    const value = (status || '').toString().toLowerCase();
+    if (value === RIDE_REQUEST_STATUS.CONFIRMED) return RIDE_REQUEST_STATUS.CONFIRMED;
+    if (value === RIDE_REQUEST_STATUS.WAITLISTED) return RIDE_REQUEST_STATUS.WAITLISTED;
+    if (value === RIDE_REQUEST_STATUS.DECLINED) return RIDE_REQUEST_STATUS.DECLINED;
+    return RIDE_REQUEST_STATUS.PENDING;
+}
+
+function isDecisionStatus(status) {
+    const normalized = normalizeRideRequestStatus(status);
+    return normalized === RIDE_REQUEST_STATUS.CONFIRMED ||
+        normalized === RIDE_REQUEST_STATUS.WAITLISTED ||
+        normalized === RIDE_REQUEST_STATUS.DECLINED;
+}
+
+function toNonNegativeInteger(value, fallback = 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return parsed;
+}
+
+function nextConfirmedSeatCount(currentSeatCountConfirmed, previousRequestStatus, nextRequestStatus) {
+    const current = toNonNegativeInteger(currentSeatCountConfirmed, 0);
+    const wasConfirmed = normalizeRideRequestStatus(previousRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
+    const willBeConfirmed = normalizeRideRequestStatus(nextRequestStatus) === RIDE_REQUEST_STATUS.CONFIRMED;
+    if (wasConfirmed === willBeConfirmed) return current;
+    if (wasConfirmed && !willBeConfirmed) return Math.max(0, current - 1);
+    return current + 1;
+}
+
+/**
+ * Create a rideshare offer under a game/practice event.
+ */
+export async function createRideOffer(teamId, gameId, payload = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to offer a ride.');
+    const seatCapacity = toNonNegativeInteger(payload.seatCapacity, 0);
+    if (seatCapacity <= 0) throw new Error('Seat capacity must be at least 1.');
+
+    const directionRaw = (payload.direction || '').toString().toLowerCase();
+    const direction = directionRaw === 'to' || directionRaw === 'from' || directionRaw === 'round-trip'
+        ? directionRaw
+        : 'to';
+
+    const note = typeof payload.note === 'string' ? payload.note.trim() : '';
+    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`), {
+        driverUserId: user.uid,
+        driverName: payload.driverName || user.displayName || user.email || 'Parent Driver',
+        seatCapacity,
+        seatCountConfirmed: 0,
+        direction,
+        note: note || null,
+        status: RIDE_OFFER_STATUS.OPEN,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return offerRef.id;
+}
+
+/**
+ * List rideshare offers (with nested requests) for an event.
+ */
+export async function listRideOffersForEvent(teamId, gameId) {
+    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
+    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
+        const offerData = offerDoc.data() || {};
+        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
+        const requests = requestsSnap.docs
+            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+            .sort((a, b) => {
+                const at = a?.requestedAt?.toMillis?.() || 0;
+                const bt = b?.requestedAt?.toMillis?.() || 0;
+                return at - bt;
+            });
+        return {
+            id: offerDoc.id,
+            ...offerData,
+            status: normalizeRideOfferStatus(offerData.status),
+            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
+            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
+            requests
+        };
+    }));
+
+    offers.sort((a, b) => {
+        const at = a?.createdAt?.toMillis?.() || 0;
+        const bt = b?.createdAt?.toMillis?.() || 0;
+        return bt - at;
+    });
+    return offers;
+}
+
+/**
+ * Request a seat for a linked child.
+ */
+export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to request a ride.');
+    const childId = (payload.childId || '').toString().trim();
+    if (!childId) throw new Error('childId is required to request a ride.');
+    const childName = (payload.childName || '').toString().trim();
+    const requestId = `${user.uid}__${childId}`;
+    await setDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId), {
+        parentUserId: user.uid,
+        childId,
+        childName: childName || null,
+        status: RIDE_REQUEST_STATUS.PENDING,
+        requestedAt: Timestamp.now(),
+        respondedAt: null,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return requestId;
+}
+
+/**
+ * Driver/admin updates request status with seat-capacity protection.
+ */
+export async function updateRideRequestStatus(teamId, gameId, offerId, requestId, nextStatus) {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
+    const normalizedNextStatus = normalizeRideRequestStatus(nextStatus);
+    if (!isDecisionStatus(normalizedNextStatus)) {
+        throw new Error('Status must be confirmed, waitlisted, or declined.');
+    }
+
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, requestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!offerSnap.exists()) throw new Error('Ride offer not found.');
+        if (!requestSnap.exists()) throw new Error('Ride request not found.');
+
+        const offer = offerSnap.data() || {};
+        const request = requestSnap.data() || {};
+        const offerStatus = normalizeRideOfferStatus(offer.status);
+        if (offerStatus !== RIDE_OFFER_STATUS.OPEN) throw new Error('Ride offer is closed.');
+
+        const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);
+        const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);
+        const nextSeatCount = nextConfirmedSeatCount(currentSeatCountConfirmed, request.status, normalizedNextStatus);
+        if (nextSeatCount > seatCapacity) throw new Error('Offer is full.');
+
+        tx.update(requestRef, {
+            status: normalizedNextStatus,
+            respondedAt: Timestamp.now(),
+            updatedAt: Timestamp.now()
+        });
+        tx.update(offerRef, {
+            seatCountConfirmed: nextSeatCount,
+            updatedAt: Timestamp.now()
+        });
+        return { seatCountConfirmed: nextSeatCount };
+    });
+}
+
+export async function closeRideOffer(teamId, gameId, offerId, status = RIDE_OFFER_STATUS.CLOSED) {
+    const normalizedStatus = normalizeRideOfferStatus(status);
+    await updateDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId), {
+        status: normalizedStatus,
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function cancelRideRequest(teamId, gameId, offerId, requestId) {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
+
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, requestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!requestSnap.exists()) return;
+        const offer = offerSnap.exists() ? (offerSnap.data() || {}) : null;
+        const request = requestSnap.data() || {};
+        tx.delete(requestRef);
+        if (!offer) return;
+        const nextSeatCount = nextConfirmedSeatCount(
+            toNonNegativeInteger(offer.seatCountConfirmed, 0),
+            request.status,
+            RIDE_REQUEST_STATUS.DECLINED
+        );
+        tx.update(offerRef, {
+            seatCountConfirmed: nextSeatCount,
+            updatedAt: Timestamp.now()
+        });
+    });
 }
 
 export async function getRsvpBreakdownByPlayer(teamId, gameId) {

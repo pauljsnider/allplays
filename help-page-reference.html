@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Help - File-by-File Page Reference</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <main class="max-w-7xl mx-auto px-4 py-8">
+    <a href="help.html" class="text-sm text-blue-700 hover:text-blue-900">← Back to Help Portal</a>
+    <h1 class="mt-2 text-3xl font-extrabold">File-by-File Page Reference</h1>
+    <p class="mt-2 text-slate-600">Each page, what it does, and which role should use it.</p>
+
+    <div class="mt-6 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-100 text-slate-700">
+          <tr>
+            <th class="text-left px-4 py-3 font-bold">File</th>
+            <th class="text-left px-4 py-3 font-bold">Primary Features</th>
+            <th class="text-left px-4 py-3 font-bold">Role(s)</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          <tr><td class="px-4 py-3 font-mono">index.html</td><td class="px-4 py-3">Landing page, product entry, navigation entry points</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">login.html</td><td class="px-4 py-3">Sign in, sign up, auth flows</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">accept-invite.html</td><td class="px-4 py-3">Invite acceptance and account linking</td><td class="px-4 py-3">Parent, Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">reset-password.html</td><td class="px-4 py-3">Password reset entry and completion</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">verify-pending.html</td><td class="px-4 py-3">Pending verification state guidance</td><td class="px-4 py-3">All new users</td></tr>
+          <tr><td class="px-4 py-3 font-mono">profile.html</td><td class="px-4 py-3">Profile settings and account details</td><td class="px-4 py-3">Member, Parent, Coach, Admin</td></tr>
+
+          <tr><td class="px-4 py-3 font-mono">teams.html</td><td class="px-4 py-3">Browse teams and discovery</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">team.html</td><td class="px-4 py-3">Team details, schedule, roster, links to operations</td><td class="px-4 py-3">Parent, Coach, Admin, Member</td></tr>
+          <tr><td class="px-4 py-3 font-mono">dashboard.html</td><td class="px-4 py-3">My Teams management dashboard</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">parent-dashboard.html</td><td class="px-4 py-3">Parent-centric schedule/player actions</td><td class="px-4 py-3">Parent</td></tr>
+          <tr><td class="px-4 py-3 font-mono">admin.html</td><td class="px-4 py-3">Global admin tools and access control</td><td class="px-4 py-3">Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">check-admin-status.html</td><td class="px-4 py-3">Admin status diagnostics</td><td class="px-4 py-3">Admin</td></tr>
+
+          <tr><td class="px-4 py-3 font-mono">edit-team.html</td><td class="px-4 py-3">Team metadata updates</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">edit-roster.html</td><td class="px-4 py-3">Player roster create/update/delete</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">edit-schedule.html</td><td class="px-4 py-3">Game/practice planning, event editing, tracker launching</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">calendar.html</td><td class="px-4 py-3">Calendar/schedule visualization</td><td class="px-4 py-3">Parent, Coach, Admin, Member</td></tr>
+          <tr><td class="px-4 py-3 font-mono">edit-config.html</td><td class="px-4 py-3">Stats and tracker config management</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">drills.html</td><td class="px-4 py-3">Drill planning and library workflows</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">game-plan.html</td><td class="px-4 py-3">Game plan creation and review</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">game-day.html</td><td class="px-4 py-3">Game-day operational controls</td><td class="px-4 py-3">Coach, Admin</td></tr>
+
+          <tr><td class="px-4 py-3 font-mono">track.html</td><td class="px-4 py-3">Standard game tracking</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">track-live.html</td><td class="px-4 py-3">Live tracker (multi-sport), chat, unified notes, game log</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">live-tracker.html</td><td class="px-4 py-3">Basketball-specific live tracker</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">track-basketball.html</td><td class="px-4 py-3">Basketball beta tracker flow</td><td class="px-4 py-3">Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">track-statsheet.html</td><td class="px-4 py-3">Statsheet tracking/import path</td><td class="px-4 py-3">Coach, Admin</td></tr>
+
+          <tr><td class="px-4 py-3 font-mono">game.html</td><td class="px-4 py-3">Post-game report view, score/stats outcomes</td><td class="px-4 py-3">Parent, Coach, Admin, Member</td></tr>
+          <tr><td class="px-4 py-3 font-mono">live-game.html</td><td class="px-4 py-3">Live/replay game viewing and chat eligibility</td><td class="px-4 py-3">Parent, Coach, Admin, Member</td></tr>
+          <tr><td class="px-4 py-3 font-mono">player.html</td><td class="px-4 py-3">Player profile and game report drilldown</td><td class="px-4 py-3">Parent, Coach, Admin</td></tr>
+          <tr><td class="px-4 py-3 font-mono">team-chat.html</td><td class="px-4 py-3">Team chat room, mentions/tags, communication thread</td><td class="px-4 py-3">Parent, Coach, Admin</td></tr>
+
+          <tr><td class="px-4 py-3 font-mono">help.html</td><td class="px-4 py-3">Help portal landing and topic routing</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">help-account.html</td><td class="px-4 py-3">Account/access ownership by role</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">help-team-operations.html</td><td class="px-4 py-3">Team setup and management ownership by role</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">help-game-operations.html</td><td class="px-4 py-3">Game planning/tracking ownership by role</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">help-watch-chat.html</td><td class="px-4 py-3">Watch/chat/tag ownership by role</td><td class="px-4 py-3">All</td></tr>
+          <tr><td class="px-4 py-3 font-mono">help-page-reference.html</td><td class="px-4 py-3">Full page capability matrix</td><td class="px-4 py-3">All</td></tr>
+
+          <tr class="bg-slate-50"><td class="px-4 py-3 font-semibold" colspan="3">Test/QA pages (engineering/internal)</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-fix-recurring-rsvp.html</td><td class="px-4 py-3">Recurring RSVP test harness</td><td class="px-4 py-3">Engineering/QA</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-fix-schedule-drills.html</td><td class="px-4 py-3">Schedule/drills regression checks</td><td class="px-4 py-3">Engineering/QA</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-foul-tracking.html</td><td class="px-4 py-3">Foul tracking test utility</td><td class="px-4 py-3">Engineering/QA</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-game-day.html</td><td class="px-4 py-3">Game-day feature checks</td><td class="px-4 py-3">Engineering/QA</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-pr-changes.html</td><td class="px-4 py-3">PR smoke/regression checks</td><td class="px-4 py-3">Engineering/QA</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-statsheet-mapping.html</td><td class="px-4 py-3">Statsheet mapping validation</td><td class="px-4 py-3">Engineering/QA</td></tr>
+          <tr><td class="px-4 py-3 font-mono">test-youtube-stream.html</td><td class="px-4 py-3">Stream embed/watch tests</td><td class="px-4 py-3">Engineering/QA</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

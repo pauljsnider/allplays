@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Team Details - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -232,6 +233,8 @@
         import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
+        import { computeNativeStandings } from './js/native-standings.js?v=1';
+        import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
@@ -270,6 +273,7 @@
         let scheduleViewMode = 'list';
         let scheduleCalendarMonth = new Date().getMonth();
         let scheduleCalendarYear = new Date().getFullYear();
+        let seasonFilterLabel = String(new Date().getFullYear());
 
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -317,6 +321,59 @@
             `;
         }
 
+        function buildNativeStandingsSnapshot(team, dbGames) {
+            const standingsConfig = team?.standingsConfig || {};
+            if (!standingsConfig.enabled) return null;
+
+            const teamName = String(team?.name || '').trim();
+            if (!teamName) return null;
+
+            const leagueGames = (Array.isArray(dbGames) ? dbGames : [])
+                .filter((game) => game?.type !== 'practice')
+                .map((game) => {
+                    const opponent = String(game?.opponent || '').trim();
+                    const isHome = game?.isHome !== false;
+                    return {
+                        homeTeam: isHome ? teamName : opponent,
+                        awayTeam: isHome ? opponent : teamName,
+                        homeScore: game?.homeScore,
+                        awayScore: game?.awayScore,
+                        status: game?.status
+                    };
+                });
+
+            const rows = computeNativeStandings(leagueGames, standingsConfig);
+            const match = rows.find((row) => row.team === teamName) || rows[0] || null;
+
+            return {
+                ok: rows.length > 0,
+                rows,
+                match,
+                config: standingsConfig
+            };
+        }
+
+        function renderNativeStandingsOverviewBody(snapshot) {
+            if (!snapshot || !snapshot.ok || !snapshot.match) {
+                return '<p class="text-sm text-gray-500">No completed games yet for native standings</p>';
+            }
+
+            const row = snapshot.match;
+            const mode = snapshot.config?.rankingMode === 'win_pct' ? 'Win %' : 'Points';
+            const rankLabel = typeof row.rank === 'number' ? `#${row.rank}` : 'N/A';
+
+            return `
+                <div class="mb-2">
+                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
+                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • ${escapeHtml(rankLabel)} • ${escapeHtml(mode)}</div>
+                </div>
+                <div class="text-xs text-gray-500">
+                    PTS ${Number(row.points) || 0} · PCT ${(Number(row.winPct) || 0).toFixed(3)} · PF ${Number(row.pf) || 0} · PA ${Number(row.pa) || 0} · PD ${Number(row.pd) || 0}
+                </div>
+                <div class="text-xs text-gray-400 mt-2">Computed from completed in-app games</div>
+            `;
+        }
+
         function ensureCountdownTimer() {
             if (countdownIntervalId) return;
             countdownIntervalId = setInterval(updateCountdown, 60000);
@@ -338,30 +395,55 @@
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
         }
 
+        function streamLinkHtml(team) {
+            if (team.twitchChannel) {
+                return `<a class="inline-flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 font-medium transition" target="_blank" rel="noopener noreferrer" href="https://twitch.tv/${encodeURIComponent(team.twitchChannel)}">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Watch on Twitch
+                </a>`;
+            }
+            const embedUrl = team.streamEmbedUrl || team.youtubeEmbedUrl;
+            if (embedUrl) {
+                const channelMatch = embedUrl.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+                const videoMatch = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+                const url = channelMatch
+                    ? `https://www.youtube.com/channel/${channelMatch[1]}`
+                    : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+                if (url) return `<a class="inline-flex items-center gap-1 text-sm text-red-500 hover:text-red-600 font-medium transition" target="_blank" rel="noopener noreferrer" href="${url}">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Watch on YouTube
+                </a>`;
+            }
+            return '';
+        }
+
         function toDateSafe(value) {
             if (!value) return null;
             const d = value?.toDate ? value.toDate() : new Date(value);
             return Number.isNaN(d?.getTime?.()) ? null : d;
         }
 
-        function calculateSeasonRecord(games) {
-            let wins = 0;
-            let losses = 0;
-            let ties = 0;
+        function getSeasonRecordMeta(games, selectedSeason) {
+            const record = calculateSeasonRecord(games, { seasonLabel: selectedSeason });
+            const totalGames = record.wins + record.losses + record.ties;
+            const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
+            return { record, totalGames, winPercentage };
+        }
 
-            games.forEach(game => {
-                if (game.status === 'completed' && game.homeScore !== undefined && game.awayScore !== undefined) {
-                    if (game.homeScore > game.awayScore) {
-                        wins++;
-                    } else if (game.homeScore < game.awayScore) {
-                        losses++;
-                    } else {
-                        ties++;
-                    }
-                }
-            });
+        function updateSeasonRecordCard(games, selectedSeason) {
+            const titleEl = document.getElementById('season-record-title');
+            const valueEl = document.getElementById('season-record-value');
+            const pctEl = document.getElementById('season-record-pct');
+            const playedEl = document.getElementById('season-record-played');
+            if (!titleEl || !valueEl || !pctEl || !playedEl) return;
 
-            return { wins, losses, ties };
+            const { record, totalGames, winPercentage } = getSeasonRecordMeta(games, selectedSeason);
+            titleEl.textContent = `Season Record (${selectedSeason})`;
+            valueEl.textContent = `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}`;
+            pctEl.textContent = totalGames > 0 ? `(${winPercentage}%)` : '';
+            playedEl.textContent = totalGames === 0
+                ? 'No countable games completed yet'
+                : `${totalGames} game${totalGames === 1 ? '' : 's'} played`;
         }
 
         function formatMMSS(ms) {
@@ -633,8 +715,15 @@
                     }
                 }
 
-                // Calculate season record
-                const record = calculateSeasonRecord(dbGames);
+                const seasonLabels = listSeasonLabels(dbGames);
+                if (!seasonLabels.length) {
+                    seasonLabels.push(String(new Date().getFullYear()));
+                }
+                if (!seasonLabels.includes(seasonFilterLabel)) {
+                    const currentYearLabel = String(new Date().getFullYear());
+                    seasonFilterLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : seasonLabels[0];
+                }
+                const seasonMeta = getSeasonRecordMeta(dbGames, seasonFilterLabel);
 
                 // Render Header
                 document.getElementById('team-header').innerHTML = `
@@ -670,6 +759,7 @@
                                     </a>`
                         : ''
                     }
+                                ${streamLinkHtml(team)}
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
                         </div>
@@ -677,11 +767,15 @@
                 `;
 
                 // Render Season Overview Cards
-                const totalGames = dbGames.filter(g => g.status === 'completed').length;
-                const winPercentage = totalGames > 0 ? ((record.wins / totalGames) * 100).toFixed(0) : 0;
-                const leagueSnapshot = team.leagueUrl
-                    ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
-                    : { ok: false, reason: 'missing-url', rows: [], match: null };
+                const totalGames = seasonMeta.totalGames;
+                const winPercentage = seasonMeta.winPercentage;
+                const record = seasonMeta.record;
+                const nativeStandingsSnapshot = buildNativeStandingsSnapshot(team, dbGames);
+                const leagueSnapshot = (nativeStandingsSnapshot && nativeStandingsSnapshot.ok)
+                    ? null
+                    : (team.leagueUrl
+                        ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
+                        : { ok: false, reason: 'missing-url', rows: [], match: null });
 
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
@@ -694,21 +788,26 @@
                     <!-- Season Record -->
                     <div class="bg-white rounded-xl shadow-md hover:shadow-lg transition p-6 border border-gray-200">
                         <div class="flex items-center justify-between mb-3">
-                            <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record</h3>
+                            <div class="flex flex-col gap-1">
+                                <h3 id="season-record-title" class="text-sm font-semibold text-gray-600 uppercase tracking-wide">Season Record (${seasonFilterLabel})</h3>
+                                <select id="season-record-filter" class="text-xs border border-gray-200 rounded px-2 py-0.5 text-gray-700">
+                                    ${seasonLabels.map((label) => `<option value="${escapeHtml(label)}" ${label === seasonFilterLabel ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                                </select>
+                            </div>
                             <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                             </svg>
                         </div>
                         <div class="flex items-baseline gap-2">
-                            <span class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
+                            <span id="season-record-value" class="text-3xl md:text-4xl font-bold text-gray-900">${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ''}</span>
                             ${totalGames > 0
-                            ? `<span class="text-sm text-gray-500">(${winPercentage}%)</span>`
-                            : ''
+                            ? `<span id="season-record-pct" class="text-sm text-gray-500">(${winPercentage}%)</span>`
+                            : '<span id="season-record-pct" class="text-sm text-gray-500"></span>'
                         }
                         </div>
                         ${totalGames === 0
-                            ? `<p class="text-xs text-gray-500 mt-2">No games completed yet</p>`
-                            : `<p class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
+                            ? `<p id="season-record-played" class="text-xs text-gray-500 mt-2">No countable games completed yet</p>`
+                            : `<p id="season-record-played" class="text-xs text-gray-500 mt-2">${totalGames} game${totalGames === 1 ? '' : 's'} played</p>`
                         }
                     </div>
 
@@ -743,9 +842,19 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-5m3 5V7m3 10v-3m4 8H5a2 2 0 01-2-2V4a2 2 0 012-2h14a2 2 0 012 2v16a2 2 0 01-2 2z"></path>
                             </svg>
                         </div>
-                        ${renderLeagueOverviewBody(leagueSnapshot, team)}
+                        ${(nativeStandingsSnapshot && nativeStandingsSnapshot.ok)
+                            ? renderNativeStandingsOverviewBody(nativeStandingsSnapshot)
+                            : renderLeagueOverviewBody(leagueSnapshot, team)}
                     </div>
                 `;
+
+                const seasonFilterEl = document.getElementById('season-record-filter');
+                if (seasonFilterEl) {
+                    seasonFilterEl.addEventListener('change', () => {
+                        seasonFilterLabel = seasonFilterEl.value;
+                        updateSeasonRecordCard(dbGames, seasonFilterLabel);
+                    });
+                }
 
                 // Start countdown updates
                 if (nextGame) {

@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Match Report - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -606,9 +607,10 @@ Write the match report now:`;
 
             try {
                 const [team, game, players] = await Promise.all([
-                    getTeam(teamId),
+                    // Reports are historical and must resolve soft-deleted teams.
+                    getTeam(teamId, { includeInactive: true }),
                     getGame(teamId, gameId),
-                    getPlayers(teamId)
+                    getPlayers(teamId, { includeInactive: true })
                 ]);
 
                 if (!game) {
