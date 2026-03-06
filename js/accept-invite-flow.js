@@ -37,6 +37,9 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         }
 
         const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId, authEmail);
+        if (!redeemResult || !redeemResult.success) {
+            throw new Error('Failed to redeem admin invite atomically');
+        }
 
         return {
             success: true,

@@ -46,6 +46,26 @@ describe('accept invite flow', () => {
         await expect(processInvite('user-1', 'ABCD1234')).rejects.toThrow('Code already used');
     });
 
+    it('fails when atomic admin redemption returns an invalid result', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-126',
+                type: 'admin_invite',
+                data: { teamId: 'team-4' }
+            })),
+            redeemParentInvite: vi.fn(),
+            getTeam: vi.fn(),
+            redeemAdminInviteAtomically: vi.fn().mockResolvedValue({})
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-4', 'MNOP3456')).rejects.toThrow(
+            'Failed to redeem admin invite atomically'
+        );
+    });
+
     it('fails closed when atomic admin redemption is unavailable', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({
