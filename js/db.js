@@ -1029,7 +1029,7 @@ export async function redeemAdminInviteAtomicPersistence({
     }
 }
 
-export async function redeemAdminInviteAtomically(codeId, userId) {
+export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail = null) {
     return runTransaction(db, async (transaction) => {
         const codeRef = doc(db, "accessCodes", codeId);
         const codeSnap = await transaction.get(codeRef);
@@ -1070,13 +1070,14 @@ export async function redeemAdminInviteAtomically(codeId, userId) {
         const teamData = teamSnap.data() || {};
         const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
         const authEmail = auth.currentUser?.email || '';
-        const userEmail = (userData.email || authEmail || '').toLowerCase().trim();
-
-        if (userEmail) {
-            transaction.set(teamRef, {
-                adminEmails: arrayUnion(userEmail)
-            }, { merge: true });
+        const userEmail = (userData.email || authEmail || fallbackEmail || '').toLowerCase().trim();
+        if (!userEmail) {
+            throw new Error('Unable to determine user email for admin invite');
         }
+
+        transaction.set(teamRef, {
+            adminEmails: arrayUnion(userEmail)
+        }, { merge: true });
 
         transaction.set(userRef, {
             coachOf: arrayUnion(teamId),
