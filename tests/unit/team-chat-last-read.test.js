@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldUpdateChatLastRead } from '../../js/team-chat-last-read.js';
+import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from '../../js/team-chat-last-read.js';
 
 describe('team chat last-read snapshot policy', () => {
     it('updates last-read when user/team context exists and chat is actively visible/focused', () => {
@@ -51,6 +51,56 @@ describe('team chat last-read snapshot policy', () => {
         expect(shouldUpdateChatLastRead({
             hasCurrentUser: true,
             hasTeamId: true
+        })).toBe(false);
+    });
+});
+
+describe('team chat last-read lifecycle retry policy', () => {
+    it('retries last-read when user returns to an active chat view with a fresh loaded snapshot and messages', () => {
+        expect(shouldRetryChatLastReadOnViewReturn({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true,
+            hasMessages: true,
+            hasLoadedSnapshot: true,
+            isAwaitingPostResumeSnapshot: false
+        })).toBe(true);
+    });
+
+    it('does not retry last-read when no messages are loaded', () => {
+        expect(shouldRetryChatLastReadOnViewReturn({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true,
+            hasMessages: false,
+            hasLoadedSnapshot: true,
+            isAwaitingPostResumeSnapshot: false
+        })).toBe(false);
+    });
+
+    it('does not retry last-read while waiting for post-resume snapshot freshness', () => {
+        expect(shouldRetryChatLastReadOnViewReturn({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true,
+            hasMessages: true,
+            hasLoadedSnapshot: true,
+            isAwaitingPostResumeSnapshot: true
+        })).toBe(false);
+    });
+
+    it('does not retry last-read before any realtime snapshot has loaded', () => {
+        expect(shouldRetryChatLastReadOnViewReturn({
+            hasCurrentUser: true,
+            hasTeamId: true,
+            isPageVisible: true,
+            isWindowFocused: true,
+            hasMessages: true,
+            hasLoadedSnapshot: false,
+            isAwaitingPostResumeSnapshot: false
         })).toBe(false);
     });
 });

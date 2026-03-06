@@ -93,6 +93,14 @@ export async function executeEmailPasswordSignup({
         }
     } else {
         try {
+            await markAccessCodeAsUsed(validation.codeId, userId);
+        } catch (error) {
+            console.error('Error marking code as used:', error);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw error;
+        }
+
+        try {
             await updateUserProfile(userId, {
                 email: email,
                 createdAt: new Date(),
@@ -100,12 +108,6 @@ export async function executeEmailPasswordSignup({
             });
         } catch (e) {
             console.error('Error creating user profile:', e);
-        }
-
-        try {
-            await markAccessCodeAsUsed(validation.codeId, userId);
-        } catch (error) {
-            console.error('Error marking code as used:', error);
         }
     }
 

@@ -13,12 +13,14 @@ describe('effective RSVP summary', () => {
         const rosterIds = new Set(['p1', 'p2']);
         const rsvps = [
             {
+                id: 'parent-1',
                 userId: 'parent-1',
                 playerIds: ['p1', 'p2'],
                 response: 'going',
                 respondedAt: '2026-03-04T11:00:00.000Z'
             },
             {
+                id: 'parent-1__p1',
                 userId: 'coach-1',
                 playerIds: ['p1'],
                 response: 'not_going',
