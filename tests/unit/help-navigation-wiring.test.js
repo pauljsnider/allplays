@@ -20,10 +20,10 @@ describe('help navigation wiring', () => {
 
     it('renders multi-page help portal links', () => {
         const helpHtml = readRepoFile('help.html');
-        expect(helpHtml).toContain('href="help-account.html"');
-        expect(helpHtml).toContain('href="help-team-operations.html"');
-        expect(helpHtml).toContain('href="help-game-operations.html"');
-        expect(helpHtml).toContain('href="help-watch-chat.html"');
-        expect(helpHtml).toContain('href="help-page-reference.html"');
+        expect(helpHtml).toContain('href="workflow-getting-started.html"');
+        expect(helpHtml).toContain('href="workflow-team-setup.html"');
+        expect(helpHtml).toContain('href="workflow-game-day.html"');
+        expect(helpHtml).toContain('href="workflow-live-watch-replay.html"');
+        expect(helpHtml).toContain('href="workflow-track-game.html"');
     });
 });
