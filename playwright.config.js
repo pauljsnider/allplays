@@ -1,5 +1,6 @@
 const { defineConfig, devices } = require('@playwright/test');
 const { resolveShard, resolveSuiteSelection } = require('./config/playwright-suite-strategy.cjs');
+const { buildReporters, resolveGrepInvert } = require('./config/playwright-reliability.cjs');
 
 const suiteSelection = resolveSuiteSelection(process.env);
 const shard = resolveShard(process.env);
@@ -13,9 +14,7 @@ module.exports = defineConfig({
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI
-    ? [['github'], ['html', { open: 'never' }]]
-    : [['list'], ['html', { open: 'never' }]],
+  reporter: buildReporters(process.env),
   use: {
     baseURL: 'http://127.0.0.1:4173',
     trace: 'on-first-retry',
@@ -29,6 +28,7 @@ module.exports = defineConfig({
     timeout: 30_000
   },
   grep: suiteSelection.grep,
+  grepInvert: resolveGrepInvert(process.env),
   shard,
   projects: [
     {

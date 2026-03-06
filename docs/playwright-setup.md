@@ -153,7 +153,8 @@ PRs are expected to stay green on this gate at all times. If the smoke suite is 
   - `critical` in one job
   - `extended` split into `1/2` and `2/2` shards
 - **Runtime target:** < 30 minutes
-- **Artifacts:** HTML report always uploaded (30-day retention); traces uploaded on failure (14-day)
+- **Reliability gate:** Each shard exports a JSON report and fails if flaky tests exceed `2.00%` of executed tests
+- **Artifacts:** HTML report always uploaded (30-day retention); JSON report always uploaded (30-day retention); traces uploaded on failure (14-day)
 
 The nightly run produces the evidence log used to track pass/fail trends and flake rate.
 
@@ -194,8 +195,9 @@ The `@critical` suite (Week 1, Days 3-4) will cover auth and role-gated UI — a
 ## Flake Management
 
 - Flake rate target: < 2% per spec
+- Nightly CI computes flake rate from the Playwright JSON report and enforces a `2.00%` budget per shard
 - Flaky specs are tagged `@quarantine` and moved to a separate folder (`tests/quarantine/`) until fixed
-- Nightly CI does **not** run quarantine specs
+- Default Playwright runs do **not** run quarantine specs; set `PLAYWRIGHT_INCLUDE_QUARANTINE=1` to include them explicitly
 - Flake triage is Day 9 (2026-03-05) work
 
 ---
