@@ -241,19 +241,31 @@ function updateTabs() {
   });
 }
 
-function setupVideoPanel() {
-  const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
-  const extLink = document.getElementById('stream-external-link');
-  const iframe = document.getElementById('youtube-stream-iframe');
-  const recordedVideo = els.recordedReplayVideo;
-  const previousPlayback = state.videoPlayback;
-  const nextPlayback = resolveReplayVideoOptions({
+function resolveVideoPlayback() {
+  return resolveReplayVideoOptions({
     team: state.team,
     game: state.game,
     isReplay: state.isReplay,
     clipStartMs: state.clipStartMs,
     clipEndMs: state.clipEndMs
   });
+}
+
+function refreshVideoPanel({ force = false } = {}) {
+  const nextPlayback = resolveVideoPlayback();
+  if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
+    return false;
+  }
+  setupVideoPanel(nextPlayback);
+  return true;
+}
+
+function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
+  const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
+  const extLink = document.getElementById('stream-external-link');
+  const iframe = document.getElementById('youtube-stream-iframe');
+  const recordedVideo = els.recordedReplayVideo;
+  const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
   state.videoPlayback = nextPlayback;
   state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
@@ -1679,7 +1691,7 @@ function formatFirestoreError(error) {
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
-  setupVideoPanel();
+  refreshVideoPanel();
   renderGameInfo();
   const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;
   if (resetAt > state.lastResetAt) {
@@ -1800,7 +1812,7 @@ async function init() {
   state.period = game.period || 'Q1';
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
-  setupVideoPanel();
+  refreshVideoPanel({ force: true });
   renderGameInfo();
   renderScoreboard();
   renderLineup();
