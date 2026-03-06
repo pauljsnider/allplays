@@ -1662,31 +1662,18 @@
                 const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
                 await Promise.all(deleteStatsPromises);
 
-                // Delete all live events
-                const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
-                const deleteLiveEventPromises = liveEventsSnap.docs.map(doc => deleteDoc(doc.ref));
-                await Promise.all(deleteLiveEventPromises);
-
-                // Reset game status/flags after deleting tracked records
-                await updateGame(currentTeamId, currentGameId, {
-                    status: 'scheduled',
-                    liveStatus: 'scheduled',
-                    homeScore: 0,
-                    awayScore: 0,
-                    opponentStats: {},
-                    liveHasData: false,
-                    // Preserve opponent fields
-                    opponent: currentGame.opponent,
-                    opponentTeamId: currentGame.opponentTeamId,
-                    opponentTeamName: currentGame.opponentTeamName,
-                    opponentTeamPhoto: currentGame.opponentTeamPhoto
-                });
-                if (currentGame) {
-                    currentGame.liveHasData = false;
-                    currentGame.liveStatus = 'scheduled';
-                    currentGame.homeScore = 0;
-                    currentGame.awayScore = 0;
-                    currentGame.opponentStats = {};
+                // Reset game status to scheduled if it was started
+                if (currentGame.status !== 'scheduled') {
+                    await updateGame(currentTeamId, currentGameId, {
+                        status: 'scheduled',
+                        homeScore: 0,
+                        awayScore: 0,
+                        // Preserve opponent fields
+                        opponent: currentGame.opponent,
+                        opponentTeamId: currentGame.opponentTeamId,
+                        opponentTeamName: currentGame.opponentTeamName,
+                        opponentTeamPhoto: currentGame.opponentTeamPhoto
+                    });
                 }
                 liveState.isLive = false;
                 liveState.lastClockSyncAt = 0;
