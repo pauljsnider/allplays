@@ -45,3 +45,35 @@ export function buildTrackLiveResetUpdate({
     opponentTeamPhoto: currentGame?.opponentTeamPhoto || ''
   };
 }
+
+export async function runTrackLiveResetPersistence({
+  publishResetEvent,
+  updateResetState,
+  cleanupPersistedState,
+  logWarn = () => {},
+  logError = () => {}
+} = {}) {
+  if (typeof publishResetEvent === 'function') {
+    try {
+      await publishResetEvent();
+    } catch (error) {
+      logWarn('Failed to publish reset event:', error);
+    }
+  }
+
+  if (typeof updateResetState === 'function') {
+    try {
+      await updateResetState();
+    } catch (error) {
+      logError('Error updating game reset state:', error);
+    }
+  }
+
+  if (typeof cleanupPersistedState === 'function') {
+    try {
+      await cleanupPersistedState();
+    } catch (error) {
+      logWarn('Failed to clear persisted tracking records during reset:', error);
+    }
+  }
+}

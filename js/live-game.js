@@ -21,7 +21,7 @@ import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc } from './live-game-state.js?v=1';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=1';
 
 const state = {
   teamId: null,
@@ -779,10 +779,18 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
 }
 
 function processNewEvents(events) {
-  const newEvents = events.filter(ev => !state.eventIds.has(ev.id));
+  const resetBoundaryMs = Number(state.lastResetAt) || 0;
+  const newEvents = events.filter(ev => (
+    !state.eventIds.has(ev.id) &&
+    isLiveEventVisibleForResetBoundary(ev, resetBoundaryMs)
+  ));
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
     if (event.type === 'reset') {
+      const resetAt = getTimestampMs(event.createdAt) || Date.now();
+      if (resetAt > (state.lastResetAt || 0)) {
+        state.lastResetAt = resetAt;
+      }
       const next = applyResetEventState(state, event);
       Object.assign(state, next);
       state.eventIds.add(event.id);

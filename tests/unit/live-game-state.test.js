@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -70,5 +70,24 @@ describe('live game state helpers', () => {
       { events: [], stats: {}, opponentStats: {}, homeScore: 0, awayScore: 0 }
     );
     expect(shouldReset).toBe(false);
+  });
+
+  it('filters non-reset events older than the live reset boundary', () => {
+    const oldEvent = {
+      type: 'stat',
+      createdAt: { toMillis: () => 1000 }
+    };
+    const newEvent = {
+      type: 'stat',
+      createdAt: { toMillis: () => 3000 }
+    };
+
+    expect(isLiveEventVisibleForResetBoundary(oldEvent, 2000)).toBe(false);
+    expect(isLiveEventVisibleForResetBoundary(newEvent, 2000)).toBe(true);
+  });
+
+  it('always keeps reset events and unknown timestamps', () => {
+    expect(isLiveEventVisibleForResetBoundary({ type: 'reset', createdAt: { toMillis: () => 1000 } }, 2000)).toBe(true);
+    expect(isLiveEventVisibleForResetBoundary({ type: 'stat' }, 2000)).toBe(true);
   });
 });
