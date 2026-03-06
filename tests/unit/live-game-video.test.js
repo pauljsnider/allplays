@@ -4,7 +4,8 @@ import {
     buildHighlightShareUrl,
     createHighlightClipDraft,
     normalizeSavedHighlightClips,
-    resolveReplayVideoOptions
+    resolveReplayVideoOptions,
+    shouldReloadVideoPlayback
 } from '../../js/live-game-video.js';
 
 describe('live game replay video helpers', () => {
@@ -73,5 +74,31 @@ describe('live game replay video helpers', () => {
         });
 
         expect(url).toBe('https://allplays.example/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=12000&clipEnd=72000');
+    });
+
+    it('keeps embedded playback running when the source is unchanged', () => {
+        expect(shouldReloadVideoPlayback(
+            { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
+            { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' }
+        )).toBe(false);
+    });
+
+    it('keeps recorded playback running when the source is unchanged', () => {
+        expect(shouldReloadVideoPlayback(
+            { mode: 'recorded', sourceUrl: 'https://cdn.example.com/game.mp4' },
+            { mode: 'recorded', sourceUrl: 'https://cdn.example.com/game.mp4', posterUrl: 'https://cdn.example.com/game.jpg' }
+        )).toBe(false);
+    });
+
+    it('reloads playback when the mode or source changes', () => {
+        expect(shouldReloadVideoPlayback(
+            { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
+            { mode: 'recorded', sourceUrl: 'https://cdn.example.com/game.mp4' }
+        )).toBe(true);
+
+        expect(shouldReloadVideoPlayback(
+            { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
+            { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live456?autoplay=1&mute=1' }
+        )).toBe(true);
     });
 });

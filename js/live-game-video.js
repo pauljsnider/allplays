@@ -210,3 +210,18 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
         savedHighlights: []
     };
 }
+
+export function shouldReloadVideoPlayback(previousPlayback, nextPlayback) {
+    const previousMode = previousPlayback?.mode || 'none';
+    const nextMode = nextPlayback?.mode || 'none';
+
+    if (previousMode !== nextMode) {
+        return true;
+    }
+
+    if (nextMode === 'embed' || nextMode === 'recorded') {
+        return (previousPlayback?.sourceUrl || '') !== (nextPlayback?.sourceUrl || '');
+    }
+
+    return false;
+}

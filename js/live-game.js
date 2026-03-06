@@ -20,7 +20,7 @@ import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=10';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions } from './live-game-video.js?v=1';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=1';
@@ -246,22 +246,27 @@ function setupVideoPanel() {
   const extLink = document.getElementById('stream-external-link');
   const iframe = document.getElementById('youtube-stream-iframe');
   const recordedVideo = els.recordedReplayVideo;
-  state.videoPlayback = resolveReplayVideoOptions({
+  const previousPlayback = state.videoPlayback;
+  const nextPlayback = resolveReplayVideoOptions({
     team: state.team,
     game: state.game,
     isReplay: state.isReplay,
     clipStartMs: state.clipStartMs,
     clipEndMs: state.clipEndMs
   });
+  const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  state.videoPlayback = nextPlayback;
   state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
 
   if (state.videoPlayback?.mode === 'recorded') {
     if (iframe) {
-      iframe.src = '';
+      if (iframe.getAttribute('src')) iframe.src = '';
       iframe.classList.add('hidden');
     }
     if (recordedVideo) {
-      recordedVideo.src = state.videoPlayback.sourceUrl || '';
+      if (shouldReloadPlayback) {
+        recordedVideo.src = state.videoPlayback.sourceUrl || '';
+      }
       recordedVideo.poster = state.videoPlayback.posterUrl || '';
       recordedVideo.classList.remove('hidden');
     }
@@ -278,13 +283,17 @@ function setupVideoPanel() {
   } else if (state.videoPlayback?.mode === 'embed') {
     if (recordedVideo) {
       recordedVideo.pause();
-      recordedVideo.removeAttribute('src');
-      recordedVideo.load();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
       recordedVideo.classList.add('hidden');
     }
     els.recordedReplayTools?.classList.add('hidden');
     if (iframe) {
-      iframe.src = state.videoPlayback.sourceUrl || '';
+      if (shouldReloadPlayback) {
+        iframe.src = state.videoPlayback.sourceUrl || '';
+      }
       iframe.classList.remove('hidden');
     }
     if (videoTab) videoTab.classList.remove('hidden');
@@ -296,12 +305,14 @@ function setupVideoPanel() {
   } else {
     if (recordedVideo) {
       recordedVideo.pause();
-      recordedVideo.removeAttribute('src');
-      recordedVideo.load();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
       recordedVideo.classList.add('hidden');
     }
     if (iframe) {
-      iframe.src = '';
+      if (iframe.getAttribute('src')) iframe.src = '';
       iframe.classList.add('hidden');
     }
     els.recordedReplayTools?.classList.add('hidden');
