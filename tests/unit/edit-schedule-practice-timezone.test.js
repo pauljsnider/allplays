@@ -21,4 +21,13 @@ describe('edit schedule practice datetime-local prefill', () => {
         expect(block).not.toContain("document.getElementById('practiceStart').value = date.toISOString().slice(0, 16)");
         expect(block).not.toContain("document.getElementById('practiceEnd').value = endDate.toISOString().slice(0, 16)");
     });
+
+    it('does not leave any editable schedule datetime-local input on raw UTC slicing', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('function formatIsoForInput(value) {');
+        expect(source).toContain('value="${formatIsoForInput(game.arrivalTime)}"');
+        expect(source).toContain('value="${formatIsoForInput(date)}"');
+        expect(source).not.toContain('value="${date.toISOString().slice(0, 16)}"');
+    });
 });
