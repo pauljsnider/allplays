@@ -14,14 +14,14 @@ import {
   getConfigs,
   subscribeGame
 } from './db.js?v=14';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=9';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState } from './live-game-state.js?v=1';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=1';
 
 const state = {
   teamId: null,
@@ -73,7 +73,8 @@ const state = {
   lastStatChange: null,
   scoringRun: { team: null, points: 0 },
   lastRunAnnounced: 0,
-  hasVideoStream: false
+  hasVideoStream: false,
+  lastResetAt: 0
 };
 
 const els = {
@@ -758,11 +759,38 @@ function updateMomentum(event) {
   }
 }
 
+function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting for plays...') {
+  const liveLineup = gameDoc?.liveLineup || {};
+  const next = applyResetEventState(state, {
+    period: gameDoc?.period || 'Q1',
+    homeScore: gameDoc?.homeScore || 0,
+    awayScore: gameDoc?.awayScore || 0,
+    gameClockMs: Number.isFinite(gameDoc?.liveClockMs) ? gameDoc.liveClockMs : 0,
+    onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
+    bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
+  });
+  Object.assign(state, next);
+  if (els.playsFeed) {
+    els.playsFeed.innerHTML = `<div data-placeholder="plays" class="text-center text-sand/40 py-8">${placeholder}</div>`;
+  }
+  renderScoreboard();
+  renderStats();
+  renderLineup();
+}
+
 function processNewEvents(events) {
-  const newEvents = events.filter(ev => !state.eventIds.has(ev.id));
+  const resetBoundaryMs = Number(state.lastResetAt) || 0;
+  const newEvents = events.filter(ev => (
+    !state.eventIds.has(ev.id) &&
+    isLiveEventVisibleForResetBoundary(ev, resetBoundaryMs)
+  ));
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
     if (event.type === 'reset') {
+      const resetAt = getTimestampMs(event.createdAt) || Date.now();
+      if (resetAt > (state.lastResetAt || 0)) {
+        state.lastResetAt = resetAt;
+      }
       const next = applyResetEventState(state, event);
       Object.assign(state, next);
       state.eventIds.add(event.id);
@@ -882,6 +910,14 @@ function startLiveEvents() {
       // Show a message while waiting for first events
       const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
       if (placeholder) placeholder.textContent = 'Connected. Waiting for plays...';
+    }
+    if (!state.liveEventsFirstLoad && events.length === 0) {
+      const hadLiveState = state.events.length > 0 ||
+        Object.keys(state.stats || {}).length > 0 ||
+        Object.keys(state.opponentStats || {}).length > 0;
+      if (hadLiveState) {
+        resetViewerStateFromGameDoc(state.game, 'Game reset. Waiting for plays...');
+      }
     }
     state.liveEventsFirstLoad = false;
     processNewEvents(events);
@@ -1333,6 +1369,14 @@ function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
   renderGameInfo();
+  const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;
+  if (resetAt > state.lastResetAt) {
+    state.lastResetAt = resetAt;
+    resetViewerStateFromGameDoc(gameDoc, 'Game reset. Waiting for plays...');
+  }
+  if (shouldResetViewerFromGameDoc(gameDoc, state)) {
+    resetViewerStateFromGameDoc(gameDoc, 'Game reset. Waiting for plays...');
+  }
   if (gameDoc.liveLineup) {
     state.onCourt = Array.isArray(gameDoc.liveLineup.onCourt) ? gameDoc.liveLineup.onCourt : state.onCourt;
     state.bench = Array.isArray(gameDoc.liveLineup.bench) ? gameDoc.liveLineup.bench : state.bench;
@@ -1342,6 +1386,11 @@ function handleGameUpdate(gameDoc) {
     state.homeScore = gameDoc.homeScore || state.homeScore;
     state.awayScore = gameDoc.awayScore || state.awayScore;
     state.period = gameDoc.period || state.period;
+    if (Number.isFinite(gameDoc.liveClockMs)) {
+      state.gameClockMs = gameDoc.liveClockMs;
+    } else if (Number.isFinite(gameDoc.gameClockMs)) {
+      state.gameClockMs = gameDoc.gameClockMs;
+    }
     renderScoreboard();
   }
 
@@ -1435,6 +1484,7 @@ async function init() {
   state.homeScore = game.homeScore || 0;
   state.awayScore = game.awayScore || 0;
   state.period = game.period || 'Q1';
+  state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
   setupVideoPanel();
   renderGameInfo();

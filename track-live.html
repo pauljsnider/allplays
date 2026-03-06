@@ -13,7 +13,7 @@
   </script>
 
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Live Track Game - ALL PLAYS</title>
@@ -23,32 +23,116 @@
             theme: {
                 extend: {
                     colors: {
-                        primary: {
-                            50: '#eef2ff',
-                            100: '#e0e7ff',
-                            500: '#6366f1',
-                            600: '#4f46e5',
-                            700: '#4338ca',
-                            800: '#3730a3',
-                            900: '#312e81'
-                        }
+                        ink: '#0b132b',
+                        slate: '#1c2541',
+                        teal: '#5bc0be',
+                        coral: '#ff6b6b',
+                        gold: '#ffd93d',
+                        sand: '#f7f5ed'
+                    },
+                    fontFamily: {
+                        display: ['"Space Grotesk"', 'ui-sans-serif'],
+                        body: ['"Inter Tight"', 'ui-sans-serif']
                     }
                 }
             }
         }
     </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter+Tight:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --ink: #0b132b;
+            --slate: #1c2541;
+            --teal: #5bc0be;
+            --coral: #ff6b6b;
+            --gold: #ffd93d;
+            --sand: #f7f5ed;
+        }
+
         body {
-            font-family: 'Montserrat', 'Roboto', sans-serif;
+            font-family: 'Inter Tight', ui-sans-serif;
             background:
-                radial-gradient(circle at 10% 10%, rgba(56, 189, 248, 0.14), transparent 35%),
-                radial-gradient(circle at 90% 0%, rgba(16, 185, 129, 0.10), transparent 32%),
-                #eef3f8;
+                radial-gradient(circle at 20% 20%, rgba(91, 192, 190, 0.14), transparent 40%),
+                radial-gradient(circle at 80% 0%, rgba(255, 217, 61, 0.10), transparent 35%),
+                var(--ink);
             font-size: 14px;
+            color: var(--sand);
+        }
+
+        #header-container header {
+            background: rgba(11, 19, 43, 0.95);
+            border-bottom: 1px solid rgba(91, 192, 190, 0.2);
+        }
+
+        #header-container a,
+        #header-container button,
+        #header-container p,
+        #header-container span,
+        #header-container h1,
+        #header-container h2 {
+            color: var(--sand);
+        }
+
+        #header-container a:hover,
+        #header-container button:hover {
+            color: var(--teal);
+        }
+
+        #footer-container footer {
+            background: #0f1b35;
+            color: rgba(247, 245, 237, 0.7);
+        }
+
+        #footer-container h4 {
+            color: var(--sand);
+        }
+
+        #footer-container a {
+            color: rgba(247, 245, 237, 0.7);
+        }
+
+        #footer-container a:hover {
+            color: var(--teal);
         }
 
         .stat-btn {
             touch-action: manipulation;
+        }
+
+        .track-panel {
+            background: linear-gradient(165deg, rgba(28, 37, 65, 0.74), rgba(11, 19, 43, 0.78));
+            border: 1px solid rgba(91, 192, 190, 0.22);
+            border-radius: 12px;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+        }
+
+        .track-panel-title {
+            background: rgba(11, 19, 43, 0.85);
+            border-bottom: 1px solid rgba(91, 192, 190, 0.24);
+            color: var(--teal);
+        }
+
+        .track-panel-title.away {
+            color: var(--coral);
+        }
+
+        .period-btn {
+            transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+        }
+
+        .period-active {
+            background: var(--teal);
+            color: var(--ink);
+            border: 1px solid var(--teal);
+            font-weight: 700;
+        }
+
+        .period-inactive {
+            background: rgba(28, 37, 65, 0.9);
+            color: rgba(247, 245, 237, 0.72);
+            border: 1px solid rgba(91, 192, 190, 0.2);
         }
 
         .stat-cell {
@@ -84,52 +168,119 @@
             flex: 1;
             min-width: 0;
             padding: 3px;
-            border: 1px solid #d1d5db;
+            border: 1px solid rgba(91, 192, 190, 0.3);
             border-radius: 3px;
             font-size: 9px;
+            background: rgba(11, 19, 43, 0.55);
+            color: var(--sand);
         }
 
         .notes-btn {
             width: 30px;
             height: 24px;
             padding: 2px 4px;
-            background: #2563eb;
-            color: white;
+            background: var(--teal);
+            color: var(--ink);
             border: none;
             border-radius: 3px;
             font-size: 8px;
             cursor: pointer;
             flex-shrink: 0;
+            font-weight: 700;
         }
 
         .notes-btn:hover {
-            background: #1d4ed8;
+            background: #7bd3d1;
+        }
+
+        #statsTable,
+        #opponentTable {
+            color: rgba(247, 245, 237, 0.95);
+        }
+
+        #statsTable thead tr,
+        #opponentTable thead tr {
+            background: rgba(247, 245, 237, 0.08);
+            border-bottom-color: rgba(91, 192, 190, 0.3);
+        }
+
+        #statsTable tbody tr,
+        #opponentTable tbody tr {
+            border-bottom-color: rgba(91, 192, 190, 0.18);
+        }
+
+        #statsTable tbody tr:hover,
+        #opponentTable tbody tr:hover {
+            background: rgba(11, 19, 43, 0.35);
+        }
+
+        #gameLog .undo-log-btn {
+            background: var(--coral);
+        }
+
+        #gameLog .undo-log-btn:hover {
+            background: #ff8888;
+        }
+
+        #finish-modal > div {
+            background: linear-gradient(180deg, rgba(28, 37, 65, 0.96), rgba(11, 19, 43, 0.98));
+            border: 1px solid rgba(91, 192, 190, 0.24);
+            color: var(--sand);
+        }
+
+        #finish-modal label {
+            color: rgba(247, 245, 237, 0.9);
+        }
+
+        #finish-modal input,
+        #finish-modal textarea {
+            background: rgba(11, 19, 43, 0.6);
+            border-color: rgba(91, 192, 190, 0.28);
+            color: var(--sand);
+        }
+
+        #emailPreviewSection {
+            border-top-color: rgba(91, 192, 190, 0.22);
+        }
+
+        #emailPreviewSection > div {
+            background: rgba(11, 19, 43, 0.52);
+            border: 1px solid rgba(91, 192, 190, 0.18);
+        }
+
+        #emailPreview {
+            color: rgba(247, 245, 237, 0.85);
         }
     </style>
 </head>
 
-<body class="bg-transparent text-gray-900">
+<body class="bg-ink text-sand min-h-screen font-body">
     <div id="header-container"></div>
 
     <div class="p-2">
         <!-- Game Tracking Header -->
-        <div class="bg-slate-900 text-white p-3 rounded-lg mb-3 shadow-lg border border-sky-400/30">
+        <div class="track-panel p-3 mb-3">
             <div class="flex justify-between items-center mb-2">
                 <div>
                     <div class="flex items-center gap-2 mb-1">
-                        <h1 class="font-bold text-lg" id="game-title">Loading...</h1>
+                        <h1 class="font-display font-bold text-lg text-teal" id="game-title">Loading...</h1>
                         <span id="liveBadge" class="hidden inline-flex items-center gap-1 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
                             <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
                             LIVE
                         </span>
                     </div>
-                    <div class="text-sm opacity-90" id="game-meta"></div>
-                    <button id="shareLiveBtn" class="hidden mt-1 text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded transition">
-                        📋 Copy Live Link
-                    </button>
+                    <div class="text-sm text-sand/70" id="game-meta"></div>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                        <button id="shareLiveShareBtn" class="hidden text-xs bg-teal text-ink px-2 py-1 rounded font-semibold hover:bg-teal/80 transition">
+                            🔗 Share
+                        </button>
+                        <button id="shareLiveBtn" class="hidden text-xs bg-slate border border-teal/30 hover:bg-ink text-sand px-2 py-1 rounded transition">
+                            📋 Copy Live Link
+                        </button>
+                    </div>
                 </div>
                 <div class="text-right">
-                    <div class="text-3xl font-mono font-bold mb-1">
+                    <div class="text-3xl font-display font-bold mb-1">
                         <span id="home-score">0</span> - <span id="away-score">0</span>
                     </div>
                 </div>
@@ -142,40 +293,40 @@
             <!-- Period Selector -->
             <div class="flex justify-center gap-1 mb-2">
                 <button
-                    class="period-btn bg-white text-blue-600 border-2 border-blue-600 px-3 py-1 rounded text-xs font-bold"
+                    class="period-btn period-active px-3 py-1 rounded text-xs"
                     data-period="Q1">Q1</button>
-                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                <button class="period-btn period-inactive px-3 py-1 rounded text-xs"
                     data-period="Q2">Q2</button>
-                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                <button class="period-btn period-inactive px-3 py-1 rounded text-xs"
                     data-period="Q3">Q3</button>
-                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                <button class="period-btn period-inactive px-3 py-1 rounded text-xs"
                     data-period="Q4">Q4</button>
-                <button class="period-btn bg-white text-gray-600 border border-gray-300 px-3 py-1 rounded text-xs"
+                <button class="period-btn period-inactive px-3 py-1 rounded text-xs"
                     data-period="OT">OT</button>
             </div>
 
             <div class="flex justify-center gap-2 flex-wrap">
                 <button id="startBtn"
-                    class="bg-white text-blue-600 px-3 py-1 rounded font-semibold text-sm">Start</button>
-                <button id="stopBtn" class="bg-red-600 text-white px-3 py-1 rounded text-sm" disabled>Stop</button>
-                <button id="resetBtn" class="bg-gray-700 text-white px-3 py-1 rounded text-sm">Reset</button>
-                <button id="undoLastBtn" class="bg-yellow-600 text-white px-3 py-1 rounded text-sm font-bold">↶ Undo
+                    class="bg-teal text-ink px-3 py-1 rounded font-semibold text-sm">Start</button>
+                <button id="stopBtn" class="bg-coral text-white px-3 py-1 rounded text-sm" disabled>Stop</button>
+                <button id="resetBtn" class="bg-slate text-sand px-3 py-1 rounded text-sm border border-teal/20">Reset</button>
+                <button id="undoLastBtn" class="bg-gold text-ink px-3 py-1 rounded text-sm font-bold">↶ Undo
                     Last</button>
-                <button id="cancelBtn" class="bg-orange-600 text-white px-3 py-1 rounded text-sm font-bold">Cancel
+                <button id="cancelBtn" class="bg-coral/90 text-white px-3 py-1 rounded text-sm font-bold">Cancel
                     Game</button>
                 <!-- Email button removed -->
                 <button id="finish-btn"
-                    class="bg-green-600 text-white px-3 py-1 rounded text-sm font-bold">Finish</button>
+                    class="bg-teal text-ink px-3 py-1 rounded text-sm font-bold">Finish</button>
             </div>
         </div>
 
         <!-- Team Stats Table -->
-        <div class="bg-white rounded-lg shadow-md overflow-hidden border-2 border-slate-800 mb-3">
-            <div class="bg-slate-800 text-white p-3 font-bold text-center">Team Stats</div>
+        <div class="track-panel overflow-hidden mb-3">
+            <div class="track-panel-title p-3 font-bold text-center">Team Stats</div>
             <div class="overflow-x-auto">
                 <table class="w-full text-center text-xs" id="statsTable">
                     <thead>
-                        <tr class="bg-gray-100 border-b-2 border-slate-800">
+                        <tr class="bg-slate/60 border-b-2 border-teal/40">
                             <th class="player-name text-left p-1">Player</th>
                             <!-- Column headers will be injected -->
                         </tr>
@@ -188,17 +339,18 @@
         </div>
 
         <!-- Opponent Stats Table -->
-        <div class="bg-white rounded-lg shadow-md overflow-hidden border-2 border-red-600 mb-3">
-            <div class="bg-red-600 text-white p-3 font-bold text-center flex justify-between items-center">
+        <div class="track-panel overflow-hidden mb-3">
+            <div class="track-panel-title away p-3 font-bold text-center flex justify-between items-center">
                 <span>Opponent Stats</span>
-                <button id="addOpponentBtn" class="bg-red-700 text-white px-2 py-1 rounded text-xs hover:bg-red-800">Add
+                <button id="addOpponentBtn" class="bg-coral text-white px-2 py-1 rounded text-xs hover:bg-coral/80">Add
                     Player</button>
             </div>
             <div class="overflow-x-auto">
                 <table class="w-full text-center text-xs" id="opponentTable">
                     <thead>
-                        <tr class="bg-gray-100 border-b-2 border-red-600">
+                        <tr class="bg-slate/60 border-b-2 border-coral/50">
                             <th class="player-name text-left p-1">Player</th>
+                            <th class="stat-cell-wide p-1">Status</th>
                             <!-- Column headers will be injected -->
                         </tr>
                     </thead>
@@ -210,37 +362,37 @@
         </div>
 
         <!-- Live Notes -->
-        <div class="bg-white rounded-lg shadow-md border-2 border-slate-300 p-3 mb-3 space-y-2">
+        <div class="track-panel p-3 mb-3 space-y-2">
             <div class="flex items-center justify-between gap-2">
-                <h3 class="font-bold text-sm text-slate-700">Live Notes</h3>
+                <h3 class="font-bold text-sm text-teal">Live Notes</h3>
                 <button id="voice-note-btn"
-                    class="px-2 py-1 rounded bg-white border border-slate-300 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                    class="px-2 py-1 rounded bg-slate border border-teal/30 text-[11px] font-semibold text-sand hover:bg-ink">
                     Start voice note
                 </button>
             </div>
-            <p id="voice-note-hint" class="text-[11px] text-slate-500">Tap Start voice note, speak, then tap Stop voice note.</p>
+            <p id="voice-note-hint" class="text-[11px] text-sand/60">Tap Start voice note, speak, then tap Stop voice note.</p>
             <div class="flex gap-2">
                 <input id="live-note-input"
-                    class="flex-1 px-3 py-2 rounded border border-slate-300 text-sm"
+                    class="flex-1 px-3 py-2 rounded border border-teal/30 bg-ink/40 text-sm text-sand"
                     placeholder="Quick note for this game...">
                 <button id="live-note-add"
-                    class="px-3 py-2 rounded bg-slate-800 text-white text-xs font-semibold hover:bg-slate-900">Add</button>
+                    class="px-3 py-2 rounded bg-teal text-ink text-xs font-semibold hover:bg-teal/80">Add</button>
             </div>
         </div>
 
         <!-- Game Log -->
-        <div class="bg-white rounded-lg shadow-md border-2 border-slate-800 p-3 max-h-48 overflow-y-auto">
-            <h3 class="font-bold text-sm text-slate-800 mb-2">Game Log</h3>
+        <div class="track-panel p-3 max-h-48 overflow-y-auto">
+            <h3 class="font-bold text-sm text-teal mb-2">Game Log</h3>
             <div id="gameLog" class="text-xs">
-                <div class="p-2 bg-gray-100 rounded text-gray-500 text-center">Game log will appear here</div>
+                <div class="p-2 bg-slate/70 rounded text-sand/60 text-center">Game log will appear here</div>
             </div>
         </div>
 
         <!-- Live Chat -->
-        <div id="chat-panel" class="mt-3 bg-gray-900 border border-blue-500/40 rounded-lg overflow-hidden shadow-md">
+        <div id="chat-panel" class="track-panel mt-3 overflow-hidden">
             <button id="chat-toggle" class="w-full p-3 flex items-center justify-between text-white">
                 <span class="flex items-center gap-2">
-                    <svg class="w-5 h-5 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-5 h-5 text-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
                     </svg>
@@ -249,21 +401,21 @@
                         class="hidden bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[18px] text-center">0</span>
                 </span>
                 <span class="flex items-center gap-3">
-                    <span id="chat-viewer-count" class="text-blue-200 text-xs">0 watching</span>
-                    <svg id="chat-chevron" class="w-5 h-5 text-blue-300 transition-transform" fill="none" stroke="currentColor"
+                    <span id="chat-viewer-count" class="text-teal/80 text-xs">0 watching</span>
+                    <svg id="chat-chevron" class="w-5 h-5 text-teal transition-transform" fill="none" stroke="currentColor"
                         viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>
                     </svg>
                 </span>
             </button>
-            <div id="chat-content" class="hidden border-t border-blue-400/20">
-                <div id="chat-messages" class="h-48 overflow-y-auto p-3 space-y-2 bg-gray-950">
-                    <p class="text-center text-blue-300/60 text-xs py-4">Chat messages will appear here...</p>
+            <div id="chat-content" class="hidden border-t border-teal/20">
+                <div id="chat-messages" class="h-48 overflow-y-auto p-3 space-y-2 bg-ink/60">
+                    <p class="text-center text-teal/60 text-xs py-4">Chat messages will appear here...</p>
                 </div>
-                <form id="chat-form" class="p-3 border-t border-blue-400/20 flex gap-2">
+                <form id="chat-form" class="p-3 border-t border-teal/20 flex gap-2">
                     <input type="text" id="chat-input" placeholder="Send a message..."
-                        class="flex-1 bg-gray-900 border border-blue-400/40 rounded-lg px-3 py-2 text-blue-50 text-sm focus:outline-none focus:border-blue-300">
-                    <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-lg font-semibold text-sm">Send</button>
+                        class="flex-1 bg-ink border border-teal/30 rounded-lg px-3 py-2 text-sand text-sm focus:outline-none focus:border-teal">
+                    <button type="submit" class="bg-teal text-ink px-4 py-2 rounded-lg font-semibold text-sm">Send</button>
                 </form>
             </div>
         </div>
@@ -271,33 +423,33 @@
         <!-- Finish Game Modal -->
         <div id="finish-modal"
             class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div class="bg-white rounded-lg max-w-4xl w-full p-6 my-8">
+            <div class="rounded-lg max-w-4xl w-full p-6 my-8">
                 <h2 class="text-2xl font-bold mb-4">Finish Game</h2>
                 <form id="finish-form" class="space-y-4">
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700">Home Score</label>
+                            <label class="block text-sm font-medium text-sand/90">Home Score</label>
                             <input type="number" id="finalHomeScore" required
-                                class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2">
+                                class="mt-1 block w-full rounded-md shadow-sm border p-2">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700">Away Score</label>
+                            <label class="block text-sm font-medium text-sand/90">Away Score</label>
                             <input type="number" id="finalAwayScore" required
-                                class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2">
+                                class="mt-1 block w-full rounded-md shadow-sm border p-2">
                         </div>
                     </div>
                     <div>
                         <div class="flex justify-between items-center mb-2">
-                            <label class="block text-sm font-medium text-gray-700">Game Summary</label>
+                            <label class="block text-sm font-medium text-sand/90">Game Summary</label>
                             <button type="button" id="generateAISummary"
-                                class="px-3 py-1 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 flex items-center gap-1">
+                                class="px-3 py-1 bg-teal text-ink text-sm rounded-md hover:bg-teal/80 flex items-center gap-1 font-semibold">
                                 <span>✨</span> Generate AI Summary
                             </button>
                         </div>
                         <textarea id="gameSummary" rows="4"
-                            class="mt-1 block w-full border-gray-300 rounded-md shadow-sm border p-2"
+                            class="mt-1 block w-full rounded-md shadow-sm border p-2"
                             placeholder="Key moments, MVP, etc."></textarea>
-                        <div id="aiSummaryLoading" class="hidden mt-2 text-sm text-blue-600 flex items-center gap-2">
+                        <div id="aiSummaryLoading" class="hidden mt-2 text-sm text-teal flex items-center gap-2">
                             <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none"
                                 viewBox="0 0 24 24">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"
@@ -311,21 +463,21 @@
                     </div>
                     <div class="flex items-center">
                         <input type="checkbox" id="sendEmailCheckbox" checked
-                            class="h-4 w-4 text-blue-600 border-gray-300 rounded">
-                        <label for="sendEmailCheckbox" class="ml-2 text-sm font-medium text-gray-700">Send game summary
+                            class="h-4 w-4 text-teal border-teal/30 rounded">
+                        <label for="sendEmailCheckbox" class="ml-2 text-sm font-medium text-sand/90">Send game summary
                             email</label>
                     </div>
                     <div id="emailPreviewSection" class="border-t pt-4">
                         <h3 class="text-lg font-semibold mb-2">Email Preview</h3>
-                        <div class="bg-gray-50 p-4 rounded-md max-h-96 overflow-y-auto">
+                        <div class="p-4 rounded-md max-h-96 overflow-y-auto">
                             <pre id="emailPreview"
-                                class="text-xs whitespace-pre-wrap font-mono text-gray-700">Email preview will appear here...</pre>
+                                class="text-xs whitespace-pre-wrap font-mono">Email preview will appear here...</pre>
                         </div>
                     </div>
                     <div class="flex justify-end space-x-3 pt-4">
                         <button type="button" id="cancel-finish"
-                            class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
-                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Save
+                            class="px-4 py-2 border border-teal/30 rounded-md text-sand/80 hover:bg-slate">Cancel</button>
+                        <button type="submit" class="px-4 py-2 bg-teal text-ink rounded-md hover:bg-teal/80 font-semibold">Save
                             & Complete</button>
                     </div>
                 </form>
@@ -342,6 +494,7 @@
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { resolveOpponentDisplayName } from './js/live-game-state.js?v=1';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
+        import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
         import { checkAuth } from './js/auth.js?v=9';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
@@ -369,13 +522,24 @@
         ];
         let isFinishing = false; // Flag to disable beforeunload warning when finishing game
         let liveState = {
+            isLive: false,
             chatExpanded: false,
             unreadChatCount: 0,
             lastChatSeenAt: Date.now(),
             chatInitialized: false,
             unsubscribeChat: null,
             unsubscribeViewers: null,
-            lastChatSentAt: 0
+            lastChatSentAt: 0,
+            lastClockSyncAt: 0
+        };
+        const LIVE_CLOCK_SYNC_INTERVAL_MS = 5000;
+        let liveSync = {
+            scoreSyncTimeout: null,
+            lastSyncedHome: null,
+            lastSyncedAway: null,
+            playerTimeouts: new Map(),
+            opponentTimeout: null,
+            liveFlagTimeout: null
         };
         let gameState = {
             startTime: null,
@@ -411,14 +575,41 @@
             init();
         });
 
+        function getLiveShareUrl() {
+            return `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${currentGameId}`;
+        }
+
         document.getElementById('shareLiveBtn').addEventListener('click', () => {
-            const url = `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${currentGameId}`;
+            const url = getLiveShareUrl();
             navigator.clipboard.writeText(url).then(() => {
                 const btn = document.getElementById('shareLiveBtn');
                 btn.textContent = '✅ Copied!';
                 setTimeout(() => { btn.textContent = '📋 Copy Live Link'; }, 2000);
             }).catch(() => {
-                prompt('Copy this link:', `${window.location.origin}/live-game.html?teamId=${currentTeamId}&gameId=${currentGameId}`);
+                prompt('Copy this link:', url);
+            });
+        });
+
+        document.getElementById('shareLiveShareBtn').addEventListener('click', async () => {
+            const url = getLiveShareUrl();
+            const title = `${currentTeam?.name || 'Team'} Live Game`;
+            const text = `Watch ${currentTeam?.name || 'our team'} live on ALL PLAYS`;
+            if (navigator.share) {
+                try {
+                    await navigator.share({ title, text, url });
+                    return;
+                } catch (_) {
+                    // If user cancels share, do not fall back.
+                    return;
+                }
+            }
+            navigator.clipboard.writeText(url).then(() => {
+                const btn = document.getElementById('shareLiveShareBtn');
+                const previous = btn.textContent;
+                btn.textContent = '✅ Link Copied';
+                setTimeout(() => { btn.textContent = previous; }, 2000);
+            }).catch(() => {
+                prompt('Share this link:', url);
             });
         });
 
@@ -557,11 +748,11 @@
                     btn.addEventListener('click', () => {
                         // Update UI
                         document.querySelectorAll('.period-btn').forEach(b => {
-                            b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'font-bold');
-                            b.classList.add('bg-white', 'text-gray-600', 'border-gray-300');
+                            b.classList.remove('period-active');
+                            b.classList.add('period-inactive');
                         });
-                        btn.classList.remove('bg-white', 'text-gray-600', 'border-gray-300');
-                        btn.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'font-bold');
+                        btn.classList.remove('period-inactive');
+                        btn.classList.add('period-active');
 
                         // Update state
                         gameState.currentPeriod = btn.dataset.period;
@@ -589,6 +780,137 @@
 
         function getFieldStatus(playerId) {
             return gameState.playerFieldStatus[playerId]?.status === 'onField' ? 'onField' : 'bench';
+        }
+
+        function scheduleScoreSync() {
+            if (!currentTeamId || !currentGameId) return;
+            if (liveSync.scoreSyncTimeout) return;
+            liveSync.scoreSyncTimeout = setTimeout(async () => {
+                liveSync.scoreSyncTimeout = null;
+                if (homeScore === liveSync.lastSyncedHome && awayScore === liveSync.lastSyncedAway) return;
+                try {
+                    await updateGame(currentTeamId, currentGameId, { homeScore, awayScore });
+                    liveSync.lastSyncedHome = homeScore;
+                    liveSync.lastSyncedAway = awayScore;
+                } catch (error) {
+                    console.warn('Failed to sync live scores:', error);
+                }
+            }, 500);
+        }
+
+        function buildOpponentStatsSnapshot() {
+            const snapshot = {};
+            opponentPlayers.forEach((opp) => {
+                const existing = gameState.opponentStats[opp.id] || {};
+                snapshot[opp.id] = {
+                    ...existing,
+                    name: opp.name || existing.name || '',
+                    number: existing.number || ''
+                };
+                currentConfig.columns.forEach((col) => {
+                    const key = col.toLowerCase();
+                    snapshot[opp.id][key] = existing[key] || 0;
+                });
+            });
+            return snapshot;
+        }
+
+        function scheduleOpponentStatsSync() {
+            if (!currentTeamId || !currentGameId) return;
+            if (liveSync.opponentTimeout) return;
+            liveSync.opponentTimeout = setTimeout(async () => {
+                liveSync.opponentTimeout = null;
+                try {
+                    await updateGame(currentTeamId, currentGameId, {
+                        opponentStats: buildOpponentStatsSnapshot()
+                    });
+                } catch (error) {
+                    console.warn('Failed to sync opponent stats:', error);
+                }
+            }, 500);
+        }
+
+        function schedulePlayerStatsSync(playerId) {
+            if (!currentTeamId || !currentGameId || !playerId) return;
+            if (liveSync.playerTimeouts.has(playerId)) return;
+            const timeout = setTimeout(async () => {
+                liveSync.playerTimeouts.delete(playerId);
+                try {
+                    const player = players.find((p) => p.id === playerId);
+                    const statsObj = {};
+                    currentConfig.columns.forEach((col) => {
+                        const key = col.toLowerCase();
+                        statsObj[key] = gameState.playerStats[playerId]?.[key] || 0;
+                    });
+                    const timeMs = getPlayerFieldElapsedMs(
+                        gameState.playerFieldStatus,
+                        playerId,
+                        gameState.isRunning ? Date.now() : null
+                    );
+                    const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+                    await setDoc(statsRef, {
+                        playerName: player?.name || '',
+                        playerNumber: player?.number || '',
+                        stats: statsObj,
+                        timeMs
+                    }, { merge: true });
+                } catch (error) {
+                    console.warn('Failed to sync player stats:', error);
+                }
+            }, 500);
+            liveSync.playerTimeouts.set(playerId, timeout);
+        }
+
+        function scheduleLiveHasData() {
+            if (!currentTeamId || !currentGameId) return;
+            if (!liveState.isLive || !gameState.isRunning) return;
+            if (currentGame?.liveHasData) return;
+            if (liveSync.liveFlagTimeout) return;
+            liveSync.liveFlagTimeout = setTimeout(async () => {
+                liveSync.liveFlagTimeout = null;
+                if (!liveState.isLive || !gameState.isRunning) return;
+                try {
+                    await updateGame(currentTeamId, currentGameId, { liveHasData: true });
+                    if (currentGame) currentGame.liveHasData = true;
+                } catch (error) {
+                    console.warn('Failed to mark live data flag:', error);
+                }
+            }, 500);
+        }
+
+        function clearLiveSyncTimeouts() {
+            if (liveSync.scoreSyncTimeout) {
+                clearTimeout(liveSync.scoreSyncTimeout);
+                liveSync.scoreSyncTimeout = null;
+            }
+            if (liveSync.opponentTimeout) {
+                clearTimeout(liveSync.opponentTimeout);
+                liveSync.opponentTimeout = null;
+            }
+            if (liveSync.liveFlagTimeout) {
+                clearTimeout(liveSync.liveFlagTimeout);
+                liveSync.liveFlagTimeout = null;
+            }
+            liveSync.playerTimeouts.forEach((timeout) => {
+                clearTimeout(timeout);
+            });
+            liveSync.playerTimeouts.clear();
+            liveSync.lastSyncedHome = null;
+            liveSync.lastSyncedAway = null;
+        }
+
+        async function syncClockToGameDoc() {
+            if (!currentTeamId || !currentGameId) return;
+            try {
+                await updateGame(currentTeamId, currentGameId, {
+                    liveClockMs: gameState.elapsed,
+                    liveClockRunning: gameState.isRunning,
+                    liveClockPeriod: gameState.currentPeriod,
+                    liveClockUpdatedAt: Date.now()
+                });
+            } catch (error) {
+                console.warn('Failed to sync live clock to game doc:', error);
+            }
         }
 
         async function syncLiveLineup() {
@@ -619,6 +941,7 @@
             setPlayerFieldStatus(gameState.playerFieldStatus, playerId, status, now);
             renderStatsTable();
             syncLiveLineup().catch(console.warn);
+            scheduleLiveHasData();
         };
 
         function renderStatsTable() {
@@ -629,19 +952,19 @@
             let headersHTML = '<th class="player-name text-left p-1">Player</th>';
             headersHTML += '<th class="stat-cell-wide p-1">Status</th>';
             currentConfig.columns.forEach(col => {
-                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
                 headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
             });
             thead.innerHTML = headersHTML;
 
             // Render player rows
             tbody.innerHTML = players.map(player => {
-                let rowHTML = `<tr class="border-b hover:bg-gray-50">
+                let rowHTML = `<tr class="border-b hover:bg-ink/30">
                     <td class="player-name text-left p-1 font-medium">
                         <div class="flex items-center gap-2">
-                            <span class="inline-flex h-8 w-8 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                            <span class="inline-flex h-8 w-8 rounded-full bg-ink/50 overflow-hidden border border-teal/20">
                                 ${player.photoUrl ? `<img src="${escapeHtml(player.photoUrl)}" alt="${escapeHtml(player.name)}" class="w-full h-full object-cover">` : `
-                                    <svg class="w-full h-full text-gray-400 p-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-full h-full text-sand/40 p-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
                                     </svg>
                                 `}
@@ -653,31 +976,31 @@
                 const onField = getFieldStatus(player.id) === 'onField';
                 rowHTML += `<td class="stat-cell-wide p-1">
                     <div class="flex flex-col items-center gap-1">
-                        <div id="field-time-${player.id}" class="text-[10px] font-semibold text-slate-700">${formatFieldTime(fieldMs)}</div>
+                        <div id="field-time-${player.id}" class="text-[10px] font-semibold text-sand/80">${formatFieldTime(fieldMs)}</div>
                         <div class="flex gap-0.5">
-                            <button class="stat-btn rounded px-1.5 h-5 text-[10px] font-bold border ${onField ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-300'}"
+                            <button class="stat-btn rounded px-1.5 h-5 text-[10px] font-bold border ${onField ? 'bg-teal text-ink border-teal' : 'bg-slate text-teal border-teal/40'}"
                                 onclick="setPlayerFieldStatus('${player.id}', 'onField')">On</button>
-                            <button class="stat-btn rounded px-1.5 h-5 text-[10px] font-bold border ${onField ? 'bg-white text-gray-600 border-gray-300' : 'bg-gray-700 text-white border-gray-700'}"
+                            <button class="stat-btn rounded px-1.5 h-5 text-[10px] font-bold border ${onField ? 'bg-slate text-sand/70 border-teal/20' : 'bg-coral text-white border-coral'}"
                                 onclick="setPlayerFieldStatus('${player.id}', 'bench')">Bench</button>
                         </div>
                     </div>
                 </td>`;
 
                 currentConfig.columns.forEach(col => {
-                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
                     const statKey = col.toLowerCase();
 
                     if (isPoints) {
                         const existingVal = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
                         rowHTML += `<td class="stat-cell-wide p-1">
                             <div class="flex flex-col items-center gap-1">
-                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${existingVal}</div>
+                                <div class="font-bold text-sm text-teal" id="stat-${player.id}-${statKey}">${existingVal}</div>
                                 <div class="flex gap-0.5">
-                                    <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
+                                    <button class="stat-btn bg-teal/20 text-teal border border-teal/40 rounded w-5 h-5 text-xs font-bold hover:bg-teal/30"
                                         onclick="incrementStat('${player.id}', '${statKey}', 1, false)">1</button>
-                                    <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
+                                    <button class="stat-btn bg-teal/20 text-teal border border-teal/40 rounded w-5 h-5 text-xs font-bold hover:bg-teal/30"
                                         onclick="incrementStat('${player.id}', '${statKey}', 2, false)">2</button>
-                                    <button class="stat-btn bg-blue-50 text-blue-600 border border-blue-300 rounded w-5 h-5 text-xs font-bold hover:bg-blue-100"
+                                    <button class="stat-btn bg-teal/20 text-teal border border-teal/40 rounded w-5 h-5 text-xs font-bold hover:bg-teal/30"
                                         onclick="incrementStat('${player.id}', '${statKey}', 3, false)">3</button>
                                 </div>
                             </div>
@@ -686,9 +1009,9 @@
                         const existingVal = (gameState.playerStats[player.id] && gameState.playerStats[player.id][statKey]) || 0;
                         rowHTML += `<td class="stat-cell p-1">
                             <div class="flex flex-col items-center gap-1">
-                                <div class="font-bold text-sm text-blue-600" id="stat-${player.id}-${statKey}">${existingVal}</div>
+                                <div class="font-bold text-sm text-teal" id="stat-${player.id}-${statKey}">${existingVal}</div>
                                 <div class="flex gap-0.5">
-                                    <button class="stat-btn bg-green-50 text-green-600 border border-green-300 rounded w-5 h-5 text-xs font-bold hover:bg-green-100"
+                                    <button class="stat-btn bg-gold/20 text-gold border border-gold/40 rounded w-5 h-5 text-xs font-bold hover:bg-gold/30"
                                         onclick="incrementStat('${player.id}', '${statKey}', 1, false)">+</button>
                                 </div>
                             </div>
@@ -707,35 +1030,39 @@
 
             // Render column headers
             let headersHTML = '<th class="player-name text-left p-1">Player</th>';
+            headersHTML += '<th class="stat-cell-wide p-1">Status</th>';
             currentConfig.columns.forEach(col => {
-                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
                 headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
             });
             thead.innerHTML = headersHTML;
 
             // Render opponent rows
             tbody.innerHTML = opponentPlayers.map(opp => {
-                let rowHTML = `<tr class="border-b hover:bg-gray-50">
+                let rowHTML = `<tr class="border-b hover:bg-ink/30">
                     <td class="player-name text-left p-1">
                         <input type="text" class="notes-input" placeholder="Player name..." value="${escapeHtml(opp.name)}"
                             onchange="updateOpponentName('${opp.id}', this.value)">
                     </td>`;
+                rowHTML += `<td class="stat-cell-wide p-1">
+                    <div class="text-[10px] text-sand/60 font-semibold">Away</div>
+                </td>`;
 
                 currentConfig.columns.forEach(col => {
-                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS';
+                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
                     const statKey = col.toLowerCase();
                     const existingVal = gameState.opponentStats[opp.id]?.[statKey] || 0;
 
                     if (isPoints) {
                         rowHTML += `<td class="stat-cell-wide p-1">
                             <div class="flex flex-col items-center gap-1">
-                                <div class="font-bold text-sm text-red-600" id="stat-${opp.id}-${statKey}">${existingVal}</div>
+                                <div class="font-bold text-sm text-coral" id="stat-${opp.id}-${statKey}">${existingVal}</div>
                                 <div class="flex gap-0.5">
-                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                    <button class="stat-btn bg-coral/20 text-coral border border-coral/40 rounded w-5 h-5 text-xs font-bold hover:bg-coral/30"
                                         onclick="incrementStat('${opp.id}', '${statKey}', 1, true)">1</button>
-                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                    <button class="stat-btn bg-coral/20 text-coral border border-coral/40 rounded w-5 h-5 text-xs font-bold hover:bg-coral/30"
                                         onclick="incrementStat('${opp.id}', '${statKey}', 2, true)">2</button>
-                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                    <button class="stat-btn bg-coral/20 text-coral border border-coral/40 rounded w-5 h-5 text-xs font-bold hover:bg-coral/30"
                                         onclick="incrementStat('${opp.id}', '${statKey}', 3, true)">3</button>
                                 </div>
                             </div>
@@ -743,9 +1070,9 @@
                     } else {
                         rowHTML += `<td class="stat-cell p-1">
                             <div class="flex flex-col items-center gap-1">
-                                <div class="font-bold text-sm text-red-600" id="stat-${opp.id}-${statKey}">${existingVal}</div>
+                                <div class="font-bold text-sm text-coral" id="stat-${opp.id}-${statKey}">${existingVal}</div>
                                 <div class="flex gap-0.5">
-                                    <button class="stat-btn bg-red-50 text-red-600 border border-red-300 rounded w-5 h-5 text-xs font-bold hover:bg-red-100"
+                                    <button class="stat-btn bg-coral/20 text-coral border border-coral/40 rounded w-5 h-5 text-xs font-bold hover:bg-coral/30"
                                         onclick="incrementStat('${opp.id}', '${statKey}', 1, true)">+</button>
                                 </div>
                             </div>
@@ -764,6 +1091,8 @@
             if (gameState.opponentStats[oppId]) {
                 gameState.opponentStats[oppId].name = name;
             }
+            scheduleOpponentStatsSync();
+            scheduleLiveHasData();
         };
 
 
@@ -901,6 +1230,7 @@
                 if (isPoints) {
                     awayScore += value;
                     updateScoreDisplay();
+                    scheduleScoreSync();
                 }
                 const opp = opponentPlayers.find(o => o.id === playerId);
                 const oppName = opp.name || 'Opponent Player';
@@ -926,6 +1256,8 @@
                     description: `${oppName} +${value} ${statKey.toUpperCase()}`,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
+                scheduleOpponentStatsSync();
+                scheduleLiveHasData();
             } else {
                 const player = players.find(p => p.id === playerId);
                 if (!player) return;
@@ -941,6 +1273,7 @@
                 if (isPoints) {
                     homeScore += value;
                     updateScoreDisplay();
+                    scheduleScoreSync();
                 }
 
                 addLogEntry(`#${player.number || '-'} ${player.name} +${value} ${statKey.toUpperCase()}`, {
@@ -967,6 +1300,8 @@
                     description: `#${player.number || '-'} ${player.name} +${value} ${statKey.toUpperCase()}`,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
+                schedulePlayerStatsSync(playerId);
+                scheduleLiveHasData();
             }
         };
 
@@ -990,10 +1325,12 @@
                 if (isPoints) {
                     awayScore = Math.max(0, awayScore - value);
                     updateScoreDisplay();
+                    scheduleScoreSync();
                 }
                 const opp = opponentPlayers.find(o => o.id === playerId);
                 const oppName = opp.name || 'Opponent Player';
                 addLogEntry(`${oppName} (Opp) -${value} ${statKey.toUpperCase()}`);
+                scheduleOpponentStatsSync();
             } else {
                 const player = players.find(p => p.id === playerId);
                 if (!player) return;
@@ -1006,10 +1343,14 @@
                 if (isPoints) {
                     homeScore = Math.max(0, homeScore - value);
                     updateScoreDisplay();
+                    scheduleScoreSync();
                 }
 
                 addLogEntry(`#${player.number || '-'} ${player.name} -${value} ${statKey.toUpperCase()}`);
+                schedulePlayerStatsSync(playerId);
             }
+
+            scheduleLiveHasData();
 
             broadcastLiveEvent(currentTeamId, currentGameId, {
                 type: 'undo',
@@ -1046,34 +1387,99 @@
                     (gameState.gameLog && gameState.gameLog.length > 0);
 
                 if (!hasLocalActivity) {
-                    const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                    const [eventsSnap, statsSnap, liveEventsSnap] = await Promise.all([
+                        getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
+                        getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
+                        getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
+                    ]);
 
-                    if (eventsSnap.size > 0) {
-                        const msg = currentGame?.status === 'completed'
-                            ? `This game was previously finished and has ${eventsSnap.size} event(s). Starting will clear that data. Continue?`
-                            : `This game already has ${eventsSnap.size} tracked event(s). Starting fresh will clear them. Continue?`;
+                    const persistedState = summarizePersistedTrackingState({
+                        eventsCount: eventsSnap.size,
+                        statsCount: statsSnap.size,
+                        liveEventsCount: liveEventsSnap.size,
+                        hasScores: (currentGame?.homeScore || 0) > 0 || (currentGame?.awayScore || 0) > 0,
+                        hasOpponentStats: !!(currentGame?.opponentStats && Object.keys(currentGame.opponentStats).length > 0),
+                        hasLiveFlag: !!currentGame?.liveHasData || currentGame?.liveStatus === 'live'
+                    });
 
-                        const confirmClear = confirm(msg);
-                        if (!confirmClear) {
-                            return; // User cancelled
+                    if (persistedState.hasPersistedData) {
+                        const shouldResume = confirm('This game already has tracked data. Continue where you left off?\n\nClick Cancel to start over and clear previous stats.');
+                        if (!shouldResume) {
+                            clearLiveSyncTimeouts();
+
+                            gameState.playerStats = {};
+                            gameState.gameLog = [];
+                            gameState.playerFieldStatus = createFieldState(players);
+                            homeScore = 0;
+                            awayScore = 0;
+                            opponentPlayers.forEach((opp) => {
+                                const existing = gameState.opponentStats[opp.id] || {};
+                                gameState.opponentStats[opp.id] = {
+                                    ...existing,
+                                    name: existing.name || opp.name || '',
+                                    number: existing.number || ''
+                                };
+                                currentConfig.columns.forEach((col) => {
+                                    gameState.opponentStats[opp.id][col.toLowerCase()] = 0;
+                                });
+                            });
+
+                            const resetLineup = getLiveLineup(gameState.playerFieldStatus, players);
+                            await runTrackLiveResetPersistence({
+                                publishResetEvent: () => broadcastLiveEvent(currentTeamId, currentGameId, {
+                                    type: 'reset',
+                                    period: gameState.currentPeriod,
+                                    gameClockMs: 0,
+                                    homeScore: 0,
+                                    awayScore: 0,
+                                    onCourt: resetLineup.onCourt,
+                                    bench: resetLineup.bench,
+                                    description: `Tracker restarted from zero. Cleared: ${persistedState.summary}.`,
+                                    createdBy: currentUser?.uid || null
+                                }),
+                                updateResetState: async () => {
+                                    await updateGame(
+                                        currentTeamId,
+                                        currentGameId,
+                                        buildTrackLiveResetUpdate({
+                                            currentGame,
+                                            period: gameState.currentPeriod,
+                                            liveLineup: resetLineup
+                                        })
+                                    );
+                                    currentGame.liveStatus = 'scheduled';
+                                    currentGame.liveHasData = false;
+                                    currentGame.homeScore = 0;
+                                    currentGame.awayScore = 0;
+                                    currentGame.opponentStats = {};
+                                },
+                                cleanupPersistedState: async () => {
+                                    const deletions = [
+                                        ...eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)),
+                                        ...statsSnap.docs.map(docItem => deleteDoc(docItem.ref))
+                                    ];
+                                    const results = await Promise.allSettled(deletions);
+                                    const failedDeletes = results.filter((result) => result.status === 'rejected');
+                                    if (failedDeletes.length) {
+                                        console.warn('Some persisted tracking records could not be deleted:', failedDeletes);
+                                    }
+                                },
+                                logWarn: (...args) => console.warn(...args),
+                                logError: (message, error) => console.warn(message, error)
+                            });
+
+                            updateScoreDisplay();
+                            renderGameLog();
+                            renderStatsTable();
+                            renderOpponentTable();
                         }
-
-                        // Clear existing events and stats
-                        console.log('Clearing existing events and stats...');
-                        const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
-                        await Promise.all(deleteEventPromises);
-
-                        // Clear aggregated stats
-                        const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                        const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
-                        await Promise.all(deleteStatsPromises);
-
-                        console.log('Cleared existing data. Starting fresh...');
                     }
                 }
 
                 gameState.startTime = Date.now() - gameState.elapsed;
                 gameState.isRunning = true;
+                liveState.isLive = true;
+                liveState.lastClockSyncAt = 0;
                 startFieldClock(gameState.playerFieldStatus, Date.now());
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
@@ -1093,6 +1499,9 @@
                 }).catch(console.warn);
                 document.getElementById('liveBadge').classList.remove('hidden');
                 document.getElementById('shareLiveBtn').classList.remove('hidden');
+                document.getElementById('shareLiveShareBtn').classList.remove('hidden');
+                syncClockToGameDoc().catch(console.warn);
+                scheduleScoreSync();
                 syncLiveLineup().catch(console.warn);
             }
         }
@@ -1104,16 +1513,29 @@
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
                 addLogEntry('Game stopped');
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'clock_pause',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    description: 'Game paused',
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
+                syncClockToGameDoc().catch(console.warn);
                 renderStatsTable();
             }
         }
 
         async function resetTimer() {
             if (confirm('Reset timer and clear all stats? This will also clear saved stats in the database.')) {
+                clearLiveSyncTimeouts();
                 pauseFieldClock(gameState.playerFieldStatus, Date.now());
                 gameState.startTime = null;
                 gameState.elapsed = 0;
                 gameState.isRunning = false;
+                gameState.currentPeriod = (currentConfig?.periods?.[0]?.label) || 'Q1';
+                liveState.lastClockSyncAt = 0;
                 gameState.gameLog = [];
                 gameState.playerStats = {}; // Clear in-memory player stats
                 gameState.playerFieldStatus = createFieldState(players);
@@ -1134,31 +1556,38 @@
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
 
+                document.querySelectorAll('.period-btn').forEach((button) => {
+                    const isActive = button.dataset.period === gameState.currentPeriod;
+                    button.classList.toggle('period-active', isActive);
+                    button.classList.toggle('period-inactive', !isActive);
+                });
+
                 document.querySelectorAll('[id^="stat-"]').forEach(el => {
                     el.textContent = '0';
                 });
 
-                // Clear aggregated stats in Firebase
-                try {
-                    const eventsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-                    await Promise.all(eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)));
+                // Apply local reset immediately so UI always clears even if network writes stall/fail.
+                liveState.isLive = false;
+                liveState.lastClockSyncAt = 0;
+                if (currentGame) {
+                    currentGame.liveStatus = 'scheduled';
+                    currentGame.liveHasData = false;
+                    currentGame.homeScore = 0;
+                    currentGame.awayScore = 0;
+                    currentGame.opponentStats = {};
+                }
+                updateScoreDisplay();
+                renderGameLog();
+                renderStatsTable();
+                renderOpponentTable();
+                document.getElementById('liveBadge').classList.add('hidden');
+                document.getElementById('shareLiveBtn').classList.add('hidden');
+                document.getElementById('shareLiveShareBtn').classList.add('hidden');
+                updateTimer();
 
-                    const statsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                    await Promise.all(statsSnapshot.docs.map(doc => deleteDoc(doc.ref)));
-
-                    const liveEventsSnapshot = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
-                    await Promise.all(liveEventsSnapshot.docs.map(liveDoc => deleteDoc(liveDoc.ref)));
-
-                    const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
-                    await updateGame(currentTeamId, currentGameId, {
-                        homeScore: 0,
-                        awayScore: 0,
-                        period: gameState.currentPeriod,
-                        liveLineup,
-                        opponentStats: gameState.opponentStats
-                    });
-                    await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
-                    await broadcastLiveEvent(currentTeamId, currentGameId, {
+                const liveLineup = getLiveLineup(gameState.playerFieldStatus, players);
+                await runTrackLiveResetPersistence({
+                    publishResetEvent: () => broadcastLiveEvent(currentTeamId, currentGameId, {
                         type: 'reset',
                         period: gameState.currentPeriod,
                         gameClockMs: 0,
@@ -1168,18 +1597,35 @@
                         bench: liveLineup.bench,
                         description: 'Game reset',
                         createdBy: currentUser?.uid || null
-                    }).catch(console.warn);
-                } catch (error) {
-                    console.error('Error clearing stats:', error);
-                }
-
-                updateScoreDisplay();
-                renderGameLog();
-                renderStatsTable();
-                renderOpponentTable();
-                document.getElementById('liveBadge').classList.add('hidden');
-                document.getElementById('shareLiveBtn').classList.add('hidden');
-                updateTimer();
+                    }),
+                    updateResetState: async () => {
+                        await updateGame(currentTeamId, currentGameId, {
+                            ...buildTrackLiveResetUpdate({
+                                currentGame,
+                                period: gameState.currentPeriod,
+                                liveLineup
+                            }),
+                            opponentStats: gameState.opponentStats
+                        });
+                        await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
+                    },
+                    cleanupPersistedState: async () => {
+                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
+                        ]);
+                        const cleanupResults = await Promise.allSettled([
+                            ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
+                        ]);
+                        const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
+                        if (failedDeletes.length) {
+                            console.warn('Some persisted tracking records could not be deleted during reset:', failedDeletes);
+                        }
+                    },
+                    logWarn: (...args) => console.warn(...args),
+                    logError: (...args) => console.error(...args)
+                });
             }
         }
 
@@ -1213,6 +1659,8 @@
                         opponentTeamPhoto: currentGame.opponentTeamPhoto
                     });
                 }
+                liveState.isLive = false;
+                liveState.lastClockSyncAt = 0;
 
                 // Navigate back to schedule
                 alert('Game cancelled. All data has been deleted.');
@@ -1240,6 +1688,27 @@
                 const elapsedMs = getPlayerFieldElapsedMs(gameState.playerFieldStatus, player.id, gameState.isRunning ? Date.now() : null);
                 timeEl.textContent = formatFieldTime(elapsedMs);
             });
+
+            const wallNow = Date.now();
+            if (
+                gameState.isRunning &&
+                liveState.isLive &&
+                currentTeamId &&
+                currentGameId &&
+                (wallNow - liveState.lastClockSyncAt >= LIVE_CLOCK_SYNC_INTERVAL_MS)
+            ) {
+                liveState.lastClockSyncAt = wallNow;
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'clock_sync',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    description: 'Clock sync',
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
+                syncClockToGameDoc().catch(console.warn);
+            }
         }
 
         function getGameTime() {
@@ -1265,15 +1734,15 @@
         function renderGameLog() {
             const logDiv = document.getElementById('gameLog');
             if (gameState.gameLog.length === 0) {
-                logDiv.innerHTML = '<div class="p-2 bg-gray-100 rounded text-gray-500 text-center">Game log will appear here</div>';
+                logDiv.innerHTML = '<div class="p-2 bg-slate/70 rounded text-sand/60 text-center">Game log will appear here</div>';
                 return;
             }
 
             logDiv.innerHTML = gameState.gameLog.map((entry, index) => `
-                <div class="p-2 mb-1 bg-gray-100 rounded flex justify-between items-start gap-2 border-l-2 border-blue-600">
+                <div class="p-2 mb-1 bg-slate/60 rounded flex justify-between items-start gap-2 border-l-2 border-teal/70">
                     <span class="flex-1 min-w-0 break-words whitespace-normal">${escapeHtml(entry.text)}</span>
-                    <span class="text-blue-600 font-medium text-xs mr-2">${escapeHtml(entry.period || 'Q1')} ${escapeHtml(entry.time)}</span>
-                    <button class="bg-red-600 text-white px-2 py-1 rounded text-xs hover:bg-red-700 undo-log-btn"
+                    <span class="text-teal font-medium text-xs mr-2">${escapeHtml(entry.period || 'Q1')} ${escapeHtml(entry.time)}</span>
+                    <button class="bg-coral text-white px-2 py-1 rounded text-xs hover:bg-coral/80 undo-log-btn"
                         data-undo-index="${index}">✕</button>
                 </div>
             `).join('');
@@ -1308,7 +1777,9 @@
                     if (isPoints) {
                         awayScore = Math.max(0, awayScore - parsedValue);
                         updateScoreDisplay();
+                        scheduleScoreSync();
                     }
+                    scheduleOpponentStatsSync();
                 } else {
                     if (!gameState.playerStats[playerId]) gameState.playerStats[playerId] = {};
                     const currentVal = Number(gameState.playerStats[playerId][statKey] || statEl?.textContent || 0);
@@ -1318,8 +1789,11 @@
                     if (isPoints) {
                         homeScore = Math.max(0, homeScore - parsedValue);
                         updateScoreDisplay();
+                        scheduleScoreSync();
                     }
+                    schedulePlayerStatsSync(playerId);
                 }
+                scheduleLiveHasData();
 
                 broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'undo',
@@ -1381,13 +1855,13 @@
         function renderChatMessages(messages) {
             if (!chatEls.messages) return;
             if (!messages.length) {
-                chatEls.messages.innerHTML = '<p class="text-center text-blue-300/60 text-xs py-4">No messages yet. Start the conversation.</p>';
+                chatEls.messages.innerHTML = '<p class="text-center text-teal/60 text-xs py-4">No messages yet. Start the conversation.</p>';
                 return;
             }
             chatEls.messages.innerHTML = messages.slice().reverse().map((msg) => `
                 <div class="${msg.senderId === currentUser?.uid ? 'text-right' : ''}">
-                    <div class="text-[11px] text-blue-200">${escapeHtml(msg.senderName || 'Fan')}</div>
-                    <div class="inline-block mt-0.5 px-2 py-1 rounded-lg ${msg.senderId === currentUser?.uid ? 'bg-blue-600 text-white' : 'bg-gray-800 text-blue-50'} text-xs break-words max-w-[90%]">
+                    <div class="text-[11px] text-teal/80">${escapeHtml(msg.senderName || 'Fan')}</div>
+                    <div class="inline-block mt-0.5 px-2 py-1 rounded-lg ${msg.senderId === currentUser?.uid ? 'bg-teal text-ink' : 'bg-slate text-sand'} text-xs break-words max-w-[90%]">
                         ${escapeHtml(msg.text || '')}
                     </div>
                 </div>
@@ -1742,6 +2216,8 @@ Write the match report now:`;
 
                 // Mark live stream as completed
                 await setGameLiveStatus(currentTeamId, currentGameId, 'completed').catch(console.warn);
+                liveState.isLive = false;
+                liveState.lastClockSyncAt = 0;
 
                 // Disable beforeunload warning since we're finishing successfully
                 isFinishing = true;
@@ -1806,11 +2282,11 @@ Write the match report now:`;
 
                 // Update button styles
                 document.querySelectorAll('.period-btn').forEach(b => {
-                    b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'border-2', 'font-bold');
-                    b.classList.add('bg-white', 'text-gray-600', 'border-gray-300', 'border');
+                    b.classList.remove('period-active');
+                    b.classList.add('period-inactive');
                 });
-                this.classList.remove('bg-white', 'text-gray-600', 'border-gray-300', 'border');
-                this.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'border-2', 'font-bold');
+                this.classList.remove('period-inactive');
+                this.classList.add('period-active');
 
                 addLogEntry(`Period changed to ${period}`);
 
