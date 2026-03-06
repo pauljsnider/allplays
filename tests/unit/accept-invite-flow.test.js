@@ -20,12 +20,12 @@ describe('accept invite flow', () => {
         };
 
         const processInvite = createInviteProcessor(deps);
-        const result = await processInvite('user-1', 'ABCD1234');
+        const result = await processInvite('user-1', 'ABCD1234', 'Coach@Example.com');
 
         expect(result.success).toBe(true);
         expect(result.redirectUrl).toBe('dashboard.html');
         expect(result.message).toContain('Tigers');
-        expect(deps.redeemAdminInviteAtomically).toHaveBeenCalledWith('code-123', 'user-1');
+        expect(deps.redeemAdminInviteAtomically).toHaveBeenCalledWith('code-123', 'user-1', 'Coach@Example.com');
     });
 
     it('bubbles atomic admin redemption errors', async () => {

@@ -33,7 +33,7 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
 
     if (validation.type === 'admin_invite') {
         if (typeof redeemAdminInviteAtomically === 'function') {
-            const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId);
+            const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId, authEmail);
             return {
                 success: true,
                 message: `You've been added as an admin of ${redeemResult.teamName || 'the team'}!`,

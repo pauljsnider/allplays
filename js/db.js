@@ -33,7 +33,7 @@ import {
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
-import { buildCoachOverrideRsvpDocId } from './rsvp-doc-ids.js';
+import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import {
     isTeamActive,
@@ -1029,7 +1029,7 @@ export async function redeemAdminInviteAtomicPersistence({
     }
 }
 
-export async function redeemAdminInviteAtomically(codeId, userId) {
+export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail = null) {
     return runTransaction(db, async (transaction) => {
         const codeRef = doc(db, "accessCodes", codeId);
         const codeSnap = await transaction.get(codeRef);
@@ -1070,13 +1070,14 @@ export async function redeemAdminInviteAtomically(codeId, userId) {
         const teamData = teamSnap.data() || {};
         const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
         const authEmail = auth.currentUser?.email || '';
-        const userEmail = (userData.email || authEmail || '').toLowerCase().trim();
-
-        if (userEmail) {
-            transaction.set(teamRef, {
-                adminEmails: arrayUnion(userEmail)
-            }, { merge: true });
+        const userEmail = (userData.email || authEmail || fallbackEmail || '').toLowerCase().trim();
+        if (!userEmail) {
+            throw new Error('Unable to determine user email for admin invite');
         }
+
+        transaction.set(teamRef, {
+            adminEmails: arrayUnion(userEmail)
+        }, { merge: true });
 
         transaction.set(userRef, {
             coachOf: arrayUnion(teamId),
@@ -2794,7 +2795,15 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
     });
     if (docId !== effectiveUserId) {
         const legacyRsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
-        await deleteDoc(legacyRsvpRef);
+        let legacySnap = null;
+        try {
+            legacySnap = await getDoc(legacyRsvpRef);
+        } catch (err) {
+            if (err?.code !== 'permission-denied') throw err;
+        }
+        if (legacySnap?.exists() && shouldDeleteLegacyRsvpForOverride(legacySnap.data(), normalizedPlayerId)) {
+            await deleteDoc(legacyRsvpRef);
+        }
     }
 
     // Keep denormalized summary consistent with submitRsvp behavior.

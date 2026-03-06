@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -37,10 +37,57 @@ describe('live game state helpers', () => {
     expect(next.awayScore).toBe(0);
     expect(next.gameClockMs).toBe(0);
     expect(next.events).toEqual([]);
-    expect(Array.from(next.eventIds)).toEqual([]);
+    expect(Array.from(next.eventIds)).toEqual(['e1']);
     expect(next.stats).toEqual({});
     expect(next.opponentStats).toEqual({});
     expect(next.onCourt).toEqual([]);
     expect(next.bench).toEqual(['p1', 'p2']);
+  });
+
+  it('clones prior event ids during reset to avoid mutating source state', () => {
+    const current = {
+      eventIds: new Set(['e1'])
+    };
+
+    const next = applyResetEventState(current, { homeScore: 0, awayScore: 0 });
+    next.eventIds.add('e2');
+
+    expect(Array.from(current.eventIds)).toEqual(['e1']);
+    expect(Array.from(next.eventIds)).toEqual(['e1', 'e2']);
+  });
+
+  it('detects scheduled reset from game doc when tracked state exists', () => {
+    const shouldReset = shouldResetViewerFromGameDoc(
+      { liveStatus: 'scheduled', liveHasData: false, homeScore: 0, awayScore: 0 },
+      { events: [{ id: 'e1' }], stats: {}, opponentStats: {}, homeScore: 2, awayScore: 0 }
+    );
+    expect(shouldReset).toBe(true);
+  });
+
+  it('does not force reset from game doc when no tracked state exists', () => {
+    const shouldReset = shouldResetViewerFromGameDoc(
+      { liveStatus: 'scheduled', liveHasData: false, homeScore: 0, awayScore: 0 },
+      { events: [], stats: {}, opponentStats: {}, homeScore: 0, awayScore: 0 }
+    );
+    expect(shouldReset).toBe(false);
+  });
+
+  it('filters non-reset events older than the live reset boundary', () => {
+    const oldEvent = {
+      type: 'stat',
+      createdAt: { toMillis: () => 1000 }
+    };
+    const newEvent = {
+      type: 'stat',
+      createdAt: { toMillis: () => 3000 }
+    };
+
+    expect(isLiveEventVisibleForResetBoundary(oldEvent, 2000)).toBe(false);
+    expect(isLiveEventVisibleForResetBoundary(newEvent, 2000)).toBe(true);
+  });
+
+  it('always keeps reset events and unknown timestamps', () => {
+    expect(isLiveEventVisibleForResetBoundary({ type: 'reset', createdAt: { toMillis: () => 1000 } }, 2000)).toBe(true);
+    expect(isLiveEventVisibleForResetBoundary({ type: 'stat' }, 2000)).toBe(true);
   });
 });

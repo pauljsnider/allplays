@@ -250,20 +250,32 @@
 
         renderFooter(document.getElementById('footer-container'));
 
+        const { teamId: initialTeamId } = getUrlParams();
         let currentUser = null;
-        let currentTeamId = null;
+        let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
         let adminEmails = [];
         let pendingAdminInviteEmails = [];
+        let isInitPending = true;
 
-        checkAuth((user) => {
+        const saveBtn = document.getElementById('save-btn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = initialTeamId ? 'Loading Team...' : 'Loading...';
+
+        checkAuth(async (user) => {
             if (!user) {
                 window.location.href = 'login.html';
                 return;
             }
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            init();
+            try {
+                await init();
+            } finally {
+                isInitPending = false;
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Team';
+            }
         });
 
         function renderAdminList() {
@@ -290,59 +302,61 @@
         }
 
         async function init() {
-            const { teamId } = getUrlParams();
-            if (teamId) {
-                currentTeamId = teamId;
-                document.getElementById('page-title').textContent = 'Edit Team';
-                const team = await getTeam(teamId);
-                if (team) {
-                    if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
-                        alert("You don't have permission to edit this team.");
-                        window.location.href = 'dashboard.html';
-                        return;
-                    }
-
-                    document.getElementById('name').value = team.name || '';
-                    document.getElementById('description').value = team.description || '';
-                    document.getElementById('sport').value = team.sport || '';
-                    document.getElementById('notificationEmail').value = team.notificationEmail || '';
-                    document.getElementById('leagueUrl').value = team.leagueUrl || '';
-                    document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
-                    document.getElementById('standingsRankingMode').value = team.standingsConfig?.rankingMode === 'win_pct' ? 'win_pct' : 'points';
-                    document.getElementById('standingsTiebreakers').value = Array.isArray(team.standingsConfig?.tiebreakers)
-                        ? team.standingsConfig.tiebreakers.join(', ')
-                        : '';
-                    document.getElementById('zip').value = team.zip || '';
-                    document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
-                    // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
-                    const streamInput = document.getElementById('streamUrl');
-                    if (team.twitchChannel) {
-                        streamInput.value = `twitch.tv/${team.twitchChannel}`;
-                    } else if (team.streamEmbedUrl || team.youtubeEmbedUrl) {
-                        streamInput.value = team.streamEmbedUrl || team.youtubeEmbedUrl;
-                    }
-                    streamInput.dispatchEvent(new Event('input')); // trigger detection badge
-                    adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
-                    renderAdminList();
-
-                    if (team.photoUrl) {
-                        currentPhotoUrl = team.photoUrl;
-                        document.getElementById('photo-preview').innerHTML = `<img src="${team.photoUrl}" class="w-full h-full object-cover">`;
-                    }
-
-                    // Update management links
-                    document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${teamId}`;
-                    document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${teamId}`;
-
-                    // Fetch unread count and render banner
-                    let unreadCount = 0;
-                    try {
-                        unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
-                    } catch (e) {
-                        console.warn('Failed to get unread count:', e);
-                    }
-                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'edit', unreadCount });
+            if (initialTeamId) {
+                const team = await getTeam(initialTeamId);
+                if (!team) {
+                    alert('Team not found or no longer active.');
+                    currentTeamId = null;
+                    window.location.href = 'dashboard.html';
+                    return;
                 }
+                document.getElementById('page-title').textContent = 'Edit Team';
+                if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
+                    alert("You don't have permission to edit this team.");
+                    window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                document.getElementById('name').value = team.name || '';
+                document.getElementById('description').value = team.description || '';
+                document.getElementById('sport').value = team.sport || '';
+                document.getElementById('notificationEmail').value = team.notificationEmail || '';
+                document.getElementById('leagueUrl').value = team.leagueUrl || '';
+                document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
+                document.getElementById('standingsRankingMode').value = team.standingsConfig?.rankingMode === 'win_pct' ? 'win_pct' : 'points';
+                document.getElementById('standingsTiebreakers').value = Array.isArray(team.standingsConfig?.tiebreakers)
+                    ? team.standingsConfig.tiebreakers.join(', ')
+                    : '';
+                document.getElementById('zip').value = team.zip || '';
+                document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
+                // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
+                const streamInput = document.getElementById('streamUrl');
+                if (team.twitchChannel) {
+                    streamInput.value = `twitch.tv/${team.twitchChannel}`;
+                } else if (team.streamEmbedUrl || team.youtubeEmbedUrl) {
+                    streamInput.value = team.streamEmbedUrl || team.youtubeEmbedUrl;
+                }
+                streamInput.dispatchEvent(new Event('input')); // trigger detection badge
+                adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
+                renderAdminList();
+
+                if (team.photoUrl) {
+                    currentPhotoUrl = team.photoUrl;
+                    document.getElementById('photo-preview').innerHTML = `<img src="${team.photoUrl}" class="w-full h-full object-cover">`;
+                }
+
+                // Update management links
+                document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${initialTeamId}`;
+                document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${initialTeamId}`;
+
+                // Fetch unread count and render banner
+                let unreadCount = 0;
+                try {
+                    unreadCount = await getUnreadChatCount(currentUser.uid, initialTeamId);
+                } catch (e) {
+                    console.warn('Failed to get unread count:', e);
+                }
+                renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
             }
         }
 
@@ -580,6 +594,10 @@
         document.getElementById('team-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('save-btn');
+            if (isInitPending) {
+                alert('Team is still loading. Please wait a moment and try again.');
+                return;
+            }
             btn.disabled = true;
             btn.textContent = 'Saving...';
 

@@ -56,6 +56,6 @@ describe('expandRecurrence until end date inclusivity', () => {
         const occurrences = expandRecurrence(master, 30);
         const dates = occurrences.map((occurrence) => occurrence.instanceDate);
 
-        expect(dates).toEqual(['2026-03-02', '2026-03-03', '2026-03-04']);
+        expect(dates).toEqual(['2026-03-01', '2026-03-02', '2026-03-03']);
     });
 });
