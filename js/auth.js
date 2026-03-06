@@ -16,8 +16,8 @@ import {
     updatePassword
 } from './firebase.js?v=9';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail } from './db.js?v=14';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=2';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=3';
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
