@@ -46,7 +46,7 @@ describe('accept invite flow', () => {
         await expect(processInvite('user-1', 'ABCD1234')).rejects.toThrow('Code already used');
     });
 
-    it('falls back to profile + team updates when atomic redemption is unavailable', async () => {
+    it('fails closed when atomic admin redemption is unavailable', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({
                 valid: true,
@@ -67,14 +67,13 @@ describe('accept invite flow', () => {
         };
 
         const processInvite = createInviteProcessor(deps);
-        await processInvite('user-3', 'IJKL9012');
+        await expect(processInvite('user-3', 'IJKL9012')).rejects.toThrow(
+            'Missing atomic admin invite redemption handler'
+        );
 
-        expect(deps.updateTeam).toHaveBeenCalledWith('team-3', { adminEmails: ['other@example.com', 'coach@example.com'] });
-        expect(deps.updateUserProfile).toHaveBeenCalledWith('user-3', {
-            coachOf: ['team-1', 'team-3'],
-            roles: ['parent', 'coach']
-        });
-        expect(deps.markAccessCodeAsUsed).toHaveBeenCalledWith('code-125', 'user-3');
+        expect(deps.updateTeam).not.toHaveBeenCalled();
+        expect(deps.updateUserProfile).not.toHaveBeenCalled();
+        expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 
     it('does not mark code when validation fails', async () => {
