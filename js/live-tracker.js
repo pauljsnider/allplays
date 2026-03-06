@@ -10,6 +10,7 @@ import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLi
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
+import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 
@@ -2452,6 +2453,13 @@ async function init() {
       }
 
       if (shouldResume) {
+        const restoredLineup = restoreLiveLineup({
+          liveLineup: game.liveLineup,
+          roster
+        });
+        state.onCourt = restoredLineup.onCourt;
+        state.bench = restoredLineup.bench;
+
         const statsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats');
         const hasAggregatedStats = statsSnapshot.size > 0;
         const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
