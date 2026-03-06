@@ -413,6 +413,7 @@ export function parseICS(icsText) {
                 currentEvent.recurrenceTimeZone = recurrenceTimeZone;
               }
             }
+            currentEvent.recurrenceAbsoluteTime = isAbsoluteRecurringDateTime(value);
             break;
           case 'DTEND':
             currentEvent.dtend = parseICSDate(value, parsedField.params);
@@ -474,6 +475,10 @@ function addDaysPreservingLocalTime(date, days) {
   return nextDate;
 }
 
+function addDaysPreservingAbsoluteTime(date, days) {
+  return new Date(date.getTime() + (days * MS_PER_DAY));
+}
+
 function isRecurringWallClockDateTime(icsDate) {
   return (
     typeof icsDate === 'string' &&
@@ -489,7 +494,22 @@ function normalizeICSTzid(rawTzid) {
   return tzid || null;
 }
 
-function addDaysPreservingRecurrenceWallTime(date, days, recurrenceTimeZone) {
+function isAbsoluteRecurringDateTime(icsDate) {
+  return (
+    typeof icsDate === 'string' &&
+    icsDate.length > 8 &&
+    (
+      icsDate.endsWith('Z') ||
+      /([+-])(\d{2}):?(\d{2})$/.test(icsDate)
+    )
+  );
+}
+
+function addDaysPreservingRecurrenceWallTime(date, days, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return addDaysPreservingAbsoluteTime(date, days);
+  }
+
   if (!recurrenceTimeZone) {
     return addDaysPreservingLocalTime(date, days);
   }
@@ -513,7 +533,11 @@ function addDaysPreservingRecurrenceWallTime(date, days, recurrenceTimeZone) {
   return shifted || addDaysPreservingLocalTime(date, days);
 }
 
-function getRecurrenceWeekday(date, recurrenceTimeZone) {
+function getRecurrenceWeekday(date, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return date.getUTCDay();
+  }
+
   if (!recurrenceTimeZone) {
     return date.getDay();
   }
@@ -526,7 +550,11 @@ function getRecurrenceWeekday(date, recurrenceTimeZone) {
   return new Date(Date.UTC(wallClock.year, wallClock.month, wallClock.day)).getUTCDay();
 }
 
-function getRecurrenceDayNumber(date, recurrenceTimeZone) {
+function getRecurrenceDayNumber(date, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / MS_PER_DAY);
+  }
+
   if (!recurrenceTimeZone) {
     return toCalendarDayNumber(date);
   }
@@ -588,7 +616,13 @@ function parseICSRRule(rawRule) {
 }
 
 function expandRecurringICSEvent(event) {
-  const { rrule, exDates = [], recurrenceTimeZone = null, ...baseEvent } = event;
+  const {
+    rrule,
+    exDates = [],
+    recurrenceTimeZone = null,
+    recurrenceAbsoluteTime = false,
+    ...baseEvent
+  } = event;
   if (!rrule) return [baseEvent];
 
   const freq = String(rrule.freq || '').toUpperCase();
@@ -646,24 +680,24 @@ function expandRecurringICSEvent(event) {
       if (untilBoundary && cursor > untilBoundary) break;
       pushOccurrence(cursor);
       generated++;
-      cursor = addDaysPreservingRecurrenceWallTime(cursor, interval, recurrenceTimeZone);
+      cursor = addDaysPreservingRecurrenceWallTime(cursor, interval, recurrenceTimeZone, recurrenceAbsoluteTime);
     }
 
     return occurrences;
   }
 
-  const defaultDayCode = DAY_CODES[getRecurrenceWeekday(startDate, recurrenceTimeZone)];
+  const defaultDayCode = DAY_CODES[getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime)];
   const byDays = Array.isArray(rrule.byDays) && rrule.byDays.length
     ? Array.from(new Set(rrule.byDays))
     : [defaultDayCode];
   const byDayIndexes = new Set(byDays.map((dayCode) => ICS_DAY_TO_INDEX[dayCode]).filter((idx) => idx != null));
   if (!byDayIndexes.size) {
-    byDayIndexes.add(startDate.getDay());
+    byDayIndexes.add(getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
   }
 
   const startWeekAnchor = new Date(startDate);
   startWeekAnchor.setHours(0, 0, 0, 0);
-  startWeekAnchor.setDate(startWeekAnchor.getDate() - getRecurrenceWeekday(startDate, recurrenceTimeZone));
+  startWeekAnchor.setDate(startWeekAnchor.getDate() - getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
 
   let cursor = new Date(startDate);
   let generated = 0;
@@ -672,9 +706,9 @@ function expandRecurringICSEvent(event) {
     const cursorDayStart = new Date(cursor);
     cursorDayStart.setHours(0, 0, 0, 0);
     const cursorWeekAnchor = new Date(cursorDayStart);
-    const cursorWeekday = getRecurrenceWeekday(cursor, recurrenceTimeZone);
+    const cursorWeekday = getRecurrenceWeekday(cursor, recurrenceTimeZone, recurrenceAbsoluteTime);
     cursorWeekAnchor.setDate(cursorWeekAnchor.getDate() - cursorWeekday);
-    const weekDiff = Math.floor((getRecurrenceDayNumber(cursorWeekAnchor, recurrenceTimeZone) - getRecurrenceDayNumber(startWeekAnchor, recurrenceTimeZone)) / 7);
+    const weekDiff = Math.floor((getRecurrenceDayNumber(cursorWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime) - getRecurrenceDayNumber(startWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime)) / 7);
     const isCadencedWeek = weekDiff >= 0 && weekDiff % interval === 0;
     const isMatchingWeekday = byDayIndexes.has(cursorWeekday);
 
@@ -683,7 +717,7 @@ function expandRecurringICSEvent(event) {
       generated++;
     }
 
-    cursor = addDaysPreservingRecurrenceWallTime(cursor, 1, recurrenceTimeZone);
+    cursor = addDaysPreservingRecurrenceWallTime(cursor, 1, recurrenceTimeZone, recurrenceAbsoluteTime);
   }
 
   return occurrences;
