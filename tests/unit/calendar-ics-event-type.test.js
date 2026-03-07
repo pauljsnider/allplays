@@ -24,8 +24,18 @@ describe('getCalendarEventStatus', () => {
         expect(status).toBe('cancelled');
     });
 
+    it('maps ICS STATUS:CANCELED to cancelled', () => {
+        const status = getCalendarEventStatus({ status: 'CANCELED', summary: 'U12 vs Lions' });
+        expect(status).toBe('cancelled');
+    });
+
     it('maps TeamSnap [CANCELED] summary to cancelled', () => {
         const status = getCalendarEventStatus({ summary: '[CANCELED] U12 Practice' });
+        expect(status).toBe('cancelled');
+    });
+
+    it('maps [cancelled] summary variants case-insensitively to cancelled', () => {
+        const status = getCalendarEventStatus({ summary: '[cancelled] U12 Practice' });
         expect(status).toBe('cancelled');
     });
 
