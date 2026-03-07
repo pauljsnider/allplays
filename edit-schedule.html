@@ -2361,7 +2361,7 @@ PARSING RULES:
                                         <input type="text" value="${game.opponent}"
                                             onchange="updateOperation(${index}, 'opponent', this.value)"
                                             class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">
-                                        <input type="datetime-local" value="${date.toISOString().slice(0, 16)}"
+                                        <input type="datetime-local" value="${formatIsoForInput(date)}"
                                             onchange="updateOperation(${index}, 'date', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">
                                         <input type="text" value="${game.location || ''}" placeholder="Location"

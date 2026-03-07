@@ -2,7 +2,7 @@
 import { getTeam, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query } from './db.js?v=14';
 import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=9';
+import { checkAuth } from './auth.js?v=10';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
