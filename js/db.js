@@ -502,6 +502,24 @@ export async function getAggregatedStatsForGames(teamId, gameIds) {
     return totalsByPlayer;
 }
 
+export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
+    try {
+        const docRef = doc(db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return null;
+        const data = docSnap.data() || {};
+        return data.stats || {};
+    } catch (error) {
+        console.error('[getAggregatedStatsForPlayer] failed to load aggregated stats', {
+            teamId,
+            gameId,
+            playerId,
+            error,
+        });
+        throw new Error(`Unable to load stats for player ${playerId}: ${error.message}`);
+    }
+}
+
 export async function getGame(teamId, gameId) {
     const docRef = doc(db, `teams/${teamId}/games`, gameId);
     const docSnap = await getDoc(docRef);
