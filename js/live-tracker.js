@@ -2,7 +2,7 @@
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=14';
 import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
-import { checkAuth } from './auth.js?v=9';
+import { checkAuth } from './auth.js?v=10';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -10,8 +10,10 @@ import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLi
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
+import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
+import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -67,6 +69,8 @@ let liveState = {
   chatExpanded: false,
   unreadChatCount: 0,
   lastChatSeenAt: Date.now(),
+  lastChatSnapshotAt: Date.now(),
+  lastChatSnapshotIds: [],
   chatInitialized: false,
   eventQueue: [],
   retryAttempt: 0,
@@ -1109,30 +1113,28 @@ function renderChatMessages(messages) {
 }
 
 function updateUnread(messages) {
-  if (!messages || !messages.length) return;
-  if (!liveState.chatInitialized) {
-    liveState.chatInitialized = true;
-    liveState.lastChatSeenAt = Date.now();
-    liveState.unreadChatCount = 0;
-    updateUnreadBadge();
-    return;
-  }
-
-  if (liveState.chatExpanded) {
-    liveState.lastChatSeenAt = Date.now();
-    liveState.unreadChatCount = 0;
-    updateUnreadBadge();
-    return;
-  }
-
-  let newlyUnread = 0;
-  messages.forEach(msg => {
-    const ts = msg.createdAt?.toMillis ? msg.createdAt.toMillis() : null;
-    if (!ts || ts > liveState.lastChatSeenAt) newlyUnread += 1;
+  const next = advanceLiveChatUnreadState({
+    messages,
+    chatInitialized: liveState.chatInitialized,
+    chatExpanded: liveState.chatExpanded,
+    unreadChatCount: liveState.unreadChatCount,
+    lastChatSeenAt: liveState.lastChatSeenAt,
+    lastChatSnapshotAt: liveState.lastChatSnapshotAt,
+    lastChatSnapshotIds: liveState.lastChatSnapshotIds
   });
+  const shouldRefreshBadge =
+    next.unreadChatCount !== liveState.unreadChatCount ||
+    next.chatInitialized !== liveState.chatInitialized ||
+    next.lastChatSeenAt !== liveState.lastChatSeenAt ||
+    next.lastChatSnapshotAt !== liveState.lastChatSnapshotAt;
 
-  if (newlyUnread > 0) {
-    liveState.unreadChatCount += newlyUnread;
+  liveState.chatInitialized = next.chatInitialized;
+  liveState.unreadChatCount = next.unreadChatCount;
+  liveState.lastChatSeenAt = next.lastChatSeenAt;
+  liveState.lastChatSnapshotAt = next.lastChatSnapshotAt;
+  liveState.lastChatSnapshotIds = next.lastChatSnapshotIds;
+
+  if (shouldRefreshBadge) {
     updateUnreadBadge();
   }
 }
@@ -1171,6 +1173,8 @@ function toggleChat() {
   }
   if (liveState.chatExpanded) {
     liveState.lastChatSeenAt = Date.now();
+    liveState.lastChatSnapshotAt = liveState.lastChatSeenAt;
+    liveState.lastChatSnapshotIds = [];
     liveState.unreadChatCount = 0;
     updateUnreadBadge();
   }
@@ -2447,6 +2451,13 @@ async function init() {
       }
 
       if (shouldResume) {
+        const restoredLineup = restoreLiveLineup({
+          liveLineup: game.liveLineup,
+          roster
+        });
+        state.onCourt = restoredLineup.onCourt;
+        state.bench = restoredLineup.bench;
+
         const statsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats');
         const hasAggregatedStats = statsSnapshot.size > 0;
         const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
