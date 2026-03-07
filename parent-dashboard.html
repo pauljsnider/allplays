@@ -1620,11 +1620,11 @@
                 const typeColor = game.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800';
                 const isCancelled = game.isCancelled;
                 const attendance = game.practiceAttendance || null;
-                const attendanceRecorded = game.type === 'practice' && hasRecordedAttendance(attendance);
                 const packetContext = game.type === 'practice'
                     ? resolvePracticePacketContextForEvent(game)
                     : { sessionId: null, homePacket: null };
                 const homePacket = game.practiceHomePacket || packetContext.homePacket || null;
+                const attendanceRecorded = game.type === 'practice' && hasRecordedAttendance(attendance);
                 const homePacketBlocks = Array.isArray(homePacket?.blocks) ? homePacket.blocks : [];
                 const homePacketReady = game.type === 'practice' && homePacketBlocks.length > 0;
                 const homePacketMinutes = homePacket?.totalMinutes || homePacketBlocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
