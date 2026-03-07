@@ -47,6 +47,28 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function hasIncentivePlayerLink(data) {
+      return data.teamId is string &&
+             data.playerId is string &&
+             isParentForPlayer(data.teamId, data.playerId);
+    }
+
+    function isIncentiveCapPayloadValid(data) {
+      return data.maxPerGameCents is int &&
+             (
+               data.keys().hasOnly(['maxPerGameCents', 'updatedAt']) ||
+               hasIncentivePlayerLink(data)
+             );
+    }
+
+    function isIncentiveRulePayloadValid(data) {
+      return hasIncentivePlayerLink(data);
+    }
+
+    function isIncentivePaidGamePayloadValid(data) {
+      return hasIncentivePlayerLink(data);
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
@@ -96,6 +118,34 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true;  // Public profiles
       allow write: if isOwner(userId) || isGlobalAdmin();  // Owner or global admin can update
+
+      // Incentive rules - private to the parent who created them
+      match /incentiveRules/{ruleId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                        (
+                          (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
+                          (!ruleId.matches('^_cap_.*') && isIncentiveRulePayloadValid(request.resource.data))
+                        );
+        allow update: if isOwner(userId) &&
+                        (
+                          (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
+                          (!ruleId.matches('^_cap_.*') &&
+                           hasIncentivePlayerLink(resource.data) &&
+                           isIncentiveRulePayloadValid(request.resource.data))
+                        );
+        allow delete: if isOwner(userId);
+      }
+
+      // Incentive paid game records - private to the parent
+      match /incentivePaidGames/{recordId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isIncentivePaidGamePayloadValid(request.resource.data);
+        allow update: if isOwner(userId) &&
+                        hasIncentivePlayerLink(resource.data) &&
+                        isIncentivePaidGamePayloadValid(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
     }
 
     // Access codes - allow public read for validation during signup

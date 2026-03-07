@@ -186,6 +186,30 @@
         </div>
     </div>
 
+    <!-- Incentives Panel (slide-out, parent-only) -->
+    <div id="incentives-panel" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="closeIncentivesPanel()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <div>
+                    <h3 id="incentives-panel-title" class="text-lg font-bold text-gray-900">Incentives</h3>
+                    <p class="text-xs text-gray-500 mt-0.5">Private — only you can see this</p>
+                </div>
+                <button onclick="closeIncentivesPanel()" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="incentives-panel-content" class="px-6 py-5">
+                <div class="text-center py-12">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                    <p class="text-sm text-gray-500">Loading incentives...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
         import {
             getParentDashboardData,
@@ -208,9 +232,26 @@
             requestRideSpot,
             updateRideRequestStatus,
             closeRideOffer,
-            cancelRideRequest
-        } from './js/db.js?v=23';
+            cancelRideRequest,
+            getAggregatedStatsForPlayer
+        } from './js/db.js?v=24';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
+        import {
+            getIncentiveRules,
+            saveIncentiveRule as saveIncentiveRuleFn,
+            toggleIncentiveRule as toggleIncentiveRuleFn,
+            deleteIncentiveRule as deleteIncentiveRuleFn,
+            markGamePaid as markGamePaidFn,
+            unmarkGamePaid as unmarkGamePaidFn,
+            getPaidGames,
+            calculateEarnings,
+            formatCents,
+            getStatOptionsForTeam,
+            renderIncentivesPanel,
+            renderRuleBuilder,
+            getCapSetting,
+            saveCapSetting as saveCapSettingFn,
+        } from './js/parent-incentives.js?v=3';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
@@ -233,6 +274,8 @@
         const rideshareOffersByEvent = new Map();
         const teamChildrenByTeamId = new Map();
         const selectedRideChildByOffer = new Map();
+        let incentivesPanelPlayer = null;  // { id, name, teamId }
+        const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -250,6 +293,16 @@
         window.toggleRideOfferClosed = toggleRideOfferClosed;
         window.cancelMyRideRequest = cancelMyRideRequest;
         window.setRideChildSelection = setRideChildSelection;
+        window.openIncentivesPanel = openIncentivesPanel;
+        window.closeIncentivesPanel = closeIncentivesPanel;
+        window.openIncentiveRuleBuilder = openIncentiveRuleBuilder;
+        window.closeIncentiveRuleBuilder = closeIncentiveRuleBuilder;
+        window.saveIncentiveRuleFromBuilder = saveIncentiveRuleFromBuilder;
+        window.toggleIncentiveRule = handleToggleIncentiveRule;
+        window.deleteIncentiveRule = handleDeleteIncentiveRule;
+        window.markGamePaid = handleMarkGamePaid;
+        window.saveIncentiveCap = handleSaveIncentiveCap;
+        window.removeIncentiveCap = handleRemoveIncentiveCap;
 
         function escapeAttr(value) {
             return String(value ?? '')
@@ -1452,27 +1505,35 @@
             }
 
             container.innerHTML = children.map(child => `
-                <a href="player.html?teamId=${child.teamId}&playerId=${child.playerId}" 
-                   class="flex items-center gap-4 p-3 rounded-xl border border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition group">
-                    <div class="h-12 w-12 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
-                        ${child.playerPhotoUrl 
-                            ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">` 
-                            : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>`
-                        }
+                <div class="rounded-xl border border-gray-200 overflow-hidden">
+                    <a href="player.html?teamId=${child.teamId}&playerId=${child.playerId}"
+                       class="flex items-center gap-4 p-3 hover:border-primary-300 hover:bg-primary-50 transition group">
+                        <div class="h-12 w-12 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
+                            ${child.playerPhotoUrl
+                                ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">`
+                                : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>`
+                            }
+                        </div>
+                        <div class="flex-grow min-w-0">
+                            <div class="font-bold text-gray-900 group-hover:text-primary-700 truncate">${escapeHtml(child.playerName)}</div>
+                            <div class="text-xs text-gray-500 truncate">${escapeHtml(child.teamName)}</div>
+                        </div>
+                        <div class="flex-shrink-0 flex items-center gap-2 text-gray-300 group-hover:text-primary-400">
+                            <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2 py-1 rounded-full border border-primary-100">
+                                Profile
+                            </span>
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </div>
+                    </a>
+                    <div class="border-t border-gray-100 px-3 py-2 bg-gray-50">
+                        <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
+                            class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
+                            💰 Incentives
+                        </button>
                     </div>
-                    <div class="flex-grow min-w-0">
-                        <div class="font-bold text-gray-900 group-hover:text-primary-700 truncate">${escapeHtml(child.playerName)}</div>
-                        <div class="text-xs text-gray-500 truncate">${escapeHtml(child.teamName)}</div>
-                    </div>
-                    <div class="flex-shrink-0 flex items-center gap-2 text-gray-300 group-hover:text-primary-400">
-                        <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2 py-1 rounded-full border border-primary-100">
-                            Edit
-                        </span>
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                        </svg>
-                    </div>
-                </a>
+                </div>
             `).join('');
         }
 
@@ -1603,6 +1664,19 @@
                             </svg>
                             ${escapeHtml(game.location || 'TBD')}
                         </div>
+                        ${(() => {
+                            // Show earnings chip for past tracked games where incentives have been calculated
+                            const cacheKey = `${game.id}__${game.childId}`;
+                            const earnedCents = incentivesEarningsCache.get(cacheKey);
+                            if (game.type === 'game' && game.isDbGame && !game.isCancelled && earnedCents !== undefined && earnedCents !== 0) {
+                                const isPositive = earnedCents >= 0;
+                                return `<button onclick="openIncentivesPanel('${escapeAttr(game.childId)}', '${escapeAttr(game.childName || '')}', '${escapeAttr(game.teamId)}')"
+                                    class="inline-flex items-center gap-1 text-xs font-semibold ${isPositive ? 'text-green-700 bg-green-50 border-green-200' : 'text-red-600 bg-red-50 border-red-200'} px-2 py-0.5 rounded-full mt-1 mr-1 border hover:opacity-80 transition">
+                                    💰 ${isPositive ? '+' : ''}${formatCents(earnedCents, { sign: false })} earned →
+                                </button>`;
+                            }
+                            return '';
+                        })()}
                         ${game.type !== 'practice' && game.isHome === true ? '<span class="inline-block text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">HOME</span>' : ''}
                         ${game.type !== 'practice' && game.isHome === false ? '<span class="inline-block text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">AWAY</span>' : ''}
                         ${game.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(game.kitColor)}</div>` : ''}
@@ -1737,6 +1811,259 @@
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
         });
+
+        // ── Incentives Panel ──────────────────────────────────────────────
+
+        async function openIncentivesPanel(playerId, playerName, teamId) {
+            incentivesPanelPlayer = { id: playerId, name: playerName, teamId };
+            const panel = document.getElementById('incentives-panel');
+            const title = document.getElementById('incentives-panel-title');
+            const content = document.getElementById('incentives-panel-content');
+            title.textContent = `${playerName} · Incentives`;
+            content.innerHTML = `<div class="text-center py-12"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div><p class="text-sm text-gray-500">Loading...</p></div>`;
+            panel.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            await refreshIncentivesPanel();
+        }
+
+        function closeIncentivesPanel() {
+            document.getElementById('incentives-panel').classList.add('hidden');
+            document.body.style.overflow = '';
+            incentivesPanelPlayer = null;
+        }
+
+        async function refreshIncentivesPanel() {
+            if (!incentivesPanelPlayer || !currentUserId) return;
+            const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
+            const content = document.getElementById('incentives-panel-content');
+            try {
+                const [rules, paidGamesMap, statOptions, maxPerGameCents] = await Promise.all([
+                    getIncentiveRules(currentUserId, playerId),
+                    getPaidGames(currentUserId, playerId),
+                    getStatOptionsForTeam(teamId),
+                    getCapSetting(currentUserId, playerId),
+                ]);
+
+                // Fetch stats for recent past games for this player
+                const pastGames = allScheduleEvents
+                    .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
+                    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                const recentGames = pastGames.slice(0, 5);
+                const recentGameIds = new Set(recentGames.map(game => game.id));
+
+                const seasonGameStats = await Promise.all(
+                    pastGames.map(async (game) => {
+                        const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
+                        return { game, stats };
+                    })
+                );
+                // Update earnings cache for schedule chips
+                const activeRules = rules.filter(r => r.active);
+                for (const { game, stats } of seasonGameStats) {
+                    if (stats) {
+                        const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
+                        incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
+                    }
+                }
+
+                content.innerHTML = renderIncentivesPanel({
+                    player: { id: playerId, name: playerName, teamId },
+                    rules,
+                    paidGames: paidGamesMap,
+                    seasonGameStats,
+                    recentGameStats: seasonGameStats.filter(({ game }) => recentGameIds.has(game.id)),
+                    statOptions,
+                    userId: currentUserId,
+                    maxPerGameCents,
+                });
+
+                // Attach rule builder interactivity
+                attachRuleBuilderListeners();
+            } catch (error) {
+                console.error('Failed to load incentives panel:', error);
+                content.innerHTML = `
+                    <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-5">
+                        <p class="text-sm font-semibold text-red-800">Failed to load incentives.</p>
+                        <p class="text-xs text-red-700 mt-1">${error?.message ? escapeHtml(error.message) : 'Check your connection and try again.'}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function openIncentiveRuleBuilder(teamId, playerId) {
+            if (!incentivesPanelPlayer) return;
+            getStatOptionsForTeam(teamId).then(statOptions => {
+                const builderEl = document.getElementById('incentive-rule-builder');
+                if (!builderEl) return;
+                builderEl.innerHTML = renderRuleBuilder(statOptions, teamId, playerId);
+                builderEl.classList.remove('hidden');
+                attachRuleBuilderListeners();
+            });
+        }
+
+        function closeIncentiveRuleBuilder() {
+            const builderEl = document.getElementById('incentive-rule-builder');
+            if (builderEl) {
+                builderEl.classList.add('hidden');
+                builderEl.innerHTML = '';
+            }
+        }
+
+        function attachRuleBuilderListeners() {
+            // selectIncentiveStat and selectIncentiveType need to be global for onclick attributes
+            window.selectIncentiveStat = function(key) {
+                document.getElementById('incentive-stat-key').value = key;
+                document.querySelectorAll('.stat-pill').forEach(btn => {
+                    const isSelected = btn.dataset.stat === key;
+                    btn.classList.toggle('bg-primary-600', isSelected);
+                    btn.classList.toggle('text-white', isSelected);
+                    btn.classList.toggle('border-primary-600', isSelected);
+                    btn.classList.toggle('bg-white', !isSelected);
+                    btn.classList.toggle('text-gray-600', !isSelected);
+                    btn.classList.toggle('border-gray-200', !isSelected);
+                });
+                const label = document.getElementById('incentive-threshold-stat-label');
+                if (label) label.textContent = key.toUpperCase();
+                updateIncentivePreview();
+            };
+
+            window.selectIncentiveType = function(type) {
+                document.getElementById('incentive-type').value = type;
+                const perUnitBtn = document.getElementById('type-per-unit');
+                const thresholdBtn = document.getElementById('type-threshold');
+                const perUnitField = document.getElementById('field-per-unit');
+                const thresholdField = document.getElementById('field-threshold');
+                if (!perUnitBtn || !thresholdBtn) return;
+                if (type === 'per_unit') {
+                    perUnitBtn.classList.replace('bg-white', 'bg-primary-600');
+                    perUnitBtn.classList.replace('text-gray-600', 'text-white');
+                    thresholdBtn.classList.replace('bg-primary-600', 'bg-white');
+                    thresholdBtn.classList.replace('text-white', 'text-gray-600');
+                    perUnitField?.classList.remove('hidden');
+                    thresholdField?.classList.add('hidden');
+                } else {
+                    thresholdBtn.classList.replace('bg-white', 'bg-primary-600');
+                    thresholdBtn.classList.replace('text-gray-600', 'text-white');
+                    perUnitBtn.classList.replace('bg-primary-600', 'bg-white');
+                    perUnitBtn.classList.replace('text-white', 'text-gray-600');
+                    thresholdField?.classList.remove('hidden');
+                    perUnitField?.classList.add('hidden');
+                }
+                updateIncentivePreview();
+            };
+
+            // Live preview update on amount/threshold change
+            ['incentive-amount', 'incentive-bonus-amount', 'incentive-threshold', 'incentive-threshold-op'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('input', updateIncentivePreview);
+            });
+        }
+
+        function updateIncentivePreview() {
+            const previewEl = document.getElementById('incentive-preview');
+            if (!previewEl) return;
+            const statKey = document.getElementById('incentive-stat-key')?.value;
+            const type = document.getElementById('incentive-type')?.value;
+            if (!statKey) { previewEl.classList.add('hidden'); return; }
+            const label = statKey.toUpperCase();
+            let text = '';
+            if (type === 'per_unit') {
+                const amt = parseFloat(document.getElementById('incentive-amount')?.value);
+                if (!isNaN(amt) && amt !== 0) {
+                    const cents = Math.round(amt * 100);
+                    text = `Example: 10 ${label} × ${formatCents(Math.abs(cents), { sign: false })} = ${formatCents(10 * cents, { sign: true })}`;
+                }
+            } else {
+                const threshold = parseInt(document.getElementById('incentive-threshold')?.value, 10);
+                const op = document.getElementById('incentive-threshold-op')?.value;
+                const amt = parseFloat(document.getElementById('incentive-bonus-amount')?.value);
+                if (!isNaN(threshold) && !isNaN(amt) && amt !== 0) {
+                    const cents = Math.round(amt * 100);
+                    const opLabel = op === 'gte' ? '≥' : '>';
+                    text = `If ${label} ${opLabel} ${threshold}: earn ${formatCents(cents, { sign: true })}`;
+                }
+            }
+            if (text) {
+                previewEl.textContent = text;
+                previewEl.classList.remove('hidden');
+            } else {
+                previewEl.classList.add('hidden');
+            }
+        }
+
+        async function saveIncentiveRuleFromBuilder(teamId, playerId) {
+            const statKey = document.getElementById('incentive-stat-key')?.value;
+            const type = document.getElementById('incentive-type')?.value || 'per_unit';
+            if (!statKey) { alert('Please select a stat.'); return; }
+
+            let amountCents, threshold = null, thresholdOp = null;
+            if (type === 'per_unit') {
+                const amt = parseFloat(document.getElementById('incentive-amount')?.value);
+                if (isNaN(amt) || amt === 0) { alert('Please enter a non-zero amount.'); return; }
+                amountCents = Math.round(amt * 100);
+            } else {
+                const th = parseInt(document.getElementById('incentive-threshold')?.value, 10);
+                const amt = parseFloat(document.getElementById('incentive-bonus-amount')?.value);
+                const op = document.getElementById('incentive-threshold-op')?.value || 'gt';
+                if (isNaN(th) || isNaN(amt) || amt === 0) { alert('Please fill in the threshold and amount.'); return; }
+                threshold = th;
+                thresholdOp = op;
+                amountCents = Math.round(amt * 100);
+            }
+
+            await saveIncentiveRuleFn(currentUserId, {
+                teamId,
+                playerId,
+                playerName: incentivesPanelPlayer?.name || '',
+                statKey,
+                type,
+                amountCents,
+                threshold,
+                thresholdOp,
+                active: true,
+            });
+            closeIncentiveRuleBuilder();
+            await refreshIncentivesPanel();
+        }
+
+        async function handleToggleIncentiveRule(userId, ruleId, active) {
+            await toggleIncentiveRuleFn(userId, ruleId, active);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleDeleteIncentiveRule(userId, ruleId) {
+            if (!confirm('Delete this rule?')) return;
+            await deleteIncentiveRuleFn(userId, ruleId);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleMarkGamePaid(userId, gameId, playerId, teamId, amountCents) {
+            await markGamePaidFn(userId, gameId, playerId, teamId, amountCents);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleSaveIncentiveCap(userId, playerId) {
+            const teamId = incentivesPanelPlayer?.teamId;
+            if (!teamId) return;
+            const input = document.getElementById('incentive-cap-input');
+            const raw = input ? input.value.trim() : '';
+            if (raw === '') {
+                await saveCapSettingFn(userId, teamId, playerId, null);
+            } else {
+                const dollars = parseFloat(raw);
+                if (isNaN(dollars) || dollars < 0) { alert('Enter a valid dollar amount (or leave blank for no cap).'); return; }
+                await saveCapSettingFn(userId, teamId, playerId, Math.round(dollars * 100));
+            }
+            await refreshIncentivesPanel();
+        }
+
+        async function handleRemoveIncentiveCap(userId, playerId) {
+            const teamId = incentivesPanelPlayer?.teamId;
+            if (!teamId) return;
+            await saveCapSettingFn(userId, teamId, playerId, null);
+            await refreshIncentivesPanel();
+        }
 
         init();
     </script>
