@@ -270,6 +270,13 @@
 
       <!-- VIDEO (center, double-wide) -->
       <section id="video-panel" class="panel-shell p-3 hidden md:flex md:col-span-2 md:flex-col md:overflow-hidden">
+        <video
+          id="recorded-replay-video"
+          class="hidden w-full aspect-video md:aspect-auto md:flex-1 rounded-xl bg-black"
+          controls
+          playsinline
+          preload="metadata"
+        ></video>
         <iframe
           id="youtube-stream-iframe"
           class="w-full aspect-video md:aspect-auto md:flex-1 rounded-xl border border-teal/20"
@@ -280,6 +287,43 @@
           referrerpolicy="strict-origin-when-cross-origin"
           allowfullscreen
         ></iframe>
+        <div id="recorded-replay-tools" class="hidden mt-3 rounded-xl border border-teal/20 bg-slate/45 p-3">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <p class="text-[11px] uppercase tracking-[0.25em] text-teal/70">Archived Replay</p>
+              <p id="recorded-replay-meta" class="text-sm text-sand/80">Create a highlight clip up to 60 seconds.</p>
+            </div>
+            <span class="rounded-full border border-teal/30 px-2 py-1 text-[11px] text-teal">Max 60s</span>
+          </div>
+          <div class="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_2fr]">
+            <label class="text-xs text-sand/70">
+              Start (seconds)
+              <div class="mt-1 flex gap-2">
+                <input id="highlight-start-input" type="number" min="0" step="1" class="w-full rounded-lg border border-teal/25 bg-ink px-3 py-2 text-sand" value="0">
+                <button id="highlight-set-start" type="button" class="rounded-lg border border-teal/25 px-3 py-2 text-teal hover:bg-ink/80">Use now</button>
+              </div>
+            </label>
+            <label class="text-xs text-sand/70">
+              End (seconds)
+              <div class="mt-1 flex gap-2">
+                <input id="highlight-end-input" type="number" min="1" step="1" class="w-full rounded-lg border border-teal/25 bg-ink px-3 py-2 text-sand" value="60">
+                <button id="highlight-set-end" type="button" class="rounded-lg border border-teal/25 px-3 py-2 text-teal hover:bg-ink/80">Use now</button>
+              </div>
+            </label>
+            <label class="text-xs text-sand/70">
+              Title
+              <input id="highlight-title-input" type="text" maxlength="80" placeholder="Player finish, big block, winning run..." class="mt-1 w-full rounded-lg border border-teal/25 bg-ink px-3 py-2 text-sand">
+            </label>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button id="highlight-share-btn" type="button" class="rounded-lg bg-teal px-4 py-2 text-sm font-medium text-ink">Copy Clip Link</button>
+            <button id="highlight-save-btn" type="button" class="rounded-lg border border-teal/25 px-4 py-2 text-sm font-medium text-sand hover:bg-ink/80">Save Highlight</button>
+          </div>
+          <div class="mt-4">
+            <div class="text-[11px] uppercase tracking-[0.25em] text-teal/70">Saved Highlights</div>
+            <div id="saved-highlights-list" class="mt-2 space-y-2"></div>
+          </div>
+        </div>
         <a id="stream-external-link" href="#" target="_blank" rel="noopener noreferrer"
           class="hidden mt-1 text-xs text-center text-sand/50 hover:text-sand/80 transition">
         </a>
@@ -436,6 +480,6 @@
 
   <div id="footer-container"></div>
 
-  <script type="module" src="js/live-game.js"></script>
+  <script type="module" src="js/live-game.js?v=2"></script>
 </body>
 </html>
