@@ -1852,19 +1852,38 @@
                 const recentGames = pastGames.slice(0, 5);
                 const recentGameIds = new Set(recentGames.map(game => game.id));
 
-                const seasonGameStats = await Promise.all(
+                const seasonGameResults = await Promise.allSettled(
                     pastGames.map(async (game) => {
                         const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
                         return { game, stats };
                     })
                 );
+                const seasonGameStats = [];
+                let statsLoadFailures = 0;
+                seasonGameResults.forEach((result, index) => {
+                    const game = pastGames[index];
+                    if (result.status === 'fulfilled') {
+                        seasonGameStats.push(result.value);
+                        return;
+                    }
+                    statsLoadFailures += 1;
+                    incentivesEarningsCache.delete(`${game.id}__${playerId}`);
+                    console.error('[parent-dashboard] Failed to load incentives stats for game', {
+                        teamId,
+                        gameId: game.id,
+                        playerId,
+                        error: result.reason,
+                    });
+                });
                 // Update earnings cache for schedule chips
                 const activeRules = rules.filter(r => r.active);
                 for (const { game, stats } of seasonGameStats) {
-                    if (stats) {
-                        const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
-                        incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
+                    if (!stats) {
+                        incentivesEarningsCache.delete(`${game.id}__${playerId}`);
+                        continue;
                     }
+                    const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
+                    incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
                 }
 
                 content.innerHTML = renderIncentivesPanel({
@@ -1876,6 +1895,7 @@
                     statOptions,
                     userId: currentUserId,
                     maxPerGameCents,
+                    statsLoadFailures,
                 });
 
                 // Attach rule builder interactivity

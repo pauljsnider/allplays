@@ -353,8 +353,9 @@ export function formatBreakdownLine({ rule, statValue, earned }) {
  * @param {Array} opts.recentGameStats - [{ game: {...}, stats: {...}|null }]
  * @param {Array} opts.statOptions - [{ key, label }]
  * @param {string} opts.userId
+ * @param {number} opts.statsLoadFailures - number of games excluded due to stats load failures
  */
-export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStats = [], recentGameStats = seasonGameStats, statOptions, userId, maxPerGameCents = null }) {
+export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStats = [], recentGameStats = seasonGameStats, statOptions, userId, maxPerGameCents = null, statsLoadFailures = 0 }) {
     const activeRules = rules.filter(r => r.active);
     const safeUserId = inlineHandlerString(userId);
     const safePlayerId = inlineHandlerString(player.id);
@@ -396,6 +397,12 @@ export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStat
                     </div>` : ''}
                 </div>
             </div>
+
+            ${statsLoadFailures > 0 ? `
+            <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p class="text-sm font-semibold text-amber-800">Some game stats could not be loaded.</p>
+                <p class="text-xs text-amber-700 mt-1">Current earnings exclude ${statsLoadFailures} game${statsLoadFailures === 1 ? '' : 's'} until those stats can be fetched.</p>
+            </div>` : ''}
 
             <!-- Rules -->
             <div>

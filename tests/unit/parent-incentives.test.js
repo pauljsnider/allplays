@@ -353,4 +353,24 @@ describe('renderIncentivesPanel', () => {
         expect(html).not.toContain(`window.markGamePaid('parent-1');alert('user')//', 'game-1');alert('game')//', 'player-1');alert('player')//', 'team-1');alert('team')//', 100)`);
         expect(html).toContain(`window.markGamePaid('parent-1\\');alert(\\'user\\')//', 'game-1\\');alert(\\'game\\')//', 'player-1\\');alert(\\'player\\')//', 'team-1\\');alert(\\'team\\')//', 100)`);
     });
+
+    it('shows a warning when some game stats could not be loaded', () => {
+        const html = renderIncentivesPanel({
+            player: { id: 'p1', name: 'Player One', teamId: 't1' },
+            rules: [makeRule({ amountCents: 100 })],
+            paidGames: new Map(),
+            seasonGameStats: [
+                { game: { id: 'g1', opponent: 'Game 1', date: '2026-03-01' }, stats: { pts: 5 } },
+            ],
+            recentGameStats: [
+                { game: { id: 'g1', opponent: 'Game 1', date: '2026-03-01' }, stats: { pts: 5 } },
+            ],
+            statOptions: [{ key: 'pts', label: 'PTS' }],
+            userId: 'u1',
+            statsLoadFailures: 2,
+        });
+
+        expect(html).toContain('Some game stats could not be loaded.');
+        expect(html).toContain('Current earnings exclude 2 games until those stats can be fetched.');
+    });
 });
