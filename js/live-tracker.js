@@ -12,6 +12,7 @@ import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
+import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 
 let currentTeamId = null;
@@ -995,6 +996,20 @@ async function broadcastEvent(eventData) {
   }
 }
 
+async function broadcastResetEvent(description = 'Tracker reset. Live viewer state cleared.') {
+  if (!currentTeamId || !currentGameId) return;
+  await broadcastEvent(buildLiveResetEvent({
+    period: state.period || 'Q1',
+    gameClockMs: 0,
+    homeScore: 0,
+    awayScore: 0,
+    onCourt: state.onCourt || [],
+    bench: state.bench || roster.map((player) => player.id),
+    createdBy: currentUser?.uid || null,
+    description
+  }));
+}
+
 function scheduleRetry() {
   if (liveState.retryTimeout) return;
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
@@ -1570,6 +1585,8 @@ async function startStop() {
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
+        const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
+        await Promise.all(liveEventsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
         await updateGame(currentTeamId, currentGameId, { 
           homeScore: 0, 
@@ -1581,6 +1598,7 @@ async function startStop() {
           opponentTeamName: currentGame.opponentTeamName,
           opponentTeamPhoto: currentGame.opponentTeamPhoto
         });
+        await broadcastResetEvent('Tracker reset before restart. Live viewer state cleared.');
       }
     }
 
@@ -2429,6 +2447,7 @@ async function init() {
         }
         state.home = 0;
         state.away = 0;
+        await broadcastResetEvent('Tracker restarted from zero. Live viewer state cleared.');
       }
 
       if (shouldResume) {
