@@ -502,6 +502,14 @@ export async function getAggregatedStatsForGames(teamId, gameIds) {
     return totalsByPlayer;
 }
 
+export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
+    const docRef = doc(db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) return null;
+    const data = docSnap.data() || {};
+    return data.stats || {};
+}
+
 export async function getGame(teamId, gameId) {
     const docRef = doc(db, `teams/${teamId}/games`, gameId);
     const docSnap = await getDoc(docRef);
