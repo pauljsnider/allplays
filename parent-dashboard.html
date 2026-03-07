@@ -240,12 +240,13 @@
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
             toggleIncentiveRule as toggleIncentiveRuleFn,
-            deleteIncentiveRule as deleteIncentiveRuleFn,
+            retireIncentiveRule as retireIncentiveRuleFn,
             markGamePaid as markGamePaidFn,
             unmarkGamePaid as unmarkGamePaidFn,
             getPaidGames,
             calculateEarnings,
             formatCents,
+            getApplicableRulesForGame,
             getStatOptionsForTeam,
             renderIncentivesPanel,
             renderRuleBuilder,
@@ -275,6 +276,7 @@
         const teamChildrenByTeamId = new Map();
         const selectedRideChildByOffer = new Map();
         let incentivesPanelPlayer = null;  // { id, name, teamId }
+        let incentivesPanelRules = [];
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
@@ -296,6 +298,7 @@
         window.openIncentivesPanel = openIncentivesPanel;
         window.closeIncentivesPanel = closeIncentivesPanel;
         window.openIncentiveRuleBuilder = openIncentiveRuleBuilder;
+        window.editIncentiveRule = editIncentiveRule;
         window.closeIncentiveRuleBuilder = closeIncentiveRuleBuilder;
         window.saveIncentiveRuleFromBuilder = saveIncentiveRuleFromBuilder;
         window.toggleIncentiveRule = handleToggleIncentiveRule;
@@ -1858,11 +1861,12 @@
                         return { game, stats };
                     })
                 );
+                incentivesPanelRules = rules;
+
                 // Update earnings cache for schedule chips
-                const activeRules = rules.filter(r => r.active);
                 for (const { game, stats } of seasonGameStats) {
                     if (stats) {
-                        const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
+                        const { totalCents } = calculateEarnings(getApplicableRulesForGame(rules, game.date), stats, maxPerGameCents);
                         incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
                     }
                 }
@@ -1899,6 +1903,21 @@
                 builderEl.innerHTML = renderRuleBuilder(statOptions, teamId, playerId);
                 builderEl.classList.remove('hidden');
                 attachRuleBuilderListeners();
+                updateIncentivePreview();
+            });
+        }
+
+        function editIncentiveRule(userId, ruleId) {
+            if (!incentivesPanelPlayer || userId !== currentUserId) return;
+            const rule = incentivesPanelRules.find(candidate => candidate.id === ruleId);
+            if (!rule) return;
+            getStatOptionsForTeam(incentivesPanelPlayer.teamId).then(statOptions => {
+                const builderEl = document.getElementById('incentive-rule-builder');
+                if (!builderEl) return;
+                builderEl.innerHTML = renderRuleBuilder(statOptions, incentivesPanelPlayer.teamId, incentivesPanelPlayer.id, rule);
+                builderEl.classList.remove('hidden');
+                attachRuleBuilderListeners();
+                updateIncentivePreview();
             });
         }
 
@@ -1993,6 +2012,8 @@
         }
 
         async function saveIncentiveRuleFromBuilder(teamId, playerId) {
+            const editRuleId = document.getElementById('incentive-edit-rule-id')?.value || null;
+            const existingRule = editRuleId ? incentivesPanelRules.find(candidate => candidate.id === editRuleId) : null;
             const statKey = document.getElementById('incentive-stat-key')?.value;
             const type = document.getElementById('incentive-type')?.value || 'per_unit';
             if (!statKey) { alert('Please select a stat.'); return; }
@@ -2013,6 +2034,7 @@
             }
 
             await saveIncentiveRuleFn(currentUserId, {
+                ...(editRuleId ? { id: editRuleId } : {}),
                 teamId,
                 playerId,
                 playerName: incentivesPanelPlayer?.name || '',
@@ -2021,20 +2043,22 @@
                 amountCents,
                 threshold,
                 thresholdOp,
-                active: true,
+                active: existingRule ? existingRule.active !== false : true,
             });
             closeIncentiveRuleBuilder();
             await refreshIncentivesPanel();
         }
 
-        async function handleToggleIncentiveRule(userId, ruleId, active) {
-            await toggleIncentiveRuleFn(userId, ruleId, active);
+        async function handleToggleIncentiveRule(userId, ruleId) {
+            const rule = incentivesPanelRules.find(candidate => candidate.id === ruleId);
+            if (!rule) return;
+            await toggleIncentiveRuleFn(userId, rule);
             await refreshIncentivesPanel();
         }
 
         async function handleDeleteIncentiveRule(userId, ruleId) {
-            if (!confirm('Delete this rule?')) return;
-            await deleteIncentiveRuleFn(userId, ruleId);
+            if (!confirm('Stop using this rule for future games? Past earnings will stay unchanged.')) return;
+            await retireIncentiveRuleFn(userId, ruleId);
             await refreshIncentivesPanel();
         }
 

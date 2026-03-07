@@ -22,6 +22,7 @@ import {
     where,
     orderBy,
     serverTimestamp,
+    writeBatch,
 } from './firebase.js';
 
 // Normalizes a stat column name (e.g. 'PTS', 'POINTS') to Firestore key (e.g. 'pts').
@@ -138,40 +139,56 @@ export async function getIncentiveRules(userId, playerId) {
 export async function saveIncentiveRule(userId, ruleData) {
     const now = serverTimestamp();
     if (ruleData.id) {
-        // Update existing
         const { id, ...data } = ruleData;
-        await updateDoc(doc(db, `users/${userId}/incentiveRules`, id), {
-            ...data,
+        const currentRuleRef = doc(db, `users/${userId}/incentiveRules`, id);
+        const nextRuleRef = doc(collection(db, `users/${userId}/incentiveRules`));
+        const batch = writeBatch(db);
+        batch.update(currentRuleRef, {
+            effectiveTo: now,
             updatedAt: now,
         });
-        return id;
-    } else {
-        // Create new
-        const docRef = await addDoc(collection(db, `users/${userId}/incentiveRules`), {
-            ...ruleData,
-            active: ruleData.active !== false,  // default active
+        batch.set(nextRuleRef, {
+            ...data,
+            active: data.active !== false,
             createdAt: now,
             updatedAt: now,
+            effectiveFrom: now,
+            effectiveTo: null,
+            supersedesRuleId: id,
         });
-        return docRef.id;
+        await batch.commit();
+        return nextRuleRef.id;
     }
+
+    const docRef = await addDoc(collection(db, `users/${userId}/incentiveRules`), {
+        ...ruleData,
+        active: ruleData.active !== false,
+        createdAt: now,
+        updatedAt: now,
+        effectiveFrom: now,
+        effectiveTo: null,
+    });
+    return docRef.id;
 }
 
 /**
  * Toggle a rule's active state.
  */
-export async function toggleIncentiveRule(userId, ruleId, active) {
-    await updateDoc(doc(db, `users/${userId}/incentiveRules`, ruleId), {
-        active,
-        updatedAt: serverTimestamp(),
+export async function toggleIncentiveRule(userId, rule) {
+    return saveIncentiveRule(userId, {
+        ...rule,
+        active: !rule.active,
     });
 }
 
 /**
- * Delete an incentive rule permanently.
+ * Retire an incentive rule for future games while preserving history.
  */
-export async function deleteIncentiveRule(userId, ruleId) {
-    await deleteDoc(doc(db, `users/${userId}/incentiveRules`, ruleId));
+export async function retireIncentiveRule(userId, ruleId) {
+    await updateDoc(doc(db, `users/${userId}/incentiveRules`, ruleId), {
+        effectiveTo: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+    });
 }
 
 // ─── Cap Settings ────────────────────────────────────────────────────────────
@@ -247,6 +264,35 @@ export async function getPaidGames(userId, playerId) {
         map.set(data.gameId, { amountCents: data.amountCents, paidAt: data.paidAt });
     });
     return map;
+}
+
+function normalizeComparableDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value.toDate === 'function') return value.toDate();
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function isCurrentRuleVersion(rule) {
+    return !normalizeComparableDate(rule.effectiveTo);
+}
+
+export function isRuleActiveForGame(rule, gameDate) {
+    if (!rule || rule.active === false) return false;
+    const normalizedGameDate = normalizeComparableDate(gameDate);
+    if (!normalizedGameDate) return rule.active !== false;
+
+    const effectiveFrom = normalizeComparableDate(rule.effectiveFrom || rule.createdAt);
+    const effectiveTo = normalizeComparableDate(rule.effectiveTo);
+
+    if (effectiveFrom && normalizedGameDate < effectiveFrom) return false;
+    if (effectiveTo && normalizedGameDate >= effectiveTo) return false;
+    return true;
+}
+
+export function getApplicableRulesForGame(rules, gameDate) {
+    return rules.filter(rule => isRuleActiveForGame(rule, gameDate));
 }
 
 // ─── Earnings Calculation ────────────────────────────────────────────────────
@@ -355,7 +401,7 @@ export function formatBreakdownLine({ rule, statValue, earned }) {
  * @param {string} opts.userId
  */
 export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStats = [], recentGameStats = seasonGameStats, statOptions, userId, maxPerGameCents = null }) {
-    const activeRules = rules.filter(r => r.active);
+    const currentRules = rules.filter(isCurrentRuleVersion);
 
     // Calculate season totals
     let totalEarnedCents = 0;
@@ -364,7 +410,9 @@ export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStat
 
     for (const { game, stats } of seasonGameStats) {
         if (!stats) continue;
-        const { totalCents, uncappedTotalCents, wasCapped, breakdown } = calculateEarnings(activeRules, stats, maxPerGameCents);
+        const gameDate = game?.date && game.date.toDate ? game.date.toDate() : game?.date;
+        const applicableRules = getApplicableRulesForGame(rules, gameDate);
+        const { totalCents, uncappedTotalCents, wasCapped, breakdown } = calculateEarnings(applicableRules, stats, maxPerGameCents);
         const paid = paidGames.get(game.id);
         totalEarnedCents += totalCents;
         if (paid) totalPaidCents += paid.amountCents;
@@ -406,7 +454,7 @@ export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStat
                         Add Rule
                     </button>
                 </div>
-                ${rules.length === 0 ? renderEmptyRules() : renderRuleList(rules, userId)}
+                ${currentRules.length === 0 ? renderEmptyRules() : renderRuleList(currentRules, userId)}
                 <!-- Global per-game cap -->
                 <div class="mt-4 pt-3 border-t border-gray-100">
                     <p class="text-xs font-semibold text-gray-600 mb-1.5">Max earned per game (cap)</p>
@@ -436,7 +484,7 @@ export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStat
                 <div class="space-y-3">
                     ${gameEarnings.map(g => renderGameEarningsCard(g, userId, player.id, player.teamId)).join('')}
                 </div>
-            </div>` : (activeRules.length > 0 ? `
+            </div>` : (currentRules.some(rule => rule.active) ? `
             <div class="text-center py-6 text-gray-400">
                 <p class="text-sm">No completed games yet.</p>
                 <p class="text-xs mt-1">Earnings will appear here after games are tracked.</p>
@@ -464,10 +512,18 @@ function renderRuleList(rules, userId) {
                         <p class="text-sm font-semibold ${rule.active ? (rule.amountCents < 0 ? 'text-red-600' : 'text-gray-900') : 'text-gray-400'} truncate">
                             ${escapeHtml(formatRuleLabel(rule))}
                         </p>
+                        <p class="text-[11px] text-gray-400 mt-1">Applies to games from now on</p>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
+                        <button onclick="window.editIncentiveRule('${userId}', '${rule.id}')"
+                            class="text-gray-300 hover:text-primary-500 transition p-1"
+                            title="Edit rule">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536M9 11l6.232-6.232a2.5 2.5 0 113.536 3.536L12.536 14.536A4 4 0 019.708 15.708L7 16l.292-2.708A4 4 0 018.464 10.88L9 11z"/>
+                            </svg>
+                        </button>
                         <!-- Toggle -->
-                        <button onclick="window.toggleIncentiveRule('${userId}', '${rule.id}', ${!rule.active})"
+                        <button onclick="window.toggleIncentiveRule('${userId}', '${rule.id}')"
                             class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${rule.active ? 'bg-primary-600' : 'bg-gray-200'}"
                             title="${rule.active ? 'Disable rule' : 'Enable rule'}">
                             <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${rule.active ? 'translate-x-4.5' : 'translate-x-0.5'}"></span>
@@ -475,7 +531,7 @@ function renderRuleList(rules, userId) {
                         <!-- Delete -->
                         <button onclick="window.deleteIncentiveRule('${userId}', '${rule.id}')"
                             class="text-gray-300 hover:text-red-400 transition p-1"
-                            title="Delete rule">
+                            title="Stop using rule">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                             </svg>
@@ -531,10 +587,13 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
  * @param {string} teamId
  * @param {string} playerId
  */
-export function renderRuleBuilder(statOptions, teamId, playerId) {
+export function renderRuleBuilder(statOptions, teamId, playerId, initialRule = null) {
+    const isEditing = !!initialRule?.id;
+    const initialType = initialRule?.type || 'per_unit';
     return `
         <div class="border border-primary-200 rounded-xl p-4 bg-primary-50 space-y-4">
-            <p class="text-sm font-bold text-primary-800">New Rule</p>
+            <p class="text-sm font-bold text-primary-800">${isEditing ? 'Edit Rule' : 'New Rule'}</p>
+            ${isEditing ? '<p class="text-xs text-primary-700">Changes only apply to future games.</p>' : ''}
 
             <!-- Stat selector -->
             <div>
@@ -544,12 +603,13 @@ export function renderRuleBuilder(statOptions, teamId, playerId) {
                         <button type="button"
                             onclick="selectIncentiveStat('${opt.key}')"
                             data-stat="${opt.key}"
-                            class="stat-pill px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-primary-400 hover:text-primary-700 transition">
+                            class="stat-pill px-3 py-1.5 text-xs font-semibold rounded-lg border ${initialRule?.statKey === opt.key ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-primary-400 hover:text-primary-700'} transition">
                             ${escapeHtml(opt.label)}
                         </button>
                     `).join('')}
                 </div>
-                <input type="hidden" id="incentive-stat-key" value="">
+                <input type="hidden" id="incentive-stat-key" value="${escapeAttr(initialRule?.statKey || '')}">
+                <input type="hidden" id="incentive-edit-rule-id" value="${escapeAttr(initialRule?.id || '')}">
             </div>
 
             <!-- Rule type toggle -->
@@ -557,37 +617,39 @@ export function renderRuleBuilder(statOptions, teamId, playerId) {
                 <p class="text-xs font-semibold text-gray-600 mb-2">Type</p>
                 <div class="flex rounded-lg border border-gray-200 overflow-hidden w-fit">
                     <button type="button" id="type-per-unit" onclick="selectIncentiveType('per_unit')"
-                        class="px-3 py-1.5 text-xs font-semibold bg-primary-600 text-white transition">Per unit</button>
+                        class="px-3 py-1.5 text-xs font-semibold ${initialType === 'per_unit' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600'} transition">Per unit</button>
                     <button type="button" id="type-threshold" onclick="selectIncentiveType('threshold')"
-                        class="px-3 py-1.5 text-xs font-semibold bg-white text-gray-600 hover:bg-gray-50 transition">Goal bonus</button>
+                        class="px-3 py-1.5 text-xs font-semibold ${initialType === 'threshold' ? 'bg-primary-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'} transition">Goal bonus</button>
                 </div>
-                <input type="hidden" id="incentive-type" value="per_unit">
+                <input type="hidden" id="incentive-type" value="${escapeAttr(initialType)}">
             </div>
 
             <!-- Per-unit amount -->
-            <div id="field-per-unit">
+            <div id="field-per-unit" class="${initialType === 'per_unit' ? '' : 'hidden'}">
                 <p class="text-xs font-semibold text-gray-600 mb-1">Amount per stat</p>
                 <div class="flex items-center gap-2">
                     <span class="text-gray-500 font-semibold">$</span>
                     <input type="number" id="incentive-amount" step="0.25" min="-100" max="100" placeholder="1.00"
+                        value="${initialType === 'per_unit' && typeof initialRule?.amountCents === 'number' ? (initialRule.amountCents / 100).toFixed(2) : ''}"
                         class="w-24 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400">
                     <span class="text-xs text-gray-400">(negative = penalty)</span>
                 </div>
             </div>
 
             <!-- Threshold fields -->
-            <div id="field-threshold" class="hidden space-y-3">
+            <div id="field-threshold" class="${initialType === 'threshold' ? '' : 'hidden'} space-y-3">
                 <div>
                     <p class="text-xs font-semibold text-gray-600 mb-1">Condition</p>
                     <div class="flex items-center gap-2">
                         <select id="incentive-threshold-op"
                             class="px-2 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400">
-                            <option value="gt">&gt; (greater than)</option>
-                            <option value="gte">≥ (at least)</option>
+                            <option value="gt" ${initialRule?.thresholdOp === 'gt' || !initialRule?.thresholdOp ? 'selected' : ''}>&gt; (greater than)</option>
+                            <option value="gte" ${initialRule?.thresholdOp === 'gte' ? 'selected' : ''}>≥ (at least)</option>
                         </select>
                         <input type="number" id="incentive-threshold" step="1" min="0" placeholder="3"
+                            value="${initialType === 'threshold' && typeof initialRule?.threshold === 'number' ? escapeAttr(initialRule.threshold) : ''}"
                             class="w-20 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400">
-                        <span id="incentive-threshold-stat-label" class="text-xs text-gray-500 font-medium"></span>
+                        <span id="incentive-threshold-stat-label" class="text-xs text-gray-500 font-medium">${escapeHtml(statKeyLabel(initialRule?.statKey || ''))}</span>
                     </div>
                 </div>
                 <div>
@@ -595,6 +657,7 @@ export function renderRuleBuilder(statOptions, teamId, playerId) {
                     <div class="flex items-center gap-2">
                         <span class="text-gray-500 font-semibold">$</span>
                         <input type="number" id="incentive-bonus-amount" step="0.25" min="-100" max="100" placeholder="2.00"
+                            value="${initialType === 'threshold' && typeof initialRule?.amountCents === 'number' ? (initialRule.amountCents / 100).toFixed(2) : ''}"
                             class="w-24 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400">
                     </div>
                 </div>
@@ -626,4 +689,14 @@ function escapeHtml(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+function escapeAttr(str) {
+    if (!str && str !== 0) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
