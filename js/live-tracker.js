@@ -2464,7 +2464,14 @@ async function init() {
         const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
-        const resumeClockState = deriveResumeClockState(liveEvents, { period: state.period, clock: state.clock });
+        const resumeClockState = deriveResumeClockState(
+          liveEvents,
+          { period: state.period, clock: state.clock },
+          {
+            liveClockPeriod: currentGame?.liveClockPeriod,
+            liveClockMs: currentGame?.liveClockMs
+          }
+        );
         if (resumeClockState.restored) {
           state.period = resumeClockState.period;
           state.clock = resumeClockState.clock;
