@@ -198,7 +198,14 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     getUserProfile,
                     updateUserProfile
                 });
+            } catch (e) {
+                console.error('Error linking admin invite:', e);
+                clearPendingActivationCode();
+                await cleanupFailedNewUser(result.user, 'admin invite link failure');
+                throw e;
+            }
 
+            try {
                 await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
@@ -206,7 +213,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     createdAt: new Date()
                 });
             } catch (e) {
-                console.error('Error linking admin invite:', e);
+                console.error('Error creating user profile after admin invite redeem:', e);
             }
         } else {
             try {
