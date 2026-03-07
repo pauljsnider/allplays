@@ -12,6 +12,7 @@ import {
     db,
     collection,
     getDocs,
+    getDoc,
     doc,
     addDoc,
     updateDoc,
@@ -173,6 +174,32 @@ export async function deleteIncentiveRule(userId, ruleId) {
     await deleteDoc(doc(db, `users/${userId}/incentiveRules`, ruleId));
 }
 
+// ─── Cap Settings ────────────────────────────────────────────────────────────
+
+/**
+ * Get the global per-game earnings cap for a player (in cents).
+ * Returns null if no cap is set.
+ */
+export async function getCapSetting(userId, playerId) {
+    const snap = await getDoc(doc(db, `users/${userId}/incentiveRules`, `_cap_${playerId}`));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    return typeof data.maxPerGameCents === 'number' ? data.maxPerGameCents : null;
+}
+
+/**
+ * Save the global per-game earnings cap for a player.
+ * Pass null to remove the cap.
+ */
+export async function saveCapSetting(userId, playerId, maxPerGameCents) {
+    const docRef = doc(db, `users/${userId}/incentiveRules`, `_cap_${playerId}`);
+    if (maxPerGameCents === null) {
+        await deleteDoc(docRef);
+    } else {
+        await setDoc(docRef, { maxPerGameCents, updatedAt: serverTimestamp() });
+    }
+}
+
 // ─── Payment Tracking ────────────────────────────────────────────────────────
 
 /**
@@ -226,7 +253,7 @@ export async function getPaidGames(userId, playerId) {
  * @param {Object} stats - { pts: 12, reb: 5, to: 2, ... } from aggregatedStats
  * @returns {{ totalCents: number, breakdown: Array }}
  */
-export function calculateEarnings(activeRules, stats) {
+export function calculateEarnings(activeRules, stats, maxPerGameCents = null) {
     let totalCents = 0;
     const breakdown = [];
 
@@ -248,7 +275,13 @@ export function calculateEarnings(activeRules, stats) {
         totalCents += earned;
     }
 
-    return { totalCents, breakdown };
+    const uncappedTotalCents = totalCents;
+    // Cap only applies to positive earnings (not penalties)
+    if (maxPerGameCents !== null && totalCents > maxPerGameCents) {
+        totalCents = maxPerGameCents;
+    }
+
+    return { totalCents, uncappedTotalCents, wasCapped: totalCents !== uncappedTotalCents, breakdown };
 }
 
 /**
@@ -309,7 +342,7 @@ export function formatBreakdownLine({ rule, statValue, earned }) {
  * @param {Array} opts.statOptions - [{ key, label }]
  * @param {string} opts.userId
  */
-export function renderIncentivesPanel({ player, rules, paidGames, recentGameStats, statOptions, userId }) {
+export function renderIncentivesPanel({ player, rules, paidGames, recentGameStats, statOptions, userId, maxPerGameCents = null }) {
     const activeRules = rules.filter(r => r.active);
 
     // Calculate season totals
@@ -319,11 +352,11 @@ export function renderIncentivesPanel({ player, rules, paidGames, recentGameStat
 
     for (const { game, stats } of recentGameStats) {
         if (!stats) continue;
-        const { totalCents, breakdown } = calculateEarnings(activeRules, stats);
+        const { totalCents, uncappedTotalCents, wasCapped, breakdown } = calculateEarnings(activeRules, stats, maxPerGameCents);
         const paid = paidGames.get(game.id);
         totalEarnedCents += totalCents;
         if (paid) totalPaidCents += paid.amountCents;
-        gameEarnings.push({ game, stats, totalCents, breakdown, paid: !!paid });
+        gameEarnings.push({ game, stats, totalCents, uncappedTotalCents, wasCapped, breakdown, paid: !!paid });
     }
 
     const unpaidCents = totalEarnedCents - totalPaidCents;
@@ -359,6 +392,23 @@ export function renderIncentivesPanel({ player, rules, paidGames, recentGameStat
                     </button>
                 </div>
                 ${rules.length === 0 ? renderEmptyRules() : renderRuleList(rules, userId)}
+                <!-- Global per-game cap -->
+                <div class="mt-4 pt-3 border-t border-gray-100">
+                    <p class="text-xs font-semibold text-gray-600 mb-1.5">Max earned per game (cap)</p>
+                    <div class="flex items-center gap-2">
+                        <span class="text-gray-500 font-semibold text-sm">$</span>
+                        <input type="number" id="incentive-cap-input" step="1" min="0" inputmode="decimal"
+                            placeholder="No cap"
+                            value="${maxPerGameCents !== null ? (maxPerGameCents / 100).toFixed(0) : ''}"
+                            class="w-24 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400">
+                        <button onclick="window.saveIncentiveCap('${userId}', '${player.id}')"
+                            class="text-xs font-semibold text-primary-600 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition border border-primary-200">
+                            Save
+                        </button>
+                        ${maxPerGameCents !== null ? `<button onclick="window.removeIncentiveCap('${userId}', '${player.id}')" class="text-xs text-gray-400 hover:text-red-400 transition">Remove</button>` : ''}
+                    </div>
+                    ${maxPerGameCents !== null ? `<p class="text-xs text-gray-400 mt-1">Earnings capped at $${(maxPerGameCents / 100).toFixed(0)} per game</p>` : ''}
+                </div>
             </div>
 
             <!-- Rule Builder placeholder (inserted dynamically) -->
@@ -422,7 +472,7 @@ function renderRuleList(rules, userId) {
     `;
 }
 
-function renderGameEarningsCard({ game, totalCents, breakdown, paid }, userId, playerId, teamId) {
+function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCapped, breakdown, paid }, userId, playerId, teamId) {
     const gameDate = game.date && game.date.toDate ? game.date.toDate() : (game.date ? new Date(game.date) : null);
     const dateStr = gameDate ? gameDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
     const opponent = game.opponent || game.title || 'Game';
@@ -434,7 +484,7 @@ function renderGameEarningsCard({ game, totalCents, breakdown, paid }, userId, p
             <div class="flex items-center justify-between gap-3 px-4 py-3 bg-gray-50 border-b border-gray-100">
                 <div>
                     <p class="text-sm font-semibold text-gray-900">${escapeHtml(opponent)}</p>
-                    <p class="text-xs text-gray-500">${dateStr}</p>
+                    <p class="text-xs text-gray-500">${dateStr}${wasCapped ? ` · <span class="text-amber-600 font-medium">capped at ${formatCents(totalCents, { sign: false })} (would have been ${formatCents(uncappedTotalCents, { sign: false })})</span>` : ''}</p>
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-base font-bold ${isPositive ? 'text-green-700' : 'text-red-600'}">${isPositive ? '+' : ''}${totalStr}</span>
