@@ -23,6 +23,7 @@ import {
     formatRuleLabel,
     formatBreakdownLine,
     normalizeStatKey,
+    renderIncentivesPanel,
     statKeyLabel,
 } from '../../js/parent-incentives.js';
 
@@ -252,5 +253,49 @@ describe('formatBreakdownLine', () => {
         const rule = makeRule({ statKey: 'reb', type: 'threshold', amountCents: 200, threshold: 3, thresholdOp: 'gt' });
         const line = formatBreakdownLine({ rule, statValue: 2, earned: 0 });
         expect(line).toBe('REB > 3: 2 ✗ → +$0.00');
+    });
+});
+
+describe('renderIncentivesPanel', () => {
+    it('uses full season stats for balances while showing only recent game cards', () => {
+        const html = renderIncentivesPanel({
+            player: { id: 'p1', name: 'Player One', teamId: 't1' },
+            rules: [makeRule({ amountCents: 100 })],
+            paidGames: new Map(),
+            seasonGameStats: [
+                { game: { id: 'g3', opponent: 'Game 3', date: '2026-03-03' }, stats: { pts: 7 } },
+                { game: { id: 'g2', opponent: 'Game 2', date: '2026-03-02' }, stats: { pts: 6 } },
+                { game: { id: 'g1', opponent: 'Game 1', date: '2026-03-01' }, stats: { pts: 5 } },
+            ],
+            recentGameStats: [
+                { game: { id: 'g3', opponent: 'Game 3', date: '2026-03-03' }, stats: { pts: 7 } },
+                { game: { id: 'g2', opponent: 'Game 2', date: '2026-03-02' }, stats: { pts: 6 } },
+            ],
+            statOptions: [{ key: 'pts', label: 'PTS' }],
+            userId: 'u1',
+        });
+
+        expect(html).toContain('$18.00');
+        expect(html).toContain('Game 3');
+        expect(html).toContain('Game 2');
+        expect(html).not.toContain('Game 1');
+    });
+
+    it('shows a minus sign for negative game totals', () => {
+        const html = renderIncentivesPanel({
+            player: { id: 'p1', name: 'Player One', teamId: 't1' },
+            rules: [makeRule({ statKey: 'to', amountCents: -200 })],
+            paidGames: new Map(),
+            seasonGameStats: [
+                { game: { id: 'g1', opponent: 'Penalty Game', date: '2026-03-01' }, stats: { to: 2 } },
+            ],
+            recentGameStats: [
+                { game: { id: 'g1', opponent: 'Penalty Game', date: '2026-03-01' }, stats: { to: 2 } },
+            ],
+            statOptions: [{ key: 'to', label: 'TO' }],
+            userId: 'u1',
+        });
+
+        expect(html).toContain('-$4.00');
     });
 });
