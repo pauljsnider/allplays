@@ -1837,47 +1837,57 @@
             const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
             const content = document.getElementById('incentives-panel-content');
 
-            const [rules, paidGamesMap, statOptions, maxPerGameCents] = await Promise.all([
-                getIncentiveRules(currentUserId, playerId),
-                getPaidGames(currentUserId, playerId),
-                getStatOptionsForTeam(teamId),
-                getCapSetting(currentUserId, playerId),
-            ]);
+            try {
+                const [rules, paidGamesMap, statOptions, maxPerGameCents] = await Promise.all([
+                    getIncentiveRules(currentUserId, playerId),
+                    getPaidGames(currentUserId, playerId),
+                    getStatOptionsForTeam(teamId),
+                    getCapSetting(currentUserId, playerId),
+                ]);
 
-            // Fetch stats for recent past games for this player
-            const pastGames = allScheduleEvents
-                .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
-                .sort((a, b) => new Date(b.date) - new Date(a.date))
-                .slice(0, 5);
+                // Fetch stats for recent past games for this player
+                const pastGames = allScheduleEvents
+                    .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
+                    .sort((a, b) => new Date(b.date) - new Date(a.date))
+                    .slice(0, 5);
 
-            const recentGameStats = await Promise.all(
-                pastGames.map(async (game) => {
-                    const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
-                    return { game, stats };
-                })
-            );
+                const recentGameStats = await Promise.all(
+                    pastGames.map(async (game) => {
+                        const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
+                        return { game, stats };
+                    })
+                );
 
-            // Update earnings cache for schedule chips
-            const activeRules = rules.filter(r => r.active);
-            for (const { game, stats } of recentGameStats) {
-                if (stats) {
-                    const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
-                    incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
+                // Update earnings cache for schedule chips
+                const activeRules = rules.filter(r => r.active);
+                for (const { game, stats } of recentGameStats) {
+                    if (stats) {
+                        const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
+                        incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
+                    }
                 }
+
+                content.innerHTML = renderIncentivesPanel({
+                    player: { id: playerId, name: playerName, teamId },
+                    rules,
+                    paidGames: paidGamesMap,
+                    recentGameStats,
+                    statOptions,
+                    userId: currentUserId,
+                    maxPerGameCents,
+                });
+
+                // Attach rule builder interactivity
+                attachRuleBuilderListeners();
+            } catch (error) {
+                console.error('Failed to load incentives panel:', error);
+                content.innerHTML = `
+                    <div class="text-center py-10 text-gray-500">
+                        <p class="text-sm font-semibold text-gray-700">Could not load incentives right now.</p>
+                        <p class="text-xs mt-2">${error?.message ? escapeHtml(error.message) : 'Please try again in a moment.'}</p>
+                    </div>
+                `;
             }
-
-            content.innerHTML = renderIncentivesPanel({
-                player: { id: playerId, name: playerName, teamId },
-                rules,
-                paidGames: paidGamesMap,
-                recentGameStats,
-                statOptions,
-                userId: currentUserId,
-                maxPerGameCents,
-            });
-
-            // Attach rule builder interactivity
-            attachRuleBuilderListeners();
         }
 
         function openIncentiveRuleBuilder(teamId, playerId) {

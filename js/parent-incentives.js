@@ -254,7 +254,8 @@ export async function getPaidGames(userId, playerId) {
  * @returns {{ totalCents: number, breakdown: Array }}
  */
 export function calculateEarnings(activeRules, stats, maxPerGameCents = null) {
-    let totalCents = 0;
+    let positiveCents = 0;
+    let negativeCents = 0;
     const breakdown = [];
 
     for (const rule of activeRules) {
@@ -272,14 +273,21 @@ export function calculateEarnings(activeRules, stats, maxPerGameCents = null) {
         }
 
         breakdown.push({ rule, statValue, earned });
-        totalCents += earned;
+        if (earned >= 0) {
+            positiveCents += earned;
+        } else {
+            negativeCents += earned;
+        }
     }
 
-    const uncappedTotalCents = totalCents;
+    const uncappedPositiveCents = positiveCents;
     // Cap only applies to positive earnings (not penalties)
-    if (maxPerGameCents !== null && totalCents > maxPerGameCents) {
-        totalCents = maxPerGameCents;
+    if (maxPerGameCents !== null && positiveCents > maxPerGameCents) {
+        positiveCents = maxPerGameCents;
     }
+
+    const totalCents = positiveCents + negativeCents;
+    const uncappedTotalCents = uncappedPositiveCents + negativeCents;
 
     return { totalCents, uncappedTotalCents, wasCapped: totalCents !== uncappedTotalCents, breakdown };
 }
@@ -502,7 +510,7 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
             </div>
             <div class="px-4 py-2.5 space-y-1">
                 ${breakdown.map(line => `
-                    <p class="text-xs ${line.earned < 0 ? 'text-red-500' : line.earned > 0 ? 'text-gray-700' : 'text-gray-400'}">${formatBreakdownLine(line)}</p>
+                    <p class="text-xs ${line.earned < 0 ? 'text-red-500' : line.earned > 0 ? 'text-gray-700' : 'text-gray-400'}">${escapeHtml(formatBreakdownLine(line))}</p>
                 `).join('')}
                 ${breakdown.length === 0 ? '<p class="text-xs text-gray-400 italic">No earnings this game</p>' : ''}
             </div>

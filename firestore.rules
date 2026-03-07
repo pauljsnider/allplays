@@ -47,6 +47,18 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function isIncentiveCapDoc(data) {
+      return data.keys().hasOnly(['maxPerGameCents', 'updatedAt']) &&
+             data.maxPerGameCents is int;
+    }
+
+    function canAccessIncentiveRuleDoc(data) {
+      return isIncentiveCapDoc(data) ||
+             (data.teamId is string &&
+              data.playerId is string &&
+              isParentForPlayer(data.teamId, data.playerId));
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
@@ -99,12 +111,18 @@ service cloud.firestore {
 
       // Incentive rules - private to the parent who created them
       match /incentiveRules/{ruleId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
+        allow read, write: if isSignedIn() &&
+                              request.auth.uid == userId &&
+                              (resource == null || canAccessIncentiveRuleDoc(resource.data)) &&
+                              (request.resource == null || canAccessIncentiveRuleDoc(request.resource.data));
       }
 
       // Incentive paid game records - private to the parent
       match /incentivePaidGames/{recordId} {
-        allow read, write: if isSignedIn() && request.auth.uid == userId;
+        allow read, write: if isSignedIn() &&
+                              request.auth.uid == userId &&
+                              (resource == null || canAccessIncentiveRuleDoc(resource.data)) &&
+                              (request.resource == null || canAccessIncentiveRuleDoc(request.resource.data));
       }
     }
 

@@ -129,6 +129,17 @@ describe('calculateEarnings – with per-game cap', () => {
         expect(wasCapped).toBe(false);
     });
 
+    it('caps positive earnings before applying penalties', () => {
+        const rules = [
+            makeRule({ statKey: 'pts', amountCents: 150 }),
+            makeRule({ id: 'r2', statKey: 'to', amountCents: -500 }),
+        ];
+        const { totalCents, uncappedTotalCents, wasCapped } = calculateEarnings(rules, { pts: 10, to: 1 }, 1000);
+        expect(totalCents).toBe(500);
+        expect(uncappedTotalCents).toBe(1000);
+        expect(wasCapped).toBe(true);
+    });
+
     it('cap does not apply to negative (penalty) totals', () => {
         const rule = makeRule({ statKey: 'to', amountCents: -200 });
         const { totalCents, wasCapped } = calculateEarnings([rule], { to: 5 }, 500);
