@@ -11,6 +11,8 @@ describe('track live tournament advancement wiring', () => {
 
     expect(source).toContain("import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';");
     expect(source).toContain('const advancementPatches = collectTournamentAdvancementPatches(allGames);');
-    expect(source).toContain('advancementPatches.forEach(({ gameId, tournament }) => {');
+    expect(source).toContain('const maxAdvancementBatchOperations = 450;');
+    expect(source).toContain('for (let i = 0; i < advancementPatches.length; i += maxAdvancementBatchOperations) {');
+    expect(source).toContain('advancementPatches.slice(i, i + maxAdvancementBatchOperations).forEach(({ gameId, tournament }) => {');
   });
 });

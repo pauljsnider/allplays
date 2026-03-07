@@ -2219,18 +2219,21 @@ Write the match report now:`;
                 const allGames = allGamesSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
                 const advancementPatches = collectTournamentAdvancementPatches(allGames);
                 if (advancementPatches.length) {
-                    const advancementBatch = writeBatch(db);
-                    advancementPatches.forEach(({ gameId, tournament }) => {
-                        const patchRef = doc(db, `teams/${currentTeamId}/games`, gameId);
-                        const existingGame = allGames.find((game) => game.id === gameId);
-                        advancementBatch.update(patchRef, {
-                            tournament: {
-                                ...(existingGame?.tournament || {}),
-                                ...tournament
-                            }
+                    const maxAdvancementBatchOperations = 450;
+                    for (let i = 0; i < advancementPatches.length; i += maxAdvancementBatchOperations) {
+                        const advancementBatch = writeBatch(db);
+                        advancementPatches.slice(i, i + maxAdvancementBatchOperations).forEach(({ gameId, tournament }) => {
+                            const patchRef = doc(db, `teams/${currentTeamId}/games`, gameId);
+                            const existingGame = allGames.find((game) => game.id === gameId);
+                            advancementBatch.update(patchRef, {
+                                tournament: {
+                                    ...(existingGame?.tournament || {}),
+                                    ...tournament
+                                }
+                            });
                         });
-                    });
-                    await advancementBatch.commit();
+                        await advancementBatch.commit();
+                    }
                 }
 
                 // Mark live stream as completed
