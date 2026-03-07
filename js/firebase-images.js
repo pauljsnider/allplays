@@ -1,16 +1,9 @@
 import { initializeApp, getApps } from "./vendor/firebase-app.js";
 import { getStorage } from "./vendor/firebase-storage.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "./vendor/firebase-auth.js";
+import { resolveImageFirebaseConfig } from "./firebase-runtime-config.js";
 
-const imgConfig = {
-    apiKey: "AIzaSyCxeLIe1ZcbX_GH5TEg1MBo8vmxGs6cttE",
-    authDomain: "game-flow-img.firebaseapp.com",
-    projectId: "game-flow-img",
-    storageBucket: "game-flow-img.firebasestorage.app",
-    messagingSenderId: "340859680438",
-    appId: "1:340859680438:web:4d00f571e8531907a11817",
-    measurementId: "G-FRVND6NT3C"
-};
+const imgConfig = resolveImageFirebaseConfig();
 
 // Keep this isolated from the main app; use a named app to avoid clashes
 const imgApp = getApps().find(app => app.name === "game-flow-img")
