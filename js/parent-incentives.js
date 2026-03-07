@@ -346,28 +346,32 @@ export function formatBreakdownLine({ rule, statValue, earned }) {
  * @param {Object} opts.player - { id, name, number, teamId }
  * @param {Array} opts.rules - all rules (active + inactive)
  * @param {Map} opts.paidGames - gameId → { amountCents, paidAt }
+ * @param {Array} opts.seasonGameStats - [{ game: {...}, stats: {...}|null }]
  * @param {Array} opts.recentGameStats - [{ game: {...}, stats: {...}|null }]
  * @param {Array} opts.statOptions - [{ key, label }]
  * @param {string} opts.userId
  */
-export function renderIncentivesPanel({ player, rules, paidGames, recentGameStats, statOptions, userId, maxPerGameCents = null }) {
+export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStats = [], recentGameStats = seasonGameStats, statOptions, userId, maxPerGameCents = null }) {
     const activeRules = rules.filter(r => r.active);
 
     // Calculate season totals
     let totalEarnedCents = 0;
     let totalPaidCents = 0;
-    const gameEarnings = [];
+    const seasonGameEarnings = new Map();
 
-    for (const { game, stats } of recentGameStats) {
+    for (const { game, stats } of seasonGameStats) {
         if (!stats) continue;
         const { totalCents, uncappedTotalCents, wasCapped, breakdown } = calculateEarnings(activeRules, stats, maxPerGameCents);
         const paid = paidGames.get(game.id);
         totalEarnedCents += totalCents;
         if (paid) totalPaidCents += paid.amountCents;
-        gameEarnings.push({ game, stats, totalCents, uncappedTotalCents, wasCapped, breakdown, paid: !!paid });
+        seasonGameEarnings.set(game.id, { game, stats, totalCents, uncappedTotalCents, wasCapped, breakdown, paid: !!paid });
     }
 
     const unpaidCents = totalEarnedCents - totalPaidCents;
+    const gameEarnings = recentGameStats
+        .map(({ game }) => seasonGameEarnings.get(game.id))
+        .filter(Boolean);
 
     return `
         <div class="space-y-6">
@@ -484,7 +488,7 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
     const gameDate = game.date && game.date.toDate ? game.date.toDate() : (game.date ? new Date(game.date) : null);
     const dateStr = gameDate ? gameDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
     const opponent = game.opponent || game.title || 'Game';
-    const totalStr = formatCents(totalCents, { sign: false });
+    const totalStr = formatCents(totalCents, { sign: true });
     const isPositive = totalCents >= 0;
 
     return `
@@ -495,7 +499,7 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
                     <p class="text-xs text-gray-500">${dateStr}${wasCapped ? ` · <span class="text-amber-600 font-medium">capped at ${formatCents(totalCents, { sign: false })} (would have been ${formatCents(uncappedTotalCents, { sign: false })})</span>` : ''}</p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <span class="text-base font-bold ${isPositive ? 'text-green-700' : 'text-red-600'}">${isPositive ? '+' : ''}${totalStr}</span>
+                    <span class="text-base font-bold ${isPositive ? 'text-green-700' : 'text-red-600'}">${totalStr}</span>
                     ${paid
                         ? `<span class="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>

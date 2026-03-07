@@ -1848,10 +1848,12 @@
                 // Fetch stats for recent past games for this player
                 const pastGames = allScheduleEvents
                     .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
-                    .sort((a, b) => new Date(b.date) - new Date(a.date))
-                    .slice(0, 5);
+                    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-                const recentGameStats = await Promise.all(
+                const recentGames = pastGames.slice(0, 5);
+                const recentGameIds = new Set(recentGames.map(game => game.id));
+
+                const seasonGameStats = await Promise.all(
                     pastGames.map(async (game) => {
                         const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
                         return { game, stats };
@@ -1860,7 +1862,7 @@
 
                 // Update earnings cache for schedule chips
                 const activeRules = rules.filter(r => r.active);
-                for (const { game, stats } of recentGameStats) {
+                for (const { game, stats } of seasonGameStats) {
                     if (stats) {
                         const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
                         incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
@@ -1871,7 +1873,8 @@
                     player: { id: playerId, name: playerName, teamId },
                     rules,
                     paidGames: paidGamesMap,
-                    recentGameStats,
+                    seasonGameStats,
+                    recentGameStats: seasonGameStats.filter(({ game }) => recentGameIds.has(game.id)),
                     statOptions,
                     userId: currentUserId,
                     maxPerGameCents,
