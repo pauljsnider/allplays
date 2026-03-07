@@ -249,7 +249,9 @@
             getStatOptionsForTeam,
             renderIncentivesPanel,
             renderRuleBuilder,
-        } from './js/parent-incentives.js?v=1';
+            getCapSetting,
+            saveCapSetting as saveCapSettingFn,
+        } from './js/parent-incentives.js?v=2';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
@@ -299,6 +301,8 @@
         window.toggleIncentiveRule = handleToggleIncentiveRule;
         window.deleteIncentiveRule = handleDeleteIncentiveRule;
         window.markGamePaid = handleMarkGamePaid;
+        window.saveIncentiveCap = handleSaveIncentiveCap;
+        window.removeIncentiveCap = handleRemoveIncentiveCap;
 
         function escapeAttr(value) {
             return String(value ?? '')
@@ -1833,10 +1837,11 @@
             const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
             const content = document.getElementById('incentives-panel-content');
 
-            const [rules, paidGamesMap, statOptions] = await Promise.all([
+            const [rules, paidGamesMap, statOptions, maxPerGameCents] = await Promise.all([
                 getIncentiveRules(currentUserId, playerId),
                 getPaidGames(currentUserId, playerId),
                 getStatOptionsForTeam(teamId),
+                getCapSetting(currentUserId, playerId),
             ]);
 
             // Fetch stats for recent past games for this player
@@ -1856,7 +1861,7 @@
             const activeRules = rules.filter(r => r.active);
             for (const { game, stats } of recentGameStats) {
                 if (stats) {
-                    const { totalCents } = calculateEarnings(activeRules, stats);
+                    const { totalCents } = calculateEarnings(activeRules, stats, maxPerGameCents);
                     incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
                 }
             }
@@ -1868,6 +1873,7 @@
                 recentGameStats,
                 statOptions,
                 userId: currentUserId,
+                maxPerGameCents,
             });
 
             // Attach rule builder interactivity
@@ -2023,6 +2029,24 @@
 
         async function handleMarkGamePaid(userId, gameId, playerId, teamId, amountCents) {
             await markGamePaidFn(userId, gameId, playerId, teamId, amountCents);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleSaveIncentiveCap(userId, playerId) {
+            const input = document.getElementById('incentive-cap-input');
+            const raw = input ? input.value.trim() : '';
+            if (raw === '') {
+                await saveCapSettingFn(userId, playerId, null);
+            } else {
+                const dollars = parseFloat(raw);
+                if (isNaN(dollars) || dollars < 0) { alert('Enter a valid dollar amount (or leave blank for no cap).'); return; }
+                await saveCapSettingFn(userId, playerId, Math.round(dollars * 100));
+            }
+            await refreshIncentivesPanel();
+        }
+
+        async function handleRemoveIncentiveCap(userId, playerId) {
+            await saveCapSettingFn(userId, playerId, null);
             await refreshIncentivesPanel();
         }
 
