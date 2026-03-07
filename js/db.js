@@ -503,11 +503,16 @@ export async function getAggregatedStatsForGames(teamId, gameIds) {
 }
 
 export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
-    const docRef = doc(db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
-    const docSnap = await getDoc(docRef);
-    if (!docSnap.exists()) return null;
-    const data = docSnap.data() || {};
-    return data.stats || {};
+    try {
+        const docRef = doc(db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return null;
+        const data = docSnap.data() || {};
+        return data.stats || {};
+    } catch (error) {
+        console.error('Failed to fetch aggregated stats:', error);
+        throw new Error(`Unable to load stats for player ${playerId}: ${error.message}`);
+    }
 }
 
 export async function getGame(teamId, gameId) {
