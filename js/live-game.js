@@ -16,7 +16,7 @@ import {
 } from './db.js?v=14';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=9';
+import { checkAuth } from './auth.js?v=10';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
