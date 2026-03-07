@@ -191,12 +191,17 @@ export async function getCapSetting(userId, playerId) {
  * Save the global per-game earnings cap for a player.
  * Pass null to remove the cap.
  */
-export async function saveCapSetting(userId, playerId, maxPerGameCents) {
+export async function saveCapSetting(userId, teamId, playerId, maxPerGameCents) {
     const docRef = doc(db, `users/${userId}/incentiveRules`, `_cap_${playerId}`);
     if (maxPerGameCents === null) {
         await deleteDoc(docRef);
     } else {
-        await setDoc(docRef, { maxPerGameCents, updatedAt: serverTimestamp() });
+        await setDoc(docRef, {
+            teamId,
+            playerId,
+            maxPerGameCents,
+            updatedAt: serverTimestamp(),
+        });
     }
 }
 
@@ -254,8 +259,8 @@ export async function getPaidGames(userId, playerId) {
  * @returns {{ totalCents: number, breakdown: Array }}
  */
 export function calculateEarnings(activeRules, stats, maxPerGameCents = null) {
-    let positiveCents = 0;
-    let negativeCents = 0;
+    let positiveTotalCents = 0;
+    let penaltyTotalCents = 0;
     const breakdown = [];
 
     for (const rule of activeRules) {
@@ -274,20 +279,18 @@ export function calculateEarnings(activeRules, stats, maxPerGameCents = null) {
 
         breakdown.push({ rule, statValue, earned });
         if (earned >= 0) {
-            positiveCents += earned;
+            positiveTotalCents += earned;
         } else {
-            negativeCents += earned;
+            penaltyTotalCents += earned;
         }
     }
 
-    const uncappedPositiveCents = positiveCents;
-    // Cap only applies to positive earnings (not penalties)
-    if (maxPerGameCents !== null && positiveCents > maxPerGameCents) {
-        positiveCents = maxPerGameCents;
+    const uncappedPositiveTotalCents = positiveTotalCents;
+    if (maxPerGameCents !== null && positiveTotalCents > maxPerGameCents) {
+        positiveTotalCents = maxPerGameCents;
     }
-
-    const totalCents = positiveCents + negativeCents;
-    const uncappedTotalCents = uncappedPositiveCents + negativeCents;
+    const uncappedTotalCents = uncappedPositiveTotalCents + penaltyTotalCents;
+    const totalCents = positiveTotalCents + penaltyTotalCents;
 
     return { totalCents, uncappedTotalCents, wasCapped: totalCents !== uncappedTotalCents, breakdown };
 }
@@ -459,7 +462,7 @@ function renderRuleList(rules, userId) {
                 <div class="flex items-center justify-between gap-3 p-3 rounded-xl border ${rule.active ? 'border-gray-200 bg-white' : 'border-gray-100 bg-gray-50'}">
                     <div class="flex-1 min-w-0">
                         <p class="text-sm font-semibold ${rule.active ? (rule.amountCents < 0 ? 'text-red-600' : 'text-gray-900') : 'text-gray-400'} truncate">
-                            ${formatRuleLabel(rule)}
+                            ${escapeHtml(formatRuleLabel(rule))}
                         </p>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">

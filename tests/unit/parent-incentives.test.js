@@ -161,6 +161,17 @@ describe('calculateEarnings – with per-game cap', () => {
         expect(totalCents).toBe(2000);
         expect(wasCapped).toBe(false);
     });
+
+    it('caps only positive earnings and then applies penalties', () => {
+        const rules = [
+            makeRule({ statKey: 'pts', amountCents: 100 }),
+            makeRule({ id: 'r2', statKey: 'to', amountCents: -200 }),
+        ];
+        const { totalCents, uncappedTotalCents, wasCapped } = calculateEarnings(rules, { pts: 20, to: 3 }, 1000);
+        expect(totalCents).toBe(400);
+        expect(uncappedTotalCents).toBe(1400);
+        expect(wasCapped).toBe(true);
+    });
 });
 
 // ─── formatCents ─────────────────────────────────────────────────────────────
@@ -297,5 +308,27 @@ describe('renderIncentivesPanel', () => {
         });
 
         expect(html).toContain('-$4.00');
+    });
+
+    it('escapes breakdown lines before rendering into HTML', () => {
+        const html = renderIncentivesPanel({
+            player: { id: 'player-1', name: 'Kid', teamId: 'team-1' },
+            rules: [makeRule({ statKey: '<img src=x onerror=alert(1)>', amountCents: 100 })],
+            paidGames: new Map(),
+            seasonGameStats: [{
+                game: { id: 'game-1', title: 'Game', date: '2026-03-01T00:00:00Z' },
+                stats: { '<img src=x onerror=alert(1)>': 1 },
+            }],
+            recentGameStats: [{
+                game: { id: 'game-1', title: 'Game', date: '2026-03-01T00:00:00Z' },
+                stats: { '<img src=x onerror=alert(1)>': 1 },
+            }],
+            statOptions: [],
+            userId: 'parent-1',
+            maxPerGameCents: null,
+        });
+
+        expect(html).not.toContain('<img src=x onerror=alert(1)>');
+        expect(html).toContain('&lt;IMG SRC=X ONERROR=ALERT(1)&gt;');
     });
 });

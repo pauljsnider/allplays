@@ -251,7 +251,7 @@
             renderRuleBuilder,
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
-        } from './js/parent-incentives.js?v=2';
+        } from './js/parent-incentives.js?v=3';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
@@ -1836,7 +1836,6 @@
             if (!incentivesPanelPlayer || !currentUserId) return;
             const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
             const content = document.getElementById('incentives-panel-content');
-
             try {
                 const [rules, paidGamesMap, statOptions, maxPerGameCents] = await Promise.all([
                     getIncentiveRules(currentUserId, playerId),
@@ -1859,7 +1858,6 @@
                         return { game, stats };
                     })
                 );
-
                 // Update earnings cache for schedule chips
                 const activeRules = rules.filter(r => r.active);
                 for (const { game, stats } of seasonGameStats) {
@@ -1885,9 +1883,9 @@
             } catch (error) {
                 console.error('Failed to load incentives panel:', error);
                 content.innerHTML = `
-                    <div class="text-center py-10 text-gray-500">
-                        <p class="text-sm font-semibold text-gray-700">Could not load incentives right now.</p>
-                        <p class="text-xs mt-2">${error?.message ? escapeHtml(error.message) : 'Please try again in a moment.'}</p>
+                    <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-5">
+                        <p class="text-sm font-semibold text-red-800">Failed to load incentives.</p>
+                        <p class="text-xs text-red-700 mt-1">${error?.message ? escapeHtml(error.message) : 'Check your connection and try again.'}</p>
                     </div>
                 `;
             }
@@ -2046,20 +2044,24 @@
         }
 
         async function handleSaveIncentiveCap(userId, playerId) {
+            const teamId = incentivesPanelPlayer?.teamId;
+            if (!teamId) return;
             const input = document.getElementById('incentive-cap-input');
             const raw = input ? input.value.trim() : '';
             if (raw === '') {
-                await saveCapSettingFn(userId, playerId, null);
+                await saveCapSettingFn(userId, teamId, playerId, null);
             } else {
                 const dollars = parseFloat(raw);
                 if (isNaN(dollars) || dollars < 0) { alert('Enter a valid dollar amount (or leave blank for no cap).'); return; }
-                await saveCapSettingFn(userId, playerId, Math.round(dollars * 100));
+                await saveCapSettingFn(userId, teamId, playerId, Math.round(dollars * 100));
             }
             await refreshIncentivesPanel();
         }
 
         async function handleRemoveIncentiveCap(userId, playerId) {
-            await saveCapSettingFn(userId, playerId, null);
+            const teamId = incentivesPanelPlayer?.teamId;
+            if (!teamId) return;
+            await saveCapSettingFn(userId, teamId, playerId, null);
             await refreshIncentivesPanel();
         }
 
