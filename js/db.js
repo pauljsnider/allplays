@@ -510,7 +510,12 @@ export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
         const data = docSnap.data() || {};
         return data.stats || {};
     } catch (error) {
-        console.error('Failed to fetch aggregated stats:', error);
+        console.error('[getAggregatedStatsForPlayer] failed to load aggregated stats', {
+            teamId,
+            gameId,
+            playerId,
+            error,
+        });
         throw new Error(`Unable to load stats for player ${playerId}: ${error.message}`);
     }
 }
