@@ -53,6 +53,14 @@ service cloud.firestore {
              isParentForPlayer(data.teamId, data.playerId);
     }
 
+    function isIncentiveCapPayloadValid(data) {
+      return data.maxPerGameCents is int &&
+             (
+               data.keys().hasOnly(['maxPerGameCents', 'updatedAt']) ||
+               hasIncentivePlayerLink(data)
+             );
+    }
+
     function isIncentiveRulePayloadValid(data) {
       return hasIncentivePlayerLink(data);
     }
@@ -113,22 +121,30 @@ service cloud.firestore {
 
       // Incentive rules - private to the parent who created them
       match /incentiveRules/{ruleId} {
-        allow read: if isOwner(userId) && hasIncentivePlayerLink(resource.data);
-        allow create: if isOwner(userId) && isIncentiveRulePayloadValid(request.resource.data);
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                        (
+                          (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
+                          (!ruleId.matches('^_cap_.*') && isIncentiveRulePayloadValid(request.resource.data))
+                        );
         allow update: if isOwner(userId) &&
-                        hasIncentivePlayerLink(resource.data) &&
-                        isIncentiveRulePayloadValid(request.resource.data);
-        allow delete: if isOwner(userId) && hasIncentivePlayerLink(resource.data);
+                        (
+                          (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
+                          (!ruleId.matches('^_cap_.*') &&
+                           hasIncentivePlayerLink(resource.data) &&
+                           isIncentiveRulePayloadValid(request.resource.data))
+                        );
+        allow delete: if isOwner(userId);
       }
 
       // Incentive paid game records - private to the parent
       match /incentivePaidGames/{recordId} {
-        allow read: if isOwner(userId) && hasIncentivePlayerLink(resource.data);
+        allow read: if isOwner(userId);
         allow create: if isOwner(userId) && isIncentivePaidGamePayloadValid(request.resource.data);
         allow update: if isOwner(userId) &&
                         hasIncentivePlayerLink(resource.data) &&
                         isIncentivePaidGamePayloadValid(request.resource.data);
-        allow delete: if isOwner(userId) && hasIncentivePlayerLink(resource.data);
+        allow delete: if isOwner(userId);
       }
     }
 

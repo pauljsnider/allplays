@@ -67,6 +67,14 @@
         { "fieldPath": "teamId", "order": "ASCENDING" },
         { "fieldPath": "paidAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "incentiveRules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "playerId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
