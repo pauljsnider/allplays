@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 
 // Mock firebase.js so the module can be imported without a live Firebase project
 vi.mock('../../js/firebase.js', () => ({
@@ -15,6 +15,7 @@ vi.mock('../../js/firebase.js', () => ({
     where: vi.fn(),
     orderBy: vi.fn(),
     serverTimestamp: vi.fn(),
+    writeBatch: vi.fn(),
 }));
 
 import {
@@ -22,10 +23,15 @@ import {
     formatCents,
     formatRuleLabel,
     formatBreakdownLine,
+    getApplicableRulesForGame,
     normalizeStatKey,
     renderIncentivesPanel,
+    retireIncentiveRule,
+    saveIncentiveRule,
     statKeyLabel,
+    toggleIncentiveRule,
 } from '../../js/parent-incentives.js';
+import * as firebaseModule from '../../js/firebase.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +47,10 @@ function makeRule(overrides) {
         ...overrides,
     };
 }
+
+beforeEach(() => {
+    vi.clearAllMocks();
+});
 
 // ─── calculateEarnings ───────────────────────────────────────────────────────
 
@@ -104,6 +114,65 @@ describe('calculateEarnings – no cap', () => {
         expect(totalCents).toBe(500);
         expect(uncappedTotalCents).toBe(500);
         expect(wasCapped).toBe(false);
+    });
+});
+
+describe('rule versioning', () => {
+    it('creates a successor rule version when editing', async () => {
+        const batch = {
+            update: vi.fn(),
+            set: vi.fn(),
+            commit: vi.fn().mockResolvedValue(),
+        };
+        firebaseModule.writeBatch.mockReturnValue(batch);
+        firebaseModule.doc
+            .mockReturnValueOnce({ path: 'users/user-1/incentiveRules/r1', id: 'r1' })
+            .mockReturnValueOnce({ path: 'users/user-1/incentiveRules/r2', id: 'r2' });
+
+        const id = await saveIncentiveRule('user-1', {
+            id: 'r1',
+            teamId: 'team-1',
+            playerId: 'player-1',
+            statKey: 'pts',
+            type: 'per_unit',
+            amountCents: 200,
+            threshold: null,
+            thresholdOp: null,
+            active: true,
+        });
+
+        expect(id).toBe('r2');
+        expect(firebaseModule.writeBatch).toHaveBeenCalledTimes(1);
+        expect(batch.update).toHaveBeenCalledTimes(1);
+        expect(batch.set).toHaveBeenCalledTimes(1);
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('versions toggles forward instead of mutating the existing rule', async () => {
+        const batch = {
+            update: vi.fn(),
+            set: vi.fn(),
+            commit: vi.fn().mockResolvedValue(),
+        };
+        firebaseModule.writeBatch.mockReturnValue(batch);
+        firebaseModule.doc
+            .mockReturnValueOnce({ path: 'users/user-1/incentiveRules/r1', id: 'r1' })
+            .mockReturnValueOnce({ path: 'users/user-1/incentiveRules/r2', id: 'r2' });
+
+        await toggleIncentiveRule('user-1', makeRule({ id: 'r1', teamId: 'team-1', playerId: 'player-1', active: true }));
+
+        expect(firebaseModule.writeBatch).toHaveBeenCalledTimes(1);
+        expect(batch.update).toHaveBeenCalledTimes(1);
+        expect(batch.set).toHaveBeenCalledTimes(1);
+        expect(batch.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('retires a rule by setting its effective end date', async () => {
+        firebaseModule.updateDoc.mockResolvedValue();
+
+        await retireIncentiveRule('user-1', 'r1');
+
+        expect(firebaseModule.updateDoc).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -267,6 +336,28 @@ describe('formatBreakdownLine', () => {
     });
 });
 
+describe('getApplicableRulesForGame', () => {
+    it('only returns rules active on the game date', () => {
+        const applicable = getApplicableRulesForGame([
+            makeRule({
+                id: 'old',
+                createdAt: new Date('2026-03-01T00:00:00Z'),
+                effectiveFrom: new Date('2026-03-01T00:00:00Z'),
+                effectiveTo: new Date('2026-03-10T00:00:00Z'),
+            }),
+            makeRule({
+                id: 'new',
+                amountCents: 200,
+                createdAt: new Date('2026-03-10T00:00:00Z'),
+                effectiveFrom: new Date('2026-03-10T00:00:00Z'),
+                effectiveTo: null,
+            }),
+        ], new Date('2026-03-05T00:00:00Z'));
+
+        expect(applicable.map(rule => rule.id)).toEqual(['old']);
+    });
+});
+
 describe('renderIncentivesPanel', () => {
     it('uses full season stats for balances while showing only recent game cards', () => {
         const html = renderIncentivesPanel({
@@ -308,6 +399,43 @@ describe('renderIncentivesPanel', () => {
         });
 
         expect(html).toContain('-$4.00');
+    });
+
+    it('uses the rule version active on each game date', () => {
+        const html = renderIncentivesPanel({
+            player: { id: 'p1', name: 'Player One', teamId: 't1' },
+            rules: [
+                makeRule({
+                    id: 'r1',
+                    amountCents: 100,
+                    effectiveFrom: new Date('2026-03-01T00:00:00Z'),
+                    effectiveTo: new Date('2026-03-10T00:00:00Z'),
+                    createdAt: new Date('2026-03-01T00:00:00Z'),
+                }),
+                makeRule({
+                    id: 'r2',
+                    amountCents: 200,
+                    effectiveFrom: new Date('2026-03-10T00:00:00Z'),
+                    effectiveTo: null,
+                    createdAt: new Date('2026-03-10T00:00:00Z'),
+                }),
+            ],
+            paidGames: new Map(),
+            seasonGameStats: [
+                { game: { id: 'g1', opponent: 'Early Game', date: '2026-03-05' }, stats: { pts: 5 } },
+                { game: { id: 'g2', opponent: 'Later Game', date: '2026-03-12' }, stats: { pts: 5 } },
+            ],
+            recentGameStats: [
+                { game: { id: 'g1', opponent: 'Early Game', date: '2026-03-05' }, stats: { pts: 5 } },
+                { game: { id: 'g2', opponent: 'Later Game', date: '2026-03-12' }, stats: { pts: 5 } },
+            ],
+            statOptions: [{ key: 'pts', label: 'PTS' }],
+            userId: 'u1',
+        });
+
+        expect(html).toContain('$15.00');
+        expect(html).toContain('+$5.00');
+        expect(html).toContain('+$10.00');
     });
 
     it('escapes breakdown lines before rendering into HTML', () => {
