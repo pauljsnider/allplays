@@ -135,7 +135,7 @@
 
     <script type="module">
         import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, getMyRsvp, getRsvpSummaries } from './js/db.js?v=23';
-        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, getCalendarEventType, getCalendarEventStatus } from './js/utils.js?v=9';
+        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent } from './js/utils.js?v=10';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
@@ -323,20 +323,14 @@
                                 const icsEvents = await fetchAndParseCalendar(calUrl);
                                 for (const ev of icsEvents) {
                                     if (trackedUids.includes(ev.uid)) continue;
-                                    const evDate = ev.dtstart instanceof Date ? ev.dtstart : new Date(ev.dtstart);
-                                    if (Number.isNaN(evDate.getTime())) continue;
-                                    events.push({
-                                        id: ev.uid || `ics-${evDate.getTime()}`,
-                                        teamId: team.id,
-                                        teamName: team.name,
+                                    const mappedEvent = buildGlobalCalendarIcsEvent({
+                                        team,
                                         teamColor: teamColors[team.id],
-                                        type: getCalendarEventType(ev),
-                                        title: ev.summary || 'Event',
-                                        date: evDate,
-                                        location: ev.location || 'TBD',
-                                        status: getCalendarEventStatus(ev),
-                                        source: 'ics'
+                                        event: ev
                                     });
+                                    if (mappedEvent) {
+                                        events.push(mappedEvent);
+                                    }
                                 }
                             } catch (e) {
                                 console.warn('Failed to load ICS calendar:', e);
