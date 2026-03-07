@@ -142,6 +142,7 @@ Add `data-testid` attributes to HTML as you write tests for new flows. The targe
 - **Trigger:** Every PR to `master`
 - **Suite:** `tests/smoke/` (`@smoke` tests)
 - **Runtime target:** < 2 minutes
+- **Runtime gate:** `scripts/check-playwright-runtime.cjs` enforces the budget from the Playwright JSON report
 - **On failure:** Uploads HTML report artifact (7-day retention)
 
 PRs are expected to stay green on this gate at all times. If the smoke suite is broken, it blocks merge.
@@ -152,7 +153,11 @@ PRs are expected to stay green on this gate at all times. If the smoke suite is 
 - **Suite strategy:**
   - `critical` in one job
   - `extended` split into `1/2` and `2/2` shards
-- **Runtime target:** < 30 minutes
+- **Runtime targets:**
+  - `critical`: <= 10 minutes
+  - each `extended` shard: <= 15 minutes
+  - full nightly budget: <= 30 minutes total across the scheduled matrix
+- **Runtime gate:** `scripts/check-playwright-runtime.cjs` enforces each job budget from the Playwright JSON report
 - **Reliability gate:** Each shard exports a JSON report and fails if flaky tests exceed `2.00%` of executed tests
 - **Artifacts:** HTML report always uploaded (30-day retention); JSON report always uploaded (30-day retention); traces uploaded on failure (14-day)
 

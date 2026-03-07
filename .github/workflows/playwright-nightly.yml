@@ -47,6 +47,15 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard || 'full' }}.json
         run: npm run test:e2e
 
+      - name: Enforce runtime budget
+        if: always()
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          PLAYWRIGHT_SHARD: ${{ matrix.shard }}
+          PLAYWRIGHT_RUNTIME_LABEL: Nightly ${{ matrix.label }}
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard || 'full' }}.json
+        run: node scripts/check-playwright-runtime.cjs
+
       - name: Enforce flake budget
         if: always()
         env:

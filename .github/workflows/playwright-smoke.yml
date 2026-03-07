@@ -25,7 +25,18 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run smoke suite
+        env:
+          PLAYWRIGHT_SUITE: smoke
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-smoke.json
         run: npm run test:e2e:smoke
+
+      - name: Enforce smoke runtime budget
+        if: always()
+        env:
+          PLAYWRIGHT_SUITE: smoke
+          PLAYWRIGHT_RUNTIME_LABEL: PR smoke suite
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-smoke.json
+        run: node scripts/check-playwright-runtime.cjs
 
       - name: Upload report on failure
         if: failure()

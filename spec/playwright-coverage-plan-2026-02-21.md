@@ -204,7 +204,7 @@ Success metric:
 ### Reliability and Reporting
 - [x] Suite tags and shard strategy finalized
 - [x] Flake rate under 2%
-- [ ] Runtime targets met
+- [x] Runtime targets met
 - [ ] Weekly evidence report published
 
 ## Coverage Targets by End of Week 2
