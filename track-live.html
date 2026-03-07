@@ -498,6 +498,7 @@
         import { checkAuth } from './js/auth.js?v=9';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
+        import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -2213,6 +2214,27 @@ Write the match report now:`;
                 // Commit all writes in a single batch
                 await batch.commit();
                 console.log('Game data saved successfully');
+
+                const allGamesSnap = await getDocs(query(collection(db, `teams/${currentTeamId}/games`)));
+                const allGames = allGamesSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+                const advancementPatches = collectTournamentAdvancementPatches(allGames);
+                if (advancementPatches.length) {
+                    const maxAdvancementBatchOperations = 450;
+                    for (let i = 0; i < advancementPatches.length; i += maxAdvancementBatchOperations) {
+                        const advancementBatch = writeBatch(db);
+                        advancementPatches.slice(i, i + maxAdvancementBatchOperations).forEach(({ gameId, tournament }) => {
+                            const patchRef = doc(db, `teams/${currentTeamId}/games`, gameId);
+                            const existingGame = allGames.find((game) => game.id === gameId);
+                            advancementBatch.update(patchRef, {
+                                tournament: {
+                                    ...(existingGame?.tournament || {}),
+                                    ...tournament
+                                }
+                            });
+                        });
+                        await advancementBatch.commit();
+                    }
+                }
 
                 // Mark live stream as completed
                 await setGameLiveStatus(currentTeamId, currentGameId, 'completed').catch(console.warn);
