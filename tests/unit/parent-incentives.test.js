@@ -331,4 +331,26 @@ describe('renderIncentivesPanel', () => {
         expect(html).not.toContain('<img src=x onerror=alert(1)>');
         expect(html).toContain('&lt;IMG SRC=X ONERROR=ALERT(1)&gt;');
     });
+
+    it('escapes inline action handler arguments before rendering mark paid buttons', () => {
+        const html = renderIncentivesPanel({
+            player: { id: `player-1');alert('player')//`, name: 'Kid', teamId: `team-1');alert('team')//` },
+            rules: [makeRule({ amountCents: 100 })],
+            paidGames: new Map(),
+            seasonGameStats: [{
+                game: { id: `game-1');alert('game')//`, title: 'Game', date: '2026-03-01T00:00:00Z' },
+                stats: { pts: 1 },
+            }],
+            recentGameStats: [{
+                game: { id: `game-1');alert('game')//`, title: 'Game', date: '2026-03-01T00:00:00Z' },
+                stats: { pts: 1 },
+            }],
+            statOptions: [],
+            userId: `parent-1');alert('user')//`,
+            maxPerGameCents: null,
+        });
+
+        expect(html).not.toContain(`window.markGamePaid('parent-1');alert('user')//', 'game-1');alert('game')//', 'player-1');alert('player')//', 'team-1');alert('team')//', 100)`);
+        expect(html).toContain(`window.markGamePaid('parent-1\\');alert(\\'user\\')//', 'game-1\\');alert(\\'game\\')//', 'player-1\\');alert(\\'player\\')//', 'team-1\\');alert(\\'team\\')//', 100)`);
+    });
 });

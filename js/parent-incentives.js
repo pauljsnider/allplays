@@ -356,6 +356,9 @@ export function formatBreakdownLine({ rule, statValue, earned }) {
  */
 export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStats = [], recentGameStats = seasonGameStats, statOptions, userId, maxPerGameCents = null }) {
     const activeRules = rules.filter(r => r.active);
+    const safeUserId = inlineHandlerString(userId);
+    const safePlayerId = inlineHandlerString(player.id);
+    const safeTeamId = inlineHandlerString(player.teamId);
 
     // Calculate season totals
     let totalEarnedCents = 0;
@@ -398,7 +401,7 @@ export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStat
             <div>
                 <div class="flex items-center justify-between mb-3">
                     <p class="text-sm font-bold text-gray-900">My Rules</p>
-                    <button onclick="window.openIncentiveRuleBuilder('${player.teamId}', '${player.id}')"
+                    <button onclick="window.openIncentiveRuleBuilder(${safeTeamId}, ${safePlayerId})"
                         class="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition border border-primary-200">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
@@ -416,11 +419,11 @@ export function renderIncentivesPanel({ player, rules, paidGames, seasonGameStat
                             placeholder="No cap"
                             value="${maxPerGameCents !== null ? (maxPerGameCents / 100).toFixed(0) : ''}"
                             class="w-24 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400">
-                        <button onclick="window.saveIncentiveCap('${userId}', '${player.id}')"
+                        <button onclick="window.saveIncentiveCap(${safeUserId}, ${safePlayerId})"
                             class="text-xs font-semibold text-primary-600 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition border border-primary-200">
                             Save
                         </button>
-                        ${maxPerGameCents !== null ? `<button onclick="window.removeIncentiveCap('${userId}', '${player.id}')" class="text-xs text-gray-400 hover:text-red-400 transition">Remove</button>` : ''}
+                        ${maxPerGameCents !== null ? `<button onclick="window.removeIncentiveCap(${safeUserId}, ${safePlayerId})" class="text-xs text-gray-400 hover:text-red-400 transition">Remove</button>` : ''}
                     </div>
                     ${maxPerGameCents !== null ? `<p class="text-xs text-gray-400 mt-1">Earnings capped at $${(maxPerGameCents / 100).toFixed(0)} per game</p>` : ''}
                 </div>
@@ -456,6 +459,7 @@ function renderEmptyRules() {
 }
 
 function renderRuleList(rules, userId) {
+    const safeUserId = inlineHandlerString(userId);
     return `
         <div class="space-y-2">
             ${rules.map(rule => `
@@ -467,13 +471,13 @@ function renderRuleList(rules, userId) {
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
                         <!-- Toggle -->
-                        <button onclick="window.toggleIncentiveRule('${userId}', '${rule.id}', ${!rule.active})"
+                        <button onclick="window.toggleIncentiveRule(${safeUserId}, ${inlineHandlerString(rule.id)}, ${!rule.active})"
                             class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${rule.active ? 'bg-primary-600' : 'bg-gray-200'}"
                             title="${rule.active ? 'Disable rule' : 'Enable rule'}">
                             <span class="inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${rule.active ? 'translate-x-4.5' : 'translate-x-0.5'}"></span>
                         </button>
                         <!-- Delete -->
-                        <button onclick="window.deleteIncentiveRule('${userId}', '${rule.id}')"
+                        <button onclick="window.deleteIncentiveRule(${safeUserId}, ${inlineHandlerString(rule.id)})"
                             class="text-gray-300 hover:text-red-400 transition p-1"
                             title="Delete rule">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -493,6 +497,10 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
     const opponent = game.opponent || game.title || 'Game';
     const totalStr = formatCents(totalCents, { sign: true });
     const isPositive = totalCents >= 0;
+    const safeUserId = inlineHandlerString(userId);
+    const safeGameId = inlineHandlerString(game.id);
+    const safePlayerId = inlineHandlerString(playerId);
+    const safeTeamId = inlineHandlerString(teamId);
 
     return `
         <div class="border border-gray-200 rounded-xl overflow-hidden">
@@ -508,7 +516,7 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                                Paid
                            </span>`
-                        : `<button onclick="window.markGamePaid('${userId}', '${game.id}', '${playerId}', '${teamId}', ${totalCents})"
+                        : `<button onclick="window.markGamePaid(${safeUserId}, ${safeGameId}, ${safePlayerId}, ${safeTeamId}, ${totalCents})"
                                class="text-xs font-semibold text-white bg-green-600 px-3 py-1 rounded-full hover:bg-green-700 transition">
                                Mark Paid
                            </button>`
@@ -532,6 +540,8 @@ function renderGameEarningsCard({ game, totalCents, uncappedTotalCents, wasCappe
  * @param {string} playerId
  */
 export function renderRuleBuilder(statOptions, teamId, playerId) {
+    const safeTeamId = inlineHandlerString(teamId);
+    const safePlayerId = inlineHandlerString(playerId);
     return `
         <div class="border border-primary-200 rounded-xl p-4 bg-primary-50 space-y-4">
             <p class="text-sm font-bold text-primary-800">New Rule</p>
@@ -542,7 +552,7 @@ export function renderRuleBuilder(statOptions, teamId, playerId) {
                 <div id="incentive-stat-pills" class="flex flex-wrap gap-2">
                     ${statOptions.map(opt => `
                         <button type="button"
-                            onclick="selectIncentiveStat('${opt.key}')"
+                            onclick="selectIncentiveStat(${inlineHandlerString(opt.key)})"
                             data-stat="${opt.key}"
                             class="stat-pill px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 bg-white text-gray-600 hover:border-primary-400 hover:text-primary-700 transition">
                             ${escapeHtml(opt.label)}
@@ -605,7 +615,7 @@ export function renderRuleBuilder(statOptions, teamId, playerId) {
 
             <!-- Actions -->
             <div class="flex gap-2 pt-1">
-                <button type="button" onclick="window.saveIncentiveRuleFromBuilder('${teamId}', '${playerId}')"
+                <button type="button" onclick="window.saveIncentiveRuleFromBuilder(${safeTeamId}, ${safePlayerId})"
                     class="flex-1 bg-primary-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-primary-700 transition">
                     Save Rule
                 </button>
@@ -626,4 +636,21 @@ function escapeHtml(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+function inlineHandlerString(value) {
+    return `'${escapeInlineHandlerString(value)}'`;
+}
+
+function escapeInlineHandlerString(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n');
 }
