@@ -1,0 +1,121 @@
+name: Playwright Weekly Evidence
+
+on:
+  schedule:
+    - cron: '0 9 * * 0'
+  workflow_dispatch:
+
+jobs:
+  full-suite:
+    name: Weekly ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: critical
+            suite: critical
+            shard: ""
+            shard_slug: full
+          - label: extended (shard 1/2)
+            suite: extended
+            shard: 1/2
+            shard_slug: 1-of-2
+          - label: extended (shard 2/2)
+            suite: extended
+            shard: 2/2
+            shard_slug: 2-of-2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run suite shard
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          PLAYWRIGHT_SHARD: ${{ matrix.shard }}
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard_slug }}.json
+        run: npm run test:e2e
+
+      - name: Enforce runtime budget
+        if: always()
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          PLAYWRIGHT_SHARD: ${{ matrix.shard }}
+          PLAYWRIGHT_RUNTIME_LABEL: Weekly ${{ matrix.label }}
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard_slug }}.json
+        run: node scripts/check-playwright-runtime.cjs
+
+      - name: Enforce flake budget
+        if: always()
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard_slug }}.json
+          PLAYWRIGHT_FLAKE_RATE_LIMIT: "0.02"
+        run: node scripts/check-playwright-flake-rate.cjs
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-weekly-report-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard_slug }}
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-weekly-traces-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard_slug }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Upload JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-weekly-json-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard_slug }}
+          path: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard_slug }}.json
+          retention-days: 30
+
+  publish-evidence:
+    name: Publish weekly evidence
+    runs-on: ubuntu-latest
+    needs: full-suite
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download JSON reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: playwright-weekly-json-${{ github.run_id }}-*
+          path: test-results/weekly-json
+          merge-multiple: true
+
+      - name: Publish weekly evidence markdown
+        env:
+          PLAYWRIGHT_WEEKLY_EVIDENCE_DATE: ${{ github.event.schedule || github.run_started_at }}
+        run: node scripts/publish-playwright-weekly-evidence.cjs test-results/weekly-json --output test-results/playwright-weekly-evidence-${{ github.run_id }}.md
+
+      - name: Upload weekly evidence report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-weekly-evidence-${{ github.run_id }}
+          path: test-results/playwright-weekly-evidence-${{ github.run_id }}.md
+          retention-days: 30

@@ -163,6 +163,15 @@ PRs are expected to stay green on this gate at all times. If the smoke suite is 
 
 The nightly run produces the evidence log used to track pass/fail trends and flake rate.
 
+### `playwright-weekly-evidence.yml` — Weekly evidence publish
+
+- **Trigger:** Every Sunday at `09:00 UTC` + manual dispatch from Actions tab
+- **Suite strategy:** mirrors the nightly matrix so the weekly report uses the same shard boundaries and budgets
+- **Published output:** a markdown artifact named `playwright-weekly-evidence-<run_id>` plus the same content appended to the Actions step summary
+- **Inputs:** the workflow reads the Playwright JSON artifacts produced by the matrix jobs and builds a weekly snapshot with executed counts, failures, flaky specs, flake rate, runtime, and budget status
+
+Use this workflow when you need an auditable weekly checkpoint instead of browsing individual nightly runs by hand.
+
 ---
 
 ## Firebase Emulator (Week 2 — Days 3+)
@@ -215,3 +224,10 @@ All workflow runs store HTML reports as GitHub Actions artifacts:
 2. Select the workflow run
 3. Scroll to **Artifacts** — download `playwright-*-report-<run_id>`
 4. Open `index.html` in the downloaded folder
+
+Weekly evidence runs also publish a markdown summary artifact:
+
+1. Go to **Actions** tab in the repo
+2. Select **Playwright Weekly Evidence**
+3. Download `playwright-weekly-evidence-<run_id>`
+4. Review the markdown summary for pass/fail counts, flaky specs, and runtime budget status

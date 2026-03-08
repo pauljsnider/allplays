@@ -205,7 +205,7 @@ Success metric:
 - [x] Suite tags and shard strategy finalized
 - [x] Flake rate under 2%
 - [x] Runtime targets met
-- [ ] Weekly evidence report published
+- [x] Weekly evidence report published
 
 ## Coverage Targets by End of Week 2
 - Critical-path Playwright coverage: >= 70% of defined P0/P1 user journeys.
