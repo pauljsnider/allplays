@@ -48,5 +48,6 @@ describe('athlete profile wiring', () => {
         expect(source).toContain("if (profile.privacy !== 'public' && !isOwner)");
         expect(source).toContain('const seasonLink = allowedSeasons.get(seasonKey);');
         expect(source).toContain('Season key ${seasonKey} not found in allowed seasons, skipping');
+        expect(source).toContain('getTeam(link.teamId, { includeInactive: true })');
     });
 });

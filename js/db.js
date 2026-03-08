@@ -1684,7 +1684,7 @@ function resolveAllowedAthleteSeasonLinks(parentLinks = []) {
 
 async function buildAthleteProfileSeasonSummary(link) {
     const [team, playerSnap, games] = await Promise.all([
-        getTeam(link.teamId),
+        getTeam(link.teamId, { includeInactive: true }),
         getDoc(doc(db, `teams/${link.teamId}/players`, link.playerId)),
         getGames(link.teamId)
     ]);
