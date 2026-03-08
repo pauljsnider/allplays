@@ -1,4 +1,5 @@
-const SHARED_GAME_ID_PREFIX = 'shared::';
+const SHARED_GAME_ID_PREFIX = 'shared_';
+const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
 
 function toDisplayName(teamName, placeholderName) {
     const team = typeof teamName === 'string' ? teamName.trim() : '';
@@ -25,12 +26,16 @@ export function buildSharedGameSyntheticId(sharedGamePath) {
 }
 
 export function isSharedGameSyntheticId(gameId) {
-    return typeof gameId === 'string' && gameId.startsWith(SHARED_GAME_ID_PREFIX);
+    return typeof gameId === 'string'
+        && (gameId.startsWith(SHARED_GAME_ID_PREFIX) || gameId.startsWith(LEGACY_SHARED_GAME_ID_PREFIX));
 }
 
 export function decodeSharedGameSyntheticId(gameId) {
     if (!isSharedGameSyntheticId(gameId)) return null;
-    return decodeURIComponent(gameId.slice(SHARED_GAME_ID_PREFIX.length));
+    const prefix = gameId.startsWith(SHARED_GAME_ID_PREFIX)
+        ? SHARED_GAME_ID_PREFIX
+        : LEGACY_SHARED_GAME_ID_PREFIX;
+    return decodeURIComponent(gameId.slice(prefix.length));
 }
 
 export function projectSharedGameForTeam(sharedGame, teamId) {

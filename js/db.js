@@ -53,7 +53,8 @@ import {
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
-    mergeGamesForTeam
+    mergeGamesForTeam,
+    projectSharedGameForTeam
 } from './shared-games.js?v=1';
 import {
     isTeamActive,
@@ -832,14 +833,23 @@ export async function getGame(teamId, gameId) {
     const docRef = getGameDocRef(teamId, gameId);
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-        return {
-            id: isSharedGameSyntheticId(gameId) ? gameId : docSnap.id,
-            ...docSnap.data(),
-            ...(isSharedGameSyntheticId(gameId) ? {
+        const data = docSnap.data();
+        if (isSharedGameSyntheticId(gameId)) {
+            return projectSharedGameForTeam({
+                id: docSnap.id,
+                ...data,
+                _sharedGamePath: docRef.path
+            }, teamId) || {
+                id: gameId,
+                ...data,
                 sharedGameId: docSnap.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            } : {})
+            };
+        }
+        return {
+            id: docSnap.id,
+            ...data
         };
     } else {
         return null;
@@ -853,14 +863,24 @@ export function subscribeGame(teamId, gameId, callback, onError) {
             callback(null);
             return;
         }
-        callback({
-            id: isSharedGameSyntheticId(gameId) ? gameId : snapshot.id,
-            ...snapshot.data(),
-            ...(isSharedGameSyntheticId(gameId) ? {
+        const data = snapshot.data();
+        if (isSharedGameSyntheticId(gameId)) {
+            callback(projectSharedGameForTeam({
+                id: snapshot.id,
+                ...data,
+                _sharedGamePath: docRef.path
+            }, teamId) || {
+                id: gameId,
+                ...data,
                 sharedGameId: snapshot.id,
                 sharedGamePath: docRef.path,
                 isSharedGame: true
-            } : {})
+            });
+            return;
+        }
+        callback({
+            id: snapshot.id,
+            ...data
         });
     }, onError);
 }

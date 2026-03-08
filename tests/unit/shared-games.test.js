@@ -7,6 +7,16 @@ import {
 } from '../../js/shared-games.js';
 
 describe('shared game projection', () => {
+    it('builds delimiter-safe synthetic ids and still decodes legacy ids', () => {
+        const sharedPath = 'organizations/org-9/sharedGames/game-legacy';
+        const syntheticId = buildSharedGameSyntheticId(sharedPath);
+
+        expect(syntheticId).toBe('shared_organizations%2Forg-9%2FsharedGames%2Fgame-legacy');
+        expect(syntheticId.includes('::')).toBe(false);
+        expect(decodeSharedGameSyntheticId(syntheticId)).toBe(sharedPath);
+        expect(decodeSharedGameSyntheticId(`shared::${encodeURIComponent(sharedPath)}`)).toBe(sharedPath);
+    });
+
     it('projects a centrally owned shared game into the home team schedule', () => {
         const shared = {
             id: 'game-100',

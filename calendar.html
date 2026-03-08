@@ -185,6 +185,16 @@
             return Array.isArray(linkedPlayersByTeam.get(teamId)) ? linkedPlayersByTeam.get(teamId) : [];
         }
 
+        function parseTeamGameKey(key) {
+            const delimiter = '::';
+            const delimiterIndex = key.indexOf(delimiter);
+            if (delimiterIndex === -1) return [key, ''];
+            return [
+                key.slice(0, delimiterIndex),
+                key.slice(delimiterIndex + delimiter.length)
+            ];
+        }
+
         function renderCalendarChildScope(teamId) {
             const linkedPlayers = getLinkedPlayersForTeam(teamId);
             if (linkedPlayers.length === 0) return '';
@@ -389,7 +399,7 @@
                 const uniqueGameKeys = [...new Set(dbEvents.map(ev => `${ev.teamId}::${ev.id}`))];
                 const unsummarizedByTeam = new Map();
                 uniqueGameKeys.forEach((key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     const shouldLoadSummary = allEvents.some((ev) => ev.teamId === teamId && ev.id === gameId && !ev.rsvpSummary);
                     if (!shouldLoadSummary) return;
                     if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
@@ -406,7 +416,7 @@
                 }));
 
                 await Promise.all(uniqueGameKeys.map(async (key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     try {
                         const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
                         const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
