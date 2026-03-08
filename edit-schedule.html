@@ -899,6 +899,7 @@
 
         let currentTeam = null;
         let currentRsvpReminderContext = null;
+        let currentRsvpRequestToken = 0;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             const accessInfo = getTeamAccessInfo(user, { ...team, id: team.id || currentTeamId });
@@ -954,6 +955,11 @@
                 senderEmail: currentUser.email
             });
             return true;
+        }
+
+        function alertNonFatalNotificationError(eventLabel, error) {
+            console.error(`${eventLabel} saved but schedule notification failed:`, error);
+            alert(`${eventLabel} saved, but the team notification failed: ${error.message}`);
         }
 
         async function sendRsvpReminder({
@@ -1384,7 +1390,13 @@
             // Attach RSVP view button handlers
             document.querySelectorAll('.view-rsvps-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    const gameId = e.target.dataset.gameId;
+                    const target = e.currentTarget;
+                    const gameId = target.dataset.gameId;
+                    const eventDocId = target.dataset.eventDocId || gameId;
+                    const eventDate = target.dataset.eventDate ? new Date(target.dataset.eventDate) : null;
+                    const eventTitle = target.dataset.eventTitle || 'Event';
+                    const eventType = target.dataset.eventType || 'game';
+                    const requestToken = ++currentRsvpRequestToken;
                     const modal = document.getElementById('rsvp-modal');
                     const content = document.getElementById('rsvp-modal-content');
                     const reminderBtn = document.getElementById('send-rsvp-reminder-btn');
@@ -1394,11 +1406,9 @@
                     modal.classList.remove('hidden');
                     try {
                         const breakdown = await getRsvpBreakdownByPlayer(currentTeamId, gameId);
+                        if (requestToken !== currentRsvpRequestToken) return;
                         const grouped = breakdown.grouped;
                         const counts = breakdown.counts;
-                        const eventDate = e.target.dataset.eventDate ? new Date(e.target.dataset.eventDate) : null;
-                        const eventTitle = e.target.dataset.eventTitle || 'Event';
-                        const eventType = e.target.dataset.eventType || 'game';
                         const renderRows = (rows) => rows.length
                             ? rows.map((row) => {
                                 const name = escapeHtml(row.playerName || 'Unknown Player');
@@ -1430,7 +1440,7 @@
                         if (counts.notResponded > 0) {
                             currentRsvpReminderContext = {
                                 eventId: gameId,
-                                eventDocId: e.target.dataset.eventDocId || gameId,
+                                eventDocId,
                                 eventType,
                                 eventTitle,
                                 eventDate,
@@ -1439,6 +1449,7 @@
                             reminderBtn.classList.remove('hidden');
                         }
                     } catch (err) {
+                        if (requestToken !== currentRsvpRequestToken) return;
                         content.innerHTML = `<p class="text-red-600 text-center py-8">Error loading RSVPs: ${err.message}</p>`;
                     }
                 });
@@ -1907,26 +1918,30 @@
                     savedGameId = await addGame(currentTeamId, gameData);
                 }
 
-                const sent = await maybeNotifyScheduleChange({
-                    eventType: 'game',
-                    eventTitle: getEventDisplayTitle({ eventType: 'game', opponent }),
-                    eventDate: parsedGameDate,
-                    location,
-                    note: notifyNote,
-                    action: editingGameId ? 'updated' : 'created',
-                    shouldNotify: shouldNotifyTeam
-                });
-
-                if (sent && savedGameId) {
-                    await updateGame(currentTeamId, savedGameId, {
-                        scheduleNotifications: buildScheduleNotificationMetadata({
-                            settings: notificationSettings,
-                            action: editingGameId ? 'updated' : 'created',
-                            sent: true,
-                            userId: currentUser.uid,
-                            note: notifyNote
-                        })
+                try {
+                    const sent = await maybeNotifyScheduleChange({
+                        eventType: 'game',
+                        eventTitle: getEventDisplayTitle({ eventType: 'game', opponent }),
+                        eventDate: parsedGameDate,
+                        location,
+                        note: notifyNote,
+                        action: editingGameId ? 'updated' : 'created',
+                        shouldNotify: shouldNotifyTeam
                     });
+
+                    if (sent && savedGameId) {
+                        await updateGame(currentTeamId, savedGameId, {
+                            scheduleNotifications: buildScheduleNotificationMetadata({
+                                settings: notificationSettings,
+                                action: editingGameId ? 'updated' : 'created',
+                                sent: true,
+                                userId: currentUser.uid,
+                                note: notifyNote
+                            })
+                        });
+                    }
+                } catch (notificationError) {
+                    alertNonFatalNotificationError('Game', notificationError);
                 }
 
                 resetGameForm();
@@ -2079,26 +2094,30 @@
                     savedPracticeId = await addPractice(currentTeamId, practiceData);
                 }
 
-                const sent = await maybeNotifyScheduleChange({
-                    eventType: 'practice',
-                    eventTitle: getEventDisplayTitle({ eventType: 'practice', title }),
-                    eventDate: startDate,
-                    location,
-                    note: notifyNote,
-                    action: editingPracticeId ? 'updated' : 'created',
-                    shouldNotify: shouldNotifyTeam
-                });
-
-                if (sent && savedPracticeId) {
-                    await updateEvent(currentTeamId, savedPracticeId, {
-                        scheduleNotifications: buildScheduleNotificationMetadata({
-                            settings: notificationSettings,
-                            action: editingPracticeId ? 'updated' : 'created',
-                            sent: true,
-                            userId: currentUser.uid,
-                            note: notifyNote
-                        })
+                try {
+                    const sent = await maybeNotifyScheduleChange({
+                        eventType: 'practice',
+                        eventTitle: getEventDisplayTitle({ eventType: 'practice', title }),
+                        eventDate: startDate,
+                        location,
+                        note: notifyNote,
+                        action: editingPracticeId ? 'updated' : 'created',
+                        shouldNotify: shouldNotifyTeam
                     });
+
+                    if (sent && savedPracticeId) {
+                        await updateEvent(currentTeamId, savedPracticeId, {
+                            scheduleNotifications: buildScheduleNotificationMetadata({
+                                settings: notificationSettings,
+                                action: editingPracticeId ? 'updated' : 'created',
+                                sent: true,
+                                userId: currentUser.uid,
+                                note: notifyNote
+                            })
+                        });
+                    }
+                } catch (notificationError) {
+                    alertNonFatalNotificationError('Practice', notificationError);
                 }
 
                 resetPracticeForm();
