@@ -14,6 +14,43 @@ export function normalizeLiveStatColumns(columns) {
   return ['PTS', 'REB', 'AST', 'STL', 'TO'];
 }
 
+function normalizeSportLabel(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+export function resolveLiveStatColumns({ columns = [], configs = [], game = null, team = null } = {}) {
+  const directColumns = normalizeLiveStatColumns(columns);
+  if (Array.isArray(columns) && columns.length) return directColumns;
+
+  const safeConfigs = Array.isArray(configs) ? configs : [];
+  const desiredSport = normalizeSportLabel(game?.sport || team?.sport);
+  const configId = String(game?.statTrackerConfigId || '').trim();
+
+  if (configId) {
+    const configMatch = safeConfigs.find((config) => String(config?.id || '').trim() === configId);
+    if (Array.isArray(configMatch?.columns) && configMatch.columns.length) {
+      return normalizeLiveStatColumns(configMatch.columns);
+    }
+  }
+
+  if (desiredSport) {
+    const sportMatch = safeConfigs.find((config) => (
+      normalizeSportLabel(config?.baseType) === desiredSport &&
+      Array.isArray(config?.columns) &&
+      config.columns.length
+    ));
+    if (sportMatch) {
+      return normalizeLiveStatColumns(sportMatch.columns);
+    }
+  }
+
+  if (safeConfigs.length === 1 && Array.isArray(safeConfigs[0]?.columns) && safeConfigs[0].columns.length) {
+    return normalizeLiveStatColumns(safeConfigs[0].columns);
+  }
+
+  return directColumns;
+}
+
 export function applyResetEventState(currentState, event) {
   const period = event?.period || currentState?.period || 'Q1';
   const onCourt = Array.isArray(event?.onCourt) ? [...event.onCourt] : [];
