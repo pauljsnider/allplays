@@ -23,7 +23,7 @@ import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-g
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=1';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=2';
 
 const state = {
   teamId: null,
@@ -1795,13 +1795,12 @@ async function init() {
   state.team = team;
   state.game = game;
   state.players = players || [];
-  if (game?.statTrackerConfigId && Array.isArray(configs)) {
-    const config = configs.find(c => c.id === game.statTrackerConfigId);
-    if (config && Array.isArray(config.columns)) {
-      state.statColumns = normalizeLiveStatColumns(config.columns);
-    }
-  }
-  state.statColumns = normalizeLiveStatColumns(state.statColumns);
+  state.statColumns = resolveLiveStatColumns({
+    columns: state.statColumns,
+    configs,
+    game,
+    team
+  });
   state.opponentStats = game.opponentStats || {};
   if (game.liveLineup) {
     state.onCourt = Array.isArray(game.liveLineup.onCourt) ? game.liveLineup.onCourt : [];

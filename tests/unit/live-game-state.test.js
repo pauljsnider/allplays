@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -9,6 +9,36 @@ describe('live game state helpers', () => {
 
   it('does not force foul column into generic stat columns', () => {
     expect(normalizeLiveStatColumns(['PTS', 'REB', 'AST'])).toEqual(['PTS', 'REB', 'AST']);
+  });
+
+  it('resolves stat columns from matching sport config when game config id is missing', () => {
+    expect(resolveLiveStatColumns({
+      configs: [
+        { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS', 'REB', 'AST'] },
+        { id: 'cfg-soccer', baseType: 'Soccer', columns: ['G', 'A', 'SOG', 'YC'] }
+      ],
+      team: { sport: 'Soccer' }
+    })).toEqual(['G', 'A', 'SOG', 'YC']);
+  });
+
+  it('prefers direct game config id over sport matching', () => {
+    expect(resolveLiveStatColumns({
+      configs: [
+        { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS', 'REB', 'AST'] },
+        { id: 'cfg-custom', baseType: 'Soccer', columns: ['SHOT', 'SAVE'] }
+      ],
+      game: { statTrackerConfigId: 'cfg-custom', sport: 'Soccer' },
+      team: { sport: 'Soccer' }
+    })).toEqual(['SHOT', 'SAVE']);
+  });
+
+  it('falls back to the only available config before basketball defaults', () => {
+    expect(resolveLiveStatColumns({
+      configs: [
+        { id: 'cfg-only', baseType: 'Custom', columns: ['A', 'B', 'C', 'D'] }
+      ],
+      team: { sport: 'Unknown' }
+    })).toEqual(['A', 'B', 'C', 'D']);
   });
 
   it('resets live viewer state from reset event payload', () => {
