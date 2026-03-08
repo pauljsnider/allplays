@@ -68,7 +68,7 @@ describe('shared schedule sync helpers', () => {
       countsTowardSeasonRecord: false,
       sharedScheduleId: 'shared_team-alpha_game-123',
       sharedScheduleSourceTeamId: 'team-alpha',
-      sharedScheduleOpponentTeamId: 'team-bravo'
+      sharedScheduleOpponentTeamId: 'team-alpha'
     });
     expect(payload.assignments).toEqual([{ role: 'Clock', value: 'Alex' }]);
     expect(payload.date).toBe('2026-03-12T18:00:00Z');

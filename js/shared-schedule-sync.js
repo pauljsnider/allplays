@@ -45,7 +45,7 @@ export function buildMirroredGamePayload({
     cancelledBy: sourceGame.cancelledBy || null,
     sharedScheduleId,
     sharedScheduleSourceTeamId: sourceTeamId || null,
-    sharedScheduleOpponentTeamId: sourceGame.opponentTeamId || null,
+    sharedScheduleOpponentTeamId: sourceTeamId || null,
     sharedScheduleOpponentGameId: sourceGameId || null
   };
 }
