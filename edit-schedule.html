@@ -70,6 +70,32 @@
             </div>
         </div>
 
+        <div id="schedule-notification-settings" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="font-semibold text-gray-900">Schedule Reminders</h3>
+                    <p class="text-sm text-gray-600">Set the default reminder window for schedule-created events. Save/edit flows can notify the team immediately, and RSVP reminders are sent from the event itself.</p>
+                </div>
+            </div>
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+                    <input type="checkbox" id="team-reminder-enabled" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                    Schedule reminders enabled
+                </label>
+                <div>
+                    <label for="team-reminder-hours" class="block text-sm font-medium text-gray-700">Default reminder timing</label>
+                    <select id="team-reminder-hours" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        <option value="24">24 hours before</option>
+                        <option value="48">48 hours before</option>
+                        <option value="72">72 hours before</option>
+                    </select>
+                </div>
+                <div class="flex items-end">
+                    <button id="save-team-reminder-settings-btn" type="button" class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition">Save Reminder Settings</button>
+                </div>
+            </div>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Add Game Form -->
             <div class="lg:col-span-1">
@@ -254,6 +280,16 @@
                             <p class="text-xs text-gray-500 mt-1">Create configs in <a href="#" id="config-link"
                                     class="text-indigo-600 hover:underline">Edit Configs</a></p>
                         </div>
+                        <div class="border-t border-gray-200 pt-4">
+                            <div class="flex items-center justify-between gap-4">
+                                <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                                    <input type="checkbox" id="game-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    Save and notify team
+                                </label>
+                                <div class="text-xs text-gray-500">Uses team chat now; reminder timing is stored for later delivery.</div>
+                            </div>
+                            <textarea id="game-notify-note" rows="2" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2" placeholder="Optional note to include with the schedule update"></textarea>
+                        </div>
                         <div class="flex gap-2">
                             <button type="submit" id="submit-game-btn"
                                 class="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
@@ -294,6 +330,18 @@
                                 <textarea id="practiceNotes" rows="2"
                                     class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
                                     placeholder="Optional notes..."></textarea>
+                            </div>
+                            <div class="border-t border-gray-200 pt-4">
+                                <div class="flex items-center justify-between gap-4">
+                                    <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                                        <input type="checkbox" id="practice-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        Save and notify team
+                                    </label>
+                                    <div class="text-xs text-gray-500">Use this when practice details change and families need a heads-up.</div>
+                                </div>
+                                <textarea id="practice-notify-note" rows="2"
+                                    class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                    placeholder="Optional note to include with the practice update"></textarea>
                             </div>
 
                             <!-- Recurrence Builder (Phase 2) -->
@@ -507,6 +555,9 @@
                 </button>
             </div>
             <div id="rsvp-modal-content" class="px-6 py-5"></div>
+            <div class="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4">
+                <button id="send-rsvp-reminder-btn" type="button" class="hidden w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition">Send RSVP Reminder to No Response</button>
+            </div>
         </div>
     </div>
 
@@ -658,7 +709,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer } from './js/db.js?v=20';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer } from './js/db.js?v=20';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -669,6 +720,7 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { collectTournamentAdvancementPatches, describeTournamentSource } from './js/tournament-brackets.js?v=1';
+        import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -846,10 +898,96 @@
         }, { skipEmailVerificationCheck: true });
 
         let currentTeam = null;
+        let currentRsvpReminderContext = null;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             const accessInfo = getTeamAccessInfo(user, { ...team, id: team.id || currentTeamId });
             return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
+        }
+
+        function getTeamScheduleNotificationSettings() {
+            return normalizeScheduleNotificationSettings(currentTeam?.scheduleNotifications || {});
+        }
+
+        function renderTeamScheduleNotificationSettings(team) {
+            const settings = normalizeScheduleNotificationSettings(team?.scheduleNotifications || {});
+            const enabledEl = document.getElementById('team-reminder-enabled');
+            const hoursEl = document.getElementById('team-reminder-hours');
+            if (enabledEl) enabledEl.checked = settings.enabled;
+            if (hoursEl) hoursEl.value = String(settings.reminderHours);
+        }
+
+        function getEventDateLabel(dateValue) {
+            const date = dateValue?.toDate ? dateValue.toDate() : new Date(dateValue);
+            if (Number.isNaN(date.getTime())) return '';
+            return `${formatDate(date)} at ${formatTime(date)}`;
+        }
+
+        function getEventDisplayTitle({ eventType, opponent, title }) {
+            if (String(eventType || '').toLowerCase() === 'practice') {
+                return title || 'Practice';
+            }
+            return opponent ? `vs. ${opponent}` : 'Game';
+        }
+
+        async function maybeNotifyScheduleChange({
+            eventType,
+            eventTitle,
+            eventDate,
+            location,
+            note,
+            action,
+            shouldNotify
+        }) {
+            if (!shouldNotify) return false;
+            await postChatMessage(currentTeamId, {
+                text: buildScheduleChangeMessage({
+                    action,
+                    eventType,
+                    title: eventTitle,
+                    dateLabel: getEventDateLabel(eventDate),
+                    location,
+                    note
+                }),
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || currentUser.email,
+                senderEmail: currentUser.email
+            });
+            return true;
+        }
+
+        async function sendRsvpReminder({
+            eventId,
+            eventDocId,
+            eventType,
+            eventTitle,
+            eventDate,
+            missingCount
+        }) {
+            await postChatMessage(currentTeamId, {
+                text: buildRsvpReminderMessage({
+                    eventType,
+                    title: eventTitle,
+                    dateLabel: getEventDateLabel(eventDate),
+                    missingCount
+                }),
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || currentUser.email,
+                senderEmail: currentUser.email
+            });
+            if (eventDocId) {
+                await updateEvent(currentTeamId, eventDocId, {
+                    scheduleNotifications: {
+                        ...buildScheduleNotificationMetadata({
+                            settings: getTeamScheduleNotificationSettings(),
+                            action: 'rsvp_reminder',
+                            sent: true,
+                            userId: currentUser.uid
+                        }),
+                        lastRsvpReminderCount: missingCount
+                    }
+                });
+            }
         }
 
         async function init() {
@@ -869,6 +1007,7 @@
             }
 
             currentTeam = team;
+            renderTeamScheduleNotificationSettings(team);
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
 
@@ -1215,6 +1354,18 @@
                     });
                     if (result.cancelled) {
                         try {
+                            await updateGame(currentTeamId, gameId, {
+                                scheduleNotifications: buildScheduleNotificationMetadata({
+                                    settings: getTeamScheduleNotificationSettings(),
+                                    action: 'cancelled',
+                                    sent: true,
+                                    userId: currentUser.uid
+                                })
+                            });
+                        } catch (error) {
+                            console.error('Game cancelled but notification metadata update failed:', error);
+                        }
+                        try {
                             await loadSchedule();
                         } catch (error) {
                             console.error('Game cancelled but schedule refresh failed:', error);
@@ -1236,12 +1387,18 @@
                     const gameId = e.target.dataset.gameId;
                     const modal = document.getElementById('rsvp-modal');
                     const content = document.getElementById('rsvp-modal-content');
+                    const reminderBtn = document.getElementById('send-rsvp-reminder-btn');
                     content.innerHTML = '<div class="text-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div></div>';
+                    reminderBtn.classList.add('hidden');
+                    currentRsvpReminderContext = null;
                     modal.classList.remove('hidden');
                     try {
                         const breakdown = await getRsvpBreakdownByPlayer(currentTeamId, gameId);
                         const grouped = breakdown.grouped;
                         const counts = breakdown.counts;
+                        const eventDate = e.target.dataset.eventDate ? new Date(e.target.dataset.eventDate) : null;
+                        const eventTitle = e.target.dataset.eventTitle || 'Event';
+                        const eventType = e.target.dataset.eventType || 'game';
                         const renderRows = (rows) => rows.length
                             ? rows.map((row) => {
                                 const name = escapeHtml(row.playerName || 'Unknown Player');
@@ -1270,6 +1427,17 @@
                                 </div>
                             </div>
                         `;
+                        if (counts.notResponded > 0) {
+                            currentRsvpReminderContext = {
+                                eventId: gameId,
+                                eventDocId: e.target.dataset.eventDocId || gameId,
+                                eventType,
+                                eventTitle,
+                                eventDate,
+                                missingCount: counts.notResponded
+                            };
+                            reminderBtn.classList.remove('hidden');
+                        }
                     } catch (err) {
                         content.innerHTML = `<p class="text-red-600 text-center py-8">Error loading RSVPs: ${err.message}</p>`;
                     }
@@ -1310,7 +1478,7 @@
                 actions = `
                     <a href="${planHref}"
                         class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Plan Practice</a>
-                    <button data-game-id="${practicePlanEventId}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Availability</button>
+                    <button data-game-id="${practicePlanEventId}" data-event-doc-id="${practice.masterId}" data-event-type="practice" data-event-title="${escapeHtml(practice.title || 'Practice')}" data-event-date="${practice.date?.toISOString?.() || ''}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Availability</button>
                     <button onclick="editOccurrence('${practice.masterId}', '${practice.instanceDate}')"
                         class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Manage</button>
                 `;
@@ -1319,7 +1487,7 @@
                 actions = `
                     <a href="${planHref}"
                         class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Plan Practice</a>
-                    <button data-game-id="${practice.eventId}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Availability</button>
+                    <button data-game-id="${practice.eventId}" data-event-doc-id="${practice.eventId}" data-event-type="practice" data-event-title="${escapeHtml(practice.title || 'Practice')}" data-event-date="${practice.date?.toISOString?.() || ''}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Availability</button>
                     <button onclick="editPractice('${practice.eventId}')"
                         class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
                     <button onclick="deletePractice('${practice.eventId}')"
@@ -1534,7 +1702,7 @@
                         ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
                         ${game.status !== 'cancelled' ? `<a href="game-day.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-orange-100 text-orange-700 rounded text-sm hover:bg-orange-200">Command Center</a>` : ''}
-                        <button data-game-id="${game.id}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">RSVPs</button>
+                        <button data-game-id="${game.id}" data-event-doc-id="${game.id}" data-event-type="game" data-event-title="${escapeHtml(`vs. ${game.opponent || 'TBD'}`)}" data-event-date="${(game.date?.toDate ? game.date.toDate() : new Date(game.date)).toISOString()}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">RSVPs</button>
                         ${game.status !== 'cancelled' ? `<button data-game-id="${game.id}" class="cancel-game-btn px-3 py-1 border border-orange-300 text-orange-600 rounded text-sm hover:bg-orange-50">Cancel</button>` : '<span class="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-semibold">Cancelled</span>'}
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
                     </div>
@@ -1557,6 +1725,8 @@
             document.getElementById('opponent').value = game.opponent || '';
             document.getElementById('location').value = game.location || '';
             document.getElementById('statConfig').value = game.statTrackerConfigId || '';
+            document.getElementById('game-notify-team').checked = false;
+            document.getElementById('game-notify-note').value = '';
             if (game.opponentTeamId) {
                 setLinkedOpponent({
                     id: game.opponentTeamId,
@@ -1657,6 +1827,8 @@
             document.getElementById('countsTowardSeasonRecord').checked = true;
             document.getElementById('arrivalTime').value = '';
             document.getElementById('gameNotes').value = '';
+            document.getElementById('game-notify-team').checked = true;
+            document.getElementById('game-notify-note').value = '';
             document.getElementById('assignment-rows').innerHTML = '';
         }
 
@@ -1691,6 +1863,10 @@
                 const arrivalVal = document.getElementById('arrivalTime').value;
                 const parsedGameDate = new Date(dateVal);
                 const tournamentData = readTournamentFormState();
+                const shouldNotifyTeam = document.getElementById('game-notify-team').checked;
+                const notifyNote = document.getElementById('game-notify-note').value.trim();
+                const notificationSettings = getTeamScheduleNotificationSettings();
+                const tournamentData = readTournamentFormState();
                 const gameData = {
                     type: 'game',
                     date: Timestamp.fromDate(parsedGameDate),
@@ -1707,7 +1883,13 @@
                     countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked,
                     arrivalTime: arrivalVal ? Timestamp.fromDate(new Date(arrivalVal)) : null,
                     notes: document.getElementById('gameNotes').value.trim() || null,
-                    assignments: getAssignmentsFromForm()
+                    assignments: getAssignmentsFromForm(),
+                    scheduleNotifications: buildScheduleNotificationMetadata({
+                        settings: notificationSettings,
+                        action: editingGameId ? 'updated' : 'created',
+                        sent: false,
+                        note: notifyNote
+                    })
                 };
                 if (tournamentData) {
                     gameData.tournament = tournamentData;
@@ -1715,13 +1897,36 @@
                     gameData.tournament = deleteField();
                 }
 
+                let savedGameId = editingGameId;
                 if (editingGameId) {
                     await updateGame(currentTeamId, editingGameId, gameData);
                 } else {
                     gameData.status = 'scheduled';
                     gameData.homeScore = 0;
                     gameData.awayScore = 0;
-                    await addGame(currentTeamId, gameData);
+                    savedGameId = await addGame(currentTeamId, gameData);
+                }
+
+                const sent = await maybeNotifyScheduleChange({
+                    eventType: 'game',
+                    eventTitle: getEventDisplayTitle({ eventType: 'game', opponent }),
+                    eventDate: parsedGameDate,
+                    location,
+                    note: notifyNote,
+                    action: editingGameId ? 'updated' : 'created',
+                    shouldNotify: shouldNotifyTeam
+                });
+
+                if (sent && savedGameId) {
+                    await updateGame(currentTeamId, savedGameId, {
+                        scheduleNotifications: buildScheduleNotificationMetadata({
+                            settings: notificationSettings,
+                            action: editingGameId ? 'updated' : 'created',
+                            sent: true,
+                            userId: currentUser.uid,
+                            note: notifyNote
+                        })
+                    });
                 }
 
                 resetGameForm();
@@ -1740,6 +1945,8 @@
             document.getElementById('practiceRecurring').checked = false;
             document.getElementById('recurrence-builder').classList.add('hidden');
             document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
+            document.getElementById('practice-notify-team').checked = true;
+            document.getElementById('practice-notify-note').value = '';
             editingPracticeId = null;
             editingSeriesId = null;
             document.getElementById('submit-practice-btn').textContent = 'Add Practice';
@@ -1760,6 +1967,8 @@
 
             document.getElementById('practiceLocation').value = practice.location || '';
             document.getElementById('practiceNotes').value = practice.notes || '';
+            document.getElementById('practice-notify-team').checked = false;
+            document.getElementById('practice-notify-note').value = '';
 
             // Handle recurring practice edit - load series settings
             if (practice.isSeriesMaster && practice.recurrence) {
@@ -1810,13 +2019,22 @@
             try {
                 const startDate = new Date(startVal);
                 const endDate = endVal ? new Date(endVal) : getDefaultEndTime(startDate, 'practice');
+                const shouldNotifyTeam = document.getElementById('practice-notify-team').checked;
+                const notifyNote = document.getElementById('practice-notify-note').value.trim();
+                const notificationSettings = getTeamScheduleNotificationSettings();
 
                 const practiceData = {
                     title,
                     date: Timestamp.fromDate(startDate),
                     end: Timestamp.fromDate(endDate),
                     location,
-                    notes
+                    notes,
+                    scheduleNotifications: buildScheduleNotificationMetadata({
+                        settings: notificationSettings,
+                        action: editingPracticeId ? 'updated' : 'created',
+                        sent: false,
+                        note: notifyNote
+                    })
                 };
 
                 // Handle recurring practice
@@ -1854,10 +2072,33 @@
                     }
                 }
 
+                let savedPracticeId = editingPracticeId;
                 if (editingPracticeId) {
                     await updateEvent(currentTeamId, editingPracticeId, practiceData);
                 } else {
-                    await addPractice(currentTeamId, practiceData);
+                    savedPracticeId = await addPractice(currentTeamId, practiceData);
+                }
+
+                const sent = await maybeNotifyScheduleChange({
+                    eventType: 'practice',
+                    eventTitle: getEventDisplayTitle({ eventType: 'practice', title }),
+                    eventDate: startDate,
+                    location,
+                    note: notifyNote,
+                    action: editingPracticeId ? 'updated' : 'created',
+                    shouldNotify: shouldNotifyTeam
+                });
+
+                if (sent && savedPracticeId) {
+                    await updateEvent(currentTeamId, savedPracticeId, {
+                        scheduleNotifications: buildScheduleNotificationMetadata({
+                            settings: notificationSettings,
+                            action: editingPracticeId ? 'updated' : 'created',
+                            sent: true,
+                            userId: currentUser.uid,
+                            note: notifyNote
+                        })
+                    });
                 }
 
                 resetPracticeForm();
@@ -2047,6 +2288,22 @@
             }
         };
 
+        document.getElementById('send-rsvp-reminder-btn').addEventListener('click', async () => {
+            if (!currentRsvpReminderContext) return;
+            const button = document.getElementById('send-rsvp-reminder-btn');
+            button.disabled = true;
+            try {
+                await sendRsvpReminder(currentRsvpReminderContext);
+                document.getElementById('rsvp-modal').classList.add('hidden');
+                currentRsvpReminderContext = null;
+            } catch (error) {
+                alert('Error sending RSVP reminder: ' + error.message);
+            } finally {
+                button.disabled = false;
+                button.classList.add('hidden');
+            }
+        });
+
         // Calendar Management Event Handlers
         document.getElementById('add-calendar-btn').addEventListener('click', () => {
             document.getElementById('add-calendar-form').classList.remove('hidden');
@@ -2096,6 +2353,26 @@
                 alert('Error removing calendar: ' + error.message);
             }
         };
+
+        document.getElementById('save-team-reminder-settings-btn').addEventListener('click', async () => {
+            const nextSettings = normalizeScheduleNotificationSettings({
+                enabled: document.getElementById('team-reminder-enabled').checked,
+                reminderHours: document.getElementById('team-reminder-hours').value,
+                delivery: 'team_chat'
+            });
+
+            try {
+                await updateTeam(currentTeamId, { scheduleNotifications: nextSettings });
+                currentTeam = {
+                    ...(currentTeam || {}),
+                    scheduleNotifications: nextSettings
+                };
+                renderTeamScheduleNotificationSettings(currentTeam);
+                alert('Schedule reminder settings saved.');
+            } catch (error) {
+                alert('Error saving reminder settings: ' + error.message);
+            }
+        });
 
         // Practice filter
         document.getElementById('show-practices').addEventListener('change', (e) => {
