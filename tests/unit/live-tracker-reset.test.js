@@ -38,4 +38,9 @@ describe('live tracker reset event helper', () => {
     expect(event.onCourt).toEqual([]);
     expect(event.bench).toEqual([]);
   });
+
+  it('uses a sport-specific default period when none is provided', () => {
+    expect(buildLiveResetEvent({ sport: 'Soccer' }).period).toBe('H1');
+    expect(buildLiveResetEvent({ sport: 'Baseball' }).period).toBe('T1');
+  });
 });

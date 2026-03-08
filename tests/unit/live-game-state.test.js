@@ -86,6 +86,16 @@ describe('live game state helpers', () => {
     expect(Array.from(next.eventIds)).toEqual(['e1', 'e2']);
   });
 
+  it('uses a sport-specific reset period when no explicit period is provided', () => {
+    const next = applyResetEventState({
+      sport: 'Soccer',
+      period: '',
+      eventIds: new Set()
+    }, {});
+
+    expect(next.period).toBe('H1');
+  });
+
   it('detects scheduled reset from game doc when tracked state exists', () => {
     const shouldReset = shouldResetViewerFromGameDoc(
       { liveStatus: 'scheduled', liveHasData: false, homeScore: 0, awayScore: 0 },

@@ -1,3 +1,5 @@
+import { getDefaultLivePeriod } from './live-sport-config.js';
+
 export function resolveOpponentDisplayName(game) {
   const opponent = String(game?.opponent || '').trim();
   if (opponent) return opponent;
@@ -52,7 +54,10 @@ export function resolveLiveStatColumns({ columns = [], configs = [], game = null
 }
 
 export function applyResetEventState(currentState, event) {
-  const period = event?.period || currentState?.period || 'Q1';
+  const period = event?.period || currentState?.period || getDefaultLivePeriod({
+    sport: event?.sport || currentState?.sport,
+    periods: event?.periods || currentState?.periods
+  });
   const onCourt = Array.isArray(event?.onCourt) ? [...event.onCourt] : [];
   const bench = Array.isArray(event?.bench) ? [...event.bench] : [];
   const priorEventIds = currentState?.eventIds instanceof Set
@@ -73,7 +78,9 @@ export function applyResetEventState(currentState, event) {
     bench,
     lastStatChange: null,
     scoringRun: { team: null, points: 0 },
-    lastRunAnnounced: 0
+    lastRunAnnounced: 0,
+    sport: event?.sport || currentState?.sport || null,
+    periods: Array.isArray(event?.periods) ? [...event.periods] : currentState?.periods || null
   };
 }
 
