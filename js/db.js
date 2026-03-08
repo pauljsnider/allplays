@@ -43,6 +43,10 @@ import {
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
 import {
+    normalizeAthleteProfileDraft,
+    summarizeAthleteProfileCareer
+} from './athlete-profile-utils.js?v=1';
+import {
     isTeamActive,
     filterTeamsByActive,
     shouldIncludeTeamInLiveOrUpcoming,
@@ -1663,6 +1667,138 @@ export async function getPlayerPrivateProfile(teamId, playerId) {
     const ref = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
     const snap = await getDoc(ref);
     return snap.exists() ? (snap.data() || {}) : null;
+}
+
+function buildParentSeasonKey(teamId, playerId) {
+    return `${teamId || ''}::${playerId || ''}`;
+}
+
+function resolveAllowedAthleteSeasonLinks(parentLinks = []) {
+    const allowed = new Map();
+    (parentLinks || []).forEach((link) => {
+        if (!link?.teamId || !link?.playerId) return;
+        allowed.set(buildParentSeasonKey(link.teamId, link.playerId), link);
+    });
+    return allowed;
+}
+
+async function buildAthleteProfileSeasonSummary(link) {
+    const [team, playerSnap, games] = await Promise.all([
+        getTeam(link.teamId),
+        getDoc(doc(db, `teams/${link.teamId}/players`, link.playerId)),
+        getGames(link.teamId)
+    ]);
+
+    if (!team || !playerSnap.exists()) {
+        return null;
+    }
+
+    const player = playerSnap.data() || {};
+    let gamesPlayed = 0;
+    let totalTimeMs = 0;
+    const statTotals = {};
+
+    for (const game of (games || [])) {
+        const statsSnap = await getDoc(doc(db, `teams/${link.teamId}/games/${game.id}/aggregatedStats`, link.playerId));
+        if (!statsSnap.exists()) continue;
+
+        const statsData = statsSnap.data() || {};
+        const stats = statsData.stats || {};
+
+        gamesPlayed += 1;
+        totalTimeMs += Number(statsData.timeMs || 0);
+        Object.entries(stats).forEach(([statKey, value]) => {
+            statTotals[statKey] = (statTotals[statKey] || 0) + Number(value || 0);
+        });
+    }
+
+    return {
+        seasonKey: buildParentSeasonKey(link.teamId, link.playerId),
+        teamId: link.teamId,
+        teamName: team.name || link.teamName || 'Team',
+        playerId: link.playerId,
+        playerName: link.playerName || player.name || 'Athlete',
+        playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null,
+        gamesPlayed,
+        totalTimeMs,
+        statTotals
+    };
+}
+
+export async function listAthleteProfilesForParent(userId) {
+    const snapshot = await getDocs(query(
+        collection(db, 'athleteProfiles'),
+        where('parentUserId', '==', userId)
+    ));
+
+    return snapshot.docs
+        .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+        .sort((a, b) => {
+            const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+            const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+            return bTime - aTime;
+        });
+}
+
+export async function getAthleteProfile(profileId) {
+    const profileRef = doc(db, 'athleteProfiles', profileId);
+    const profileSnap = await getDoc(profileRef);
+    return profileSnap.exists() ? { id: profileSnap.id, ...(profileSnap.data() || {}) } : null;
+}
+
+export async function saveAthleteProfile(userId, draft, options = {}) {
+    const userProfile = await getUserProfile(userId);
+    const parentLinks = Array.isArray(userProfile?.parentOf) ? userProfile.parentOf : [];
+    const allowedSeasons = resolveAllowedAthleteSeasonLinks(parentLinks);
+    const normalized = normalizeAthleteProfileDraft(draft);
+    const selectedSeasonKeys = normalized.selectedSeasonKeys.filter((key) => allowedSeasons.has(key));
+
+    if (!selectedSeasonKeys.length) {
+        throw new Error('Select at least one linked season to build an athlete profile.');
+    }
+
+    const seasonSummaries = [];
+    for (const seasonKey of selectedSeasonKeys) {
+        const summary = await buildAthleteProfileSeasonSummary(allowedSeasons.get(seasonKey));
+        if (summary) seasonSummaries.push(summary);
+    }
+
+    if (!seasonSummaries.length) {
+        throw new Error('No eligible linked seasons were found for this athlete profile.');
+    }
+
+    const coverSeason = seasonSummaries.find((season) => season.playerPhotoUrl) || seasonSummaries[0];
+    const profileRef = options.profileId
+        ? doc(db, 'athleteProfiles', options.profileId)
+        : doc(collection(db, 'athleteProfiles'));
+    const existingProfile = options.profileId ? await getAthleteProfile(options.profileId) : null;
+
+    const payload = {
+        parentUserId: userId,
+        athlete: {
+            name: normalized.athlete.name || coverSeason.playerName,
+            headline: normalized.athlete.headline
+        },
+        bio: normalized.bio,
+        privacy: normalized.privacy,
+        clips: normalized.clips,
+        seasons: seasonSummaries,
+        careerSummary: summarizeAthleteProfileCareer(seasonSummaries),
+        profilePhotoUrl: coverSeason.playerPhotoUrl || null,
+        updatedAt: serverTimestamp()
+    };
+
+    if (!existingProfile) {
+        payload.createdAt = serverTimestamp();
+    }
+
+    await setDoc(profileRef, payload, { merge: true });
+
+    return {
+        id: profileRef.id,
+        ...(existingProfile || {}),
+        ...payload
+    };
 }
 
 // ============================================

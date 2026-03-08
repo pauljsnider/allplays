@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Athlete Profile - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-gradient-to-br from-slate-50 via-white to-blue-50 text-slate-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="max-w-5xl mx-auto space-y-6">
+            <section id="profile-shell" class="bg-white rounded-3xl shadow-lg border border-slate-200 overflow-hidden">
+                <div class="p-8 md:p-10">
+                    <div id="profile-content" class="text-sm text-slate-500">Loading athlete profile...</div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { checkAuth } from './js/auth.js?v=9';
+        import { getAthleteProfile } from './js/db.js?v=24';
+        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=1';
+
+        const params = getUrlParams();
+        const content = document.getElementById('profile-content');
+
+        renderFooter(document.getElementById('footer-container'));
+        checkAuth((user) => renderHeader(document.getElementById('header-container'), user));
+
+        function renderStatGrid(summary) {
+            const cards = Object.entries(summary?.statTotals || {}).slice(0, 8).map(([key, total]) => `
+                <div class="rounded-2xl border border-slate-200 p-4 bg-slate-50">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">${escapeHtml(key)}</div>
+                    <div class="text-3xl font-bold text-slate-900 mt-1">${escapeHtml(total)}</div>
+                    <div class="text-xs text-slate-500 mt-1">${escapeHtml(summary?.statAverages?.[key] || '0.0')} per game</div>
+                </div>
+            `).join('');
+
+            return cards || '<div class="text-sm text-slate-500">Career stats will appear here once games with tracked stats are included.</div>';
+        }
+
+        function renderClips(clips) {
+            if (!Array.isArray(clips) || !clips.length) {
+                return '<div class="text-sm text-slate-500">No clips attached yet.</div>';
+            }
+
+            return clips.map((clip) => `
+                <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer" class="block rounded-2xl border border-slate-200 p-4 hover:bg-slate-50">
+                    <div class="font-semibold text-slate-900">${escapeHtml(clip.title || 'Highlight Clip')}</div>
+                    <div class="text-sm text-slate-500 mt-1">${escapeHtml(clip.label || clip.url)}</div>
+                </a>
+            `).join('');
+        }
+
+        async function loadProfile() {
+            if (!params.profileId) {
+                content.innerHTML = '<div class="text-center py-12 text-slate-500">No athlete profile selected.</div>';
+                return;
+            }
+
+            try {
+                const profile = await getAthleteProfile(params.profileId);
+                if (!profile) {
+                    content.innerHTML = '<div class="text-center py-12 text-slate-500">Athlete profile not found.</div>';
+                    return;
+                }
+
+                const shareUrl = buildAthleteProfileShareUrl(window.location.origin, profile.id);
+                const seasons = Array.isArray(profile.seasons) ? profile.seasons : [];
+                const bio = profile.bio || {};
+                const summary = profile.careerSummary || {};
+
+                content.innerHTML = `
+                    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+                        <div class="flex items-center gap-4">
+                            <div class="h-24 w-24 rounded-full overflow-hidden border border-slate-200 bg-slate-100 flex items-center justify-center">
+                                ${profile.profilePhotoUrl ? `<img src="${escapeHtml(profile.profilePhotoUrl)}" alt="${escapeHtml(profile.athlete?.name || 'Athlete')}" class="w-full h-full object-cover">` : '<span class="text-xs text-slate-400">No Photo</span>'}
+                            </div>
+                            <div>
+                                <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Athlete Profile</p>
+                                <h1 class="text-3xl md:text-4xl font-bold text-slate-900 mt-2">${escapeHtml(profile.athlete?.name || 'Athlete')}</h1>
+                                <p class="text-base text-slate-600 mt-2">${escapeHtml(profile.athlete?.headline || '')}</p>
+                            </div>
+                        </div>
+                        <button id="share-profile-btn" class="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Share Profile</button>
+                    </div>
+
+                    <div class="grid md:grid-cols-3 gap-4 mt-8">
+                        <div class="rounded-2xl border border-slate-200 p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Position</div>
+                            <div class="text-lg font-semibold text-slate-900 mt-1">${escapeHtml(bio.position || 'Not set')}</div>
+                        </div>
+                        <div class="rounded-2xl border border-slate-200 p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Graduation Year</div>
+                            <div class="text-lg font-semibold text-slate-900 mt-1">${escapeHtml(bio.graduationYear || 'Not set')}</div>
+                        </div>
+                        <div class="rounded-2xl border border-slate-200 p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Hometown</div>
+                            <div class="text-lg font-semibold text-slate-900 mt-1">${escapeHtml(bio.hometown || 'Not set')}</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-8">
+                        <h2 class="text-2xl font-bold text-slate-900">Career Stats</h2>
+                        <div class="grid md:grid-cols-2 gap-4 mt-4 mb-4">
+                            <div class="rounded-2xl bg-blue-50 border border-blue-100 p-5">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-blue-700">Games Played</div>
+                                <div class="text-4xl font-bold text-blue-900 mt-2">${escapeHtml(summary.gamesPlayed || 0)}</div>
+                            </div>
+                            <div class="rounded-2xl bg-indigo-50 border border-indigo-100 p-5">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-indigo-700">Total Minutes</div>
+                                <div class="text-4xl font-bold text-indigo-900 mt-2">${escapeHtml(summary.totalMinutes || 0)}</div>
+                            </div>
+                        </div>
+                        <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">${renderStatGrid(summary)}</div>
+                    </div>
+
+                    <div class="mt-8">
+                        <h2 class="text-2xl font-bold text-slate-900">Included Seasons</h2>
+                        <div class="grid md:grid-cols-2 gap-4 mt-4">
+                            ${seasons.map((season) => `
+                                <div class="rounded-2xl border border-slate-200 p-4">
+                                    <div class="font-semibold text-slate-900">${escapeHtml(season.teamName || 'Team')}</div>
+                                    <div class="text-sm text-slate-500 mt-1">${escapeHtml(season.playerName || '')}</div>
+                                    <div class="text-xs text-slate-500 mt-3">${escapeHtml(season.gamesPlayed || 0)} games · ${escapeHtml(((season.totalTimeMs || 0) / 60000).toFixed(1))} minutes</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div class="mt-8">
+                        <h2 class="text-2xl font-bold text-slate-900">Highlight Clips</h2>
+                        <div class="grid md:grid-cols-2 gap-4 mt-4">${renderClips(profile.clips)}</div>
+                    </div>
+                `;
+
+                document.getElementById('share-profile-btn')?.addEventListener('click', async () => {
+                    await shareOrCopy({
+                        title: `${profile.athlete?.name || 'Athlete'} profile`,
+                        text: 'Take a look at this athlete profile on ALL PLAYS.',
+                        url: shareUrl
+                    });
+                });
+            } catch (error) {
+                console.error('Unable to load athlete profile', error);
+                content.innerHTML = '<div class="text-center py-12 text-slate-500">This athlete profile is private or unavailable.</div>';
+            }
+        }
+
+        loadProfile();
+    </script>
+</body>
+</html>
