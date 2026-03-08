@@ -255,6 +255,7 @@
         } from './js/parent-incentives.js?v=3';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
+        import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
@@ -823,10 +824,11 @@
                 if (!Array.isArray(trackedUids)) trackedUids = [];
                 if (!Array.isArray(practiceSessions)) practiceSessions = [];
 
+                const visibleSessions = filterVisiblePracticeSessions(practiceSessions, dbGames);
                 const sessionsByEventId = new Map();
                 const sessions = [];
                 const matchedSessionIds = new Set();
-                practiceSessions.forEach((session) => {
+                visibleSessions.forEach((session) => {
                     if (!session?.eventId) return;
                     sessionsByEventId.set(session.eventId, session);
                     sessions.push({
@@ -1309,8 +1311,10 @@
             });
             for (const [teamId, teamChildren] of byTeam.entries()) {
                 const sessions = await getPracticeSessions(teamId);
+                const dbGames = await getGames(teamId);
+                const visibleSessions = filterVisiblePracticeSessions(sessions || [], dbGames);
                 const completionsBySessionId = new Map();
-                await Promise.all((sessions || []).map(async (session) => {
+                await Promise.all(visibleSessions.map(async (session) => {
                     try {
                         const completions = await getPracticePacketCompletions(teamId, session.id);
                         completionsBySessionId.set(session.id, completions || []);
@@ -1318,7 +1322,7 @@
                         completionsBySessionId.set(session.id, []);
                     }
                 }));
-                (sessions || []).forEach((session) => {
+                visibleSessions.forEach((session) => {
                     const d = session?.date?.toDate ? session.date.toDate() : new Date(session?.date);
                     if (!d || Number.isNaN(d.getTime())) return;
                     const hasAttendance = hasRecordedAttendance(session?.attendance);
