@@ -41,4 +41,12 @@ describe('athlete profile wiring', () => {
         expect(source).toContain("resource.data.privacy == 'public'");
         expect(source).toContain('resource.data.parentUserId == request.auth.uid');
     });
+
+    it('guards private athlete profile reads and skips stale season keys in db helpers', () => {
+        const source = readFile('js/db.js');
+
+        expect(source).toContain("if (profile.privacy !== 'public' && !isOwner)");
+        expect(source).toContain('const seasonLink = allowedSeasons.get(seasonKey);');
+        expect(source).toContain('Season key ${seasonKey} not found in allowed seasons, skipping');
+    });
 });

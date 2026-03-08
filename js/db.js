@@ -1743,7 +1743,18 @@ export async function listAthleteProfilesForParent(userId) {
 export async function getAthleteProfile(profileId) {
     const profileRef = doc(db, 'athleteProfiles', profileId);
     const profileSnap = await getDoc(profileRef);
-    return profileSnap.exists() ? { id: profileSnap.id, ...(profileSnap.data() || {}) } : null;
+    if (!profileSnap.exists()) {
+        return null;
+    }
+
+    const profile = { id: profileSnap.id, ...(profileSnap.data() || {}) };
+    const currentUserId = auth.currentUser?.uid || null;
+    const isOwner = currentUserId && profile.parentUserId === currentUserId;
+    if (profile.privacy !== 'public' && !isOwner) {
+        return null;
+    }
+
+    return profile;
 }
 
 export async function saveAthleteProfile(userId, draft, options = {}) {
@@ -1759,7 +1770,13 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
 
     const seasonSummaries = [];
     for (const seasonKey of selectedSeasonKeys) {
-        const summary = await buildAthleteProfileSeasonSummary(allowedSeasons.get(seasonKey));
+        const seasonLink = allowedSeasons.get(seasonKey);
+        if (!seasonLink) {
+            console.warn(`Season key ${seasonKey} not found in allowed seasons, skipping`);
+            continue;
+        }
+
+        const summary = await buildAthleteProfileSeasonSummary(seasonLink);
         if (summary) seasonSummaries.push(summary);
     }
 
