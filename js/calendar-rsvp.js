@@ -23,8 +23,9 @@ export function buildLinkedPlayersByTeam(parentLinks) {
 }
 
 export function resolveCalendarRsvpSubmission(linkedPlayersByTeam, teamId, selectedChildId = '') {
-    const players = Array.isArray(linkedPlayersByTeam?.get(teamId)) ? linkedPlayersByTeam.get(teamId) : [];
-    const allowedPlayerIds = uniqNonEmpty(players.map((player) => player?.playerId));
+    const players = linkedPlayersByTeam?.get(teamId);
+    const playerArray = Array.isArray(players) ? players : [];
+    const allowedPlayerIds = uniqNonEmpty(playerArray.map((player) => player?.playerId));
     if (allowedPlayerIds.length === 0) {
         throw new Error('No linked child is available for this team.');
     }
