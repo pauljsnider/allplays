@@ -223,7 +223,7 @@
             const linkedPlayers = getLinkedPlayersForTeam(ev.teamId);
             const defaultChildId = linkedPlayers.length === 1 ? linkedPlayers[0].playerId : '';
             return `
-                <div class="mt-3 border-t border-gray-100 pt-3">
+                <div class="mt-3 border-t border-gray-100 pt-3" data-rsvp-container>
                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                     ${renderCalendarChildScope(ev.teamId)}
                     <div class="flex gap-2">
@@ -240,7 +240,7 @@
             const teamId = btn?.dataset?.teamId || '';
             const gameId = btn?.dataset?.gameId || '';
             if (!teamId || !gameId) return;
-            const selectedChildId = btn?.closest('.mt-3')?.querySelector('[data-rsvp-child-selector="true"]')?.value || btn?.dataset?.rsvpChildId || '';
+            const selectedChildId = btn?.closest('[data-rsvp-container]')?.querySelector('[data-rsvp-child-selector="true"]')?.value || btn?.dataset?.rsvpChildId || '';
             submitCalendarRsvp(teamId, gameId, response, { selectedChildId });
         }
 
