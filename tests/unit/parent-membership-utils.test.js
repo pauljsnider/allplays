@@ -3,7 +3,8 @@ import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
     hasParentLink,
-    mergeApprovedParentLinkState
+    mergeApprovedParentLinkState,
+    mergeApprovedParentMembershipRequests
 } from '../../js/parent-membership-utils.js';
 
 describe('parent membership utils', () => {
@@ -69,5 +70,46 @@ describe('parent membership utils', () => {
             nextStatus: 'denied',
             decidedBy: 'coach-1'
         })).toThrow('Only pending requests can be decided');
+    });
+
+    it('merges approved membership requests into the requester profile without duplicates', () => {
+        const result = mergeApprovedParentMembershipRequests({
+            email: 'parent@example.com',
+            roles: ['member'],
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-9', playerName: 'Avery Lee' }
+            ],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-9']
+        }, [
+            {
+                status: 'approved',
+                requesterUserId: 'user-1',
+                requesterEmail: 'parent@example.com',
+                teamId: 'team-1',
+                teamName: 'Falcons',
+                playerId: 'player-9',
+                playerName: 'Avery Lee',
+                playerNumber: '9',
+                relation: 'Guardian'
+            },
+            {
+                status: 'approved',
+                requesterUserId: 'user-1',
+                requesterEmail: 'parent@example.com',
+                teamId: 'team-2',
+                teamName: 'Tigers',
+                playerId: 'player-3',
+                playerName: 'Jordan Cruz',
+                playerNumber: '3',
+                relation: 'Parent'
+            }
+        ]);
+
+        expect(result.changed).toBe(true);
+        expect(result.userUpdate.roles).toEqual(['member', 'parent']);
+        expect(result.userUpdate.parentOf).toHaveLength(2);
+        expect(result.userUpdate.parentTeamIds).toEqual(['team-1', 'team-2']);
+        expect(result.userUpdate.parentPlayerKeys).toEqual(['team-1::player-9', 'team-2::player-3']);
     });
 });

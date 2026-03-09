@@ -627,10 +627,6 @@ export async function approveParentMembershipRequest(teamId, requestId, decision
         const hasParentEntry = currentParents.some((parent) => parent?.userId === requestData.requesterUserId);
         const now = Timestamp.now();
 
-        transaction.set(userRef, {
-            ...merged.userUpdate,
-            updatedAt: now
-        }, { merge: true });
         transaction.set(playerRef, {
             parents: hasParentEntry ? currentParents : [...currentParents, {
                 ...merged.playerParentEntry,
