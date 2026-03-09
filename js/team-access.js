@@ -1,23 +1,17 @@
 /**
  * Check whether a user has full team management access.
- * Full access means owner, delegated coach, team admin email, or platform admin.
+ * Full access means owner, team admin email, or platform admin.
  */
 export function hasFullTeamAccess(user, team) {
   if (!user || !team) return false;
 
   const isOwner = team.ownerId === user.uid;
-  const teamId = team.id || null;
-  const isDelegatedCoach = Boolean(
-    teamId &&
-    Array.isArray(user.coachOf) &&
-    user.coachOf.includes(teamId)
-  );
   const normalizedEmail = (user.email || '').toLowerCase();
   const adminEmails = (team.adminEmails || []).map((email) => String(email || '').toLowerCase());
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;
 
-  return isOwner || isDelegatedCoach || isTeamAdmin || isPlatformAdmin;
+  return isOwner || isTeamAdmin || isPlatformAdmin;
 }
 
 /**
