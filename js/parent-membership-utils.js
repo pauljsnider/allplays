@@ -6,6 +6,12 @@ function uniqueStrings(values) {
     return [...new Set((values || []).filter(Boolean).map((value) => String(value)))];
 }
 
+export function hasParentLink(userData, teamId, playerId) {
+    return (Array.isArray(userData?.parentOf) ? userData.parentOf : []).some((link) => (
+        link?.teamId === teamId && link?.playerId === playerId
+    ));
+}
+
 export function mergeApprovedParentLinkState({
     userData,
     parentUserId,

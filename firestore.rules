@@ -280,14 +280,6 @@ service cloud.firestore {
                              request.resource.data.teamId == resource.data.teamId &&
                              request.resource.data.createdAt == resource.data.createdAt &&
                              request.resource.data.status in ['approved', 'denied']
-                           ) ||
-                           (
-                             resource.data.requesterUserId == request.auth.uid &&
-                             resource.data.status == 'denied' &&
-                             request.resource.data.requesterUserId == resource.data.requesterUserId &&
-                             request.resource.data.playerId == resource.data.playerId &&
-                             request.resource.data.teamId == resource.data.teamId &&
-                             request.resource.data.status == 'pending'
                            )
                          );
 

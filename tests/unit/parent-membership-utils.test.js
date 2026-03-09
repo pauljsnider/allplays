@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
+    hasParentLink,
     mergeApprovedParentLinkState
 } from '../../js/parent-membership-utils.js';
 
@@ -36,6 +37,21 @@ describe('parent membership utils', () => {
             email: 'parent@example.com',
             relation: 'Guardian'
         });
+    });
+
+    it('detects an existing parent link for the same team and player', () => {
+        expect(hasParentLink({
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-9' },
+                { teamId: 'team-2', playerId: 'player-3' }
+            ]
+        }, 'team-1', 'player-9')).toBe(true);
+
+        expect(hasParentLink({
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-9' }
+            ]
+        }, 'team-1', 'player-8')).toBe(false);
     });
 
     it('allows only valid request status transitions', () => {
