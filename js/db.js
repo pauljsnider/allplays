@@ -28,7 +28,8 @@ import {
     runTransaction,
     ref,
     uploadBytes,
-    getDownloadURL
+    getDownloadURL,
+    deleteObject
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
@@ -158,6 +159,23 @@ export async function uploadChatImage(teamId, file) {
             };
         }
         throw error;
+    }
+}
+
+export async function deleteUploadedChatAttachments(attachments = []) {
+    const deletions = attachments
+        .filter((attachment) => attachment?.path)
+        .map(async (attachment) => {
+            const usesImageStorage = attachment.path.startsWith('team-photos/')
+                || attachment.path.startsWith('team-videos/');
+            const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
+            await deleteObject(storageRef);
+        });
+
+    const results = await Promise.allSettled(deletions);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure) {
+        throw failure.reason;
     }
 }
 
