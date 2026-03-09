@@ -58,6 +58,53 @@ export function mergeApprovedParentLinkState({
     };
 }
 
+export function mergeApprovedParentMembershipRequests(userData, requests = []) {
+    let nextUserData = {
+        parentOf: Array.isArray(userData?.parentOf) ? [...userData.parentOf] : [],
+        parentTeamIds: Array.isArray(userData?.parentTeamIds) ? [...userData.parentTeamIds] : [],
+        parentPlayerKeys: Array.isArray(userData?.parentPlayerKeys) ? [...userData.parentPlayerKeys] : [],
+        roles: Array.isArray(userData?.roles) ? [...userData.roles] : []
+    };
+    let changed = false;
+
+    for (const request of (requests || [])) {
+        if (request?.status !== 'approved' || !request?.teamId || !request?.playerId) {
+            continue;
+        }
+        if (hasParentLink(nextUserData, request.teamId, request.playerId)) {
+            continue;
+        }
+
+        const merged = mergeApprovedParentLinkState({
+            userData: nextUserData,
+            parentUserId: request.requesterUserId || userData?.id || '',
+            parentEmail: request.requesterEmail || userData?.email || '',
+            team: {
+                id: request.teamId,
+                name: request.teamName || null
+            },
+            player: {
+                id: request.playerId,
+                name: request.playerName || null,
+                number: request.playerNumber || null,
+                photoUrl: request.playerPhotoUrl || null
+            },
+            relation: request.relation || null
+        });
+
+        nextUserData = {
+            ...nextUserData,
+            ...merged.userUpdate
+        };
+        changed = true;
+    }
+
+    return {
+        changed,
+        userUpdate: nextUserData
+    };
+}
+
 export function buildParentMembershipRequestUpdate({
     currentStatus,
     nextStatus,
