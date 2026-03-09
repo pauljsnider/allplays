@@ -36,6 +36,7 @@ import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
+    hasParentLink,
     mergeApprovedParentLinkState
 } from './parent-membership-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
@@ -603,6 +604,9 @@ export async function approveParentMembershipRequest(teamId, requestId, decision
         const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
         const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
         const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+        if (hasParentLink(userData, teamId, requestData.playerId)) {
+            throw new Error('Requester already has access to this player');
+        }
         const merged = mergeApprovedParentLinkState({
             userData,
             parentUserId: requestData.requesterUserId,
