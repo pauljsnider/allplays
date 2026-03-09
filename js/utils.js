@@ -391,7 +391,13 @@ export function parseICS(icsText) {
     if (line === 'BEGIN:VEVENT') {
       currentEvent = {};
     } else if (line === 'END:VEVENT' && currentEvent) {
-      if (currentEvent.dtstart && currentEvent.summary) {
+      const hasStandardEventFields = currentEvent.dtstart && currentEvent.summary;
+      const hasRecurringOverrideFields =
+        typeof currentEvent.uid === 'string' &&
+        currentEvent.uid.trim() &&
+        currentEvent.recurrenceId instanceof Date &&
+        !Number.isNaN(currentEvent.recurrenceId.getTime());
+      if (hasStandardEventFields || hasRecurringOverrideFields) {
         rawEvents.push(currentEvent);
       }
       currentEvent = null;
