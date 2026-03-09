@@ -93,6 +93,36 @@
                         <button id="redeem-code-btn" class="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">Redeem Code</button>
                     </div>
                 </div>
+
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 bg-gray-50">
+                        <h2 class="text-lg font-bold text-gray-900">Request Team Access</h2>
+                        <p class="text-xs text-gray-500 mt-1">Don't have an invite code yet? Request parent access from a coach or team admin.</p>
+                    </div>
+                    <div class="p-4 space-y-3">
+                        <select id="request-team-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="">Select Team</option>
+                        </select>
+                        <select id="request-player-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" disabled>
+                            <option value="">Select Player</option>
+                        </select>
+                        <select id="request-relation-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="Parent">Parent</option>
+                            <option value="Mother">Mother</option>
+                            <option value="Father">Father</option>
+                            <option value="Guardian">Guardian</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <button id="submit-parent-access-request-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition">Request Access</button>
+                        <div id="parent-membership-request-status" class="hidden text-xs rounded-lg px-3 py-2"></div>
+                    </div>
+                    <div class="p-4 border-t border-gray-100 bg-gray-50">
+                        <h3 class="text-sm font-semibold text-gray-900">My Requests</h3>
+                        <div id="parent-membership-request-list" class="mt-3 space-y-2 text-sm text-gray-600">
+                            <div class="text-xs text-gray-500">Loading requests...</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Right Column: Combined Schedule -->
@@ -215,6 +245,8 @@
             getParentDashboardData,
             redeemParentInvite,
             getTeam,
+            getTeams,
+            getPlayers,
             getGames,
             getTrackedCalendarEventUids,
             getUnreadChatCounts,
@@ -233,8 +265,10 @@
             updateRideRequestStatus,
             closeRideOffer,
             cancelRideRequest,
-            getAggregatedStatsForPlayer
-        } from './js/db.js?v=24';
+            getAggregatedStatsForPlayer,
+            createParentMembershipRequest,
+            listMyParentMembershipRequests
+        } from './js/db.js?v=25';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
         import {
             getIncentiveRules,
@@ -275,6 +309,9 @@
         const rideshareOffersByEvent = new Map();
         const teamChildrenByTeamId = new Map();
         const selectedRideChildByOffer = new Map();
+        const requestablePlayersByTeam = new Map();
+        let publicRequestTeams = [];
+        let parentMembershipRequests = [];
         let incentivesPanelPlayer = null;  // { id, name, teamId }
         let incentivesPanelRules = [];
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
@@ -314,6 +351,126 @@
                 .replace(/'/g, '&#39;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
+        }
+
+        function setParentMembershipRequestStatus(message, tone = 'neutral') {
+            const el = document.getElementById('parent-membership-request-status');
+            if (!el) return;
+            const toneClasses = {
+                neutral: 'bg-gray-50 text-gray-700 border border-gray-200',
+                success: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+                error: 'bg-red-50 text-red-700 border border-red-200'
+            };
+            el.className = `text-xs rounded-lg px-3 py-2 ${toneClasses[tone] || toneClasses.neutral}`;
+            el.textContent = message;
+            el.classList.remove('hidden');
+        }
+
+        function renderParentMembershipRequests() {
+            const listEl = document.getElementById('parent-membership-request-list');
+            if (!listEl) return;
+            if (!parentMembershipRequests.length) {
+                listEl.innerHTML = '<div class="text-xs text-gray-500">No access requests yet.</div>';
+                return;
+            }
+
+            listEl.innerHTML = parentMembershipRequests.map((request) => {
+                const statusTone = request.status === 'approved'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : request.status === 'denied'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-amber-200 bg-amber-50 text-amber-700';
+                return `
+                    <div class="rounded-xl border border-gray-200 bg-white p-3">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="font-semibold text-gray-900">${escapeHtml(request.teamName || 'Team')} · ${escapeHtml(request.playerName || 'Player')}</div>
+                                <div class="text-xs text-gray-500 mt-1">${escapeHtml(request.relation || 'Parent')} access request</div>
+                                ${request.decisionNote ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(request.decisionNote)}</div>` : ''}
+                            </div>
+                            <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusTone}">${escapeHtml(request.status || 'pending')}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function populateRequestTeamOptions() {
+            const selectEl = document.getElementById('request-team-select');
+            if (!selectEl) return;
+            selectEl.innerHTML = '<option value="">Select Team</option>' + publicRequestTeams.map((team) => (
+                `<option value="${escapeAttr(team.id)}">${escapeHtml(team.name || 'Team')}</option>`
+            )).join('');
+        }
+
+        function populateRequestPlayerOptions(players = []) {
+            const selectEl = document.getElementById('request-player-select');
+            if (!selectEl) return;
+            if (!players.length) {
+                selectEl.innerHTML = '<option value="">Select Player</option>';
+                selectEl.disabled = true;
+                return;
+            }
+            selectEl.innerHTML = '<option value="">Select Player</option>' + players.map((player) => (
+                `<option value="${escapeAttr(player.id)}">${escapeHtml(player.number ? `#${player.number} ${player.name}` : player.name || 'Player')}</option>`
+            )).join('');
+            selectEl.disabled = false;
+        }
+
+        async function handleRequestTeamSelection() {
+            const teamId = document.getElementById('request-team-select')?.value || '';
+            if (!teamId) {
+                populateRequestPlayerOptions([]);
+                return;
+            }
+
+            if (!requestablePlayersByTeam.has(teamId)) {
+                const players = await getPlayers(teamId);
+                requestablePlayersByTeam.set(teamId, (players || []).filter((player) => player?.active !== false));
+            }
+
+            populateRequestPlayerOptions(requestablePlayersByTeam.get(teamId) || []);
+        }
+
+        async function loadRequestAccessOptions() {
+            publicRequestTeams = (await getTeams()).filter((team) => team?.isPublic !== false);
+            populateRequestTeamOptions();
+            await handleRequestTeamSelection();
+        }
+
+        async function refreshParentMembershipRequestList(userId) {
+            parentMembershipRequests = await listMyParentMembershipRequests(userId);
+            renderParentMembershipRequests();
+        }
+
+        async function submitParentAccessRequest() {
+            const teamId = document.getElementById('request-team-select')?.value || '';
+            const playerId = document.getElementById('request-player-select')?.value || '';
+            const relation = document.getElementById('request-relation-select')?.value || 'Parent';
+            if (!teamId || !playerId) {
+                setParentMembershipRequestStatus('Select a team and player before requesting access.', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('submit-parent-access-request-btn');
+            const originalText = btn?.textContent || 'Request Access';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Submitting...';
+            }
+
+            try {
+                await createParentMembershipRequest(teamId, playerId, relation);
+                setParentMembershipRequestStatus('Access request submitted. A coach or admin can approve it from roster management.', 'success');
+                await refreshParentMembershipRequestList(currentUserId);
+            } catch (err) {
+                setParentMembershipRequestStatus(err?.message || 'Unable to submit access request.', 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            }
         }
 
         function formatRsvpSummary(summary) {
@@ -662,6 +819,8 @@
                 });
 
                 const data = await getParentDashboardData(user.uid);
+                await loadRequestAccessOptions();
+                await refreshParentMembershipRequestList(user.uid);
                 renderPlayers(data.children);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
@@ -754,6 +913,14 @@
                         btn.disabled = false;
                     }
                 });
+                document.getElementById('request-team-select')?.addEventListener('change', async () => {
+                    try {
+                        await handleRequestTeamSelection();
+                    } catch (err) {
+                        setParentMembershipRequestStatus('Unable to load roster for that team.', 'error');
+                    }
+                });
+                document.getElementById('submit-parent-access-request-btn')?.addEventListener('click', submitParentAccessRequest);
 
             } catch (error) {
                 console.error(error);

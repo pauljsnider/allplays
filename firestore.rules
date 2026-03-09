@@ -259,6 +259,41 @@ service cloud.firestore {
         }
       }
 
+      match /membershipRequests/{requestId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         requestId == request.auth.uid + "__" + request.resource.data.playerId &&
+                         request.resource.data.requesterUserId == request.auth.uid &&
+                         request.resource.data.teamId == teamId &&
+                         request.resource.data.status == 'pending' &&
+                         request.resource.data.playerId is string;
+
+        allow update: if isSignedIn() &&
+                         (
+                           (
+                             isTeamOwnerOrAdmin(teamId) &&
+                             resource.data.status == 'pending' &&
+                             request.resource.data.requesterUserId == resource.data.requesterUserId &&
+                             request.resource.data.playerId == resource.data.playerId &&
+                             request.resource.data.teamId == resource.data.teamId &&
+                             request.resource.data.createdAt == resource.data.createdAt &&
+                             request.resource.data.status in ['approved', 'denied']
+                           ) ||
+                           (
+                             resource.data.requesterUserId == request.auth.uid &&
+                             resource.data.status == 'denied' &&
+                             request.resource.data.requesterUserId == resource.data.requesterUserId &&
+                             request.resource.data.playerId == resource.data.playerId &&
+                             request.resource.data.teamId == resource.data.teamId &&
+                             request.resource.data.status == 'pending'
+                           )
+                         );
+
+        allow delete: if false;
+      }
+
       // Games subcollection
       match /games/{gameId} {
         allow read: if true;  // Public game data

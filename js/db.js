@@ -33,6 +33,11 @@ import {
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
+import {
+    buildParentMembershipRequestId,
+    buildParentMembershipRequestUpdate,
+    mergeApprovedParentLinkState
+} from './parent-membership-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import {
@@ -457,6 +462,211 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
             updatedAt: Timestamp.now()
         });
     }
+}
+
+function sortParentMembershipRequests(requests = []) {
+    return [...requests].sort((a, b) => {
+        const aTime = a?.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a?.createdAt || 0).getTime();
+        const bTime = b?.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b?.createdAt || 0).getTime();
+        return bTime - aTime;
+    });
+}
+
+function getCurrentUserIdentity() {
+    return {
+        userId: auth.currentUser?.uid || '',
+        email: (auth.currentUser?.email || '').toLowerCase().trim(),
+        name: auth.currentUser?.displayName || auth.currentUser?.email || 'Parent'
+    };
+}
+
+export async function createParentMembershipRequest(teamId, playerId, relation = 'Parent') {
+    const identity = getCurrentUserIdentity();
+    if (!identity.userId) {
+        throw new Error('You must be signed in to request parent access');
+    }
+    if (!teamId || !playerId) {
+        throw new Error('Team and player are required');
+    }
+
+    const [team, players, profile] = await Promise.all([
+        getTeam(teamId),
+        getPlayers(teamId),
+        getUserProfile(identity.userId)
+    ]);
+    const player = (players || []).find((entry) => entry.id === playerId);
+
+    if (!team || !player) {
+        throw new Error('Team or player not found');
+    }
+
+    const alreadyLinked = (Array.isArray(profile?.parentOf) ? profile.parentOf : []).some((link) => (
+        link?.teamId === teamId && link?.playerId === playerId
+    ));
+    if (alreadyLinked) {
+        throw new Error('You already have access to this player');
+    }
+
+    const requestId = buildParentMembershipRequestId(identity.userId, playerId);
+    const requestRef = doc(db, `teams/${teamId}/membershipRequests`, requestId);
+    const existingSnap = await getDoc(requestRef);
+    if (existingSnap.exists()) {
+        const existingData = existingSnap.data() || {};
+        if (existingData.status === 'pending') {
+            throw new Error('A request for this player is already pending');
+        }
+        if (existingData.status === 'approved') {
+            throw new Error('This player access request was already approved');
+        }
+    }
+
+    const now = Timestamp.now();
+    const requesterName = profile?.fullName || profile?.displayName || identity.name;
+    await setDoc(requestRef, {
+        requesterUserId: identity.userId,
+        requesterEmail: identity.email || profile?.email || null,
+        requesterName: requesterName || 'Parent',
+        teamId,
+        teamName: team.name || null,
+        playerId,
+        playerName: player.name || null,
+        playerNumber: player.number || null,
+        relation: relation || 'Parent',
+        status: 'pending',
+        createdAt: existingSnap.exists() ? (existingSnap.data()?.createdAt || now) : now,
+        updatedAt: now,
+        decidedAt: null,
+        decidedBy: null,
+        decidedByName: null,
+        decisionNote: null
+    }, { merge: false });
+
+    return { success: true, requestId };
+}
+
+export async function listMyParentMembershipRequests(userId) {
+    if (!userId) return [];
+    const snapshot = await getDocs(query(
+        collectionGroup(db, 'membershipRequests'),
+        where('requesterUserId', '==', userId)
+    ));
+    return sortParentMembershipRequests(snapshot.docs.map((requestDoc) => ({
+        id: requestDoc.id,
+        ...requestDoc.data()
+    })));
+}
+
+export async function listTeamParentMembershipRequests(teamId) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/membershipRequests`));
+    return sortParentMembershipRequests(snapshot.docs.map((requestDoc) => ({
+        id: requestDoc.id,
+        ...requestDoc.data()
+    })));
+}
+
+export async function approveParentMembershipRequest(teamId, requestId, decisionNote = '') {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to approve parent access');
+    }
+
+    const requestRef = doc(db, `teams/${teamId}/membershipRequests`, requestId);
+    await runTransaction(db, async (transaction) => {
+        const requestSnap = await transaction.get(requestRef);
+        if (!requestSnap.exists()) {
+            throw new Error('Request not found');
+        }
+
+        const requestData = requestSnap.data() || {};
+        const requestUpdate = buildParentMembershipRequestUpdate({
+            currentStatus: requestData.status,
+            nextStatus: 'approved',
+            decidedBy: currentUser.uid,
+            decidedByName: currentUser.displayName || currentUser.email || 'Coach',
+            decisionNote
+        });
+
+        const teamRef = doc(db, 'teams', teamId);
+        const playerRef = doc(db, `teams/${teamId}/players`, requestData.playerId);
+        const userRef = doc(db, 'users', requestData.requesterUserId);
+        const [teamSnap, playerSnap, userSnap] = await Promise.all([
+            transaction.get(teamRef),
+            transaction.get(playerRef),
+            transaction.get(userRef)
+        ]);
+
+        if (!teamSnap.exists() || !playerSnap.exists()) {
+            throw new Error('Team or player not found');
+        }
+
+        const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
+        const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
+        const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+        const merged = mergeApprovedParentLinkState({
+            userData,
+            parentUserId: requestData.requesterUserId,
+            parentEmail: requestData.requesterEmail || userData.email || '',
+            team,
+            player,
+            relation: requestData.relation || null
+        });
+
+        const currentParents = Array.isArray(player.parents) ? player.parents : [];
+        const hasParentEntry = currentParents.some((parent) => parent?.userId === requestData.requesterUserId);
+        const now = Timestamp.now();
+
+        transaction.set(userRef, {
+            ...merged.userUpdate,
+            updatedAt: now
+        }, { merge: true });
+        transaction.set(playerRef, {
+            parents: hasParentEntry ? currentParents : [...currentParents, {
+                ...merged.playerParentEntry,
+                addedAt: now
+            }],
+            updatedAt: now
+        }, { merge: true });
+        transaction.update(requestRef, {
+            ...requestUpdate,
+            updatedAt: now,
+            decidedAt: now
+        });
+    });
+
+    return { success: true };
+}
+
+export async function denyParentMembershipRequest(teamId, requestId, decisionNote = '') {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to deny parent access');
+    }
+
+    const requestRef = doc(db, `teams/${teamId}/membershipRequests`, requestId);
+    await runTransaction(db, async (transaction) => {
+        const requestSnap = await transaction.get(requestRef);
+        if (!requestSnap.exists()) {
+            throw new Error('Request not found');
+        }
+
+        const requestData = requestSnap.data() || {};
+        const requestUpdate = buildParentMembershipRequestUpdate({
+            currentStatus: requestData.status,
+            nextStatus: 'denied',
+            decidedBy: currentUser.uid,
+            decidedByName: currentUser.displayName || currentUser.email || 'Coach',
+            decisionNote
+        });
+        const now = Timestamp.now();
+        transaction.update(requestRef, {
+            ...requestUpdate,
+            updatedAt: now,
+            decidedAt: now
+        });
+    });
+
+    return { success: true };
 }
 
 // Games
