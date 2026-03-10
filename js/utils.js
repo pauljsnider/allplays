@@ -373,7 +373,7 @@ export async function fetchAndParseCalendar(url) {
  * @returns {Array} Array of parsed events
  */
 export function parseICS(icsText) {
-  const events = [];
+  const rawEvents = [];
   const lines = icsText.split(/\r\n|\n|\r/);
 
   let currentEvent = null;
@@ -391,8 +391,14 @@ export function parseICS(icsText) {
     if (line === 'BEGIN:VEVENT') {
       currentEvent = {};
     } else if (line === 'END:VEVENT' && currentEvent) {
-      if (currentEvent.dtstart && currentEvent.summary) {
-        events.push(...expandRecurringICSEvent(currentEvent));
+      const hasStandardEventFields = currentEvent.dtstart && currentEvent.summary;
+      const hasRecurringOverrideFields =
+        typeof currentEvent.uid === 'string' &&
+        currentEvent.uid.trim() &&
+        currentEvent.recurrenceId instanceof Date &&
+        !Number.isNaN(currentEvent.recurrenceId.getTime());
+      if (hasStandardEventFields || hasRecurringOverrideFields) {
+        rawEvents.push(currentEvent);
       }
       currentEvent = null;
     } else if (currentEvent) {
@@ -417,6 +423,9 @@ export function parseICS(icsText) {
             break;
           case 'DTEND':
             currentEvent.dtend = parseICSDate(value, parsedField.params);
+            break;
+          case 'RECURRENCE-ID':
+            currentEvent.recurrenceId = parseICSDate(value, parsedField.params);
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
@@ -453,7 +462,7 @@ export function parseICS(icsText) {
     }
   }
 
-  return events;
+  return buildICSOccurrences(rawEvents);
 }
 
 const ICS_DAY_TO_INDEX = {
@@ -662,13 +671,15 @@ function expandRecurringICSEvent(event) {
     if (exDateTimes.has(timestamp)) return;
     const occurrence = {
       ...baseEvent,
-      dtstart: new Date(timestamp)
+      dtstart: new Date(timestamp),
+      recurrenceId: new Date(timestamp)
     };
     if (durationMs != null) {
       occurrence.dtend = new Date(timestamp + durationMs);
     } else {
       delete occurrence.dtend;
     }
+    occurrence.id = buildICSOccurrenceId(occurrence.uid, occurrence.recurrenceId);
     occurrences.push(occurrence);
   };
 
@@ -721,6 +732,103 @@ function expandRecurringICSEvent(event) {
   }
 
   return occurrences;
+}
+
+function buildICSOccurrences(rawEvents) {
+  const events = [];
+  const overridesByUid = new Map();
+  const mastersByUid = new Map();
+
+  rawEvents.forEach((event) => {
+    if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
+      if (!overridesByUid.has(event.uid)) overridesByUid.set(event.uid, []);
+      overridesByUid.get(event.uid).push(event);
+      return;
+    }
+
+    if (event?.uid && event.rrule) {
+      if (!mastersByUid.has(event.uid)) mastersByUid.set(event.uid, []);
+      mastersByUid.get(event.uid).push(event);
+    }
+  });
+
+  rawEvents.forEach((event) => {
+    if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
+      if (!hasMasterForRecurringOverride(mastersByUid, event.uid)) {
+        const overrideEvent = buildICSOverrideOccurrence(event);
+        if (overrideEvent) events.push(overrideEvent);
+      }
+      return;
+    }
+
+    if (event?.uid && event.rrule) {
+      const overrides = overridesByUid.get(event.uid) || [];
+      const overrideExDates = overrides
+        .map((overrideEvent) => overrideEvent.recurrenceId)
+        .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()));
+      const expandedEvents = expandRecurringICSEvent({
+        ...event,
+        exDates: [...(event.exDates || []), ...overrideExDates]
+      });
+      events.push(...expandedEvents);
+      overrides.forEach((overrideEvent) => {
+        const resolvedOverride = buildICSOverrideOccurrence(overrideEvent, event);
+        if (resolvedOverride) events.push(resolvedOverride);
+      });
+      return;
+    }
+
+    events.push(event);
+  });
+
+  return events;
+}
+
+function hasMasterForRecurringOverride(mastersByUid, uid) {
+  const masters = mastersByUid.get(uid);
+  return Array.isArray(masters) && masters.length > 0;
+}
+
+function buildICSOverrideOccurrence(overrideEvent, masterEvent = null) {
+  const occurrenceAnchor = overrideEvent?.recurrenceId;
+  if (!(occurrenceAnchor instanceof Date) || Number.isNaN(occurrenceAnchor.getTime())) {
+    return null;
+  }
+
+  if (String(overrideEvent?.status || '').toUpperCase() === 'CANCELLED') {
+    return null;
+  }
+
+  const {
+    rrule: ignoredRule,
+    exDates: ignoredExDates,
+    recurrenceTimeZone: ignoredTimeZone,
+    recurrenceAbsoluteTime: ignoredAbsoluteTime,
+    ...baseMaster
+  } = masterEvent || {};
+  const {
+    rrule,
+    exDates,
+    recurrenceTimeZone,
+    recurrenceAbsoluteTime,
+    ...baseOverride
+  } = overrideEvent || {};
+
+  return {
+    ...baseMaster,
+    ...baseOverride,
+    recurrenceId: new Date(occurrenceAnchor.getTime()),
+    id: buildICSOccurrenceId(baseOverride.uid || baseMaster.uid, occurrenceAnchor)
+  };
+}
+
+function buildICSOccurrenceId(uid, recurrenceId) {
+  const normalizedUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!normalizedUid) return '';
+  if (!(recurrenceId instanceof Date) || Number.isNaN(recurrenceId.getTime())) {
+    return normalizedUid;
+  }
+  return `${normalizedUid}__${recurrenceId.toISOString()}`;
 }
 
 /**
@@ -1190,6 +1298,34 @@ export function getCalendarEventStatus(event) {
   }
 
   return 'scheduled';
+}
+
+/**
+ * Convert a parsed ICS event into the view model used by the global calendar.
+ * @param {Object} options
+ * @param {Object} options.team
+ * @param {string} options.teamColor
+ * @param {Object} options.event
+ * @returns {Object|null}
+ */
+export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
+  const eventDate = event?.dtstart instanceof Date ? event.dtstart : new Date(event?.dtstart);
+  if (Number.isNaN(eventDate.getTime())) {
+    return null;
+  }
+
+  return {
+    id: event.uid || `ics-${eventDate.getTime()}`,
+    teamId: team.id,
+    teamName: team.name,
+    teamColor,
+    type: getCalendarEventType(event),
+    title: event.summary || 'Event',
+    date: eventDate,
+    location: event.location || 'TBD',
+    status: getCalendarEventStatus(event),
+    source: 'ics'
+  };
 }
 
 // ============================================

@@ -14,7 +14,8 @@ import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
-import { normalizeLiveStatColumns, resolveLiveStatColumns } from './live-game-state.js?v=2';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
+import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -41,7 +42,7 @@ function statDefaults(columns) {
 }
 
 let state = {
-  period: 'Q1',
+  period: getDefaultLivePeriod(),
   clock: 0,
   running: false,
   lastTick: null,
@@ -1000,12 +1001,14 @@ async function broadcastEvent(eventData) {
 async function broadcastResetEvent(description = 'Tracker reset. Live viewer state cleared.') {
   if (!currentTeamId || !currentGameId) return;
   await broadcastEvent(buildLiveResetEvent({
-    period: state.period || 'Q1',
+    period: state.period || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig }),
     gameClockMs: 0,
     homeScore: 0,
     awayScore: 0,
     onCourt: state.onCourt || [],
     bench: state.bench || roster.map((player) => player.id),
+    sport: currentTeam?.sport || currentGame?.sport || currentConfig?.baseType || '',
+    periods: currentConfig?.periods || null,
     createdBy: currentUser?.uid || null,
     description
   }));
@@ -1682,6 +1685,16 @@ function setPeriod(p) {
   }
 
   renderHeader();
+}
+
+function applyPeriodButtons() {
+  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig }).slice(0, 5);
+  const fallbackLabel = labels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+  document.querySelectorAll('.period-btn').forEach((button, index) => {
+    const label = labels[index] || fallbackLabel;
+    button.dataset.period = label;
+    button.textContent = label;
+  });
 }
 
 function addStat(id, key, delta) {
@@ -2364,22 +2377,17 @@ async function init() {
     }));
 
     const configs = await getConfigs(teamId);
+    currentConfig = resolveLiveStatConfig({
+      configs,
+      game,
+      team
+    });
     const resolvedColumns = resolveLiveStatColumns({
       configs,
       game,
       team
     });
 
-    if (game.statTrackerConfigId) {
-      currentConfig = configs.find(c => c.id === game.statTrackerConfigId) || null;
-    }
-    if (!currentConfig && Array.isArray(configs) && configs.length) {
-      currentConfig = configs.find((config) => (
-        Array.isArray(config?.columns) &&
-        config.columns.length &&
-        JSON.stringify(normalizeLiveStatColumns(config.columns)) === JSON.stringify(resolvedColumns)
-      )) || null;
-    }
     if (!currentConfig) {
       currentConfig = {
         name: 'Default',
@@ -2389,7 +2397,7 @@ async function init() {
     }
 
     // Reset base state
-    state.period = 'Q1';
+    state.period = getDefaultLivePeriod({ game, team, config: currentConfig });
     state.clock = 0;
     state.running = false;
     state.lastTick = null;
@@ -2412,6 +2420,7 @@ async function init() {
     state.activeVoiceRecognition = null;
     setVoiceNoteButtonLabel(false);
     setVoiceNoteHint(false);
+    applyPeriodButtons();
 
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
@@ -2430,6 +2439,7 @@ async function init() {
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats')
         ]);
+        const resetAt = Date.now();
         try {
           await updateGame(teamId, gameId, {
             homeScore: 0,
@@ -2437,7 +2447,11 @@ async function init() {
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
-            liveResetAt: Date.now(),
+            liveResetAt: resetAt,
+            liveClockMs: 0,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q1',
+            liveClockUpdatedAt: resetAt,
             liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
             // Preserve opponent fields
             opponent: game.opponent,
@@ -2450,6 +2464,10 @@ async function init() {
         } catch (error) {
           console.warn('Failed to reset game metadata:', error);
         }
+        currentGame.liveClockMs = 0;
+        currentGame.liveClockRunning = false;
+        currentGame.liveClockPeriod = 'Q1';
+        currentGame.liveClockUpdatedAt = resetAt;
         const deletions = [
           ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
           ...statsSnapshot.docs.map(d => deleteDoc(d.ref))
@@ -2478,7 +2496,14 @@ async function init() {
         const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
-        const resumeClockState = deriveResumeClockState(liveEvents, { period: state.period, clock: state.clock });
+        const resumeClockState = deriveResumeClockState(
+          liveEvents,
+          { period: state.period, clock: state.clock },
+          {
+            liveClockPeriod: currentGame?.liveClockPeriod,
+            liveClockMs: currentGame?.liveClockMs
+          }
+        );
         if (resumeClockState.restored) {
           state.period = resumeClockState.period;
           state.clock = resumeClockState.clock;
