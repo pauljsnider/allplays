@@ -71,6 +71,19 @@
             <!-- Will be populated with season stats -->
         </div>
 
+        <!-- Selected Game Insights -->
+        <div id="player-game-insights-section" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+                <div class="p-6 md:p-8">
+                    <div class="flex items-center gap-3 mb-5">
+                        <div class="h-1 w-12 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Post-game insights</h2>
+                    </div>
+                    <div id="player-game-insights-body" class="space-y-3"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Advanced Stats Section (Premium Feature Preview) -->
         <div class="mb-8">
             <div
@@ -204,6 +217,7 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
+        import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=9";
@@ -251,6 +265,49 @@
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function insightToneClasses(tone) {
+            if (tone === 'positive') {
+                return 'border-green-200 bg-green-50';
+            }
+            if (tone === 'warning') {
+                return 'border-amber-200 bg-amber-50';
+            }
+            return 'border-gray-200 bg-gray-50';
+        }
+
+        function renderPlayerGameInsights(game, insights) {
+            const section = document.getElementById('player-game-insights-section');
+            const body = document.getElementById('player-game-insights-body');
+            if (!section || !body) return;
+
+            if (!game) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            section.classList.remove('hidden');
+            if (!insights.length) {
+                body.innerHTML = `
+                    <div class="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                        No player-specific insights are available for this game yet.
+                    </div>
+                `;
+                return;
+            }
+
+            body.innerHTML = `
+                <div class="text-sm text-gray-500 font-medium mb-2">
+                    Selected game: ${escapeHtml(game.opponent || 'Opponent')}
+                </div>
+                ${insights.map((item) => `
+                    <div class="rounded-xl border px-4 py-4 ${insightToneClasses(item.tone)}">
+                        <div class="text-sm font-bold text-gray-900">${escapeHtml(item.title || 'Insight')}</div>
+                        <p class="mt-1 text-sm text-gray-700 leading-relaxed">${escapeHtml(item.body || '')}</p>
+                    </div>
+                `).join('')}
+            `;
         }
 
         async function loadPlayerDetails() {
@@ -370,6 +427,7 @@
                 const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
                     ? gameId
                     : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
+                const selectedGame = games.find((entry) => entry.id === selectedGameId) || null;
                 // Set back-link href to team page (fallback navigation when banner not shown)
                 document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
 
@@ -442,6 +500,31 @@
                         ${card.sub ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(card.sub)}</div>` : ''}
                     </div>
                 `).join('');
+
+                if (gameId && selectedGame) {
+                    const selectedStats = perGameStats.find((entry) => entry.gameId === selectedGameId) || null;
+                    const teamStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${selectedGameId}/aggregatedStats`));
+                    const gameTeamStats = {};
+                    teamStatsSnapshot.forEach((docSnap) => {
+                        gameTeamStats[docSnap.id] = docSnap.data().stats || {};
+                    });
+                    const selectedEvents = allEvents
+                        .filter((event) => event.gameId === selectedGameId)
+                        .map((event) => ({
+                            ...event,
+                            clock: event.clock || event.gameTime || ''
+                        }));
+                    renderPlayerGameInsights(selectedGame, generatePlayerGameInsights({
+                        player,
+                        game: selectedGame,
+                        playerStats: selectedStats?.stats || {},
+                        playerTimeMs: selectedStats?.timeMs || 0,
+                        gameTeamStats,
+                        events: selectedEvents
+                    }));
+                } else {
+                    renderPlayerGameInsights(null, []);
+                }
 
                 // Render Advanced Stats Visualizations
                 const advancedStatsDiv = document.getElementById('advanced-stats');
