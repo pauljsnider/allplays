@@ -1192,6 +1192,34 @@ export function getCalendarEventStatus(event) {
   return 'scheduled';
 }
 
+/**
+ * Convert a parsed ICS event into the view model used by the global calendar.
+ * @param {Object} options
+ * @param {Object} options.team
+ * @param {string} options.teamColor
+ * @param {Object} options.event
+ * @returns {Object|null}
+ */
+export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
+  const eventDate = event?.dtstart instanceof Date ? event.dtstart : new Date(event?.dtstart);
+  if (Number.isNaN(eventDate.getTime())) {
+    return null;
+  }
+
+  return {
+    id: event.uid || `ics-${eventDate.getTime()}`,
+    teamId: team.id,
+    teamName: team.name,
+    teamColor,
+    type: getCalendarEventType(event),
+    title: event.summary || 'Event',
+    date: eventDate,
+    location: event.location || 'TBD',
+    status: getCalendarEventStatus(event),
+    source: 'ics'
+  };
+}
+
 // ============================================
 // Practice & Event Utilities - Phase 1
 // ============================================

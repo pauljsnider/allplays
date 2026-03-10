@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCalendarEventType, getCalendarEventStatus } from '../../js/utils.js';
+import { buildGlobalCalendarIcsEvent, getCalendarEventType, getCalendarEventStatus } from '../../js/utils.js';
 
 describe('getCalendarEventType', () => {
     it('classifies ICS practice events from summary when isPractice is missing', () => {
@@ -32,5 +32,33 @@ describe('getCalendarEventStatus', () => {
     it('keeps non-cancelled ICS events scheduled', () => {
         const status = getCalendarEventStatus({ status: 'CONFIRMED', summary: 'U12 vs Lions' });
         expect(status).toBe('scheduled');
+    });
+});
+
+describe('buildGlobalCalendarIcsEvent', () => {
+    it('preserves cancelled status for synced ICS events in the global calendar', () => {
+        const mappedEvent = buildGlobalCalendarIcsEvent({
+            team: { id: 'team-1', name: 'Wildcats' },
+            teamColor: '#f97316',
+            event: {
+                uid: 'ics-1',
+                summary: '[CANCELED] Practice',
+                dtstart: new Date('2026-03-07T12:15:29Z'),
+                location: 'Main Field'
+            }
+        });
+
+        expect(mappedEvent).toMatchObject({
+            id: 'ics-1',
+            teamId: 'team-1',
+            teamName: 'Wildcats',
+            teamColor: '#f97316',
+            type: 'practice',
+            title: '[CANCELED] Practice',
+            location: 'Main Field',
+            status: 'cancelled',
+            source: 'ics'
+        });
+        expect(mappedEvent.date).toBeInstanceOf(Date);
     });
 });
