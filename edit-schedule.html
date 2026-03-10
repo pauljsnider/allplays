@@ -659,10 +659,11 @@
 
     <script type="module">
         import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer } from './js/db.js?v=20';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
         import { Timestamp, deleteField } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -1005,9 +1006,8 @@
                             // Skip if already tracked
                             if (trackedUids.includes(event.uid)) return;
 
-                            // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
-                            const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
-                                event.summary?.includes('[CANCELED]');
+                            // Normalize common ICS and TeamSnap cancelled variants via shared helper
+                            const isCancelled = getCalendarEventStatus(event) === 'cancelled';
 
                             // Skip if conflicts with DB event
                             const hasConflict = dbEvents.some(dbEvent => {
@@ -1018,8 +1018,8 @@
                             if (hasConflict) return;
 
                             const isPractice = isPracticeEvent(event.summary);
-                            // Clean [CANCELED] prefix from summary before extracting opponent
-                            const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+                            // Clean cancelled prefix from summary before extracting opponent
+                            const cleanSummary = event.summary?.replace(/\[(?:CANCELED|CANCELLED)\]\s*/gi, '') || '';
                             const opponent = extractOpponent(cleanSummary, currentTeam.name);
 
                             allEvents.push({
@@ -1213,22 +1213,24 @@
                     const game = gamesCache[gameId];
                     if (!game) return;
                     if (!confirm(`Cancel the game vs. ${game.opponent}? This will notify the team via chat.`)) return;
-                    try {
-                        await cancelGame(currentTeamId, gameId, currentUser.uid);
-                        // Post cancellation to team chat
-                        const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-                        const dateStr = gameDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                        await postChatMessage(currentTeamId, {
-                            text: `⚠️ Game cancelled: vs. ${game.opponent} on ${dateStr}`,
-                            senderId: currentUser.uid,
-                            senderName: currentUser.displayName || currentUser.email,
-                            senderEmail: currentUser.email
-                        });
+                    const result = await cancelScheduledGame({
+                        teamId: currentTeamId,
+                        gameId,
+                        user: currentUser,
+                        game,
+                        cancelGame,
+                        postChatMessage
+                    });
+                    if (result.cancelled) {
                         loadSchedule();
-                    } catch (err) {
-                        console.error('Failed to cancel game:', err);
-                        alert('Error cancelling game: ' + err.message);
+                        if (result.notificationError) {
+                            console.error('Game cancelled but team chat notification failed:', result.notificationError);
+                            alert(`Game cancelled, but team chat notification failed: ${result.notificationError}`);
+                        }
+                        return;
                     }
+                    console.error('Failed to cancel game:', result.error);
+                    alert('Error cancelling game: ' + result.error);
                 });
             });
 
