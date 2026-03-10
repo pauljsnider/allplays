@@ -663,6 +663,7 @@
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
+        import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
         import { Timestamp, deleteField } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
@@ -694,6 +695,10 @@
         function mapLink(locationText) {
             if (!locationText) return null;
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
+        }
+
+        function getSelectedConfigId() {
+            return document.getElementById('statConfig').value || null;
         }
 
         async function ensureTeamsCache() {
@@ -926,25 +931,12 @@
             allConfigs = await getConfigs(currentTeamId);
             console.log('Loaded configs:', allConfigs);
             const select = document.getElementById('statConfig');
+            select.innerHTML = '<option value="">None</option>';
 
-            // Find the default config based on team sport
-            let defaultConfigId = null;
-            if (currentTeam && currentTeam.sport) {
-                const sportLower = currentTeam.sport.toLowerCase();
-                console.log('Team sport:', currentTeam.sport, 'lowercase:', sportLower);
-                const defaultConfigName = sportLower === 'basketball' ? 'Basketball Standard' :
-                    sportLower === 'soccer' ? 'Soccer Standard' : null;
-                console.log('Looking for default config:', defaultConfigName);
-
-                if (defaultConfigName) {
-                    // Use the configs we just fetched; avoid crashing when defaults are missing
-                    const defaultConfig = allConfigs.find(c => c.name === defaultConfigName);
-                    console.log('Found default config:', defaultConfig);
-                    if (defaultConfig) {
-                        defaultConfigId = defaultConfig.id;
-                    }
-                }
-            }
+            const defaultConfigId = resolvePreferredStatConfigId({
+                configs: allConfigs,
+                team: currentTeam
+            });
 
             allConfigs.forEach(config => {
                 console.log('Adding config option:', config.name, 'columns:', config.columns);
@@ -1689,7 +1681,7 @@
             const dateVal = document.getElementById('gameDate').value;
             const opponent = document.getElementById('opponent').value;
             const location = document.getElementById('location').value;
-            const configId = document.getElementById('statConfig').value;
+            const configId = getSelectedConfigId();
 
             if (!dateVal) return;
 
@@ -2132,7 +2124,7 @@
         window.trackCalendarEvent = async (calendarEvent) => {
             try {
                 const opponent = extractOpponent(calendarEvent.summary, currentTeam.name);
-                const configId = document.getElementById('statConfig').value;
+                const configId = getSelectedConfigId();
 
                 // Create game in DB
                 const eventDate = calendarEvent.dtstart;

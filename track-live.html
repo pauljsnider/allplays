@@ -492,7 +492,7 @@
         import { db } from './js/firebase.js?v=9';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=9';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { resolveOpponentDisplayName } from './js/live-game-state.js?v=1';
+        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=3';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
@@ -682,15 +682,21 @@
                 existingOnField.forEach((playerId) => setPlayerFieldStatus(gameState.playerFieldStatus, playerId, 'onField', null));
 
                 // Load Config
-                if (game.statTrackerConfigId) {
-                    const configs = await getConfigs(teamId);
-                    currentConfig = configs.find(c => c.id === game.statTrackerConfigId);
-                }
-
+                const configs = await getConfigs(teamId);
+                currentConfig = resolveLiveStatConfig({
+                    configs,
+                    game,
+                    team
+                });
                 if (!currentConfig) {
                     currentConfig = {
                         name: 'Default',
-                        columns: ['PTS', 'REB', 'AST', 'STL', 'TO']
+                        baseType: team?.sport || 'Basketball',
+                        columns: resolveLiveStatColumns({
+                            configs,
+                            game,
+                            team
+                        })
                     };
                 }
 
