@@ -1,3 +1,5 @@
+import { getDefaultLivePeriod } from './live-sport-config.js';
+
 export function resolveOpponentDisplayName(game) {
   const opponent = String(game?.opponent || '').trim();
   if (opponent) return opponent;
@@ -18,10 +20,7 @@ function normalizeSportLabel(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-export function resolveLiveStatColumns({ columns = [], configs = [], game = null, team = null } = {}) {
-  const directColumns = normalizeLiveStatColumns(columns);
-  if (Array.isArray(columns) && columns.length) return directColumns;
-
+export function resolveLiveStatConfig({ configs = [], game = null, team = null } = {}) {
   const safeConfigs = Array.isArray(configs) ? configs : [];
   const desiredSport = normalizeSportLabel(game?.sport || team?.sport);
   const configId = String(game?.statTrackerConfigId || '').trim();
@@ -29,7 +28,7 @@ export function resolveLiveStatColumns({ columns = [], configs = [], game = null
   if (configId) {
     const configMatch = safeConfigs.find((config) => String(config?.id || '').trim() === configId);
     if (Array.isArray(configMatch?.columns) && configMatch.columns.length) {
-      return normalizeLiveStatColumns(configMatch.columns);
+      return configMatch;
     }
   }
 
@@ -39,20 +38,38 @@ export function resolveLiveStatColumns({ columns = [], configs = [], game = null
       Array.isArray(config?.columns) &&
       config.columns.length
     ));
-    if (sportMatch) {
-      return normalizeLiveStatColumns(sportMatch.columns);
-    }
+    if (sportMatch) return sportMatch;
   }
 
   if (safeConfigs.length === 1 && Array.isArray(safeConfigs[0]?.columns) && safeConfigs[0].columns.length) {
-    return normalizeLiveStatColumns(safeConfigs[0].columns);
+    return safeConfigs[0];
+  }
+
+  return null;
+}
+
+export function resolvePreferredStatConfigId({ configs = [], team = null } = {}) {
+  const config = resolveLiveStatConfig({ configs, team });
+  return String(config?.id || '').trim() || null;
+}
+
+export function resolveLiveStatColumns({ columns = [], configs = [], game = null, team = null } = {}) {
+  const directColumns = normalizeLiveStatColumns(columns);
+  if (Array.isArray(columns) && columns.length) return directColumns;
+
+  const config = resolveLiveStatConfig({ configs, game, team });
+  if (config) {
+    return normalizeLiveStatColumns(config.columns);
   }
 
   return directColumns;
 }
 
 export function applyResetEventState(currentState, event) {
-  const period = event?.period || currentState?.period || 'Q1';
+  const period = event?.period || currentState?.period || getDefaultLivePeriod({
+    sport: event?.sport || currentState?.sport,
+    periods: event?.periods || currentState?.periods
+  });
   const onCourt = Array.isArray(event?.onCourt) ? [...event.onCourt] : [];
   const bench = Array.isArray(event?.bench) ? [...event.bench] : [];
   const priorEventIds = currentState?.eventIds instanceof Set
@@ -73,7 +90,9 @@ export function applyResetEventState(currentState, event) {
     bench,
     lastStatChange: null,
     scoringRun: { team: null, points: 0 },
-    lastRunAnnounced: 0
+    lastRunAnnounced: 0,
+    sport: event?.sport || currentState?.sport || null,
+    periods: Array.isArray(event?.periods) ? [...event.periods] : currentState?.periods || null
   };
 }
 
