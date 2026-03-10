@@ -44,10 +44,21 @@ function formatMoment(event) {
     return [period, clock].filter(Boolean).join(' ');
 }
 
+function getEventStatKey(event) {
+    return normalizeStatKey(event?.statKey || event?.undoData?.statKey);
+}
+
+function getEventValue(event) {
+    if (event?.value !== undefined && event?.value !== null) {
+        return toNumber(event.value);
+    }
+    return toNumber(event?.undoData?.value);
+}
+
 function extractEventPoints(event) {
-    const statKey = normalizeStatKey(event?.undoData?.statKey);
+    const statKey = getEventStatKey(event);
     if (statKey === 'pts' || statKey === 'points' || statKey === 'point') {
-        return Math.max(0, toNumber(event?.undoData?.value));
+        return Math.max(0, getEventValue(event));
     }
 
     const text = String(event?.text || '').toLowerCase();
@@ -58,6 +69,9 @@ function extractEventPoints(event) {
 }
 
 function isOpponentEvent(event) {
+    if (typeof event?.isOpponent === 'boolean') {
+        return event.isOpponent;
+    }
     return Boolean(event?.undoData?.isOpponent);
 }
 
