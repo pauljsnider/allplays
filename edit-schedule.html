@@ -622,13 +622,8 @@
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
         }
 
-        function getSelectedOrDefaultConfigId() {
-            const selectedId = document.getElementById('statConfig').value || null;
-            if (selectedId) return selectedId;
-            return resolvePreferredStatConfigId({
-                configs: allConfigs,
-                team: currentTeam
-            });
+        function getSelectedConfigId() {
+            return document.getElementById('statConfig').value || null;
         }
 
         async function ensureTeamsCache() {
@@ -1514,7 +1509,7 @@
             const dateVal = document.getElementById('gameDate').value;
             const opponent = document.getElementById('opponent').value;
             const location = document.getElementById('location').value;
-            const configId = getSelectedOrDefaultConfigId();
+            const configId = getSelectedConfigId();
 
             if (!dateVal) return;
 
@@ -1951,7 +1946,7 @@
         window.trackCalendarEvent = async (calendarEvent) => {
             try {
                 const opponent = extractOpponent(calendarEvent.summary, currentTeam.name);
-                const configId = getSelectedOrDefaultConfigId();
+                const configId = getSelectedConfigId();
 
                 // Create game in DB
                 const eventDate = calendarEvent.dtstart;
