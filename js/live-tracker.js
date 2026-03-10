@@ -2430,6 +2430,7 @@ async function init() {
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats')
         ]);
+        const resetAt = Date.now();
         try {
           await updateGame(teamId, gameId, {
             homeScore: 0,
@@ -2437,7 +2438,11 @@ async function init() {
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
-            liveResetAt: Date.now(),
+            liveResetAt: resetAt,
+            liveClockMs: 0,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q1',
+            liveClockUpdatedAt: resetAt,
             liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
             // Preserve opponent fields
             opponent: game.opponent,
@@ -2450,6 +2455,10 @@ async function init() {
         } catch (error) {
           console.warn('Failed to reset game metadata:', error);
         }
+        currentGame.liveClockMs = 0;
+        currentGame.liveClockRunning = false;
+        currentGame.liveClockPeriod = 'Q1';
+        currentGame.liveClockUpdatedAt = resetAt;
         const deletions = [
           ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
           ...statsSnapshot.docs.map(d => deleteDoc(d.ref))
@@ -2478,7 +2487,14 @@ async function init() {
         const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
-        const resumeClockState = deriveResumeClockState(liveEvents, { period: state.period, clock: state.clock });
+        const resumeClockState = deriveResumeClockState(
+          liveEvents,
+          { period: state.period, clock: state.clock },
+          {
+            liveClockPeriod: currentGame?.liveClockPeriod,
+            liveClockMs: currentGame?.liveClockMs
+          }
+        );
         if (resumeClockState.restored) {
           state.period = resumeClockState.period;
           state.clock = resumeClockState.clock;
