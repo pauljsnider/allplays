@@ -1,3 +1,5 @@
+import { getDefaultLivePeriod } from './live-sport-config.js';
+
 export function summarizePersistedTrackingState({
   eventsCount = 0,
   statsCount = 0,
@@ -24,7 +26,8 @@ export function summarizePersistedTrackingState({
 
 export function buildTrackLiveResetUpdate({
   currentGame = {},
-  period = 'Q1',
+  currentConfig = null,
+  period,
   liveLineup = { onCourt: [], bench: [] },
   liveResetAt = Date.now()
 } = {}) {
@@ -33,7 +36,7 @@ export function buildTrackLiveResetUpdate({
   return {
     homeScore: 0,
     awayScore: 0,
-    period,
+    period: period || getDefaultLivePeriod({ game: currentGame, config: currentConfig }),
     liveLineup: { onCourt, bench },
     opponentStats: {},
     liveStatus: 'scheduled',
