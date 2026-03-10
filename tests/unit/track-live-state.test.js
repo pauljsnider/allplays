@@ -83,4 +83,14 @@ describe('track live state helpers', () => {
     input.onCourt.push('p3');
     expect(payload.liveLineup.onCourt).toEqual(['p1']);
   });
+
+  it('uses sport-specific default periods for non-basketball resets', () => {
+    expect(buildTrackLiveResetUpdate({
+      currentGame: { sport: 'Soccer' }
+    }).period).toBe('H1');
+
+    expect(buildTrackLiveResetUpdate({
+      currentGame: { sport: 'Baseball' }
+    }).period).toBe('T1');
+  });
 });
