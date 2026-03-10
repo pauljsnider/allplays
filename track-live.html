@@ -495,9 +495,11 @@
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=3';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
+        import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
         import { checkAuth } from './js/auth.js?v=9';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
+        import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
         renderFooter(document.getElementById('footer-container'));
@@ -550,7 +552,7 @@
             gameLog: [],
             playerStats: {}, // In-memory player stats (replaces real-time DB writes)
             opponentStats: {},
-            currentPeriod: 'Q1',
+            currentPeriod: getDefaultLivePeriod(),
             playerFieldStatus: {}
         };
 
@@ -698,17 +700,14 @@
                     };
                 }
 
-                const sportType = String(currentTeam?.sport || currentConfig?.baseType || '').toLowerCase();
-                const periodLabels = sportType.includes('soccer')
-                    ? ['H1', 'H2', 'ET1', 'ET2', 'PK']
-                    : ['Q1', 'Q2', 'Q3', 'Q4', 'OT'];
+                const periodLabels = getSportPeriodLabels({ team: currentTeam, config: currentConfig }).slice(0, 5);
                 const periodButtons = document.querySelectorAll('.period-btn');
                 periodButtons.forEach((btn, index) => {
                     const label = periodLabels[index] || periodLabels[0];
                     btn.dataset.period = label;
                     btn.textContent = label;
                 });
-                gameState.currentPeriod = periodLabels[0];
+                gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ team: currentTeam, config: currentConfig });
 
                 // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
@@ -1449,6 +1448,7 @@
                                         currentGameId,
                                         buildTrackLiveResetUpdate({
                                             currentGame,
+                                            currentConfig,
                                             period: gameState.currentPeriod,
                                             liveLineup: resetLineup
                                         })
@@ -1540,7 +1540,7 @@
                 gameState.startTime = null;
                 gameState.elapsed = 0;
                 gameState.isRunning = false;
-                gameState.currentPeriod = (currentConfig?.periods?.[0]?.label) || 'Q1';
+                gameState.currentPeriod = getDefaultLivePeriod({ team: currentTeam, config: currentConfig, game: currentGame });
                 liveState.lastClockSyncAt = 0;
                 gameState.gameLog = [];
                 gameState.playerStats = {}; // Clear in-memory player stats
@@ -1608,6 +1608,7 @@
                         await updateGame(currentTeamId, currentGameId, {
                             ...buildTrackLiveResetUpdate({
                                 currentGame,
+                                currentConfig,
                                 period: gameState.currentPeriod,
                                 liveLineup
                             }),
@@ -2219,6 +2220,27 @@ Write the match report now:`;
                 // Commit all writes in a single batch
                 await batch.commit();
                 console.log('Game data saved successfully');
+
+                const allGamesSnap = await getDocs(query(collection(db, `teams/${currentTeamId}/games`)));
+                const allGames = allGamesSnap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+                const advancementPatches = collectTournamentAdvancementPatches(allGames);
+                if (advancementPatches.length) {
+                    const maxAdvancementBatchOperations = 450;
+                    for (let i = 0; i < advancementPatches.length; i += maxAdvancementBatchOperations) {
+                        const advancementBatch = writeBatch(db);
+                        advancementPatches.slice(i, i + maxAdvancementBatchOperations).forEach(({ gameId, tournament }) => {
+                            const patchRef = doc(db, `teams/${currentTeamId}/games`, gameId);
+                            const existingGame = allGames.find((game) => game.id === gameId);
+                            advancementBatch.update(patchRef, {
+                                tournament: {
+                                    ...(existingGame?.tournament || {}),
+                                    ...tournament
+                                }
+                            });
+                        });
+                        await advancementBatch.commit();
+                    }
+                }
 
                 // Mark live stream as completed
                 await setGameLiveStatus(currentTeamId, currentGameId, 'completed').catch(console.warn);

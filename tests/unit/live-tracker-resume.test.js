@@ -25,6 +25,21 @@ describe('live tracker resume clock state', () => {
     expect(result.clock).toBe(0);
   });
 
+  it('falls back to persisted game clock state when live events do not include a usable clock', () => {
+    const result = deriveResumeClockState(
+      [
+        { type: 'stat', playerId: 'p1', statKey: 'pts', value: 2 },
+        { type: 'chat', message: 'timeout' }
+      ],
+      { period: 'Q1', clock: 0 },
+      { liveClockPeriod: 'Q3', liveClockMs: 187000 }
+    );
+
+    expect(result.restored).toBe(true);
+    expect(result.period).toBe('Q3');
+    expect(result.clock).toBe(187000);
+  });
+
   it('restores using period/clock progression when timestamps are unavailable', () => {
     const result = deriveResumeClockState([
       { period: 'Q1', gameClockMs: 30000 },
