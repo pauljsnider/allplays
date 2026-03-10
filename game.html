@@ -155,6 +155,34 @@
             </div>
         </div>
 
+        <!-- Post-game Insights -->
+        <div id="insights-section" class="mb-8 md:mb-10 hidden">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Insights</h2>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div class="xl:col-span-1">
+                    <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200 h-full">
+                        <div class="flex items-center justify-between gap-3 mb-4">
+                            <h3 class="text-lg font-bold text-gray-900">Team Takeaways</h3>
+                            <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">Post-game</span>
+                        </div>
+                        <div id="team-insights-body" class="space-y-3"></div>
+                    </div>
+                </div>
+                <div class="xl:col-span-2">
+                    <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+                        <div class="flex items-center justify-between gap-3 mb-4">
+                            <h3 class="text-lg font-bold text-gray-900">Player Signals</h3>
+                            <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">Linked to this report</span>
+                        </div>
+                        <div id="player-insights-body" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Player Stats Section -->
         <div class="mb-8 md:mb-10">
             <div class="flex items-center gap-3 mb-4">
@@ -253,11 +281,14 @@
 
     <script type="module">
         import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto } from './js/db.js?v=14';
+        import { generateGameInsights } from './js/post-game-insights.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=9";
         import { db } from './js/firebase.js?v=9';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
+        import { resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=1';
 
         let currentUser = null;
         let canManageStatSheet = false;
@@ -288,6 +319,85 @@
             toast.textContent = message;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2000);
+        }
+
+        function insightToneClasses(tone) {
+            if (tone === 'positive') {
+                return 'border-green-200 bg-green-50';
+            }
+            if (tone === 'warning') {
+                return 'border-amber-200 bg-amber-50';
+            }
+            return 'border-gray-200 bg-gray-50';
+        }
+
+        function renderInsightsSection({ teamInsights, playerInsightsById, emptyMessage }, players, teamId, gameId) {
+            const section = document.getElementById('insights-section');
+            const teamBody = document.getElementById('team-insights-body');
+            const playerBody = document.getElementById('player-insights-body');
+            if (!section || !teamBody || !playerBody) return;
+
+            const playerLookup = new Map((players || []).map((player) => [player.id, player]));
+            const playerEntries = Object.entries(playerInsightsById || {});
+            const hasInsights = (teamInsights || []).length || playerEntries.length;
+
+            if (!hasInsights) {
+                section.classList.remove('hidden');
+                teamBody.innerHTML = `
+                    <div class="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                        ${escapeHtml(emptyMessage || 'No post-game insights are available for this report yet.')}
+                    </div>
+                `;
+                playerBody.innerHTML = `
+                    <div class="lg:col-span-2 rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                        Player-specific insights will appear here once a completed game has enough tracked activity.
+                    </div>
+                `;
+                return;
+            }
+
+            section.classList.remove('hidden');
+            teamBody.innerHTML = (teamInsights || []).map((item) => `
+                <div class="rounded-xl border px-4 py-4 ${insightToneClasses(item.tone)}">
+                    <div class="text-sm font-bold text-gray-900">${escapeHtml(item.title || 'Insight')}</div>
+                    <p class="mt-1 text-sm text-gray-700 leading-relaxed">${escapeHtml(item.body || '')}</p>
+                </div>
+            `).join('') || `
+                <div class="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                    ${escapeHtml(emptyMessage || 'No team insights available.')}
+                </div>
+            `;
+
+            playerBody.innerHTML = playerEntries.map(([playerId, insights]) => {
+                const player = playerLookup.get(playerId) || {};
+                return `
+                    <div class="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <div class="min-w-0">
+                                <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${playerId}"
+                                   class="text-base font-bold text-primary-700 hover:text-primary-800 hover:underline">
+                                    ${escapeHtml(player.name || 'Player')}
+                                </a>
+                                <div class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                                    #${escapeHtml(player.number || '-')}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            ${insights.map((item) => `
+                                <div class="rounded-lg border px-3 py-3 ${insightToneClasses(item.tone)}">
+                                    <div class="text-sm font-semibold text-gray-900">${escapeHtml(item.title || 'Insight')}</div>
+                                    <p class="mt-1 text-sm text-gray-700">${escapeHtml(item.body || '')}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('') || `
+                <div class="lg:col-span-2 rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                    Player-specific insights will appear here once tracked stats tie back to individual players.
+                </div>
+            `;
         }
 
         // Summary toggle functionality
@@ -800,89 +910,24 @@ Write the match report now:`;
                 });
 
                 // Fetch the config used for this game
-                let statKeys = [];
-                let statLabels = {};
+                let resolvedConfig = null;
 
-                if (game.statTrackerConfigId) {
-                    try {
-                        const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
-                        const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
-                        const config = configs.find(c => c.id === game.statTrackerConfigId);
-
-                        if (config && config.columns) {
-                            // First, collect all actual field names from the stats data
-                            const actualFields = new Set();
-                            Object.values(statsMap).forEach(stats => {
-                                Object.keys(stats).forEach(k => actualFields.add(k.toLowerCase()));
-                            });
-
-                            // Map config columns to actual field names in the data
-                            // Try variations: PTS -> points, pts, etc.
-                            config.columns.forEach(col => {
-                                const normalized = col.toLowerCase();
-                                let fieldName = normalized;
-
-                                // Try to find matching field in actual data
-                                // Check for common variations
-                                const variations = [
-                                    normalized,                                    // pts
-                                ];
-                                if (!normalized.endsWith('s')) {
-                                    variations.push(normalized + 's');             // pt -> pts
-                                } else {
-                                    variations.push(normalized.slice(0, -1));      // pts -> pt
-                                }
-
-                                // Special mappings
-                                if (normalized === 'pts' || normalized === 'points') {
-                                    variations.push('pts', 'points', 'pt');
-                                }
-                                if (normalized === 'rebs' || normalized === 'reb') {
-                                    variations.push('rebs', 'reb', 'rebounds');
-                                }
-                                if (normalized === 'ast' || normalized === 'assists') {
-                                    variations.push('ast', 'assists', 'assist');
-                                }
-
-                                // Find first matching variation in actual data
-                                for (const variant of variations) {
-                                    if (actualFields.has(variant)) {
-                                        fieldName = variant;
-                                        break;
-                                    }
-                                }
-
-                                statKeys.push(fieldName);
-                                statLabels[fieldName] = col;
-                            });
-                        }
-                    } catch (err) {
-                        console.error('Error fetching config:', err);
-                    }
-                }
-
-                // Fallback: if no config, collect all unique keys from statsMap
-                if (statKeys.length === 0) {
-                    const allKeys = new Set();
-                    Object.values(statsMap).forEach(stats => {
-                        Object.keys(stats).forEach(k => allKeys.add(k));
+                try {
+                    const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
+                    const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
+                    resolvedConfig = resolveLiveStatConfig({
+                        configs,
+                        game,
+                        team
                     });
-                    statKeys = Array.from(allKeys).sort();
-                    // Use uppercase for labels
-                    statKeys.forEach(key => {
-                        statLabels[key] = key.toUpperCase();
-                    });
+                } catch (err) {
+                    console.error('Error fetching config:', err);
                 }
 
-                // Always include fouls if present in the data
-                if (!statKeys.includes('fouls')) {
-                    // Check if fouls exist in any player's stats
-                    const hasFouls = Object.values(statsMap).some(stats => stats.fouls !== undefined);
-                    if (hasFouls) {
-                        statKeys.push('fouls');
-                        statLabels['fouls'] = 'FOULS';
-                    }
-                }
+                const { statKeys, statLabels } = resolveReportStatColumns({
+                    statsMap,
+                    resolvedConfig
+                });
 
                 // Setup summary controls
                 setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels);
@@ -1056,30 +1101,16 @@ Write the match report now:`;
                     const opponentHeaderRow = document.getElementById('opponent-stats-header-row');
                     const opponentTbody = document.getElementById('opponent-stats-body');
 
-                    // Get stat keys from opponent stats
-                    const opponentStatKeys = new Set();
-                    const metadataKeys = new Set(['name', 'number', 'notes']);
-                    Object.values(game.opponentStats).forEach(stats => {
-                        Object.keys(stats).forEach(k => {
-                            if (!metadataKeys.has(k)) {
-                                opponentStatKeys.add(k);
-                            }
-                        });
+                    const { oppKeys, oppLabels } = resolveOpponentReportStatColumns({
+                        opponentStats: game.opponentStats,
+                        resolvedConfig
                     });
-                    let oppKeys = Array.from(opponentStatKeys).sort();
-
-                    // Move fouls to the end if present (for better visual organization)
-                    const foulIndex = oppKeys.indexOf('fouls');
-                    if (foulIndex > -1) {
-                        oppKeys.splice(foulIndex, 1);
-                        oppKeys.push('fouls');
-                    }
 
                     // Render header
                     oppKeys.forEach(key => {
                         const th = document.createElement('th');
                         th.className = "px-4 py-4 text-center";
-                        th.textContent = key.toUpperCase();
+                        th.textContent = oppLabels[key] || key.toUpperCase();
                         opponentHeaderRow.appendChild(th);
                     });
 
@@ -1120,7 +1151,27 @@ Write the match report now:`;
                 // Fetch and render game log (events)
                 const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
                 const eventsSnapshot = await getDocs(eventsQuery);
-                const events = eventsSnapshot.docs.map(doc => doc.data());
+                const events = eventsSnapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        ...data,
+                        clock: data.clock || data.gameTime || ''
+                    };
+                });
+
+                renderInsightsSection(
+                    generateGameInsights({
+                        team,
+                        game,
+                        players,
+                        statsMap,
+                        timeMap,
+                        events
+                    }),
+                    players,
+                    teamId,
+                    gameId
+                );
 
                 if (events.length > 0) {
                     const gameLogDiv = document.getElementById('game-log');
