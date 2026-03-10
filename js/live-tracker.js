@@ -14,7 +14,7 @@ import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
-import { normalizeLiveStatColumns, resolveLiveStatColumns } from './live-game-state.js?v=2';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -2369,22 +2369,17 @@ async function init() {
     }));
 
     const configs = await getConfigs(teamId);
+    currentConfig = resolveLiveStatConfig({
+      configs,
+      game,
+      team
+    });
     const resolvedColumns = resolveLiveStatColumns({
       configs,
       game,
       team
     });
 
-    if (game.statTrackerConfigId) {
-      currentConfig = configs.find(c => c.id === game.statTrackerConfigId) || null;
-    }
-    if (!currentConfig && Array.isArray(configs) && configs.length) {
-      currentConfig = configs.find((config) => (
-        Array.isArray(config?.columns) &&
-        config.columns.length &&
-        JSON.stringify(normalizeLiveStatColumns(config.columns)) === JSON.stringify(resolvedColumns)
-      )) || null;
-    }
     if (!currentConfig) {
       currentConfig = {
         name: 'Default',
