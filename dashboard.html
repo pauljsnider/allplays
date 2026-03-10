@@ -91,10 +91,17 @@
                 const user = await authRequireAuth();
 
                 // Load user profile to get isAdmin flag
+                let profile = null;
                 try {
-                    const profile = await getUserProfile(user.uid);
+                    profile = await getUserProfile(user.uid);
                     if (profile && profile.isAdmin) {
                         user.isAdmin = true;
+                    }
+                    if (profile?.email) {
+                        user.profileEmail = profile.email;
+                        if (!user.email) {
+                            user.email = profile.email;
+                        }
                     }
                 } catch (e) {
                     console.error('Error loading user profile:', e);
@@ -103,7 +110,7 @@
                 renderHeader(document.getElementById('header-container'), user);
 
                 const [coachTeams, parentTeams] = await Promise.all([
-                    getUserTeamsWithAccess(user.uid, user.email),
+                    getUserTeamsWithAccess(user.uid, profile?.email || user.email),
                     getParentTeams(user.uid)
                 ]);
 

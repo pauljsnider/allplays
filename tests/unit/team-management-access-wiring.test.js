@@ -6,6 +6,11 @@ function readRepoFile(relativePath) {
 }
 
 describe('team management page access wiring', () => {
+    it('uses profile email fallback when loading dashboard team access', () => {
+        const html = readRepoFile('dashboard.html');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, profile?.email || user.email)');
+    });
+
     it('uses shared full-access helper in edit roster page', () => {
         const html = readRepoFile('edit-roster.html');
         expect(html).toContain("from './js/team-access.js'");
