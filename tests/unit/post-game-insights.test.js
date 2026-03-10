@@ -25,10 +25,10 @@ describe('generateGameInsights', () => {
                 p3: 600000
             },
             events: [
-                { playerId: 'p1', text: 'Ava Cole hits a 3-pointer', period: 'Q4', clock: '02:10', undoData: { statKey: 'pts', value: 3, isOpponent: false } },
+                { playerId: 'p1', text: 'Ava Cole hits a 3-pointer', period: 'Q4', clock: '02:10', statKey: 'pts', value: 3, isOpponent: false },
                 { playerId: 'p2', text: 'Mia Brooks turnover', period: 'Q4', clock: '01:42', undoData: { statKey: 'to', value: 1, isOpponent: false } },
-                { text: 'Falcons make layup', period: 'Q4', clock: '01:15', undoData: { statKey: 'pts', value: 2, isOpponent: true } },
-                { playerId: 'p1', text: 'Ava Cole makes layup', period: 'Q4', clock: '00:48', undoData: { statKey: 'pts', value: 2, isOpponent: false } },
+                { text: 'Falcons make layup', period: 'Q4', clock: '01:15', statKey: 'pts', value: 2, isOpponent: true },
+                { playerId: 'p1', text: 'Ava Cole makes layup', period: 'Q4', clock: '00:48', statKey: 'pts', value: 2, isOpponent: false },
                 { playerId: 'p2', text: 'Mia Brooks foul', period: 'Q3', clock: '05:10', undoData: { statKey: 'fouls', value: 1, isOpponent: false } }
             ]
         });
@@ -76,8 +76,8 @@ describe('generatePlayerGameInsights', () => {
                 p3: { pts: 8, ast: 3, fouls: 0, to: 0 }
             },
             events: [
-                { playerId: 'p1', text: 'Ava Cole hits a 3-pointer', period: 'Q4', clock: '02:10', undoData: { statKey: 'pts', value: 3, isOpponent: false } },
-                { playerId: 'p1', text: 'Ava Cole makes layup', period: 'Q4', clock: '00:48', undoData: { statKey: 'pts', value: 2, isOpponent: false } }
+                { playerId: 'p1', text: 'Ava Cole hits a 3-pointer', period: 'Q4', clock: '02:10', statKey: 'pts', value: 3, isOpponent: false },
+                { playerId: 'p1', text: 'Ava Cole makes layup', period: 'Q4', clock: '00:48', statKey: 'pts', value: 2, isOpponent: false }
             ]
         });
 
