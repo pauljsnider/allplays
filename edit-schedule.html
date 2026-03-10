@@ -148,6 +148,79 @@
                                 <option value="other">Other</option>
                             </select>
                         </div>
+                        <div id="tournament-settings" class="hidden border border-indigo-100 bg-indigo-50/60 rounded-lg p-4 space-y-4">
+                            <div>
+                                <h3 class="text-sm font-semibold text-indigo-900">Tournament Bracket</h3>
+                                <p class="text-xs text-indigo-700 mt-1">Map bracket slots from pool seeds, fixed teams, or prior game winners/losers.</p>
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Bracket Name</label>
+                                    <input type="text" id="tournamentBracketName" placeholder="e.g. Gold Bracket"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Round</label>
+                                    <input type="text" id="tournamentRoundName" placeholder="e.g. Quarterfinal"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Pool</label>
+                                    <input type="text" id="tournamentPoolName" placeholder="e.g. Pool A"
+                                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-white rounded-lg border border-indigo-100 p-3 space-y-2">
+                                    <h4 class="text-sm font-semibold text-gray-900">Home Slot</h4>
+                                    <select id="tournamentHomeSourceType" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                        <option value="team">Fixed team</option>
+                                        <option value="pool_seed">Pool seed</option>
+                                        <option value="game_result">Winner/loser of prior game</option>
+                                    </select>
+                                    <input type="text" id="tournamentHomeTeamName" placeholder="Team name"
+                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <input type="text" id="tournamentHomePoolName" placeholder="Pool name"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                        <input type="number" id="tournamentHomeSeed" min="1" placeholder="Seed"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <input type="text" id="tournamentHomeGameId" placeholder="Prior game ID"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                        <select id="tournamentHomeOutcome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                            <option value="winner">Winner</option>
+                                            <option value="loser">Loser</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="bg-white rounded-lg border border-indigo-100 p-3 space-y-2">
+                                    <h4 class="text-sm font-semibold text-gray-900">Away Slot</h4>
+                                    <select id="tournamentAwaySourceType" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                        <option value="team">Fixed team</option>
+                                        <option value="pool_seed">Pool seed</option>
+                                        <option value="game_result">Winner/loser of prior game</option>
+                                    </select>
+                                    <input type="text" id="tournamentAwayTeamName" placeholder="Team name"
+                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <input type="text" id="tournamentAwayPoolName" placeholder="Pool name"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                        <input type="number" id="tournamentAwaySeed" min="1" placeholder="Seed"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <input type="text" id="tournamentAwayGameId" placeholder="Prior game ID"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                        <select id="tournamentAwayOutcome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                            <option value="winner">Winner</option>
+                                            <option value="loser">Loser</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div>
                             <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
                                 <input type="checkbox" id="countsTowardSeasonRecord" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
@@ -591,9 +664,10 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
-        import { Timestamp } from "./js/firebase.js?v=9";
+        import { Timestamp, deleteField } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
+        import { collectTournamentAdvancementPatches, describeTournamentSource } from './js/tournament-brackets.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -646,6 +720,86 @@
             selectedOpponentTeam = null;
             linkedOpponentName.textContent = '';
             linkedOpponentChip.classList.add('hidden');
+        }
+
+        function updateTournamentSettingsVisibility() {
+            const isTournament = document.getElementById('competitionType').value === 'tournament';
+            document.getElementById('tournament-settings').classList.toggle('hidden', !isTournament);
+        }
+
+        function readTournamentSlot(prefix) {
+            const sourceType = document.getElementById(`tournament${prefix}SourceType`).value || 'team';
+            return {
+                sourceType,
+                teamName: document.getElementById(`tournament${prefix}TeamName`).value.trim() || null,
+                poolName: document.getElementById(`tournament${prefix}PoolName`).value.trim() || null,
+                seed: (() => {
+                    const seedValue = Number.parseInt(document.getElementById(`tournament${prefix}Seed`).value, 10);
+                    return Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null;
+                })(),
+                gameId: document.getElementById(`tournament${prefix}GameId`).value.trim() || null,
+                outcome: document.getElementById(`tournament${prefix}Outcome`).value || 'winner'
+            };
+        }
+
+        function populateTournamentSlot(prefix, slot = {}) {
+            document.getElementById(`tournament${prefix}SourceType`).value = slot.sourceType || 'team';
+            document.getElementById(`tournament${prefix}TeamName`).value = slot.teamName || '';
+            document.getElementById(`tournament${prefix}PoolName`).value = slot.poolName || '';
+            document.getElementById(`tournament${prefix}Seed`).value = slot.seed || '';
+            document.getElementById(`tournament${prefix}GameId`).value = slot.gameId || '';
+            document.getElementById(`tournament${prefix}Outcome`).value = slot.outcome || 'winner';
+        }
+
+        function resetTournamentForm() {
+            document.getElementById('tournamentBracketName').value = '';
+            document.getElementById('tournamentRoundName').value = '';
+            document.getElementById('tournamentPoolName').value = '';
+            populateTournamentSlot('Home', {});
+            populateTournamentSlot('Away', {});
+        }
+
+        function populateTournamentForm(tournament = null) {
+            const data = tournament || {};
+            document.getElementById('tournamentBracketName').value = data.bracketName || '';
+            document.getElementById('tournamentRoundName').value = data.roundName || '';
+            document.getElementById('tournamentPoolName').value = data.poolName || '';
+            populateTournamentSlot('Home', data.slotAssignments?.home || {});
+            populateTournamentSlot('Away', data.slotAssignments?.away || {});
+        }
+
+        function readTournamentFormState() {
+            if (document.getElementById('competitionType').value !== 'tournament') return null;
+            const bracketName = document.getElementById('tournamentBracketName').value.trim();
+            const roundName = document.getElementById('tournamentRoundName').value.trim();
+            const poolName = document.getElementById('tournamentPoolName').value.trim();
+            const home = readTournamentSlot('Home');
+            const away = readTournamentSlot('Away');
+            return {
+                bracketName: bracketName || null,
+                roundName: roundName || null,
+                poolName: poolName || null,
+                slotAssignments: {
+                    home,
+                    away
+                }
+            };
+        }
+
+        function renderTournamentSummary(game) {
+            if (game.competitionType !== 'tournament' || !game.tournament) return '';
+            const tournament = game.tournament || {};
+            const resolved = tournament.resolved || {};
+            const homeSource = tournament.slotAssignments?.home || {};
+            const awaySource = tournament.slotAssignments?.away || {};
+            const matchupLabel = resolved.matchupLabel || `${describeTournamentSource(homeSource)} vs ${describeTournamentSource(awaySource)}`;
+            const bracketBits = [tournament.bracketName, tournament.roundName, tournament.poolName].filter(Boolean).join(' • ');
+            return `
+                <div class="mt-2 rounded-md border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
+                    ${bracketBits ? `<div class="font-semibold">${escapeHtml(bracketBits)}</div>` : ''}
+                    <div>${escapeHtml(matchupLabel)}</div>
+                </div>
+            `;
         }
 
         function renderOpponentResults(matches, term) {
@@ -826,6 +980,9 @@
         async function loadSchedule() {
             // Get all events (games and practices) from DB
             const dbEvents = await getEvents(currentTeamId);
+            const tournamentPatchMap = new Map(
+                collectTournamentAdvancementPatches(dbEvents).map((patch) => [patch.gameId, patch.tournament.resolved])
+            );
             const practiceSessions = await getPracticeSessions(currentTeamId);
             practicePlansByEventId = {};
             (practiceSessions || []).forEach(session => {
@@ -918,6 +1075,12 @@
                     // Single event (game or practice)
                     const eventDate = event.date?.toDate ? event.date.toDate() : new Date(event.date);
                     const eventType = event.type || 'game';
+                    const resolvedTournament = event.tournament
+                        ? {
+                            ...event.tournament,
+                            resolved: tournamentPatchMap.get(event.id) || event.tournament?.resolved || null
+                        }
+                        : null;
                     allEvents.push({
                         source: 'db',
                         eventType: eventType,
@@ -941,6 +1104,7 @@
                         status: event.status,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
+                        tournament: resolvedTournament,
                         id: event.id,
                         eventId: event.id,
                         isPractice: eventType === 'practice',
@@ -1359,6 +1523,7 @@
                         </div>
                         ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${formatTime(game.arrivalTime)}</div>` : ''}
                         ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
+                        ${renderTournamentSummary(game)}
                         ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
                         ${game.status === 'cancelled' ? '<div class="mt-1"><span class="inline-block bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-semibold">CANCELLED</span></div>' : ''}
@@ -1414,6 +1579,8 @@
             document.getElementById('kitColor').value = game.kitColor || '';
             document.getElementById('seasonLabel').value = game.seasonLabel || inferSeasonLabel(date);
             document.getElementById('competitionType').value = game.competitionType || 'league';
+            populateTournamentForm(game.tournament || null);
+            updateTournamentSettingsVisibility();
             document.getElementById('countsTowardSeasonRecord').checked = game.countsTowardSeasonRecord !== false;
             if (game.arrivalTime) {
                 const at = game.arrivalTime.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime);
@@ -1492,6 +1659,8 @@
             document.getElementById('kitColor').value = '';
             document.getElementById('seasonLabel').value = inferSeasonLabel(new Date());
             document.getElementById('competitionType').value = 'league';
+            resetTournamentForm();
+            updateTournamentSettingsVisibility();
             document.getElementById('countsTowardSeasonRecord').checked = true;
             document.getElementById('arrivalTime').value = '';
             document.getElementById('gameNotes').value = '';
@@ -1512,6 +1681,7 @@
         }
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
+        document.getElementById('competitionType').addEventListener('change', updateTournamentSettingsVisibility);
         resetGameForm();
 
         document.getElementById('add-game-form').addEventListener('submit', async (e) => {
@@ -1527,6 +1697,7 @@
                 const isHomeVal = document.getElementById('isHome').value;
                 const arrivalVal = document.getElementById('arrivalTime').value;
                 const parsedGameDate = new Date(dateVal);
+                const tournamentData = readTournamentFormState();
                 const gameData = {
                     type: 'game',
                     date: Timestamp.fromDate(parsedGameDate),
@@ -1545,6 +1716,11 @@
                     notes: document.getElementById('gameNotes').value.trim() || null,
                     assignments: getAssignmentsFromForm()
                 };
+                if (tournamentData) {
+                    gameData.tournament = tournamentData;
+                } else if (editingGameId) {
+                    gameData.tournament = deleteField();
+                }
 
                 if (editingGameId) {
                     await updateGame(currentTeamId, editingGameId, gameData);
