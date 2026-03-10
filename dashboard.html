@@ -110,7 +110,7 @@
                 renderHeader(document.getElementById('header-container'), user);
 
                 const [coachTeams, parentTeams] = await Promise.all([
-                    getUserTeamsWithAccess(user.uid, profile?.email || user.email),
+                    getUserTeamsWithAccess(user.uid, user.email || profile?.email),
                     getParentTeams(user.uid)
                 ]);
 
