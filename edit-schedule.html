@@ -590,6 +590,7 @@
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
         import { Timestamp } from "./js/firebase.js?v=9";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -1049,22 +1050,24 @@
                     const game = gamesCache[gameId];
                     if (!game) return;
                     if (!confirm(`Cancel the game vs. ${game.opponent}? This will notify the team via chat.`)) return;
-                    try {
-                        await cancelGame(currentTeamId, gameId, currentUser.uid);
-                        // Post cancellation to team chat
-                        const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-                        const dateStr = gameDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-                        await postChatMessage(currentTeamId, {
-                            text: `⚠️ Game cancelled: vs. ${game.opponent} on ${dateStr}`,
-                            senderId: currentUser.uid,
-                            senderName: currentUser.displayName || currentUser.email,
-                            senderEmail: currentUser.email
-                        });
+                    const result = await cancelScheduledGame({
+                        teamId: currentTeamId,
+                        gameId,
+                        user: currentUser,
+                        game,
+                        cancelGame,
+                        postChatMessage
+                    });
+                    if (result.cancelled) {
                         loadSchedule();
-                    } catch (err) {
-                        console.error('Failed to cancel game:', err);
-                        alert('Error cancelling game: ' + err.message);
+                        if (result.notificationError) {
+                            console.error('Game cancelled but team chat notification failed:', result.notificationError);
+                            alert(`Game cancelled, but team chat notification failed: ${result.notificationError}`);
+                        }
+                        return;
                     }
+                    console.error('Failed to cancel game:', result.error);
+                    alert('Error cancelling game: ' + result.error);
                 });
             });
 
