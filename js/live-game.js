@@ -23,7 +23,8 @@ import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-g
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=2';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';
+import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
   teamId: null,
@@ -45,8 +46,10 @@ const state = {
   statColumns: [],
   homeScore: 0,
   awayScore: 0,
-  period: 'Q1',
+  period: getDefaultLivePeriod(),
   gameClockMs: 0,
+  sport: null,
+  periods: null,
 
   chatMessages: [],
   unreadChatCount: 0,
@@ -1085,10 +1088,11 @@ function updateMomentum(event) {
 function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting for plays...') {
   const liveLineup = gameDoc?.liveLineup || {};
   const next = applyResetEventState(state, {
-    period: gameDoc?.period || 'Q1',
+    period: gameDoc?.period || getDefaultLivePeriod({ game: gameDoc, team: state.team }),
     homeScore: gameDoc?.homeScore || 0,
     awayScore: gameDoc?.awayScore || 0,
     gameClockMs: Number.isFinite(gameDoc?.liveClockMs) ? gameDoc.liveClockMs : 0,
+    sport: gameDoc?.sport || state.sport,
     onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
     bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
   });
@@ -1341,7 +1345,7 @@ async function startReplay() {
   state.opponentStats = {};
   state.homeScore = 0;
   state.awayScore = 0;
-  state.period = 'Q1';
+  state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
   state.gameClockMs = 0;
   state.replayIndex = 0;
   state.replayChatIndex = 0;
@@ -1462,7 +1466,7 @@ function seekReplay(targetMs) {
   state.opponentStats = {};
   state.homeScore = 0;
   state.awayScore = 0;
-  state.period = 'Q1';
+  state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
   state.gameClockMs = targetMs;
   state.replayIndex = 0;
   state.replayChatIndex = 0;
@@ -1795,6 +1799,8 @@ async function init() {
   state.team = team;
   state.game = game;
   state.players = players || [];
+  state.sport = game?.sport || team?.sport || null;
+  state.periods = null;
   state.statColumns = resolveLiveStatColumns({
     columns: state.statColumns,
     configs,
@@ -1808,7 +1814,7 @@ async function init() {
   }
   state.homeScore = game.homeScore || 0;
   state.awayScore = game.awayScore || 0;
-  state.period = game.period || 'Q1';
+  state.period = game.period || getDefaultLivePeriod({ game, team });
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
   refreshVideoPanel({ force: true });
