@@ -43,12 +43,23 @@ function pickMostAdvanced(candidates) {
     ), null);
 }
 
-export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }) {
+export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }, persistedClockState = null) {
     const fallbackPeriod = defaults?.period || 'Q1';
     const fallbackClock = Number.isFinite(defaults?.clock) ? defaults.clock : 0;
+    const persistedPeriod = typeof persistedClockState?.liveClockPeriod === 'string'
+        ? persistedClockState.liveClockPeriod
+        : null;
+    const persistedClock = Number(persistedClockState?.liveClockMs);
+    const persistedState = (
+        persistedPeriod &&
+        Number.isFinite(persistedClock) &&
+        persistedClock >= 0
+    )
+        ? { period: persistedPeriod, clock: persistedClock, restored: true }
+        : null;
 
     if (!Array.isArray(liveEvents) || liveEvents.length === 0) {
-        return { period: fallbackPeriod, clock: fallbackClock, restored: false };
+        return persistedState || { period: fallbackPeriod, clock: fallbackClock, restored: false };
     }
 
     const candidates = liveEvents
@@ -67,7 +78,7 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         .filter(Boolean);
 
     if (!candidates.length) {
-        return { period: fallbackPeriod, clock: fallbackClock, restored: false };
+        return persistedState || { period: fallbackPeriod, clock: fallbackClock, restored: false };
     }
 
     const withTimestamp = candidates.filter(item => Number.isFinite(item.createdAtMs));

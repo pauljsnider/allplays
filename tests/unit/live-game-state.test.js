@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -39,6 +39,25 @@ describe('live game state helpers', () => {
       ],
       team: { sport: 'Unknown' }
     })).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('returns the matched config object for sport fallback', () => {
+    expect(resolveLiveStatConfig({
+      configs: [
+        { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS'] },
+        { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS'] }
+      ],
+      team: { sport: 'Soccer' }
+    })?.id).toBe('cfg-soccer');
+  });
+
+  it('returns the preferred config id for schedule defaults', () => {
+    expect(resolvePreferredStatConfigId({
+      configs: [
+        { id: 'cfg-only', baseType: 'Soccer', columns: ['GOALS'] }
+      ],
+      team: { sport: 'Soccer' }
+    })).toBe('cfg-only');
   });
 
   it('resets live viewer state from reset event payload', () => {
@@ -84,6 +103,16 @@ describe('live game state helpers', () => {
 
     expect(Array.from(current.eventIds)).toEqual(['e1']);
     expect(Array.from(next.eventIds)).toEqual(['e1', 'e2']);
+  });
+
+  it('uses a sport-specific reset period when no explicit period is provided', () => {
+    const next = applyResetEventState({
+      sport: 'Soccer',
+      period: '',
+      eventIds: new Set()
+    }, {});
+
+    expect(next.period).toBe('H1');
   });
 
   it('detects scheduled reset from game doc when tracked state exists', () => {

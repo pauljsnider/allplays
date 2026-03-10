@@ -42,6 +42,13 @@ import {
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import {
+    shouldMirrorSharedGame,
+    createSharedScheduleId,
+    buildMirroredGamePayload,
+    buildSharedScheduleSourceUpdate,
+    buildSharedScheduleDetachUpdate
+} from './shared-schedule-sync.js';
+import {
     isTeamActive,
     filterTeamsByActive,
     shouldIncludeTeamInLiveOrUpcoming,
@@ -761,19 +768,106 @@ export async function getGameEvents(teamId, gameId, { limit = 50 } = {}) {
     return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
+async function deleteSharedScheduleCounterpart(game) {
+    const counterpartTeamId = String(game?.sharedScheduleOpponentTeamId || '').trim();
+    const counterpartGameId = String(game?.sharedScheduleOpponentGameId || '').trim();
+    if (!counterpartTeamId || !counterpartGameId) return;
+
+    try {
+        await deleteDoc(doc(db, `teams/${counterpartTeamId}/games`, counterpartGameId));
+    } catch (error) {
+        console.warn('Failed to delete shared schedule counterpart:', error);
+    }
+}
+
+async function syncSharedScheduleCounterpart(teamId, gameId, sourceGame, previousGame = null) {
+    const sourceRef = doc(db, `teams/${teamId}/games`, gameId);
+    const hadCounterpart = !!(previousGame?.sharedScheduleOpponentTeamId && previousGame?.sharedScheduleOpponentGameId);
+    const nextShouldMirror = shouldMirrorSharedGame(sourceGame, teamId);
+    const opponentTeamChanged = hadCounterpart && previousGame.sharedScheduleOpponentTeamId !== sourceGame.opponentTeamId;
+
+    if (hadCounterpart && (!nextShouldMirror || opponentTeamChanged)) {
+        await deleteSharedScheduleCounterpart(previousGame);
+        await updateDoc(sourceRef, buildSharedScheduleDetachUpdate());
+    }
+
+    if (!nextShouldMirror) {
+        return;
+    }
+
+    const sourceTeam = await getTeam(teamId, { includeInactive: true });
+    if (!sourceTeam) {
+        console.warn('Failed to sync shared schedule counterpart: source team not found', teamId);
+        return;
+    }
+
+    const sharedScheduleId = previousGame?.sharedScheduleId || createSharedScheduleId(teamId, gameId);
+    const counterpartTeamId = sourceGame.opponentTeamId;
+    const counterpartRef = (!opponentTeamChanged && previousGame?.sharedScheduleOpponentGameId)
+        ? doc(db, `teams/${counterpartTeamId}/games`, previousGame.sharedScheduleOpponentGameId)
+        : null;
+    const mirrorPayload = buildMirroredGamePayload({
+        sourceTeamId: teamId,
+        sourceTeam,
+        sourceGameId: gameId,
+        sourceGame,
+        sharedScheduleId
+    });
+
+    let counterpartGameId = previousGame?.sharedScheduleOpponentGameId || null;
+
+    if (counterpartRef && counterpartGameId) {
+        await updateDoc(counterpartRef, mirrorPayload);
+    } else {
+        const newCounterpartRef = await addDoc(collection(db, `teams/${counterpartTeamId}/games`), mirrorPayload);
+        counterpartGameId = newCounterpartRef.id;
+    }
+
+    await updateDoc(sourceRef, buildSharedScheduleSourceUpdate({
+        sharedScheduleId,
+        counterpartTeamId,
+        counterpartGameId
+    }));
+}
+
 export async function addGame(teamId, gameData) {
     gameData.createdAt = Timestamp.now();
     const docRef = await addDoc(collection(db, `teams/${teamId}/games`), gameData);
+    if (shouldMirrorSharedGame(gameData, teamId)) {
+        try {
+            await syncSharedScheduleCounterpart(teamId, docRef.id, { ...gameData, id: docRef.id });
+        } catch (error) {
+            console.warn('Failed to create shared schedule counterpart:', error);
+        }
+    }
     return docRef.id;
 }
 
 export async function updateGame(teamId, gameId, gameData) {
     const docRef = doc(db, `teams/${teamId}/games`, gameId);
+    const previousGame = await getGame(teamId, gameId);
     await updateDoc(docRef, gameData);
+    const nextGame = {
+        ...(previousGame || {}),
+        ...gameData,
+        id: gameId
+    };
+    const shouldSync = shouldMirrorSharedGame(nextGame, teamId) || !!previousGame?.sharedScheduleId;
+    if (shouldSync) {
+        try {
+            await syncSharedScheduleCounterpart(teamId, gameId, nextGame, previousGame);
+        } catch (error) {
+            console.warn('Failed to sync shared schedule counterpart:', error);
+        }
+    }
 }
 
 export async function deleteGame(teamId, gameId) {
+    const existingGame = await getGame(teamId, gameId);
     await deleteDoc(doc(db, `teams/${teamId}/games`, gameId));
+    if (existingGame?.sharedScheduleId) {
+        await deleteSharedScheduleCounterpart(existingGame);
+    }
 }
 
 // ============================================
@@ -2755,8 +2849,7 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
 // ============================================
 
 export async function cancelGame(teamId, gameId, userId) {
-    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
-    await updateDoc(gameRef, {
+    await updateGame(teamId, gameId, {
         status: 'cancelled',
         cancelledAt: Timestamp.now(),
         cancelledBy: userId
