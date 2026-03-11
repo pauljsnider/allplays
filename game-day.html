@@ -1888,6 +1888,10 @@ Respond ONLY with valid JSON.`;
         };
 
         // ==================== SAVE / PUBLISH GAME PLAN ====================
+        function getPersistedGamePlan() {
+            return state.game?.gamePlan || state.gamePlan || {};
+        }
+
         function getCurrentGamePlanShape() {
             if (!state.formationId) {
                 throw new Error('Select a formation first.');
@@ -1896,7 +1900,7 @@ Respond ONLY with valid JSON.`;
                 formationId: state.formationId,
                 numPeriods: FORMATIONS[state.formationId].numPeriods || 2,
                 rotationPlan: state.rotationPlan,
-                previousGamePlan: state.gamePlan || {}
+                previousGamePlan: getPersistedGamePlan()
             };
         }
 
@@ -1917,7 +1921,7 @@ Respond ONLY with valid JSON.`;
         function renderLineupPublishStatus() {
             const status = document.getElementById('lineup-publish-status');
             if (!status) return;
-            const plan = state.gamePlan || null;
+            const plan = getPersistedGamePlan();
             if (!plan || !plan.publishedVersion) {
                 status.textContent = 'Draft only. Publish when the lineup is final.';
                 return;
@@ -1942,16 +1946,29 @@ Respond ONLY with valid JSON.`;
             btn.textContent = pendingLabel;
             btn.disabled = true;
             try {
-                const gamePlan = await builder();
+                const buildResult = await builder();
+                const gamePlan = buildResult?.gamePlan || buildResult;
                 await updateGame(state.teamId, state.gameId, { gamePlan });
                 state.gamePlan = gamePlan;
                 if (state.game) state.game.gamePlan = gamePlan;
+                let postPersistError = null;
+                if (typeof buildResult?.afterPersist === 'function') {
+                    try {
+                        await buildResult.afterPersist(gamePlan);
+                    } catch (err) {
+                        postPersistError = err;
+                    }
+                }
                 btn.textContent = successLabel;
                 renderLineupPublishStatus();
                 setTimeout(() => {
                     btn.textContent = orig;
                     btn.disabled = false;
                 }, 2000);
+                if (postPersistError) {
+                    console.warn('Lineup published, but team chat notification failed:', postPersistError);
+                    alert(`Lineup published, but team chat notification failed: ${postPersistError?.message || 'Unknown error'}`);
+                }
             } catch (err) {
                 console.error('persistGamePlanWithButton error', err);
                 btn.textContent = 'Error';
@@ -1971,6 +1988,7 @@ Respond ONLY with valid JSON.`;
             if (!state.formationId) { alert('Select a formation first.'); return; }
             await persistGamePlanWithButton('[onclick="publishGamePlan()"]', 'Publishing…', 'Published!', async () => {
                 const recipients = getLineupNotificationRecipients();
+                const previousGamePlan = getPersistedGamePlan();
                 const gamePlan = buildLineupPublishPayload({
                     ...getCurrentGamePlanShape(),
                     publishedBy: state.user?.uid || null,
@@ -1980,34 +1998,34 @@ Respond ONLY with valid JSON.`;
                     recipientParentIds: recipients.parentIds
                 });
                 const changedAssignments = countLineupChanges(
-                    state.gamePlan?.publishedLineups,
+                    previousGamePlan?.publishedLineups,
                     gamePlan.publishedLineups
                 );
-                try {
-                    await postChatMessage(state.teamId, {
-                        text: buildLineupPublishMessage({
-                            opponentName: state.game?.opponent || 'Opponent',
-                            publishedVersion: gamePlan.publishedVersion,
-                            changedAssignments
-                        }),
-                        senderId: state.user?.uid || 'system',
-                        senderName: state.user?.displayName || state.user?.email || 'Coach',
-                        senderEmail: state.user?.email || null,
-                        senderPhotoUrl: state.user?.photoURL || null,
-                        ai: false,
-                        aiMeta: {
-                            type: 'lineup-published',
-                            gameId: state.gameId,
-                            publishedVersion: gamePlan.publishedVersion,
-                            changedAssignments,
-                            recipientPlayerIds: recipients.playerIds,
-                            recipientParentIds: recipients.parentIds
-                        }
-                    });
-                } catch (notificationError) {
-                    console.warn('Lineup published, but team chat notification failed:', notificationError);
-                }
-                return gamePlan;
+                return {
+                    gamePlan,
+                    afterPersist: async () => {
+                        await postChatMessage(state.teamId, {
+                            text: buildLineupPublishMessage({
+                                opponentName: state.game?.opponent || 'Opponent',
+                                publishedVersion: gamePlan.publishedVersion,
+                                changedAssignments
+                            }),
+                            senderId: state.user?.uid || 'system',
+                            senderName: state.user?.displayName || state.user?.email || 'Coach',
+                            senderEmail: state.user?.email || null,
+                            senderPhotoUrl: state.user?.photoURL || null,
+                            ai: false,
+                            aiMeta: {
+                                type: 'lineup-published',
+                                gameId: state.gameId,
+                                publishedVersion: gamePlan.publishedVersion,
+                                changedAssignments,
+                                recipientPlayerIds: recipients.playerIds,
+                                recipientParentIds: recipients.parentIds
+                            }
+                        });
+                    }
+                };
             });
         };
 

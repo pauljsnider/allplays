@@ -108,12 +108,23 @@ describe('game day lineup publish helpers', () => {
 });
 
 describe('game-day page wiring', () => {
-  it('exposes publish controls and posts a team notification on publish', () => {
+  it('exposes publish controls and posts a team notification only after persistence succeeds', () => {
     const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
     expect(source).toContain('Publish Lineup');
     expect(source).toContain('window.publishGamePlan');
     expect(source).toContain('postChatMessage(');
+    expect(source).toContain('afterPersist: async () => {');
+    expect(source).toContain("await updateGame(state.teamId, state.gameId, { gamePlan });");
     expect(source).toContain('renderLineupPublishStatus');
+  });
+
+  it('surfaces partial publish failures and uses the persisted game plan as the publish baseline', () => {
+    const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+    expect(source).toContain('return state.game?.gamePlan || state.gamePlan || {};');
+    expect(source).toContain('previousGamePlan: getPersistedGamePlan()');
+    expect(source).toContain('previousGamePlan?.publishedLineups');
+    expect(source).toContain("alert(`Lineup published, but team chat notification failed:");
   });
 });
