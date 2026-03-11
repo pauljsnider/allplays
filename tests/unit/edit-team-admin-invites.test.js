@@ -63,6 +63,44 @@ describe('edit team admin invite processing', () => {
         });
     });
 
+    it('does not persist admin access when invite creation fails or returns no valid code', async () => {
+        const addTeamAdminEmail = vi.fn().mockResolvedValue(undefined);
+        const sendInviteEmail = vi.fn();
+
+        const malformedResult = await inviteExistingTeamAdmin({
+            teamId: 'team-123',
+            email: 'Coach@Example.com',
+            inviteAdmin: vi.fn().mockResolvedValue(null),
+            addTeamAdminEmail,
+            sendInviteEmail
+        });
+
+        const missingCodeResult = await inviteExistingTeamAdmin({
+            teamId: 'team-123',
+            email: 'Coach@Example.com',
+            inviteAdmin: vi.fn().mockResolvedValue({ code: '   ', teamName: 'Tigers', existingUser: false }),
+            addTeamAdminEmail,
+            sendInviteEmail
+        });
+
+        expect(addTeamAdminEmail).not.toHaveBeenCalled();
+        expect(sendInviteEmail).not.toHaveBeenCalled();
+        expect(malformedResult).toEqual({
+            email: 'coach@example.com',
+            status: 'fallback_code',
+            code: null,
+            teamName: null,
+            reason: 'missing_invite_code'
+        });
+        expect(missingCodeResult).toEqual({
+            email: 'coach@example.com',
+            status: 'fallback_code',
+            code: null,
+            teamName: 'Tigers',
+            reason: 'missing_invite_code'
+        });
+    });
+
     it('processes each pending invite after team creation', async () => {
         const inviteAdmin = vi.fn()
             .mockResolvedValueOnce({ code: 'CODE1111', teamName: 'Tigers', existingUser: false })
