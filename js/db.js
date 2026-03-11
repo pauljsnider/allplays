@@ -48,6 +48,7 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=1';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -850,12 +851,13 @@ export async function getSeriesMaster(teamId, seriesId) {
 export async function getConfigs(teamId) {
     const q = query(collection(db, `teams/${teamId}/statTrackerConfigs`), orderBy("name"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(doc => normalizeStatTrackerConfig({ id: doc.id, ...doc.data() }));
 }
 
 export async function createConfig(teamId, configData) {
-    configData.createdAt = Timestamp.now();
-    const docRef = await addDoc(collection(db, `teams/${teamId}/statTrackerConfigs`), configData);
+    const normalizedConfig = normalizeStatTrackerConfig(configData);
+    normalizedConfig.createdAt = Timestamp.now();
+    const docRef = await addDoc(collection(db, `teams/${teamId}/statTrackerConfigs`), normalizedConfig);
     return docRef.id;
 }
 
