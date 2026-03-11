@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildPlayerLeaderboardSnapshot,
+  evaluateDerivedFormula,
   normalizeStatTrackerConfig,
   parseAdvancedStatDefinitions,
   summarizePlayerTopStats
@@ -30,6 +31,17 @@ describe('stat leaderboard helpers', () => {
       }),
       expect.objectContaining({ id: 'reb', label: 'REB', type: 'base' }),
       expect.objectContaining({ id: 'ast', label: 'AST', type: 'base' })
+    ]);
+  });
+
+  it('preserves underscores when normalizing stat ids', () => {
+    const normalized = normalizeStatTrackerConfig({
+      columns: ['SHOTS_ON_TARGET', 'TOTAL_SHOTS']
+    });
+
+    expect(normalized.statDefinitions).toEqual([
+      expect.objectContaining({ id: 'shots_on_target', label: 'SHOTS_ON_TARGET' }),
+      expect.objectContaining({ id: 'total_shots', label: 'TOTAL_SHOTS' })
     ]);
   });
 
@@ -161,5 +173,17 @@ Deflections=deflections|scope=team|visibility=private|group=Defense
         formattedValue: '4.00'
       })
     ]);
+  });
+
+  it('evaluates derived formulas against underscored stat keys without dynamic code execution', () => {
+    expect(evaluateDerivedFormula('(shots_on_target / shots) * 100', {
+      shots_on_target: 7,
+      shots: 10
+    })).toBe(70);
+
+    expect(evaluateDerivedFormula('"; while(true){}; //', {
+      shots_on_target: 7,
+      shots: 10
+    })).toBeNull();
   });
 });

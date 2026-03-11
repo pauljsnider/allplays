@@ -2,7 +2,7 @@ function slugifyStatId(value) {
   return String(value || '')
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
+    .replace(/[^a-z0-9_]+/g, '');
 }
 
 function normalizeLabel(value, fallback = 'Stat') {
@@ -177,10 +177,6 @@ export function selectAnalyticsConfig(configs = [], preferredSport = '') {
   return scored[0]?.config || safeConfigs[0];
 }
 
-function tokenizeFormula(formula = '') {
-  return String(formula || '').match(/[A-Za-z][A-Za-z0-9_]*/g) || [];
-}
-
 function sanitizeFormula(formula = '') {
   const trimmed = String(formula || '').trim();
   if (!trimmed) return '';
@@ -189,24 +185,112 @@ function sanitizeFormula(formula = '') {
   return stripped.replace(/%/g, '/100');
 }
 
+function tokenizeExpression(formula = '') {
+  const tokens = [];
+  const pattern = /([A-Za-z][A-Za-z0-9_]*|\d+(?:\.\d+)?|\.\d+|[()+\-*/])/g;
+  let cursor = 0;
+  let match = pattern.exec(formula);
+
+  while (match) {
+    if (match.index !== cursor) return null;
+    const value = match[0];
+    tokens.push({
+      type: /^[A-Za-z]/.test(value) ? 'identifier' : (/^[()+\-*/]$/.test(value) ? 'operator' : 'number'),
+      value
+    });
+    cursor = pattern.lastIndex;
+    match = pattern.exec(formula);
+  }
+
+  return cursor === formula.length ? tokens : null;
+}
+
+function resolveStatValue(token, stats = {}) {
+  const normalized = slugifyStatId(token);
+  return Number(stats?.[normalized] ?? stats?.[token] ?? 0) || 0;
+}
+
+function parsePrimary(tokens, state, stats) {
+  const token = tokens[state.index];
+  if (!token) return null;
+
+  if (token.type === 'number') {
+    state.index += 1;
+    return Number(token.value);
+  }
+
+  if (token.type === 'identifier') {
+    state.index += 1;
+    return resolveStatValue(token.value, stats);
+  }
+
+  if (token.value === '(') {
+    state.index += 1;
+    const value = parseExpression(tokens, state, stats);
+    if (value === null || tokens[state.index]?.value !== ')') return null;
+    state.index += 1;
+    return value;
+  }
+
+  return null;
+}
+
+function parseUnary(tokens, state, stats) {
+  const token = tokens[state.index];
+  if (token?.value === '+' || token?.value === '-') {
+    state.index += 1;
+    const value = parseUnary(tokens, state, stats);
+    if (value === null) return null;
+    return token.value === '-' ? -value : value;
+  }
+
+  return parsePrimary(tokens, state, stats);
+}
+
+function parseTerm(tokens, state, stats) {
+  let value = parseUnary(tokens, state, stats);
+  if (value === null) return null;
+
+  while (tokens[state.index]?.value === '*' || tokens[state.index]?.value === '/') {
+    const operator = tokens[state.index].value;
+    state.index += 1;
+    const rhs = parseUnary(tokens, state, stats);
+    if (rhs === null) return null;
+    value = operator === '*' ? value * rhs : value / rhs;
+  }
+
+  return value;
+}
+
+function parseExpression(tokens, state, stats) {
+  let value = parseTerm(tokens, state, stats);
+  if (value === null) return null;
+
+  while (tokens[state.index]?.value === '+' || tokens[state.index]?.value === '-') {
+    const operator = tokens[state.index].value;
+    state.index += 1;
+    const rhs = parseTerm(tokens, state, stats);
+    if (rhs === null) return null;
+    value = operator === '+' ? value + rhs : value - rhs;
+  }
+
+  return value;
+}
+
 export function evaluateDerivedFormula(formula = '', stats = {}) {
   const safeFormula = sanitizeFormula(formula);
   if (!safeFormula) return null;
 
-  const scope = {};
-  tokenizeFormula(safeFormula).forEach((token) => {
-    const normalized = slugifyStatId(token);
-    scope[token] = Number(stats?.[normalized] ?? stats?.[token] ?? 0) || 0;
-  });
+  const tokens = tokenizeExpression(safeFormula);
+  if (!tokens?.length) return null;
 
-  try {
-    const evaluator = new Function(...Object.keys(scope), `return ${safeFormula};`);
-    const result = evaluator(...Object.values(scope));
-    if (!Number.isFinite(result)) return null;
-    return result;
-  } catch (error) {
+  const state = { index: 0 };
+  const result = parseExpression(tokens, state, stats);
+  if (result === null || state.index !== tokens.length || !Number.isFinite(result)) {
     return null;
   }
+
+  return result;
 }
 
 function formatStatValue(value, definition) {
