@@ -1,3 +1,66 @@
+export async function inviteExistingTeamAdmin({
+    teamId,
+    email,
+    inviteAdmin,
+    addTeamAdminEmail,
+    sendInviteEmail
+}) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!teamId) {
+        throw new Error('Team ID is required');
+    }
+    if (!normalizedEmail) {
+        throw new Error('Admin email is required');
+    }
+
+    const inviteResult = await inviteAdmin(teamId, normalizedEmail);
+    const parsedInviteResult = (inviteResult && typeof inviteResult === 'object')
+        ? inviteResult
+        : null;
+    const parsedCode = typeof parsedInviteResult?.code === 'string'
+        ? parsedInviteResult.code.trim()
+        : '';
+    const code = parsedCode || null;
+
+    await addTeamAdminEmail(teamId, normalizedEmail);
+
+    if (parsedInviteResult?.existingUser) {
+        return {
+            email: normalizedEmail,
+            status: 'existing_user',
+            code,
+            teamName: parsedInviteResult?.teamName || null
+        };
+    }
+
+    if (!code) {
+        return {
+            email: normalizedEmail,
+            status: 'fallback_code',
+            code: null,
+            teamName: parsedInviteResult?.teamName || null,
+            reason: 'missing_invite_code'
+        };
+    }
+
+    try {
+        await sendInviteEmail(normalizedEmail, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
+        return {
+            email: normalizedEmail,
+            status: 'sent',
+            code,
+            teamName: parsedInviteResult?.teamName || null
+        };
+    } catch (_emailError) {
+        return {
+            email: normalizedEmail,
+            status: 'fallback_code',
+            code,
+            teamName: parsedInviteResult?.teamName || null
+        };
+    }
+}
+
 export async function processPendingAdminInvites({
     teamId,
     pendingEmails,

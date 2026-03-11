@@ -1,7 +1,68 @@
 import { describe, it, expect, vi } from 'vitest';
-import { processPendingAdminInvites, buildAdminInviteFollowUp } from '../../js/edit-team-admin-invites.js';
+import { readFileSync } from 'node:fs';
+import {
+    processPendingAdminInvites,
+    buildAdminInviteFollowUp,
+    inviteExistingTeamAdmin
+} from '../../js/edit-team-admin-invites.js';
 
 describe('edit team admin invite processing', () => {
+    it('persists invited admin access immediately for existing teams', async () => {
+        const inviteAdmin = vi.fn().mockResolvedValue({
+            code: 'CODE1111',
+            teamName: 'Tigers',
+            existingUser: false
+        });
+        const addTeamAdminEmail = vi.fn().mockResolvedValue(undefined);
+        const sendInviteEmail = vi.fn().mockResolvedValue({ success: true });
+
+        const result = await inviteExistingTeamAdmin({
+            teamId: 'team-123',
+            email: 'Coach@Example.com',
+            inviteAdmin,
+            addTeamAdminEmail,
+            sendInviteEmail
+        });
+
+        expect(inviteAdmin).toHaveBeenCalledWith('team-123', 'coach@example.com');
+        expect(addTeamAdminEmail).toHaveBeenCalledWith('team-123', 'coach@example.com');
+        expect(sendInviteEmail).toHaveBeenCalledWith('coach@example.com', 'CODE1111', 'admin', { teamName: 'Tigers' });
+        expect(addTeamAdminEmail.mock.invocationCallOrder[0]).toBeLessThan(sendInviteEmail.mock.invocationCallOrder[0]);
+        expect(result).toEqual({
+            email: 'coach@example.com',
+            status: 'sent',
+            code: 'CODE1111',
+            teamName: 'Tigers'
+        });
+    });
+
+    it('still persists invited admin access when the invited user already exists', async () => {
+        const inviteAdmin = vi.fn().mockResolvedValue({
+            code: 'EXIST111',
+            teamName: 'Tigers',
+            existingUser: true
+        });
+        const addTeamAdminEmail = vi.fn().mockResolvedValue(undefined);
+        const sendInviteEmail = vi.fn();
+
+        const result = await inviteExistingTeamAdmin({
+            teamId: 'team-123',
+            email: 'Coach@Example.com',
+            inviteAdmin,
+            addTeamAdminEmail,
+            sendInviteEmail
+        });
+
+        expect(addTeamAdminEmail).toHaveBeenCalledWith('team-123', 'coach@example.com');
+        expect(sendInviteEmail).not.toHaveBeenCalled();
+        expect(result).toEqual({
+            email: 'coach@example.com',
+            status: 'existing_user',
+            code: 'EXIST111',
+            teamName: 'Tigers'
+        });
+    });
+
     it('processes each pending invite after team creation', async () => {
         const inviteAdmin = vi.fn()
             .mockResolvedValueOnce({ code: 'CODE1111', teamName: 'Tigers', existingUser: false })
@@ -161,5 +222,12 @@ describe('edit team admin invite processing', () => {
         expect(followUp.shareableCount).toBe(0);
         expect(followUp.unresolvedCount).toBe(3);
         expect(followUp.shareableDetails).toBe('');
+    });
+
+    it('wires existing-team invite persistence through edit-team page', () => {
+        const html = readFileSync(new URL('../../edit-team.html', import.meta.url), 'utf8');
+
+        expect(html).toContain('inviteExistingTeamAdmin');
+        expect(html).toContain('addTeamAdminEmail');
     });
 });
