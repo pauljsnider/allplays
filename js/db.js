@@ -3211,12 +3211,63 @@ function nextConfirmedSeatCount(currentSeatCountConfirmed, previousRequestStatus
     return current + 1;
 }
 
+function normalizeRideEventIds(primaryGameId, fallbackGameIds = []) {
+    const fallbackIds = Array.isArray(fallbackGameIds) ? fallbackGameIds : [fallbackGameIds];
+    return [...new Set(
+        [primaryGameId, ...fallbackIds]
+            .map((gameId) => typeof gameId === 'string' ? gameId.trim() : '')
+            .filter(Boolean)
+    )];
+}
+
+async function loadRideOffersForGameId(teamId, gameId) {
+    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
+    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
+        const offerData = offerDoc.data() || {};
+        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
+        const requests = requestsSnap.docs
+            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+            .sort((a, b) => {
+                const at = a?.requestedAt?.toMillis?.() || 0;
+                const bt = b?.requestedAt?.toMillis?.() || 0;
+                return at - bt;
+            });
+        return {
+            id: offerDoc.id,
+            ...offerData,
+            sourceGameId: gameId,
+            status: normalizeRideOfferStatus(offerData.status),
+            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
+            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
+            requests
+        };
+    }));
+
+    offers.sort((a, b) => {
+        const at = a?.createdAt?.toMillis?.() || 0;
+        const bt = b?.createdAt?.toMillis?.() || 0;
+        return bt - at;
+    });
+    return offers;
+}
+
+async function resolveRideOffersGameId(teamId, primaryGameId, fallbackGameIds = []) {
+    const candidateGameIds = normalizeRideEventIds(primaryGameId, fallbackGameIds);
+    for (const candidateGameId of candidateGameIds) {
+        const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${candidateGameId}/rideOffers`));
+        if (!offersSnap.empty) return candidateGameId;
+    }
+    return candidateGameIds[0] || '';
+}
+
 /**
  * Create a rideshare offer under a game/practice event.
  */
-export async function createRideOffer(teamId, gameId, payload = {}) {
+export async function createRideOffer(teamId, gameId, payload = {}, options = {}) {
     const user = auth.currentUser;
     if (!user?.uid) throw new Error('You must be signed in to offer a ride.');
+    const targetGameId = await resolveRideOffersGameId(teamId, gameId, options?.fallbackGameIds);
+    if (!targetGameId) throw new Error('gameId is required to offer a ride.');
     const seatCapacity = toNonNegativeInteger(payload.seatCapacity, 0);
     if (seatCapacity <= 0) throw new Error('Seat capacity must be at least 1.');
 
@@ -3226,7 +3277,7 @@ export async function createRideOffer(teamId, gameId, payload = {}) {
         : 'to';
 
     const note = typeof payload.note === 'string' ? payload.note.trim() : '';
-    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`), {
+    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${targetGameId}/rideOffers`), {
         driverUserId: user.uid,
         driverName: payload.driverName || user.displayName || user.email || 'Parent Driver',
         seatCapacity,
@@ -3243,34 +3294,19 @@ export async function createRideOffer(teamId, gameId, payload = {}) {
 /**
  * List rideshare offers (with nested requests) for an event.
  */
-export async function listRideOffersForEvent(teamId, gameId) {
-    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
-    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
-        const offerData = offerDoc.data() || {};
-        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
-        const requests = requestsSnap.docs
-            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
-            .sort((a, b) => {
-                const at = a?.requestedAt?.toMillis?.() || 0;
-                const bt = b?.requestedAt?.toMillis?.() || 0;
-                return at - bt;
-            });
-        return {
-            id: offerDoc.id,
-            ...offerData,
-            status: normalizeRideOfferStatus(offerData.status),
-            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
-            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
-            requests
-        };
-    }));
+export async function listRideOffersForEvent(teamId, gameId, options = {}) {
+    const candidateGameIds = normalizeRideEventIds(gameId, options?.fallbackGameIds);
+    if (candidateGameIds.length === 0) return [];
 
-    offers.sort((a, b) => {
-        const at = a?.createdAt?.toMillis?.() || 0;
-        const bt = b?.createdAt?.toMillis?.() || 0;
-        return bt - at;
-    });
-    return offers;
+    for (let index = 0; index < candidateGameIds.length; index += 1) {
+        const candidateGameId = candidateGameIds[index];
+        const offers = await loadRideOffersForGameId(teamId, candidateGameId);
+        if (offers.length > 0 || index === candidateGameIds.length - 1) {
+            return offers;
+        }
+    }
+
+    return [];
 }
 
 /**
