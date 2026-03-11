@@ -235,7 +235,7 @@
             cancelRideRequest,
             getAggregatedStatsForPlayer
         } from './js/db.js?v=24';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=8';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -946,7 +946,7 @@
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
 
                             calendarEvents.forEach(event => {
-                                if (trackedUids.includes(event.uid)) return;
+                                if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                                 // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                                 const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
@@ -977,7 +977,7 @@
                                         location,
                                         opponent,
                                         teamId,
-                                        id: event.uid || null,
+                                        id: getCalendarEventTrackingId(event) || null,
                                         isDbGame: false,
                                         childId: child.playerId,
                                         childName: child.playerName,
