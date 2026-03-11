@@ -125,6 +125,6 @@ describe('game-day page wiring', () => {
     expect(source).toContain('return state.game?.gamePlan || state.gamePlan || {};');
     expect(source).toContain('previousGamePlan: getPersistedGamePlan()');
     expect(source).toContain('previousGamePlan?.publishedLineups');
-    expect(source).toContain("alert(`Lineup published, but team chat notification failed:");
+    expect(source).toContain("alert('Lineup published successfully, but the team notification could not be sent. Please notify your team manually.');");
   });
 });

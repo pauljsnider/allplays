@@ -1967,7 +1967,7 @@ Respond ONLY with valid JSON.`;
                 }, 2000);
                 if (postPersistError) {
                     console.warn('Lineup published, but team chat notification failed:', postPersistError);
-                    alert(`Lineup published, but team chat notification failed: ${postPersistError?.message || 'Unknown error'}`);
+                    alert('Lineup published successfully, but the team notification could not be sent. Please notify your team manually.');
                 }
             } catch (err) {
                 console.error('persistGamePlanWithButton error', err);
