@@ -32,12 +32,20 @@ function extractRsvpPlayerIds(rsvp) {
     return uniqNonEmpty([rsvp?.playerId, rsvp?.childId]);
 }
 
+function extractEventPlayerIds(event) {
+    return uniqNonEmpty([
+        event?.childId,
+        event?.playerId,
+        ...parseChildIds(event?.childIds)
+    ]);
+}
+
 export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext = {}) {
     const events = Array.isArray(allScheduleEvents) ? allScheduleEvents : [];
     const allowedPlayerIds = uniqNonEmpty(
         events
             .filter((event) => event?.teamId === teamId && event?.id === gameId)
-            .map((event) => event?.childId || event?.playerId)
+            .flatMap((event) => extractEventPlayerIds(event))
     );
     const allowedSet = new Set(allowedPlayerIds);
     const sanitizeToAllowedScope = (ids) => ids.filter((id) => allowedSet.has(id));
