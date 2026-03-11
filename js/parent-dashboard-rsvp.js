@@ -40,13 +40,17 @@ function extractEventPlayerIds(event) {
     ]);
 }
 
-export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext = {}) {
+function getScopedRsvpPlayerIds(allScheduleEvents, teamId, gameId) {
     const events = Array.isArray(allScheduleEvents) ? allScheduleEvents : [];
-    const allowedPlayerIds = uniqNonEmpty(
+    return uniqNonEmpty(
         events
             .filter((event) => event?.teamId === teamId && event?.id === gameId)
             .flatMap((event) => extractEventPlayerIds(event))
     );
+}
+
+export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext = {}) {
+    const allowedPlayerIds = getScopedRsvpPlayerIds(allScheduleEvents, teamId, gameId);
     const allowedSet = new Set(allowedPlayerIds);
     const sanitizeToAllowedScope = (ids) => ids.filter((id) => allowedSet.has(id));
     const throwScopeError = () => {
@@ -76,6 +80,18 @@ export function resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gam
 
     if (allowedPlayerIds.length === 1) return allowedPlayerIds;
     throwScopeError();
+}
+
+export function resolveCalendarRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext = {}, fallbackPlayerIds = []) {
+    const explicitChildId = String(childContext?.selectedChildId || childContext?.childId || '').trim();
+    const explicitChildIds = parseChildIds(childContext?.childIds);
+    const scopedPlayerIds = getScopedRsvpPlayerIds(allScheduleEvents, teamId, gameId);
+
+    if (!explicitChildId && explicitChildIds.length === 0 && scopedPlayerIds.length === 0) {
+        return uniqNonEmpty(fallbackPlayerIds);
+    }
+
+    return resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext);
 }
 
 export function resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, userId) {

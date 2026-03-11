@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRsvpPlayerIdsForSubmission } from '../../js/parent-dashboard-rsvp.js';
+import {
+  resolveCalendarRsvpPlayerIdsForSubmission,
+  resolveRsvpPlayerIdsForSubmission
+} from '../../js/parent-dashboard-rsvp.js';
 
 describe('calendar RSVP player scope', () => {
   const calendarEvents = [
@@ -20,5 +23,29 @@ describe('calendar RSVP player scope', () => {
     });
 
     expect(result).toEqual(['child-b', 'child-c']);
+  });
+
+  it('falls back to legacy calendar player ids when the event has no child scope metadata', () => {
+    const result = resolveCalendarRsvpPlayerIdsForSubmission(
+      [{ teamId: 'team-1', id: 'game-3' }],
+      'team-1',
+      'game-3',
+      {},
+      ['child-a', 'child-b', 'child-a']
+    );
+
+    expect(result).toEqual(['child-a', 'child-b']);
+  });
+
+  it('allows coach calendar submissions when the event has no child scope metadata', () => {
+    const result = resolveCalendarRsvpPlayerIdsForSubmission(
+      [{ teamId: 'team-1', id: 'game-4' }],
+      'team-1',
+      'game-4',
+      {},
+      []
+    );
+
+    expect(result).toEqual([]);
   });
 });

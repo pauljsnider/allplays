@@ -138,7 +138,7 @@
         import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent } from './js/utils.js?v=10';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
-        import { resolveRsvpPlayerIdsForSubmission } from './js/parent-dashboard-rsvp.js?v=6';
+        import { resolveCalendarRsvpPlayerIdsForSubmission } from './js/parent-dashboard-rsvp.js?v=7';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -634,7 +634,13 @@
 
         async function submitCalendarRsvp(teamId, gameId, response, childContext = {}) {
             try {
-                const playerIds = resolveRsvpPlayerIdsForSubmission(allEvents, teamId, gameId, childContext);
+                const playerIds = resolveCalendarRsvpPlayerIdsForSubmission(
+                    allEvents,
+                    teamId,
+                    gameId,
+                    childContext,
+                    playerIdsByTeam.has(teamId) ? Array.from(playerIdsByTeam.get(teamId)) : []
+                );
                 const summary = await submitRsvp(teamId, gameId, currentUserId, {
                     displayName: currentUser?.displayName || currentUser?.email || null,
                     playerIds,
