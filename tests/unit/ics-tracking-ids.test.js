@@ -11,6 +11,18 @@ function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 }
 
+function readParentDashboard() {
+    return readFileSync(new URL('../../parent-dashboard.html', import.meta.url), 'utf8');
+}
+
+function readGamePlan() {
+    return readFileSync(new URL('../../game-plan.html', import.meta.url), 'utf8');
+}
+
+function readTeamPage() {
+    return readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+}
+
 describe('ICS recurring tracking ids', () => {
     it('keeps recurring occurrences distinct when matching tracked calendar events', () => {
         const ics = [
@@ -59,5 +71,12 @@ describe('ICS recurring tracking ids', () => {
         const source = readEditSchedule();
 
         expect(source).toContain('calendarEventUid: getCalendarEventTrackingId(calendarEvent)');
+    });
+
+    it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {
+        expect(readEditSchedule()).toContain("./js/utils.js?v=10");
+        expect(readParentDashboard()).toContain("./js/utils.js?v=10");
+        expect(readGamePlan()).toContain("./js/utils.js?v=10");
+        expect(readTeamPage()).toContain("./js/utils.js?v=10");
     });
 });
