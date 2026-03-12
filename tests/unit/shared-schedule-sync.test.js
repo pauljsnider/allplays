@@ -22,6 +22,20 @@ describe('shared schedule sync helpers', () => {
   });
 
   it('builds a mirrored opponent-team fixture with swapped perspective', () => {
+    const tournament = {
+      bracketName: 'Spring Cup',
+      roundName: 'Semifinal',
+      slotAssignments: {
+        home: { sourceType: 'team', teamName: 'Alpha FC' },
+        away: { sourceType: 'team', teamName: 'Bravo FC' }
+      },
+      resolved: {
+        homeLabel: 'Alpha FC',
+        awayLabel: 'Bravo FC',
+        matchupLabel: 'Alpha FC vs Bravo FC',
+        ready: true
+      }
+    };
     const payload = buildMirroredGamePayload({
       sourceTeamId: 'team-alpha',
       sourceTeam: {
@@ -48,7 +62,8 @@ describe('shared schedule sync helpers', () => {
         notes: 'Championship',
         arrivalTime: '2026-03-12T17:15:00Z',
         assignments: [{ role: 'Clock', value: 'Alex' }],
-        statTrackerConfigId: 'cfg-1'
+        statTrackerConfigId: 'cfg-1',
+        tournament
       },
       sharedScheduleId: 'shared_team-alpha_game-123'
     });
@@ -73,6 +88,10 @@ describe('shared schedule sync helpers', () => {
     expect(payload.assignments).toEqual([{ role: 'Clock', value: 'Alex' }]);
     expect(payload.date).toBe('2026-03-12T18:00:00Z');
     expect(payload.arrivalTime).toBe('2026-03-12T17:15:00Z');
+    expect(payload.tournament).toEqual(tournament);
+    expect(payload.tournament).not.toBe(tournament);
+    expect(payload.tournament.slotAssignments).not.toBe(tournament.slotAssignments);
+    expect(payload.tournament.resolved).not.toBe(tournament.resolved);
   });
 
   it('records source metadata needed to keep the counterpart game in sync', () => {

@@ -230,10 +230,11 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
+        import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=9';
         import { collection, getDocs } from "./js/firebase.js?v=9";
@@ -453,6 +454,59 @@
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
         }
 
+        function renderConfiguredTeamLeaderboards(snapshot, teamId) {
+            if (!snapshot?.topStats?.length) return '';
+
+            return `
+                <div class="bg-white rounded-xl p-6 shadow-md border border-primary-100 lg:col-span-2">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-900">Configured Stat Leaders</h3>
+                            <p class="text-sm text-gray-500">Season rankings generated from your stat tracker configuration.</p>
+                        </div>
+                        <span class="text-xs font-semibold uppercase tracking-wide text-primary-700 bg-primary-50 px-3 py-1 rounded-full">${snapshot.topStats.length} top stat${snapshot.topStats.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div class="space-y-5">
+                        ${snapshot.groups.map((group) => `
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">${escapeHtml(group.label)}</div>
+                                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                    ${group.stats.map((stat) => `
+                                        <div class="rounded-xl border border-gray-200 bg-gradient-to-br from-white to-primary-50 p-4">
+                                            <div class="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">${escapeHtml(stat.label)}</div>
+                                                    <div class="mt-2 text-2xl font-bold text-primary-700">${escapeHtml(stat.leader?.formattedValue || '0')}</div>
+                                                </div>
+                                                <div class="text-right text-xs text-gray-500">
+                                                    <div>#1 Leader</div>
+                                                    <div class="mt-1 font-semibold text-gray-700">${escapeHtml(stat.leader?.playerName || 'Player')}</div>
+                                                </div>
+                                            </div>
+                                            <div class="mt-4 space-y-2">
+                                                ${stat.leaders.slice(0, 3).map((entry) => `
+                                                    <a href="player.html#teamId=${encodeURIComponent(teamId)}&playerId=${encodeURIComponent(entry.playerId)}" class="flex items-center justify-between gap-3 rounded-lg bg-white/80 border border-white px-3 py-2 hover:border-primary-200 transition">
+                                                        <div class="flex items-center gap-3">
+                                                            <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary-100 text-primary-700 text-xs font-bold">#${entry.rank}</span>
+                                                            <div>
+                                                                <div class="text-sm font-semibold text-gray-900">${escapeHtml(entry.playerName)}</div>
+                                                                <div class="text-xs text-gray-500">No. ${escapeHtml(entry.playerNumber)}</div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="text-sm font-bold text-gray-900">${escapeHtml(entry.formattedValue)}</div>
+                                                    </a>
+                                                `).join('')}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
         async function findLatestGameWithPlayingTime(teamId, games, maxLookback = 6) {
             const completed = (games || [])
                 .filter(g => g.status === 'completed')
@@ -649,11 +703,34 @@
             currentTeamId = teamId;
 
             try {
-                const [team, players, dbGames] = await Promise.all([
+                const [team, players, dbGames, configs] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId),
-                    getGames(teamId)
+                    getGames(teamId),
+                    getConfigs(teamId)
                 ]);
+                const seasonStatsByPlayerId = {};
+                const completedGames = dbGames.filter(g => g.status === 'completed');
+                for (const game of completedGames) {
+                    const snap = await getDocs(collection(db, `teams/${teamId}/games/${game.id}/aggregatedStats`));
+                    snap.forEach((docSnap) => {
+                        const stats = docSnap.data()?.stats || {};
+                        if (!seasonStatsByPlayerId[docSnap.id]) {
+                            seasonStatsByPlayerId[docSnap.id] = {};
+                        }
+                        Object.entries(stats).forEach(([stat, value]) => {
+                            seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
+                        });
+                    });
+                }
+                const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || '');
+                const leaderboardSnapshot = analyticsConfig
+                    ? buildPlayerLeaderboardSnapshot({
+                        config: analyticsConfig,
+                        players,
+                        seasonStatsByPlayerId
+                    })
+                    : null;
 
                 teamGames = dbGames;
                 gamesById = {};
@@ -866,7 +943,6 @@
 
                 // Render Team Advanced Stats
                 const teamAdvancedStatsDiv = document.getElementById('team-advanced-stats');
-                const completedGames = dbGames.filter(g => g.status === 'completed');
                 if (completedGames.length >= 3) {
                     // Calculate win/loss trend (recent vs earlier)
                     const sortedGames = [...completedGames].sort((a, b) => {
@@ -1023,6 +1099,15 @@
                     `;
                 }
 
+                if (leaderboardSnapshot?.topStats?.length) {
+                    teamAdvancedStatsDiv.innerHTML = `
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            ${renderConfiguredTeamLeaderboards(leaderboardSnapshot, teamId)}
+                        </div>
+                        ${teamAdvancedStatsDiv.innerHTML}
+                    `;
+                }
+
                 // Render Roster
                 const rosterBody = document.getElementById('roster-list');
                 if (players.length === 0) {
@@ -1075,7 +1160,7 @@
                         const calendarEvents = await fetchAndParseCalendar(calendarUrl);
 
                         calendarEvents.forEach(event => {
-                            if (trackedUids.includes(event.uid)) return;
+                            if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                             // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                             const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||

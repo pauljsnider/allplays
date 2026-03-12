@@ -317,6 +317,12 @@ export function checkAuth(callback, options = {}) {
                 }
 
                 if (profile) {
+                    if (profile.email) {
+                        user.profileEmail = profile.email;
+                        if (!user.email) {
+                            user.email = profile.email;
+                        }
+                    }
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;
 
