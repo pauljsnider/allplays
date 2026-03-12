@@ -10,6 +10,17 @@ describe('admin invite signup cache busting', () => {
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=3';");
     });
 
+    it('pins fresh invite acceptance module versions for admin invite redemption', () => {
+        const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
+
+        expect(acceptInviteSource).toContain(
+            "import { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=15';"
+        );
+        expect(acceptInviteSource).toContain(
+            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=3';"
+        );
+    });
+
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = [
             'login.html',

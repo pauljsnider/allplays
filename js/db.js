@@ -28,13 +28,21 @@ import {
     runTransaction,
     ref,
     uploadBytes,
-    getDownloadURL
+    getDownloadURL,
+    deleteObject
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
+import {
+    buildParentMembershipRequestId,
+    buildParentMembershipRequestUpdate,
+    hasParentLink,
+    mergeApprovedParentLinkState
+} from './parent-membership-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
+import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
@@ -52,6 +60,7 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=1';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -133,8 +142,10 @@ export async function uploadChatImage(teamId, file) {
     await requireImageAuth();
 
     const ts = Date.now();
-    const safeName = String(file.name || 'image').replace(/[^\w.\-]+/g, '_');
-    const imagePath = `team-photos/${ts}_chat_${teamId}_${safeName}`;
+    const safeName = String(file.name || 'media').replace(/[^\w.\-]+/g, '_');
+    const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
+    const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
+    const imagePath = `${mediaFolder}/${ts}_chat_${teamId}_${safeName}`;
 
     try {
         const storageRef = ref(imageStorage, imagePath);
@@ -145,7 +156,8 @@ export async function uploadChatImage(teamId, file) {
             path: imagePath,
             name: file.name || null,
             type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null
+            size: Number.isFinite(file.size) ? file.size : null,
+            thumbnailUrl: null
         };
     } catch (error) {
         const code = error?.code || '';
@@ -160,10 +172,28 @@ export async function uploadChatImage(teamId, file) {
                 path: fallbackPath,
                 name: file.name || null,
                 type: file.type || null,
-                size: Number.isFinite(file.size) ? file.size : null
+                size: Number.isFinite(file.size) ? file.size : null,
+                thumbnailUrl: null
             };
         }
         throw error;
+    }
+}
+
+export async function deleteUploadedChatAttachments(attachments = []) {
+    const deletions = attachments
+        .filter((attachment) => attachment?.path)
+        .map(async (attachment) => {
+            const usesImageStorage = attachment.path.startsWith('team-photos/')
+                || attachment.path.startsWith('team-videos/');
+            const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
+            await deleteObject(storageRef);
+        });
+
+    const results = await Promise.allSettled(deletions);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure) {
+        throw failure.reason;
     }
 }
 
@@ -468,6 +498,210 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
             updatedAt: Timestamp.now()
         });
     }
+}
+
+function sortParentMembershipRequests(requests = []) {
+    return [...requests].sort((a, b) => {
+        const aTime = a?.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a?.createdAt || 0).getTime();
+        const bTime = b?.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b?.createdAt || 0).getTime();
+        return bTime - aTime;
+    });
+}
+
+function getCurrentUserIdentity() {
+    return {
+        userId: auth.currentUser?.uid || '',
+        email: (auth.currentUser?.email || '').toLowerCase().trim(),
+        name: auth.currentUser?.displayName || auth.currentUser?.email || 'Parent'
+    };
+}
+
+export async function createParentMembershipRequest(teamId, playerId, relation = 'Parent') {
+    const identity = getCurrentUserIdentity();
+    if (!identity.userId) {
+        throw new Error('You must be signed in to request parent access');
+    }
+    if (!teamId || !playerId) {
+        throw new Error('Team and player are required');
+    }
+
+    const [team, players, profile] = await Promise.all([
+        getTeam(teamId),
+        getPlayers(teamId),
+        getUserProfile(identity.userId)
+    ]);
+    const player = (players || []).find((entry) => entry.id === playerId);
+
+    if (!team || !player) {
+        throw new Error('Team or player not found');
+    }
+
+    const alreadyLinked = (Array.isArray(profile?.parentOf) ? profile.parentOf : []).some((link) => (
+        link?.teamId === teamId && link?.playerId === playerId
+    ));
+    if (alreadyLinked) {
+        throw new Error('You already have access to this player');
+    }
+
+    const requestId = buildParentMembershipRequestId(identity.userId, playerId);
+    const requestRef = doc(db, `teams/${teamId}/membershipRequests`, requestId);
+    const existingSnap = await getDoc(requestRef);
+    if (existingSnap.exists()) {
+        const existingData = existingSnap.data() || {};
+        if (existingData.status === 'pending') {
+            throw new Error('A request for this player is already pending');
+        }
+        if (existingData.status === 'approved') {
+            throw new Error('This player access request was already approved');
+        }
+    }
+
+    const now = Timestamp.now();
+    const requesterName = profile?.fullName || profile?.displayName || identity.name;
+    await setDoc(requestRef, {
+        requesterUserId: identity.userId,
+        requesterEmail: identity.email || profile?.email || null,
+        requesterName: requesterName || 'Parent',
+        teamId,
+        teamName: team.name || null,
+        playerId,
+        playerName: player.name || null,
+        playerNumber: player.number || null,
+        relation: relation || 'Parent',
+        status: 'pending',
+        createdAt: existingSnap.exists() ? (existingSnap.data()?.createdAt || now) : now,
+        updatedAt: now,
+        decidedAt: null,
+        decidedBy: null,
+        decidedByName: null,
+        decisionNote: null
+    }, { merge: false });
+
+    return { success: true, requestId };
+}
+
+export async function listMyParentMembershipRequests(userId) {
+    if (!userId) return [];
+    const snapshot = await getDocs(query(
+        collectionGroup(db, 'membershipRequests'),
+        where('requesterUserId', '==', userId)
+    ));
+    return sortParentMembershipRequests(snapshot.docs.map((requestDoc) => ({
+        id: requestDoc.id,
+        ...requestDoc.data()
+    })));
+}
+
+export async function listTeamParentMembershipRequests(teamId) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/membershipRequests`));
+    return sortParentMembershipRequests(snapshot.docs.map((requestDoc) => ({
+        id: requestDoc.id,
+        ...requestDoc.data()
+    })));
+}
+
+export async function approveParentMembershipRequest(teamId, requestId, decisionNote = '') {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to approve parent access');
+    }
+
+    const requestRef = doc(db, `teams/${teamId}/membershipRequests`, requestId);
+    await runTransaction(db, async (transaction) => {
+        const requestSnap = await transaction.get(requestRef);
+        if (!requestSnap.exists()) {
+            throw new Error('Request not found');
+        }
+
+        const requestData = requestSnap.data() || {};
+        const requestUpdate = buildParentMembershipRequestUpdate({
+            currentStatus: requestData.status,
+            nextStatus: 'approved',
+            decidedBy: currentUser.uid,
+            decidedByName: currentUser.displayName || currentUser.email || 'Coach',
+            decisionNote
+        });
+
+        const teamRef = doc(db, 'teams', teamId);
+        const playerRef = doc(db, `teams/${teamId}/players`, requestData.playerId);
+        const userRef = doc(db, 'users', requestData.requesterUserId);
+        const [teamSnap, playerSnap, userSnap] = await Promise.all([
+            transaction.get(teamRef),
+            transaction.get(playerRef),
+            transaction.get(userRef)
+        ]);
+
+        if (!teamSnap.exists() || !playerSnap.exists()) {
+            throw new Error('Team or player not found');
+        }
+
+        const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
+        const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
+        const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
+        if (hasParentLink(userData, teamId, requestData.playerId)) {
+            throw new Error('Requester already has access to this player');
+        }
+        const merged = mergeApprovedParentLinkState({
+            userData,
+            parentUserId: requestData.requesterUserId,
+            parentEmail: requestData.requesterEmail || userData.email || '',
+            team,
+            player,
+            relation: requestData.relation || null
+        });
+
+        const currentParents = Array.isArray(player.parents) ? player.parents : [];
+        const hasParentEntry = currentParents.some((parent) => parent?.userId === requestData.requesterUserId);
+        const now = Timestamp.now();
+
+        transaction.set(playerRef, {
+            parents: hasParentEntry ? currentParents : [...currentParents, {
+                ...merged.playerParentEntry,
+                addedAt: now
+            }],
+            updatedAt: now
+        }, { merge: true });
+        transaction.update(requestRef, {
+            ...requestUpdate,
+            updatedAt: now,
+            decidedAt: now
+        });
+    });
+
+    return { success: true };
+}
+
+export async function denyParentMembershipRequest(teamId, requestId, decisionNote = '') {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to deny parent access');
+    }
+
+    const requestRef = doc(db, `teams/${teamId}/membershipRequests`, requestId);
+    await runTransaction(db, async (transaction) => {
+        const requestSnap = await transaction.get(requestRef);
+        if (!requestSnap.exists()) {
+            throw new Error('Request not found');
+        }
+
+        const requestData = requestSnap.data() || {};
+        const requestUpdate = buildParentMembershipRequestUpdate({
+            currentStatus: requestData.status,
+            nextStatus: 'denied',
+            decidedBy: currentUser.uid,
+            decidedByName: currentUser.displayName || currentUser.email || 'Coach',
+            decisionNote
+        });
+        const now = Timestamp.now();
+        transaction.update(requestRef, {
+            ...requestUpdate,
+            updatedAt: now,
+            decidedAt: now
+        });
+    });
+
+    return { success: true };
 }
 
 // Games
@@ -854,12 +1088,13 @@ export async function getSeriesMaster(teamId, seriesId) {
 export async function getConfigs(teamId) {
     const q = query(collection(db, `teams/${teamId}/statTrackerConfigs`), orderBy("name"));
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(doc => normalizeStatTrackerConfig({ id: doc.id, ...doc.data() }));
 }
 
 export async function createConfig(teamId, configData) {
-    configData.createdAt = Timestamp.now();
-    const docRef = await addDoc(collection(db, `teams/${teamId}/statTrackerConfigs`), configData);
+    const normalizedConfig = normalizeStatTrackerConfig(configData);
+    normalizedConfig.createdAt = Timestamp.now();
+    const docRef = await addDoc(collection(db, `teams/${teamId}/statTrackerConfigs`), normalizedConfig);
     return docRef.id;
 }
 
@@ -1907,6 +2142,7 @@ export async function postChatMessage(teamId, {
     senderName,
     senderEmail,
     senderPhotoUrl,
+    attachments = [],
     imageUrl = null,
     imagePath = null,
     imageName = null,
@@ -1918,18 +2154,37 @@ export async function postChatMessage(teamId, {
     aiMeta = null
 }) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const createdAt = Timestamp.now();
+    const normalizedMedia = normalizeChatAttachments(
+        attachments.length > 0
+            ? attachments
+            : (imageUrl ? [{
+                url: imageUrl,
+                path: imagePath,
+                name: imageName,
+                type: imageType || 'image/*',
+                size: imageSize
+            }] : [])
+    );
+    const storedAttachments = normalizedMedia.attachments.map((attachment) => ({
+        ...attachment,
+        uploadedAt: createdAt
+    }));
     return await addDoc(messagesRef, {
         text,
         senderId,
         senderName: senderName || null,
         senderEmail: senderEmail || null,
         senderPhotoUrl: senderPhotoUrl || null,
-        imageUrl: imageUrl || null,
-        imagePath: imagePath || null,
-        imageName: imageName || null,
-        imageType: imageType || null,
-        imageSize: Number.isFinite(imageSize) ? imageSize : null,
-        createdAt: Timestamp.now(),
+        attachments: storedAttachments,
+        imageUrl: normalizedMedia.legacyImage.imageUrl || imageUrl || null,
+        imagePath: normalizedMedia.legacyImage.imagePath || imagePath || null,
+        imageName: normalizedMedia.legacyImage.imageName || imageName || null,
+        imageType: normalizedMedia.legacyImage.imageType || imageType || null,
+        imageSize: Number.isFinite(normalizedMedia.legacyImage.imageSize)
+            ? normalizedMedia.legacyImage.imageSize
+            : (Number.isFinite(imageSize) ? imageSize : null),
+        createdAt,
         editedAt: null,
         deleted: false,
         ai: ai === true,
@@ -3154,12 +3409,63 @@ function nextConfirmedSeatCount(currentSeatCountConfirmed, previousRequestStatus
     return current + 1;
 }
 
+function normalizeRideEventIds(primaryGameId, fallbackGameIds = []) {
+    const fallbackIds = Array.isArray(fallbackGameIds) ? fallbackGameIds : [fallbackGameIds];
+    return [...new Set(
+        [primaryGameId, ...fallbackIds]
+            .map((gameId) => typeof gameId === 'string' ? gameId.trim() : '')
+            .filter(Boolean)
+    )];
+}
+
+async function loadRideOffersForGameId(teamId, gameId) {
+    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
+    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
+        const offerData = offerDoc.data() || {};
+        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
+        const requests = requestsSnap.docs
+            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
+            .sort((a, b) => {
+                const at = a?.requestedAt?.toMillis?.() || 0;
+                const bt = b?.requestedAt?.toMillis?.() || 0;
+                return at - bt;
+            });
+        return {
+            id: offerDoc.id,
+            ...offerData,
+            sourceGameId: gameId,
+            status: normalizeRideOfferStatus(offerData.status),
+            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
+            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
+            requests
+        };
+    }));
+
+    offers.sort((a, b) => {
+        const at = a?.createdAt?.toMillis?.() || 0;
+        const bt = b?.createdAt?.toMillis?.() || 0;
+        return bt - at;
+    });
+    return offers;
+}
+
+async function resolveRideOffersGameId(teamId, primaryGameId, fallbackGameIds = []) {
+    const candidateGameIds = normalizeRideEventIds(primaryGameId, fallbackGameIds);
+    for (const candidateGameId of candidateGameIds) {
+        const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${candidateGameId}/rideOffers`));
+        if (!offersSnap.empty) return candidateGameId;
+    }
+    return candidateGameIds[0] || '';
+}
+
 /**
  * Create a rideshare offer under a game/practice event.
  */
-export async function createRideOffer(teamId, gameId, payload = {}) {
+export async function createRideOffer(teamId, gameId, payload = {}, options = {}) {
     const user = auth.currentUser;
     if (!user?.uid) throw new Error('You must be signed in to offer a ride.');
+    const targetGameId = await resolveRideOffersGameId(teamId, gameId, options?.fallbackGameIds);
+    if (!targetGameId) throw new Error('gameId is required to offer a ride.');
     const seatCapacity = toNonNegativeInteger(payload.seatCapacity, 0);
     if (seatCapacity <= 0) throw new Error('Seat capacity must be at least 1.');
 
@@ -3169,7 +3475,7 @@ export async function createRideOffer(teamId, gameId, payload = {}) {
         : 'to';
 
     const note = typeof payload.note === 'string' ? payload.note.trim() : '';
-    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`), {
+    const offerRef = await addDoc(collection(db, `teams/${teamId}/games/${targetGameId}/rideOffers`), {
         driverUserId: user.uid,
         driverName: payload.driverName || user.displayName || user.email || 'Parent Driver',
         seatCapacity,
@@ -3186,34 +3492,19 @@ export async function createRideOffer(teamId, gameId, payload = {}) {
 /**
  * List rideshare offers (with nested requests) for an event.
  */
-export async function listRideOffersForEvent(teamId, gameId) {
-    const offersSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers`));
-    const offers = await Promise.all(offersSnap.docs.map(async (offerDoc) => {
-        const offerData = offerDoc.data() || {};
-        const requestsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerDoc.id}/requests`));
-        const requests = requestsSnap.docs
-            .map((requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }))
-            .sort((a, b) => {
-                const at = a?.requestedAt?.toMillis?.() || 0;
-                const bt = b?.requestedAt?.toMillis?.() || 0;
-                return at - bt;
-            });
-        return {
-            id: offerDoc.id,
-            ...offerData,
-            status: normalizeRideOfferStatus(offerData.status),
-            seatCapacity: toNonNegativeInteger(offerData.seatCapacity, 0),
-            seatCountConfirmed: toNonNegativeInteger(offerData.seatCountConfirmed, 0),
-            requests
-        };
-    }));
+export async function listRideOffersForEvent(teamId, gameId, options = {}) {
+    const candidateGameIds = normalizeRideEventIds(gameId, options?.fallbackGameIds);
+    if (candidateGameIds.length === 0) return [];
 
-    offers.sort((a, b) => {
-        const at = a?.createdAt?.toMillis?.() || 0;
-        const bt = b?.createdAt?.toMillis?.() || 0;
-        return bt - at;
-    });
-    return offers;
+    for (let index = 0; index < candidateGameIds.length; index += 1) {
+        const candidateGameId = candidateGameIds[index];
+        const offers = await loadRideOffersForGameId(teamId, candidateGameId);
+        if (offers.length > 0 || index === candidateGameIds.length - 1) {
+            return offers;
+        }
+    }
+
+    return [];
 }
 
 /**
