@@ -46,7 +46,7 @@ import {
     writeBatch,
     runTransaction
 } from "./vendor/firebase-firestore.js";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "./vendor/firebase-storage.js";
+import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
 
 const firebaseConfig = {
     apiKey: "AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc",
@@ -117,4 +117,4 @@ export {
     applyActionCode
 };
 
-export { ref, uploadBytes, getDownloadURL };
+export { ref, uploadBytes, getDownloadURL, deleteObject };

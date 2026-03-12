@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveResumeClockState } from '../../js/live-tracker-resume.js';
+import { buildPersistedResumeClockState, deriveResumeClockState } from '../../js/live-tracker-resume.js';
 
 describe('live tracker resume clock state', () => {
   it('restores period and clock from latest persisted live event by createdAt', () => {
@@ -33,6 +33,36 @@ describe('live tracker resume clock state', () => {
       ],
       { period: 'Q1', clock: 0 },
       { liveClockPeriod: 'Q3', liveClockMs: 187000 }
+    );
+
+    expect(result.restored).toBe(true);
+    expect(result.period).toBe('Q3');
+    expect(result.clock).toBe(187000);
+  });
+
+  it('falls back to legacy persisted game clock fields when liveClock fields are absent', () => {
+    const result = deriveResumeClockState(
+      [
+        { type: 'stat', playerId: 'p1', statKey: 'pts', value: 2 },
+        { type: 'chat', message: 'timeout' }
+      ],
+      { period: 'Q1', clock: 0 },
+      { period: 'Q3', gameClockMs: 187000 }
+    );
+
+    expect(result.restored).toBe(true);
+    expect(result.period).toBe('Q3');
+    expect(result.clock).toBe(187000);
+  });
+
+  it('passes legacy persisted clock fields through the production game-doc mapping', () => {
+    const result = deriveResumeClockState(
+      [
+        { type: 'stat', playerId: 'p1', statKey: 'pts', value: 2 },
+        { type: 'chat', message: 'timeout' }
+      ],
+      { period: 'Q1', clock: 0 },
+      buildPersistedResumeClockState({ period: 'Q3', gameClockMs: 187000 })
     );
 
     expect(result.restored).toBe(true);
