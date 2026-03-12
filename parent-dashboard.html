@@ -235,7 +235,7 @@
             cancelRideRequest,
             getAggregatedStatsForPlayer
         } from './js/db.js?v=24';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -325,6 +325,13 @@
             return `${teamId || ''}::${eventId || ''}`;
         }
 
+        function getLegacyRideEventId(event) {
+            const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
+            const legacyEventId = typeof event?.calendarEventUid === 'string' ? event.calendarEventUid.trim() : '';
+            if (!eventId || !legacyEventId || legacyEventId === eventId) return '';
+            return legacyEventId;
+        }
+
         function getEventRideOffers(teamId, eventId) {
             const key = getEventRideKey(teamId, eventId);
             return rideshareOffersByEvent.get(key) || [];
@@ -367,6 +374,7 @@
         function renderEventRideshare(event, { includeChildPicker = false } = {}) {
             if (!canShowRideshareForEvent(event)) return '';
             const offers = getEventRideOffers(event.teamId, event.id);
+            const legacyRideEventId = getLegacyRideEventId(event);
             const summary = getEventRideshareSummary(offers);
             const eventKey = getEventRideKey(event.teamId, event.id);
             const renderKey = `${eventKey}::${includeChildPicker ? 'modal' : (event.childId || 'row')}`.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -395,13 +403,14 @@
                                 <option value="from">From Event</option>
                                 <option value="round-trip">Round Trip</option>
                             </select>
-                            <button onclick="submitRideOfferFromForm('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(renderKey)}')" class="col-span-1 px-2 py-1 text-xs rounded bg-primary-600 text-white font-semibold hover:bg-primary-700">Save</button>
+                            <button onclick="submitRideOfferFromForm('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(renderKey)}')" class="col-span-1 px-2 py-1 text-xs rounded bg-primary-600 text-white font-semibold hover:bg-primary-700">Save</button>
                         </div>
                         <input id="ride-note-${escapeAttr(renderKey)}" type="text" maxlength="160" class="mt-2 w-full px-2 py-1 text-xs border border-gray-300 rounded" placeholder="Optional note">
                     </div>
                     ${offers.length === 0
                         ? '<div class="text-xs text-gray-500 mt-2">No ride offers yet for this event.</div>'
                         : `<div class="mt-2 space-y-2">${offers.map((offer) => {
+                            const offerGameId = offer.sourceGameId || event.id;
                             const seatInfo = getOfferSeatInfo(offer);
                             const canManageOffer = offer.driverUserId === currentUserId;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -433,13 +442,13 @@
                                                 </select>
                                             ` : ''}
                                             ${canRequest ? `
-                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(selectedChildId)}','${escapeAttr(selectedChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
+                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(selectedChildId)}','${escapeAttr(selectedChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
                                             ` : ''}
                                             ${myRequest ? `
-                                                <button onclick="cancelMyRideRequest('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(myRequest.id)}')" class="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 font-semibold hover:bg-gray-50">Cancel</button>
+                                                <button onclick="cancelMyRideRequest('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(myRequest.id)}')" class="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 font-semibold hover:bg-gray-50">Cancel</button>
                                             ` : ''}
                                             ${canManageOffer ? `
-                                                <button onclick="toggleRideOfferClosed('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(offer.status)}')" class="px-2 py-1 text-xs rounded border border-orange-300 bg-orange-50 text-orange-700 font-semibold hover:bg-orange-100">${offer.status === 'open' ? 'Close' : 'Reopen'}</button>
+                                                <button onclick="toggleRideOfferClosed('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(offer.status)}')" class="px-2 py-1 text-xs rounded border border-orange-300 bg-orange-50 text-orange-700 font-semibold hover:bg-orange-100">${offer.status === 'open' ? 'Close' : 'Reopen'}</button>
                                             ` : ''}
                                         </div>
                                     </div>
@@ -450,9 +459,9 @@
                                                 <div class="flex items-center justify-between gap-2 text-[11px]">
                                                     <span class="text-gray-700">${escapeHtml(request.childName || 'Player')} · ${escapeHtml(request.status || 'pending')}</span>
                                                     <div class="flex items-center gap-1">
-                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','confirmed')" class="px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50">Confirm</button>
-                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','waitlisted')" class="px-1.5 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Waitlist</button>
-                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','declined')" class="px-1.5 py-0.5 rounded border border-red-300 text-red-700 bg-red-50">Decline</button>
+                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','confirmed')" class="px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50">Confirm</button>
+                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','waitlisted')" class="px-1.5 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Waitlist</button>
+                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','declined')" class="px-1.5 py-0.5 rounded border border-red-300 text-red-700 bg-red-50">Decline</button>
                                                     </div>
                                                 </div>
                                             `).join('')}
@@ -472,10 +481,12 @@
             openScheduleDayModal(activeDayModal.year, activeDayModal.month, activeDayModal.day);
         }
 
-        async function refreshRideshareForEvent(teamId, gameId) {
+        async function refreshRideshareForEvent(teamId, gameId, legacyGameId = '') {
             const key = getEventRideKey(teamId, gameId);
             try {
-                const offers = await listRideOffersForEvent(teamId, gameId);
+                const offers = await listRideOffersForEvent(teamId, gameId, {
+                    fallbackGameIds: legacyGameId ? [legacyGameId] : []
+                });
                 rideshareOffersByEvent.set(key, offers);
             } catch (err) {
                 console.warn('Unable to load rideshare offers for event:', teamId, gameId, err);
@@ -484,14 +495,17 @@
         }
 
         async function hydrateRideshareOffersForSchedule(events = []) {
-            const uniqueDbEvents = [...new Set(
+            const uniqueEvents = Array.from(new Map(
                 (events || [])
                     .filter((ev) => canShowRideshareForEvent(ev))
-                    .map((ev) => getEventRideKey(ev.teamId, ev.id))
-            )];
-            await Promise.all(uniqueDbEvents.map(async (key) => {
-                const [teamId, gameId] = key.split('::');
-                await refreshRideshareForEvent(teamId, gameId);
+                    .map((ev) => [getEventRideKey(ev.teamId, ev.id), {
+                        teamId: ev.teamId,
+                        gameId: ev.id,
+                        legacyGameId: getLegacyRideEventId(ev)
+                    }])
+            ).values());
+            await Promise.all(uniqueEvents.map(async ({ teamId, gameId, legacyGameId }) => {
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
             }));
         }
 
@@ -501,7 +515,7 @@
             panel.classList.toggle('hidden');
         }
 
-        async function submitRideOfferFromForm(teamId, gameId, eventKey) {
+        async function submitRideOfferFromForm(teamId, gameId, legacyGameId, eventKey) {
             try {
                 const seatsEl = document.getElementById(`ride-seats-${eventKey}`);
                 const directionEl = document.getElementById(`ride-direction-${eventKey}`);
@@ -513,8 +527,10 @@
                     direction: directionEl?.value || 'to',
                     note: noteEl?.value || '',
                     driverName: currentUser?.displayName || currentUser?.email || 'Parent Driver'
+                }, {
+                    fallbackGameIds: legacyGameId ? [legacyGameId] : []
                 });
-                await refreshRideshareForEvent(teamId, gameId);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
                 toggleRideOfferForm(eventKey);
@@ -524,7 +540,7 @@
             }
         }
 
-        async function requestRideSpotForChild(teamId, gameId, offerId, defaultChildId, defaultChildName, selectorId = '') {
+        async function requestRideSpotForChild(teamId, gameId, legacyGameId, offerGameId, offerId, defaultChildId, defaultChildName, selectorId = '') {
             try {
                 let childId = defaultChildId;
                 let childName = defaultChildName;
@@ -535,8 +551,8 @@
                     childName = selected?.childName || childName;
                 }
                 if (!childId) throw new Error('Select a child first.');
-                await requestRideSpot(teamId, gameId, offerId, { childId, childName });
-                await refreshRideshareForEvent(teamId, gameId);
+                await requestRideSpot(teamId, offerGameId, offerId, { childId, childName });
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -545,10 +561,10 @@
             }
         }
 
-        async function updateRideRequestDecision(teamId, gameId, offerId, requestId, status) {
+        async function updateRideRequestDecision(teamId, gameId, legacyGameId, offerGameId, offerId, requestId, status) {
             try {
-                await updateRideRequestStatus(teamId, gameId, offerId, requestId, status);
-                await refreshRideshareForEvent(teamId, gameId);
+                await updateRideRequestStatus(teamId, offerGameId, offerId, requestId, status);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -557,11 +573,11 @@
             }
         }
 
-        async function toggleRideOfferClosed(teamId, gameId, offerId, currentStatus) {
+        async function toggleRideOfferClosed(teamId, gameId, legacyGameId, offerGameId, offerId, currentStatus) {
             try {
                 const nextStatus = currentStatus === 'open' ? 'closed' : 'open';
-                await closeRideOffer(teamId, gameId, offerId, nextStatus);
-                await refreshRideshareForEvent(teamId, gameId);
+                await closeRideOffer(teamId, offerGameId, offerId, nextStatus);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -570,10 +586,10 @@
             }
         }
 
-        async function cancelMyRideRequest(teamId, gameId, offerId, requestId) {
+        async function cancelMyRideRequest(teamId, gameId, legacyGameId, offerGameId, offerId, requestId) {
             try {
-                await cancelRideRequest(teamId, gameId, offerId, requestId);
-                await refreshRideshareForEvent(teamId, gameId);
+                await cancelRideRequest(teamId, offerGameId, offerId, requestId);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -946,7 +962,7 @@
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
 
                             calendarEvents.forEach(event => {
-                                if (trackedUids.includes(event.uid)) return;
+                                if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                                 // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                                 const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
@@ -971,13 +987,14 @@
                                 const session = isPractice ? resolvePracticeSession(event, eventDate) : null;
 
                                 for (const child of teamChildren) {
-                                    allEvents.push({
+                                allEvents.push({
                                         type,
                                         date: eventDate,
                                         location,
                                         opponent,
                                         teamId,
-                                        id: event.uid || null,
+                                        id: getCalendarEventTrackingId(event) || null,
+                                        calendarEventUid: event.uid || null,
                                         isDbGame: false,
                                         childId: child.playerId,
                                         childName: child.playerName,

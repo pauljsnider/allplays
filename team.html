@@ -231,7 +231,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
@@ -1160,7 +1160,7 @@
                         const calendarEvents = await fetchAndParseCalendar(calendarUrl);
 
                         calendarEvents.forEach(event => {
-                            if (trackedUids.includes(event.uid)) return;
+                            if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                             // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                             const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
