@@ -6,6 +6,11 @@ function readRepoFile(relativePath) {
 }
 
 describe('team management page access wiring', () => {
+    it('prefers auth email before profile fallback when loading dashboard team access', () => {
+        const html = readRepoFile('dashboard.html');
+        expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
+    });
+
     it('uses shared full-access helper in edit roster page', () => {
         const html = readRepoFile('edit-roster.html');
         expect(html).toContain("from './js/team-access.js'");
@@ -27,7 +32,7 @@ describe('team management page access wiring', () => {
 
     it('uses shared full-access helper in edit config page', () => {
         const html = readRepoFile('edit-config.html');
-        expect(html).toContain("from './js/team-access.js'");
-        expect(html).toContain('hasFullTeamAccess(');
+        expect(html).toContain("from './js/edit-config-access.js'");
+        expect(html).toContain('getEditConfigAccessDecision(');
     });
 });
