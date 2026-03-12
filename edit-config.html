@@ -115,16 +115,12 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { hasFullTeamAccess } from './js/team-access.js';
+        import { getEditConfigAccessDecision } from './js/edit-config-access.js';
 
         renderFooter(document.getElementById('footer-container'));
 
         let currentTeamId = null;
         let currentUser = null;
-        function hasAccess(team, user) {
-            return hasFullTeamAccess(user, team);
-        }
-
         checkAuth((user) => {
             if (!user) {
                 window.location.href = 'login.html';
@@ -143,12 +139,13 @@
             }
             currentTeamId = teamId;
 
-            const team = await getTeam(teamId);
-            if (!hasAccess(team, currentUser)) {
+            const accessDecision = getEditConfigAccessDecision(currentUser, await getTeam(teamId), teamId);
+            if (!accessDecision.allowed) {
                 alert("Team not found or access denied.");
-                window.location.href = 'dashboard.html';
+                window.location.href = accessDecision.exitUrl || 'dashboard.html';
                 return;
             }
+            const team = accessDecision.team;
 
             // Fetch unread count and render banner
             let unreadCount = 0;
