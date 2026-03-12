@@ -12,6 +12,7 @@ describe('cancelScheduledGame', () => {
 
         expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';");
         expect(source).toContain('const result = await cancelScheduledGame({');
+        expect(source).toContain('await loadSchedule();');
         expect(source).toContain('Game cancelled, but team chat notification failed:');
         expect(source).not.toContain("alert('Error cancelling game: ' + err.message);");
     });

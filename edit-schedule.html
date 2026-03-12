@@ -659,7 +659,7 @@
 
     <script type="module">
         import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer } from './js/db.js?v=20';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
@@ -996,7 +996,7 @@
 
                         calendarEvents.forEach(event => {
                             // Skip if already tracked
-                            if (trackedUids.includes(event.uid)) return;
+                            if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                             // Normalize common ICS and TeamSnap cancelled variants via shared helper
                             const isCancelled = getCalendarEventStatus(event) === 'cancelled';
@@ -1214,7 +1214,11 @@
                         postChatMessage
                     });
                     if (result.cancelled) {
-                        loadSchedule();
+                        try {
+                            await loadSchedule();
+                        } catch (error) {
+                            console.error('Game cancelled but schedule refresh failed:', error);
+                        }
                         if (result.notificationError) {
                             console.error('Game cancelled but team chat notification failed:', result.notificationError);
                             alert(`Game cancelled, but team chat notification failed: ${result.notificationError}`);
@@ -1555,10 +1559,8 @@
 
             // Populate form
             const date = game.date.toDate ? game.date.toDate() : new Date(game.date);
-            // Format for datetime-local input: YYYY-MM-DDThh:mm
-            const dateStr = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
-            document.getElementById('gameDate').value = dateStr;
+            document.getElementById('gameDate').value = formatIsoForInput(date);
             document.getElementById('opponent').value = game.opponent || '';
             document.getElementById('location').value = game.location || '';
             document.getElementById('statConfig').value = game.statTrackerConfigId || '';
@@ -1583,8 +1585,7 @@
             document.getElementById('countsTowardSeasonRecord').checked = game.countsTowardSeasonRecord !== false;
             if (game.arrivalTime) {
                 const at = game.arrivalTime.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime);
-                const atStr = new Date(at.getTime() - at.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-                document.getElementById('arrivalTime').value = atStr;
+                document.getElementById('arrivalTime').value = formatIsoForInput(at);
             } else {
                 document.getElementById('arrivalTime').value = '';
             }
@@ -2149,7 +2150,7 @@
                     seasonLabel: inferSeasonLabel(eventDate),
                     competitionType: 'league',
                     countsTowardSeasonRecord: true,
-                    calendarEventUid: calendarEvent.uid
+                    calendarEventUid: getCalendarEventTrackingId(calendarEvent)
                 });
 
                 // Check if this is a basketball game using shared helper
