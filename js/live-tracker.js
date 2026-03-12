@@ -2501,7 +2501,10 @@ async function init() {
           { period: state.period, clock: state.clock },
           {
             liveClockPeriod: currentGame?.liveClockPeriod,
-            liveClockMs: currentGame?.liveClockMs
+            liveClockMs: currentGame?.liveClockMs,
+            period: currentGame?.period,
+            gameClockMs: currentGame?.gameClockMs,
+            clock: currentGame?.clock
           }
         );
         if (resumeClockState.restored) {
