@@ -138,6 +138,7 @@
         import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent } from './js/utils.js?v=11';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
+        import { resolveCalendarRsvpPlayerIdsForSubmission } from './js/parent-dashboard-rsvp.js?v=7';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -195,9 +196,9 @@
                 <div class="mt-3 border-t border-gray-100 pt-3">
                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                     <div class="flex gap-2">
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-id="${escapeAttr(ev.childId || ev.playerId || '')}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-id="${escapeAttr(ev.childId || ev.playerId || '')}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-id="${escapeAttr(ev.childId || ev.playerId || '')}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                     </div>
                     <div class="mt-1 text-xs text-gray-500">${summary}</div>
                 </div>
@@ -208,7 +209,10 @@
             const teamId = btn?.dataset?.teamId || '';
             const gameId = btn?.dataset?.gameId || '';
             if (!teamId || !gameId) return;
-            submitCalendarRsvp(teamId, gameId, response);
+            submitCalendarRsvp(teamId, gameId, response, {
+                childId: btn?.dataset?.childId || '',
+                childIds: btn?.dataset?.childIds || ''
+            });
         }
 
         async function init() {
@@ -284,6 +288,10 @@
                                     awayScore: null,
                                     liveStatus: null,
                                     myRsvp: null,
+                                    childId: game.childId || game.playerId || null,
+                                    childIds: Array.isArray(game.childIds) && game.childIds.length > 0
+                                        ? game.childIds
+                                        : (playerIdsByTeam.has(team.id) ? Array.from(playerIdsByTeam.get(team.id)) : []),
                                     source: 'db'
                                 });
                             }
@@ -309,6 +317,10 @@
                                 awayScore: game.awayScore,
                                 liveStatus: game.liveStatus,
                                 myRsvp: null,
+                                childId: game.childId || game.playerId || null,
+                                childIds: Array.isArray(game.childIds) && game.childIds.length > 0
+                                    ? game.childIds
+                                    : (playerIdsByTeam.has(team.id) ? Array.from(playerIdsByTeam.get(team.id)) : []),
                                 source: 'db'
                             });
                         }
@@ -620,11 +632,15 @@
             document.getElementById('day-modal').classList.add('hidden');
         }
 
-        async function submitCalendarRsvp(teamId, gameId, response) {
+        async function submitCalendarRsvp(teamId, gameId, response, childContext = {}) {
             try {
-                const playerIds = playerIdsByTeam.has(teamId)
-                    ? Array.from(playerIdsByTeam.get(teamId))
-                    : [];
+                const playerIds = resolveCalendarRsvpPlayerIdsForSubmission(
+                    allEvents,
+                    teamId,
+                    gameId,
+                    childContext,
+                    playerIdsByTeam.has(teamId) ? Array.from(playerIdsByTeam.get(teamId)) : []
+                );
                 const summary = await submitRsvp(teamId, gameId, currentUserId, {
                     displayName: currentUser?.displayName || currentUser?.email || null,
                     playerIds,
