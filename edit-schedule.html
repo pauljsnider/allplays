@@ -1214,7 +1214,7 @@
                         postChatMessage
                     });
                     if (result.cancelled) {
-                        loadSchedule();
+                        await loadSchedule();
                         if (result.notificationError) {
                             console.error('Game cancelled but team chat notification failed:', result.notificationError);
                             alert(`Game cancelled, but team chat notification failed: ${result.notificationError}`);
