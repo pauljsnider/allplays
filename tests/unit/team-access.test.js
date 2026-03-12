@@ -16,6 +16,10 @@ describe('team access helpers', () => {
     expect(hasFullTeamAccess({ uid: 'u1', email: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
   });
 
+  it('grants full access when profile email matches admin list', () => {
+    expect(hasFullTeamAccess({ uid: 'u1', profileEmail: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
+  });
+
   it('grants full access to platform admin', () => {
     expect(hasFullTeamAccess({ uid: 'u2', isAdmin: true }, TEAM)).toBe(true);
   });
