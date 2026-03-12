@@ -34,7 +34,8 @@ vi.mock('../../js/db.js?v=14', () => ({
     redeemParentInvite: redeemParentInviteMock,
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
-    getUserByEmail: vi.fn()
+    getUserByEmail: vi.fn(),
+    listMyParentMembershipRequests: vi.fn()
 }));
 
 describe('loginWithGoogle parent invite failure cleanup', () => {
