@@ -62,13 +62,23 @@
             <!-- Chat Header -->
             <div class="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <h2 class="text-lg font-bold text-gray-900">Team Chat</h2>
-                <button id="refresh-btn"
-                    class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                    </svg>
-                    Refresh
-                </button>
+                <div class="flex items-center gap-2">
+                    <button id="media-gallery-btn"
+                        class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7a2 2 0 012-2h3l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H6a2 2 0 01-2-2V7z"></path>
+                        </svg>
+                        Photos &amp; Videos
+                        <span id="media-gallery-count" class="hidden rounded-full bg-primary-100 px-2 py-0.5 text-xs font-semibold text-primary-700"></span>
+                    </button>
+                    <button id="refresh-btn"
+                        class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
             </div>
 
             <!-- Load More Button (hidden by default) -->
@@ -106,10 +116,10 @@
                                 placeholder="Type a message..."
                                 class="w-full px-2 py-2.5 border-0 focus:outline-none focus:ring-0"
                                 maxlength="2000">
-                            <input id="chat-image-input" type="file" accept="image/*" class="hidden">
+                            <input id="chat-image-input" type="file" accept="image/*,video/*" multiple class="hidden">
                             <button id="image-btn" type="button"
                                 class="shrink-0 p-2 rounded-md text-gray-500 hover:text-primary-600 hover:bg-primary-50 transition"
-                                title="Attach image">
+                                title="Attach photos or videos">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.5 11.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z"></path>
@@ -135,16 +145,7 @@
                     Listening... tap mic again to stop.
                 </div>
                 <div id="chat-image-preview" class="hidden mt-2 p-2 border border-gray-200 rounded-lg bg-white">
-                    <div class="flex items-center gap-3">
-                        <img id="chat-image-preview-img" alt="Image preview" class="w-14 h-14 rounded-md object-cover border border-gray-200">
-                        <div class="min-w-0 flex-1">
-                            <p id="chat-image-preview-name" class="text-sm font-medium text-gray-800 truncate"></p>
-                            <p id="chat-image-preview-size" class="text-xs text-gray-500"></p>
-                        </div>
-                        <button id="chat-image-remove-btn" type="button" class="text-sm text-red-600 hover:text-red-700 font-medium">
-                            Remove
-                        </button>
-                    </div>
+                    <div id="chat-media-preview-list" class="space-y-2"></div>
                 </div>
                 <div id="ai-thinking" class="hidden mt-2 text-sm text-indigo-600 flex items-center gap-2">
                     <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-600"></div>
@@ -180,11 +181,31 @@
         </div>
     </div>
 
+    <div id="media-gallery-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 p-4">
+        <div class="max-w-5xl mx-auto h-full flex items-center justify-center">
+            <div class="bg-white rounded-2xl shadow-xl w-full max-h-full overflow-hidden flex flex-col">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+                    <div>
+                        <h3 class="text-lg font-bold text-gray-900">Photos &amp; Videos</h3>
+                        <p id="media-gallery-summary" class="text-sm text-gray-500">Browse shared media from this team chat.</p>
+                    </div>
+                    <button id="media-gallery-close-btn" type="button" class="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg">
+                        Close
+                    </button>
+                </div>
+                <div id="media-gallery-grid" class="p-5 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div class="text-sm text-gray-500">No media shared yet.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=20';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=21';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
+        import { MAX_CHAT_MEDIA_SIZE, getMessageAttachments, collectThreadMedia } from './js/team-chat-media.js?v=1';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -320,7 +341,6 @@
         const AI_GAMES_CONTEXT_LIMIT = 20;
         const AI_EVENTS_GAMES_LIMIT = 3;
         const AI_EVENTS_PER_GAME_LIMIT = 25;
-        const MAX_CHAT_IMAGE_SIZE = 5 * 1024 * 1024;
         const CHAT_REACTIONS = [
             { key: 'thumbs_up', emoji: '👍' },
             { key: 'heart', emoji: '❤️' },
@@ -333,7 +353,8 @@
         let aiModelCache = null;
         let activeVoiceRecognition = null;
         let voiceListening = false;
-        let pendingImageFile = null;
+        let pendingImageFiles = [];
+        let pendingMediaPreviewUrls = [];
         let activeReactionPickerMessageId = null;
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
@@ -543,6 +564,19 @@
 
         function renderMessages() {
             const container = document.getElementById('messages-container');
+            const mediaEntries = collectThreadMedia(messages);
+            const mediaCount = document.getElementById('media-gallery-count');
+            const mediaSummary = document.getElementById('media-gallery-summary');
+
+            if (mediaEntries.length > 0) {
+                mediaCount.textContent = String(mediaEntries.length);
+                mediaCount.classList.remove('hidden');
+                mediaSummary.textContent = `${mediaEntries.length} shared item${mediaEntries.length === 1 ? '' : 's'} in this conversation.`;
+            } else {
+                mediaCount.textContent = '';
+                mediaCount.classList.add('hidden');
+                mediaSummary.textContent = 'Browse shared media from this team chat.';
+            }
 
             if (messages.length === 0) {
                 container.innerHTML = `
@@ -575,6 +609,7 @@
                 `;
             }
             container.innerHTML = html;
+            renderMediaGallery(mediaEntries);
         }
 
         async function hydrateSenderPhotos(messageList) {
@@ -750,11 +785,11 @@
 
             const canEdit = isOwn && !!msg.text;
             const canDelete = !isAi && (isOwn || canModerate);
-            const hasImage = msg.imageUrl && isSafeUrl(msg.imageUrl);
-            const messageImage = hasImage ? `
-                <a href="${escapeHtml(msg.imageUrl)}" target="_blank" rel="noopener noreferrer" class="block mb-2">
-                    <img src="${escapeHtml(msg.imageUrl)}" alt="${escapeHtml(msg.imageName || 'Chat image')}" class="max-w-full max-h-72 rounded-lg border border-gray-200 object-cover">
-                </a>
+            const attachments = getMessageAttachments(msg).filter((attachment) => isSafeUrl(attachment.url));
+            const messageMedia = attachments.length > 0 ? `
+                <div class="grid ${attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-2">
+                    ${attachments.map((attachment) => renderMessageAttachment(attachment)).join('')}
+                </div>
             ` : '';
             const messageText = msg.text ? `<p class="text-sm whitespace-pre-wrap break-words">${formatMessageText(msg.text)}</p>` : '';
             const reactionControls = renderReactionControls(msg, { isOwn });
@@ -781,7 +816,7 @@
                                 ${msg.editedAt ? '<span class="italic">(edited)</span> ' : ''}${timestamp}
                             </div>
                             <div class="${bubbleClass} rounded-lg px-4 py-2 rounded-br-sm">
-                                ${messageImage}${messageText}
+                                ${messageMedia}${messageText}
                             </div>
                             ${reactionControls}
                             ${actions.length > 0 ? `
@@ -804,7 +839,7 @@
                                 <span class="ml-1">${timestamp}</span>
                             </div>
                             <div class="${bubbleClass} rounded-lg px-4 py-2 rounded-bl-sm">
-                                ${messageImage}${messageText}
+                                ${messageMedia}${messageText}
                             </div>
                             ${reactionControls}
                             ${actions.length > 0 ? `
@@ -888,10 +923,51 @@
             return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
         }
 
+        function revokePendingMediaPreviewUrls() {
+            pendingMediaPreviewUrls.forEach((url) => URL.revokeObjectURL(url));
+            pendingMediaPreviewUrls = [];
+        }
+
+        function renderPendingMediaPreview() {
+            const preview = document.getElementById('chat-image-preview');
+            const list = document.getElementById('chat-media-preview-list');
+
+            revokePendingMediaPreviewUrls();
+
+            if (pendingImageFiles.length === 0) {
+                list.innerHTML = '';
+                preview.classList.add('hidden');
+                return;
+            }
+
+            list.innerHTML = pendingImageFiles.map((file, index) => {
+                const objectUrl = URL.createObjectURL(file);
+                pendingMediaPreviewUrls.push(objectUrl);
+                const mediaPreview = file.type.startsWith('video/')
+                    ? `<video src="${objectUrl}" class="w-14 h-14 rounded-md object-cover border border-gray-200 bg-black" muted playsinline></video>`
+                    : `<img src="${objectUrl}" alt="${escapeHtml(file.name)}" class="w-14 h-14 rounded-md object-cover border border-gray-200">`;
+                const label = file.type.startsWith('video/') ? 'Video' : 'Photo';
+                return `
+                    <div class="flex items-center gap-3">
+                        ${mediaPreview}
+                        <div class="min-w-0 flex-1">
+                            <p class="text-sm font-medium text-gray-800 truncate">${escapeHtml(file.name)}</p>
+                            <p class="text-xs text-gray-500">${label} • ${formatBytes(file.size)}</p>
+                        </div>
+                        <button type="button" onclick="window.removeSelectedMedia(${index})" class="text-sm text-red-600 hover:text-red-700 font-medium">
+                            Remove
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            preview.classList.remove('hidden');
+        }
+
         function updateComposerState() {
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
-            sendBtn.disabled = !input.value.trim() && !pendingImageFile;
+            sendBtn.disabled = !input.value.trim() && pendingImageFiles.length === 0;
         }
 
         function setVoiceButtonState(isListening) {
@@ -963,56 +1039,100 @@
         }
 
         function clearSelectedImage() {
-            pendingImageFile = null;
+            pendingImageFiles = [];
             const input = document.getElementById('chat-image-input');
-            const preview = document.getElementById('chat-image-preview');
-            const previewImg = document.getElementById('chat-image-preview-img');
-            const previewName = document.getElementById('chat-image-preview-name');
-            const previewSize = document.getElementById('chat-image-preview-size');
             input.value = '';
-            previewImg.src = '';
-            previewName.textContent = '';
-            previewSize.textContent = '';
-            preview.classList.add('hidden');
+            renderPendingMediaPreview();
             updateComposerState();
         }
 
-        function setSelectedImage(file) {
-            pendingImageFile = file;
-            const preview = document.getElementById('chat-image-preview');
-            const previewImg = document.getElementById('chat-image-preview-img');
-            const previewName = document.getElementById('chat-image-preview-name');
-            const previewSize = document.getElementById('chat-image-preview-size');
-
-            previewName.textContent = file.name;
-            previewSize.textContent = formatBytes(file.size);
-
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                previewImg.src = e.target?.result || '';
-            };
-            reader.readAsDataURL(file);
-            preview.classList.remove('hidden');
+        function setSelectedImage(files) {
+            pendingImageFiles = files;
+            renderPendingMediaPreview();
             updateComposerState();
         }
 
         function handleImageSelection(event) {
-            const file = event.target.files?.[0];
-            if (!file) {
+            const files = Array.from(event.target.files || []);
+            if (files.length === 0) {
                 clearSelectedImage();
                 return;
             }
-            if (!file.type.startsWith('image/')) {
-                showError('Please select an image file.');
+            const invalidType = files.find((file) => !file.type.startsWith('image/') && !file.type.startsWith('video/'));
+            if (invalidType) {
+                showError('Please select image or video files only.');
                 clearSelectedImage();
                 return;
             }
-            if (file.size > MAX_CHAT_IMAGE_SIZE) {
-                showError('Image must be 5MB or smaller.');
+            const oversized = files.find((file) => file.size > MAX_CHAT_MEDIA_SIZE);
+            if (oversized) {
+                showError('Photos and videos must be 5MB or smaller each.');
                 clearSelectedImage();
                 return;
             }
-            setSelectedImage(file);
+            setSelectedImage(files);
+        }
+
+        function renderMessageAttachment(attachment) {
+            const label = escapeHtml(attachment.name || (attachment.type === 'video' ? 'Chat video' : 'Chat image'));
+            if (attachment.type === 'video') {
+                return `
+                    <div class="rounded-lg overflow-hidden border border-gray-200 bg-black">
+                        <video controls preload="metadata" class="w-full max-h-72" src="${escapeHtml(attachment.url)}"></video>
+                        <a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer" class="block px-3 py-2 text-xs text-primary-600 bg-white truncate">${label}</a>
+                    </div>
+                `;
+            }
+
+            return `
+                <a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer" class="block rounded-lg overflow-hidden border border-gray-200">
+                    <img src="${escapeHtml(attachment.url)}" alt="${label}" class="w-full max-h-72 object-cover bg-white">
+                </a>
+            `;
+        }
+
+        function renderMediaGallery(mediaEntries) {
+            const grid = document.getElementById('media-gallery-grid');
+            if (mediaEntries.length === 0) {
+                grid.innerHTML = '<div class="text-sm text-gray-500">No media shared yet.</div>';
+                return;
+            }
+
+            grid.innerHTML = mediaEntries.map((entry) => {
+                const timestamp = entry.createdAt
+                    ? entry.createdAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+                    : '';
+                const footer = `
+                    <div class="px-3 py-2 bg-white border-t border-gray-100">
+                        <p class="text-sm font-medium text-gray-800 truncate">${escapeHtml(entry.name || (entry.type === 'video' ? 'Video' : 'Photo'))}</p>
+                        <p class="text-xs text-gray-500 truncate">${escapeHtml(entry.senderName || 'Unknown')}${timestamp ? ` • ${escapeHtml(timestamp)}` : ''}</p>
+                    </div>
+                `;
+
+                if (entry.type === 'video') {
+                    return `
+                        <div class="rounded-xl overflow-hidden border border-gray-200 bg-black shadow-sm">
+                            <video controls preload="metadata" class="w-full aspect-video bg-black" src="${escapeHtml(entry.url)}"></video>
+                            ${footer}
+                        </div>
+                    `;
+                }
+
+                return `
+                    <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer" class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm block">
+                        <img src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
+                        ${footer}
+                    </a>
+                `;
+            }).join('');
+        }
+
+        function openMediaGallery() {
+            document.getElementById('media-gallery-modal').classList.remove('hidden');
+        }
+
+        function closeMediaGallery() {
+            document.getElementById('media-gallery-modal').classList.add('hidden');
         }
 
         function hideMentionMenu() {
@@ -1424,7 +1544,8 @@
                 document.getElementById('chat-image-input').click();
             });
             document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
-            document.getElementById('chat-image-remove-btn').addEventListener('click', clearSelectedImage);
+            document.getElementById('media-gallery-btn').addEventListener('click', openMediaGallery);
+            document.getElementById('media-gallery-close-btn').addEventListener('click', closeMediaGallery);
 
             // Enter key to send
             document.getElementById('message-input').addEventListener('keypress', (e) => {
@@ -1492,6 +1613,11 @@
                     closeEditModal();
                 }
             });
+            document.getElementById('media-gallery-modal').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) {
+                    closeMediaGallery();
+                }
+            });
 
             // Disable send when empty
             const input = document.getElementById('message-input');
@@ -1541,6 +1667,7 @@
             });
             window.addEventListener('focus', handleChatViewReturn);
             window.addEventListener('beforeunload', stopVoiceCapture);
+            window.addEventListener('beforeunload', revokePendingMediaPreviewUrls);
             sendBtn.disabled = true;
             updateComposerState();
         }
@@ -1563,21 +1690,23 @@
             const voiceBtn = document.getElementById('voice-btn');
             const imageBtn = document.getElementById('image-btn');
             const text = input.value.trim();
-            const imageFile = pendingImageFile;
+            const imageFiles = pendingImageFiles.slice();
             const wantsAi = /@all\s*plays/i.test(text);
 
-            if (!text && !imageFile) return;
+            if (!text && imageFiles.length === 0) return;
 
             sendBtn.disabled = true;
-            sendBtn.textContent = imageFile ? 'Uploading...' : 'Sending...';
+            sendBtn.textContent = imageFiles.length > 0 ? 'Uploading...' : 'Sending...';
             voiceBtn.disabled = true;
             imageBtn.disabled = true;
             stopVoiceCapture();
 
+            let mediaPayloads = [];
             try {
-                let imagePayload = null;
-                if (imageFile) {
-                    imagePayload = await uploadChatImage(teamId, imageFile);
+                if (imageFiles.length > 0) {
+                    for (const file of imageFiles) {
+                        mediaPayloads.push(await uploadChatImage(teamId, file));
+                    }
                 }
                 pendingScrollToBottom = true;
                 await postChatMessage(teamId, {
@@ -1586,11 +1715,7 @@
                     senderName: currentUserProfile?.fullName || null,
                     senderEmail: currentUser.email,
                     senderPhotoUrl: currentUserProfile?.photoUrl || null,
-                    imageUrl: imagePayload?.url || null,
-                    imagePath: imagePayload?.path || null,
-                    imageName: imagePayload?.name || null,
-                    imageType: imagePayload?.type || null,
-                    imageSize: imagePayload?.size || null
+                    attachments: mediaPayloads
                 });
 
                 input.value = '';
@@ -1604,6 +1729,13 @@
                 }
 
             } catch (error) {
+                if (mediaPayloads.length > 0) {
+                    try {
+                        await deleteUploadedChatAttachments(mediaPayloads);
+                    } catch (cleanupError) {
+                        console.error('Failed to clean up uploaded chat attachments:', cleanupError);
+                    }
+                }
                 console.error('Error sending message:', error);
                 showError('Failed to send message. Please try again.');
                 pendingScrollToBottom = false;
@@ -1614,6 +1746,12 @@
                 updateComposerState();
             }
         }
+
+        window.removeSelectedMedia = function(index) {
+            pendingImageFiles = pendingImageFiles.filter((_, itemIndex) => itemIndex !== index);
+            renderPendingMediaPreview();
+            updateComposerState();
+        };
 
         // Edit functionality
         let editingMessageId = null;

@@ -28,7 +28,8 @@ import {
     runTransaction,
     ref,
     uploadBytes,
-    getDownloadURL
+    getDownloadURL,
+    deleteObject
 } from './firebase.js?v=9';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
@@ -41,6 +42,7 @@ import {
 } from './parent-membership-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
+import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
@@ -136,8 +138,10 @@ export async function uploadChatImage(teamId, file) {
     await requireImageAuth();
 
     const ts = Date.now();
-    const safeName = String(file.name || 'image').replace(/[^\w.\-]+/g, '_');
-    const imagePath = `team-photos/${ts}_chat_${teamId}_${safeName}`;
+    const safeName = String(file.name || 'media').replace(/[^\w.\-]+/g, '_');
+    const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
+    const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
+    const imagePath = `${mediaFolder}/${ts}_chat_${teamId}_${safeName}`;
 
     try {
         const storageRef = ref(imageStorage, imagePath);
@@ -148,7 +152,8 @@ export async function uploadChatImage(teamId, file) {
             path: imagePath,
             name: file.name || null,
             type: file.type || null,
-            size: Number.isFinite(file.size) ? file.size : null
+            size: Number.isFinite(file.size) ? file.size : null,
+            thumbnailUrl: null
         };
     } catch (error) {
         const code = error?.code || '';
@@ -163,10 +168,28 @@ export async function uploadChatImage(teamId, file) {
                 path: fallbackPath,
                 name: file.name || null,
                 type: file.type || null,
-                size: Number.isFinite(file.size) ? file.size : null
+                size: Number.isFinite(file.size) ? file.size : null,
+                thumbnailUrl: null
             };
         }
         throw error;
+    }
+}
+
+export async function deleteUploadedChatAttachments(attachments = []) {
+    const deletions = attachments
+        .filter((attachment) => attachment?.path)
+        .map(async (attachment) => {
+            const usesImageStorage = attachment.path.startsWith('team-photos/')
+                || attachment.path.startsWith('team-videos/');
+            const storageRef = ref(usesImageStorage ? imageStorage : storage, attachment.path);
+            await deleteObject(storageRef);
+        });
+
+    const results = await Promise.allSettled(deletions);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure) {
+        throw failure.reason;
     }
 }
 
@@ -1966,6 +1989,7 @@ export async function postChatMessage(teamId, {
     senderName,
     senderEmail,
     senderPhotoUrl,
+    attachments = [],
     imageUrl = null,
     imagePath = null,
     imageName = null,
@@ -1977,18 +2001,37 @@ export async function postChatMessage(teamId, {
     aiMeta = null
 }) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const createdAt = Timestamp.now();
+    const normalizedMedia = normalizeChatAttachments(
+        attachments.length > 0
+            ? attachments
+            : (imageUrl ? [{
+                url: imageUrl,
+                path: imagePath,
+                name: imageName,
+                type: imageType || 'image/*',
+                size: imageSize
+            }] : [])
+    );
+    const storedAttachments = normalizedMedia.attachments.map((attachment) => ({
+        ...attachment,
+        uploadedAt: createdAt
+    }));
     return await addDoc(messagesRef, {
         text,
         senderId,
         senderName: senderName || null,
         senderEmail: senderEmail || null,
         senderPhotoUrl: senderPhotoUrl || null,
-        imageUrl: imageUrl || null,
-        imagePath: imagePath || null,
-        imageName: imageName || null,
-        imageType: imageType || null,
-        imageSize: Number.isFinite(imageSize) ? imageSize : null,
-        createdAt: Timestamp.now(),
+        attachments: storedAttachments,
+        imageUrl: normalizedMedia.legacyImage.imageUrl || imageUrl || null,
+        imagePath: normalizedMedia.legacyImage.imagePath || imagePath || null,
+        imageName: normalizedMedia.legacyImage.imageName || imageName || null,
+        imageType: normalizedMedia.legacyImage.imageType || imageType || null,
+        imageSize: Number.isFinite(normalizedMedia.legacyImage.imageSize)
+            ? normalizedMedia.legacyImage.imageSize
+            : (Number.isFinite(imageSize) ? imageSize : null),
+        createdAt,
         editedAt: null,
         deleted: false,
         ai: ai === true,
