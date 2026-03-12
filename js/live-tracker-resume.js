@@ -43,13 +43,28 @@ function pickMostAdvanced(candidates) {
     ), null);
 }
 
+export function buildPersistedResumeClockState(game) {
+    return {
+        liveClockPeriod: game?.liveClockPeriod,
+        liveClockMs: game?.liveClockMs,
+        period: game?.period,
+        gameClockMs: game?.gameClockMs,
+        clock: game?.clock
+    };
+}
+
 export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }, persistedClockState = null) {
     const fallbackPeriod = defaults?.period || 'Q1';
     const fallbackClock = Number.isFinite(defaults?.clock) ? defaults.clock : 0;
-    const persistedPeriod = typeof persistedClockState?.liveClockPeriod === 'string'
-        ? persistedClockState.liveClockPeriod
-        : null;
-    const persistedClock = Number(persistedClockState?.liveClockMs);
+    const persistedPeriod = [
+        persistedClockState?.liveClockPeriod,
+        persistedClockState?.period
+    ].find((value) => typeof value === 'string' && value.trim());
+    const persistedClock = Number(
+        persistedClockState?.liveClockMs ??
+        persistedClockState?.gameClockMs ??
+        persistedClockState?.clock
+    );
     const persistedState = (
         persistedPeriod &&
         Number.isFinite(persistedClock) &&

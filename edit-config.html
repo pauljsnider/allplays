@@ -79,6 +79,12 @@
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                             <p class="text-xs text-gray-500 mt-1">Max 5 columns recommended for mobile.</p>
                         </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Advanced Stat Definitions (optional)</label>
+                            <textarea id="advancedStatDefinitions" rows="5" placeholder="FG%=fieldGoalPct|formula=(FGM/FGA)*100|group=Offense|format=percentage|precision=1|topStat=true"
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 font-mono text-sm"></textarea>
+                            <p class="text-xs text-gray-500 mt-1">One stat per line. Format: Label=statId|formula=...|group=...|scope=player|visibility=public|format=number|precision=2|rankingOrder=desc|topStat=true</p>
+                        </div>
                         <button type="submit"
                             class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Create
                             Config</button>
@@ -105,19 +111,16 @@
 
     <script type="module">
         import { getTeam, getConfigs, createConfig, deleteConfig, getUnreadChatCount } from './js/db.js?v=14';
+        import { parseAdvancedStatDefinitions } from './js/stat-leaderboards.js?v=1';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { hasFullTeamAccess } from './js/team-access.js';
+        import { getEditConfigAccessDecision } from './js/edit-config-access.js';
 
         renderFooter(document.getElementById('footer-container'));
 
         let currentTeamId = null;
         let currentUser = null;
-        function hasAccess(team, user) {
-            return hasFullTeamAccess(user, team);
-        }
-
         checkAuth((user) => {
             if (!user) {
                 window.location.href = 'login.html';
@@ -136,12 +139,13 @@
             }
             currentTeamId = teamId;
 
-            const team = await getTeam(teamId);
-            if (!hasAccess(team, currentUser)) {
+            const accessDecision = getEditConfigAccessDecision(currentUser, await getTeam(teamId), teamId);
+            if (!accessDecision.allowed) {
                 alert("Team not found or access denied.");
-                window.location.href = 'dashboard.html';
+                window.location.href = accessDecision.exitUrl || 'dashboard.html';
                 return;
             }
+            const team = accessDecision.team;
 
             // Fetch unread count and render banner
             let unreadCount = 0;
@@ -158,13 +162,21 @@
             document.getElementById('basketball-template').addEventListener('click', () => {
                 document.getElementById('configName').value = 'Basketball Standard';
                 document.getElementById('baseType').value = 'Basketball';
-                document.getElementById('columns').value = 'PTS, REB, AST, STL, TO';
+                document.getElementById('columns').value = 'PTS, REB, AST, FGM, FGA, TO';
+                document.getElementById('advancedStatDefinitions').value = [
+                    'FG%=fieldGoalPct|formula=(FGM/FGA)*100|group=Offense|format=percentage|precision=1|topStat=true',
+                    'AST/TO=assistTurnoverRatio|formula=AST/TO|group=Offense|precision=2|topStat=true'
+                ].join('\n');
             });
 
             document.getElementById('soccer-template').addEventListener('click', () => {
                 document.getElementById('configName').value = 'Soccer Standard';
                 document.getElementById('baseType').value = 'Soccer';
-                document.getElementById('columns').value = 'GOALS, SHOTS, PASSES, BLOCKS, HUSTLE';
+                document.getElementById('columns').value = 'GOALS, SHOTS, SHOTS_ON_TARGET, ASSISTS, SAVES';
+                document.getElementById('advancedStatDefinitions').value = [
+                    'Shot%=shotPct|formula=(SHOTS_ON_TARGET/SHOTS)*100|group=Attack|format=percentage|precision=1|topStat=true',
+                    'Goal Rate=goalRate|formula=(GOALS/SHOTS)*100|group=Attack|format=percentage|precision=1|topStat=true'
+                ].join('\n');
             });
         }
 
@@ -185,6 +197,13 @@
                         <div class="flex gap-2 mt-2">
                             ${config.columns.map(col => `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">${col}</span>`).join('')}
                         </div>
+                        ${Array.isArray(config.statDefinitions) && config.statDefinitions.length > config.columns.length ? `
+                            <div class="flex flex-wrap gap-2 mt-3">
+                                ${config.statDefinitions
+                                    .filter(def => def.type === 'derived' || def.topStat)
+                                    .map(def => `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${def.topStat ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">${def.label}${def.group ? ` • ${def.group}` : ''}${def.visibility === 'private' ? ' • Private' : ''}</span>`).join('')}
+                            </div>
+                        ` : ''}
                     </div>
                     <button data-id="${config.id}" class="text-red-600 hover:text-red-900 delete-btn px-3 py-1 border border-red-200 rounded hover:bg-red-50">Delete</button>
                 </div>
@@ -205,8 +224,10 @@
             const name = document.getElementById('configName').value;
             const baseType = document.getElementById('baseType').value;
             const columnsStr = document.getElementById('columns').value;
+            const advancedStatDefinitionsStr = document.getElementById('advancedStatDefinitions').value;
 
             const columns = columnsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+            const statDefinitions = parseAdvancedStatDefinitions(advancedStatDefinitionsStr);
 
             if (columns.length === 0) {
                 alert("Please add at least one column.");
@@ -217,7 +238,8 @@
                 await createConfig(currentTeamId, {
                     name,
                     baseType,
-                    columns
+                    columns,
+                    statDefinitions
                 });
                 document.getElementById('add-config-form').reset();
                 loadConfigs();

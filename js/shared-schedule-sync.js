@@ -3,6 +3,18 @@ function cloneAssignments(assignments) {
   return assignments.map((entry) => ({ ...entry }));
 }
 
+function clonePlainValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => clonePlainValue(entry));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, clonePlainValue(entry)])
+    );
+  }
+  return value;
+}
+
 export function shouldMirrorSharedGame(game = {}, sourceTeamId = '') {
   if ((game?.type || 'game') !== 'game') return false;
   const opponentTeamId = String(game?.opponentTeamId || '').trim();
@@ -41,6 +53,7 @@ export function buildMirroredGamePayload({
     arrivalTime: sourceGame.arrivalTime || null,
     notes: sourceGame.notes || null,
     assignments: cloneAssignments(sourceGame.assignments),
+    tournament: clonePlainValue(sourceGame.tournament) || null,
     cancelledAt: sourceGame.cancelledAt || null,
     cancelledBy: sourceGame.cancelledBy || null,
     sharedScheduleId,

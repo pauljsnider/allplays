@@ -1,3 +1,7 @@
+function getNormalizedUserEmail(user) {
+  return String(user?.email || user?.profileEmail || '').toLowerCase();
+}
+
 /**
  * Check whether a user has full team management access.
  * Full access means owner, team admin email, or platform admin.
@@ -6,7 +10,7 @@ export function hasFullTeamAccess(user, team) {
   if (!user || !team) return false;
 
   const isOwner = team.ownerId === user.uid;
-  const normalizedEmail = (user.email || '').toLowerCase();
+  const normalizedEmail = getNormalizedUserEmail(user);
   const adminEmails = (team.adminEmails || []).map((email) => String(email || '').toLowerCase());
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;

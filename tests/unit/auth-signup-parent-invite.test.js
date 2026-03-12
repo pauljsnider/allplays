@@ -31,7 +31,8 @@ const dbMocks = vi.hoisted(() => ({
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
-    getUserByEmail: vi.fn()
+    getUserByEmail: vi.fn(),
+    listMyParentMembershipRequests: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js?v=9', () => firebaseMocks);
