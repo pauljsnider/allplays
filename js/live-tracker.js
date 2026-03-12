@@ -9,7 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
-import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
+import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
@@ -2499,13 +2499,7 @@ async function init() {
         const resumeClockState = deriveResumeClockState(
           liveEvents,
           { period: state.period, clock: state.clock },
-          {
-            liveClockPeriod: currentGame?.liveClockPeriod,
-            liveClockMs: currentGame?.liveClockMs,
-            period: currentGame?.period,
-            gameClockMs: currentGame?.gameClockMs,
-            clock: currentGame?.clock
-          }
+          buildPersistedResumeClockState(currentGame)
         );
         if (resumeClockState.restored) {
           state.period = resumeClockState.period;

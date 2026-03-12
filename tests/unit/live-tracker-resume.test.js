@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { deriveResumeClockState } from '../../js/live-tracker-resume.js';
+import { buildPersistedResumeClockState, deriveResumeClockState } from '../../js/live-tracker-resume.js';
 
 describe('live tracker resume clock state', () => {
   it('restores period and clock from latest persisted live event by createdAt', () => {
@@ -56,14 +55,19 @@ describe('live tracker resume clock state', () => {
     expect(result.clock).toBe(187000);
   });
 
-  it('passes legacy persisted clock fields through the live tracker resume flow', () => {
-    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+  it('passes legacy persisted clock fields through the production game-doc mapping', () => {
+    const result = deriveResumeClockState(
+      [
+        { type: 'stat', playerId: 'p1', statKey: 'pts', value: 2 },
+        { type: 'chat', message: 'timeout' }
+      ],
+      { period: 'Q1', clock: 0 },
+      buildPersistedResumeClockState({ period: 'Q3', gameClockMs: 187000 })
+    );
 
-    expect(source).toContain('liveClockPeriod: currentGame?.liveClockPeriod');
-    expect(source).toContain('liveClockMs: currentGame?.liveClockMs');
-    expect(source).toContain('period: currentGame?.period');
-    expect(source).toContain('gameClockMs: currentGame?.gameClockMs');
-    expect(source).toContain('clock: currentGame?.clock');
+    expect(result.restored).toBe(true);
+    expect(result.period).toBe('Q3');
+    expect(result.clock).toBe(187000);
   });
 
   it('restores using period/clock progression when timestamps are unavailable', () => {
