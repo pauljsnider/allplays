@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+import { test, expect } from '@playwright/test';
 
 const FATAL_CONSOLE_PATTERNS = [
     /Missing Firebase image config/i,
