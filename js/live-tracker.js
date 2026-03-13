@@ -82,11 +82,8 @@ let liveState = {
   lastChatSentAt: 0,
   scoreSyncTimeout: null,
   lastSyncedHome: null,
-  lastSyncedAway: null,
-  lastClockSyncAt: 0
+  lastSyncedAway: null
 };
-
-const LIVE_CLOCK_SYNC_INTERVAL_MS = 5000;
 
 let liveSync = {
   playerTimeouts: new Map(),
@@ -1212,7 +1209,6 @@ function initViewerCount() {
 async function startLiveBroadcast() {
   if (liveState.isLive) return;
   liveState.isLive = true;
-  liveState.lastClockSyncAt = 0;
   try {
     await setGameLiveStatus(currentTeamId, currentGameId, 'live');
   } catch (error) {
@@ -1234,7 +1230,6 @@ async function endLiveBroadcast() {
 
   if (liveState.isLive) {
     liveState.isLive = false;
-    liveState.lastClockSyncAt = 0;
     if (liveState.unsubscribeChat) liveState.unsubscribeChat();
     if (liveState.unsubscribeViewers) liveState.unsubscribeViewers();
   }
@@ -1631,21 +1626,6 @@ function tick() {
   updateClockUI();
   updatePlayerTimes();
   renderFairness();
-
-  const wallNow = Date.now();
-  if (
-    liveState.isLive &&
-    currentTeamId &&
-    currentGameId &&
-    (wallNow - liveState.lastClockSyncAt >= LIVE_CLOCK_SYNC_INTERVAL_MS)
-  ) {
-    liveState.lastClockSyncAt = wallNow;
-    broadcastEvent(baseLiveEvent({
-      type: 'clock_sync',
-      description: 'Clock sync'
-    }));
-    syncClockToGameDoc();
-  }
 }
 
 function updatePlayerTimes() {

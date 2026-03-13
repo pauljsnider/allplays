@@ -1673,7 +1673,14 @@
         function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
-            openTrackerChoiceModal(gameId, isBasketballForGame(game));
+
+            if (isBasketballForGame(game)) {
+                pendingTrackGameId = gameId;
+                document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
+                return;
+            }
+
+            window.location.href = `track.html#teamId=${currentTeamId}&gameId=${gameId}`;
         }
 
         function renderDbGame(game) {
@@ -2441,7 +2448,13 @@
                     calendarEventUid: getCalendarEventTrackingId(calendarEvent)
                 });
 
-                openTrackerChoiceModal(gameId, isBasketballConfig(configId));
+                // Check if this is a basketball game using shared helper
+                if (isBasketballConfig(configId)) {
+                    pendingTrackGameId = gameId;
+                    document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
+                } else {
+                    window.location.href = `track.html#teamId=${currentTeamId}&gameId=${gameId}`;
+                }
             } catch (error) {
                 console.error('Error tracking game:', error);
                 alert('Error tracking game: ' + error.message);
@@ -3051,13 +3064,8 @@ PARSING RULES:
         document.getElementById('basketball-tracker-live')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();
             const gameId = pendingTrackGameId;
-            const isBasketball = pendingTrackIsBasketball;
             closeBasketballTrackerModal();
-            if (isBasketball) {
-                window.location.href = `live-tracker.html#teamId=${currentTeamId}&gameId=${gameId}`;
-            } else {
-                window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}`;
-            }
+            window.location.href = `live-tracker.html#teamId=${currentTeamId}&gameId=${gameId}`;
         });
         document.getElementById('basketball-tracker-photo')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AllPlays nightly Playwright smoke test at 03:00 local time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+AccuracySec=1m
+Unit=allplays-nightly-playwright-smoke.service
+
+[Install]
+WantedBy=timers.target
