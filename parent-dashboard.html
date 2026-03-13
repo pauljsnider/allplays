@@ -490,6 +490,16 @@
             return legacyEventId;
         }
 
+        function parseTeamGameKey(key) {
+            const delimiter = '::';
+            const delimiterIndex = key.indexOf(delimiter);
+            if (delimiterIndex === -1) return [key, ''];
+            return [
+                key.slice(0, delimiterIndex),
+                key.slice(delimiterIndex + delimiter.length)
+            ];
+        }
+
         function getEventRideOffers(teamId, eventId) {
             const key = getEventRideKey(teamId, eventId);
             return rideshareOffersByEvent.get(key) || [];
@@ -863,7 +873,7 @@
                 )];
                 const unsummarizedByTeam = new Map();
                 uniqueGameKeys.forEach((key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
                     if (!shouldLoadSummary) return;
                     if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
@@ -880,7 +890,7 @@
                 }));
 
                 await Promise.all(uniqueGameKeys.map(async (key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     try {
                         const rsvps = await getRsvps(teamId, gameId);
                         const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, currentUserId);
