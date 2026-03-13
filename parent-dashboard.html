@@ -1719,10 +1719,16 @@
                         </div>
                     </a>
                     <div class="border-t border-gray-100 px-3 py-2 bg-gray-50">
-                        <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
-                            class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
-                            💰 Incentives
-                        </button>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <a href="athlete-profile-builder.html?teamId=${child.teamId}&playerId=${child.playerId}"
+                                class="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition border border-primary-200">
+                                Athlete Profile
+                            </a>
+                            <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
+                                class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
+                                💰 Incentives
+                            </button>
+                        </div>
                     </div>
                 </div>
             `).join('');
