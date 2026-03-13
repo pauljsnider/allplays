@@ -47,7 +47,7 @@ import {
     runTransaction
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
-import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js";
+import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=2";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 
