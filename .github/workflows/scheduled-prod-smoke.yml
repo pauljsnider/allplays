@@ -1,0 +1,40 @@
+name: scheduled-prod-smoke
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: scheduled-prod-smoke
+  cancel-in-progress: true
+
+jobs:
+  scheduled-prod-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: master
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright test runner
+        run: npm install --no-save @playwright/test@1.54.2
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run scheduled production smoke
+        run: npx playwright test tests/smoke/static-hosting-bootstrap.spec.js --config=playwright.smoke.config.js --reporter=line
+        env:
+          SMOKE_BASE_URL: https://allplays.ai
