@@ -440,8 +440,17 @@
         }
 
         async function refreshParentMembershipRequestList(userId) {
-            parentMembershipRequests = await listMyParentMembershipRequests(userId);
-            renderParentMembershipRequests();
+            try {
+                parentMembershipRequests = await listMyParentMembershipRequests(userId);
+                renderParentMembershipRequests();
+            } catch (err) {
+                console.warn('[parent-dashboard] Failed to load parent membership requests:', err);
+                parentMembershipRequests = [];
+                const listEl = document.getElementById('parent-membership-request-list');
+                if (listEl) {
+                    listEl.innerHTML = '<div class="text-xs text-red-600">Unable to load your access requests right now.</div>';
+                }
+            }
         }
 
         async function submitParentAccessRequest() {

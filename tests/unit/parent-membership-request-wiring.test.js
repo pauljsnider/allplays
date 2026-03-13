@@ -15,6 +15,8 @@ describe('parent membership request wiring', () => {
         expect(html).toContain('submit-parent-access-request-btn');
         expect(html).toContain('createParentMembershipRequest');
         expect(html).toContain('listMyParentMembershipRequests');
+        expect(html).toContain('Failed to load parent membership requests');
+        expect(html).toContain('Unable to load your access requests right now.');
     });
 
     it('adds roster approval controls for pending parent membership requests', () => {
@@ -32,9 +34,18 @@ describe('parent membership request wiring', () => {
         const rules = readRepoFile('firestore.rules');
 
         expect(rules).toContain('match /membershipRequests/{requestId}');
+        expect(rules).toContain('match /{path=**}/membershipRequests/{requestId}');
         expect(rules).toContain("request.resource.data.status == 'pending'");
         expect(rules).toContain("request.resource.data.requesterUserId == request.auth.uid");
         expect(rules).toContain("request.resource.data.status in ['approved', 'denied']");
         expect(rules).toContain('isTeamOwnerOrAdmin(teamId)');
+    });
+
+    it('defines the parent membership request collection-group index', () => {
+        const indexes = readRepoFile('firestore.indexes.json');
+
+        expect(indexes).toContain('"collectionGroup": "membershipRequests"');
+        expect(indexes).toContain('"fieldPath": "requesterUserId"');
+        expect(indexes).toContain('"queryScope": "COLLECTION_GROUP"');
     });
 });

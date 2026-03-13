@@ -24,7 +24,8 @@ describe('edit schedule tournament wiring', () => {
     expect(endIndex).toBeGreaterThan(submitIndex);
 
     const block = source.slice(submitIndex, endIndex);
-    expect(block).toContain('const tournamentData = readTournamentFormState();');
+    const tournamentDataMatches = block.match(/const tournamentData = readTournamentFormState\(\);/g) || [];
+    expect(tournamentDataMatches).toHaveLength(1);
     expect(block).toContain('if (tournamentData) {');
     expect(block).toContain('gameData.tournament = tournamentData;');
   });
