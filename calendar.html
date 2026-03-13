@@ -135,7 +135,7 @@
 
     <script type="module">
         import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries } from './js/db.js?v=23';
-        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=11';
+        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=12';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
@@ -531,6 +531,7 @@
                     <div class="text-xs text-gray-500 w-28 flex-shrink-0 font-medium">${dateStr} ${timeStr}</div>
                     <span class="text-xs font-bold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'} w-16 flex-shrink-0">${ev.type === 'practice' ? 'Prac' : 'Game'}</span>
                     <div class="text-sm font-medium text-gray-900 truncate flex-grow ${isCancelled ? 'line-through' : ''}">${escapeHtml(ev.title)}</div>
+                    ${isCancelled ? '<span class="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">CANCELLED</span>' : ''}
                     <div class="text-xs text-gray-500 truncate max-w-[150px] hidden sm:block">${escapeHtml(ev.teamName)}</div>
                     ${renderRsvpBlock(ev, true)}
                     ${ev.isHome === true ? '<span class="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">H</span>' : ''}
