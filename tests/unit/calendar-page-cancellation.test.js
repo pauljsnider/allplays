@@ -13,4 +13,10 @@ describe('calendar page ICS cancellation handling', () => {
         expect(source).toContain('const mappedEvent = buildGlobalCalendarIcsEvent({');
         expect(source).not.toContain("status: 'scheduled'");
     });
+
+    it('renders compact cancelled events with an explicit cancelled badge', () => {
+        const source = readCalendarPage();
+
+        expect(source).toContain("isCancelled ? '<span class=\"text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded\">CANCELLED</span>' : ''");
+    });
 });
