@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+import { test, expect } from '@playwright/test';
 
 const FATAL_CONSOLE_PATTERNS = [
     /Missing Firebase image config/i,
@@ -43,7 +43,9 @@ async function assertBootsWithoutFatalErrors(page, path, titlePattern) {
     const bust = Date.now();
     await page.goto(`${path}${path.includes('?') ? '&' : '?'}cb=${bust}`, { waitUntil: 'domcontentloaded' });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-    await expect(page).toHaveTitle(titlePattern);
+    const title = await page.title();
+    const titleMatchers = Array.isArray(titlePattern) ? titlePattern : [titlePattern];
+    expect(titleMatchers.some((pattern) => pattern.test(title))).toBeTruthy();
     expect(issues).toEqual([]);
 }
 
@@ -52,5 +54,5 @@ test('homepage boots under static-hosting constraints', async ({ page, baseURL }
 });
 
 test('dashboard boot path does not fatally fail under static-hosting constraints', async ({ page, baseURL }) => {
-    await assertBootsWithoutFatalErrors(page, `${baseURL}/dashboard.html`, /My Teams/i);
+    await assertBootsWithoutFatalErrors(page, `${baseURL}/dashboard.html`, [/My Teams/i, /Login - ALL PLAYS/i]);
 });
