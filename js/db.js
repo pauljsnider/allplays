@@ -50,6 +50,7 @@ import {
     buildSharedScheduleSourceUpdate,
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
+import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -368,6 +369,55 @@ export async function updateUserProfile(userId, profile) {
     const docRef = doc(db, "users", userId);
     profile.updatedAt = Timestamp.now();
     await setDoc(docRef, profile, { merge: true });
+}
+
+export async function getNotificationPreferencesForTeam(userId, teamId) {
+    if (!userId || !teamId) return null;
+    const prefRef = doc(db, 'users', userId, 'notificationPreferences', teamId);
+    const snap = await getDoc(prefRef);
+    if (!snap.exists()) return null;
+    return normalizeTeamNotificationPreferences(snap.data());
+}
+
+export async function saveNotificationPreferencesForTeam(userId, teamId, preferences) {
+    if (!userId || !teamId) {
+        throw new Error('Missing userId or teamId for notification preferences');
+    }
+
+    const normalized = normalizeTeamNotificationPreferences(preferences);
+    const prefRef = doc(db, 'users', userId, 'notificationPreferences', teamId);
+    await setDoc(prefRef, {
+        ...normalized,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return normalized;
+}
+
+function getNotificationDeviceId(token) {
+    const normalized = String(token || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    if (normalized) return normalized.slice(0, 180);
+    return `device_${Date.now()}`;
+}
+
+export async function upsertNotificationDeviceToken(userId, { token, platform = 'web', userAgent = '' } = {}) {
+    if (!userId) {
+        throw new Error('Missing userId for notification device token');
+    }
+    const normalizedToken = String(token || '').trim();
+    if (!normalizedToken) {
+        throw new Error('Missing device token');
+    }
+
+    const deviceId = getNotificationDeviceId(normalizedToken);
+    const deviceRef = doc(db, 'users', userId, 'notificationDevices', deviceId);
+    await setDoc(deviceRef, {
+        token: normalizedToken,
+        platform,
+        userAgent,
+        updatedAt: Timestamp.now(),
+        createdAt: Timestamp.now()
+    }, { merge: true });
+    return deviceId;
 }
 
 export async function getAllUsers() {

@@ -34,7 +34,10 @@ A static HTML + JavaScript sports team management and stat tracking application,
 2. Enable **Authentication** (Email/Password provider).
 3. Enable **Firestore Database** (Start in production mode, set appropriate rules).
 4. Enable **Storage** (For team photos).
-5. Copy your web app configuration and update `js/firebase.js` (main project) and `js/firebase-images.js` (image upload project).
+5. Configure Firebase web settings at runtime (do not hardcode credentials in source):
+   - Main app config: `window.__ALLPLAYS_CONFIG__.firebase` (or `firebasePrimary`) with keys `apiKey`, `authDomain`, `projectId`, `messagingSenderId`, `appId` (optional: `storageBucket`, `measurementId`).
+   - Image app config: `window.__ALLPLAYS_CONFIG__.firebaseImages` (or `firebaseImage`) with the same keys.
+   - On Firebase Hosting, primary config can also come from `/__/firebase/init.json`.
 
 Notes:
 - Auth domains must include your GitHub Pages host and local dev (e.g., `localhost`, `127.0.0.1`, `pauljsnider.github.io`, custom domain).

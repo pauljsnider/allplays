@@ -146,6 +146,14 @@ service cloud.firestore {
                         isIncentivePaidGamePayloadValid(request.resource.data);
         allow delete: if isOwner(userId);
       }
+
+      match /notificationPreferences/{teamId} {
+        allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
+
+      match /notificationDevices/{deviceId} {
+        allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
     }
 
     // Access codes - allow public read for validation during signup
