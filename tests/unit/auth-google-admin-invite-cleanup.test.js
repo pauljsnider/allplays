@@ -101,6 +101,9 @@ describe('loginWithGoogle admin invite failure handling', () => {
             teamId: 'team-1',
             codeId: 'code-admin-1'
         }));
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('addTeamAdminEmail');
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('updateUserProfile');
         expect(updateUserProfileMock).not.toHaveBeenCalled();
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
         expect(deleteMock).toHaveBeenCalledTimes(1);
@@ -145,6 +148,9 @@ describe('loginWithGoogle admin invite failure handling', () => {
             teamId: 'team-2',
             codeId: 'code-admin-2'
         }));
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('addTeamAdminEmail');
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('updateUserProfile');
         expect(updateUserProfileMock).not.toHaveBeenCalled();
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
         expect(deleteMock).toHaveBeenCalledTimes(1);

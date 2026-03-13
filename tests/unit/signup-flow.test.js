@@ -153,6 +153,9 @@ describe('executeEmailPasswordSignup', () => {
             teamId: 'team-42',
             codeId: 'code-admin-1'
         }));
+        expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');
+        expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('addTeamAdminEmail');
+        expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('updateUserProfile');
         expect(dependencies.updateUserProfile).toHaveBeenCalledWith('user-123', expect.objectContaining({
             email: 'newadmin@example.com',
             emailVerificationRequired: true
