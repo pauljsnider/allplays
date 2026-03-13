@@ -1,20 +1,23 @@
-name: preview-smoke
+name: scheduled-prod-smoke
 
 on:
-  pull_request:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 concurrency:
-  group: preview-smoke-${{ github.event.pull_request.number }}
+  group: scheduled-prod-smoke
   cancel-in-progress: true
 
 jobs:
-  preview-smoke:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+  scheduled-prod-smoke:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: master
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -28,20 +31,10 @@ jobs:
       - name: Install Playwright test runner
         run: npm install --no-save @playwright/test@1.54.2
 
-      - name: Start local static server
-        run: python3 -m http.server 4173 >/tmp/allplays-preview-smoke.log 2>&1 &
-
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run static-hosting smoke
+      - name: Run scheduled production smoke
         run: npx playwright test tests/smoke/static-hosting-bootstrap.spec.js --config=playwright.smoke.config.js --reporter=line
         env:
-          SMOKE_BASE_URL: http://127.0.0.1:4173
-
-      - name: Upload server log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: preview-smoke-http-log
-          path: /tmp/allplays-preview-smoke.log
+          SMOKE_BASE_URL: https://allplays.ai
