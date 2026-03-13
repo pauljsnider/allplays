@@ -40,4 +40,12 @@ describe('parent membership request wiring', () => {
         expect(rules).toContain("request.resource.data.status in ['approved', 'denied']");
         expect(rules).toContain('isTeamOwnerOrAdmin(teamId)');
     });
+
+    it('defines the parent membership request collection-group index', () => {
+        const indexes = readRepoFile('firestore.indexes.json');
+
+        expect(indexes).toContain('"collectionGroup": "membershipRequests"');
+        expect(indexes).toContain('"fieldPath": "requesterUserId"');
+        expect(indexes).toContain('"queryScope": "COLLECTION_GROUP"');
+    });
 });
