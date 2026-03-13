@@ -1,7 +1,7 @@
 Current state:
 - `accept-invite.html` delegates admin invite handling to `js/accept-invite-flow.js`.
 - `js/accept-invite-flow.js` calls `redeemAdminInviteAtomically(...)` from `js/db.js`, which appends the normalized email to `adminEmails`, adds coach membership, and marks the code used in a transaction.
-- Because the page still imports `db.js?v=14` and `accept-invite-flow.js?v=2`, browsers can reuse cached pre-fix assets for this path.
+- Because the page still imports `db.js?v=15` and `accept-invite-flow.js?v=2`, browsers can reuse cached pre-fix assets for this path.
 
 Proposed state:
 - Bump the `accept-invite.html` module URLs so the page loads the fixed redemption code path immediately after deploy.
