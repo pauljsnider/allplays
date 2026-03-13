@@ -36,7 +36,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=10', () => firebaseMocks);
-vi.mock('../../js/db.js?v=15', () => dbMocks);
+vi.mock('../../js/db.js?v=16', () => dbMocks);
 
 const { signup, loginWithGoogle } = await import('../../js/auth.js');
 
