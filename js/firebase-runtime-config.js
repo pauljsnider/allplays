@@ -1,6 +1,24 @@
 const FIREBASE_INIT_JSON_URL = '/__/firebase/init.json';
 const REQUIRED_FIREBASE_FIELDS = ['apiKey', 'authDomain', 'projectId', 'messagingSenderId', 'appId'];
 const OPTIONAL_FIREBASE_FIELDS = ['storageBucket', 'measurementId'];
+const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
+    authDomain: 'game-flow-c6311.firebaseapp.com',
+    projectId: 'game-flow-c6311',
+    storageBucket: 'game-flow-c6311.firebasestorage.app',
+    messagingSenderId: '1030107289033',
+    appId: '1:1030107289033:web:7154238712942475143046',
+    measurementId: 'G-E48D0L8L40'
+};
+const DEFAULT_IMAGE_FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyCxeLIe1ZcbX_GH5TEg1MBo8vmxGs6cttE',
+    authDomain: 'game-flow-img.firebaseapp.com',
+    projectId: 'game-flow-img',
+    storageBucket: 'game-flow-img.firebasestorage.app',
+    messagingSenderId: '340859680438',
+    appId: '1:340859680438:web:4d00f571e8531907a11817',
+    measurementId: 'G-FRVND6NT3C'
+};
 
 function readGlobalConfig() {
     return (typeof window !== 'undefined' && window.__ALLPLAYS_CONFIG__ && typeof window.__ALLPLAYS_CONFIG__ === 'object')
@@ -50,7 +68,12 @@ export async function resolvePrimaryFirebaseConfig() {
         return inlineConfig;
     }
 
-    return fetchFirebaseConfigFromHosting();
+    try {
+        return await fetchFirebaseConfigFromHosting();
+    } catch (error) {
+        console.warn('Falling back to bundled Firebase config.', error);
+        return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+    }
 }
 
 export function resolveImageFirebaseConfig() {
@@ -62,7 +85,5 @@ export function resolveImageFirebaseConfig() {
         return imageConfig;
     }
 
-    throw new Error(
-        'Missing Firebase image config. Set window.__ALLPLAYS_CONFIG__.firebaseImages (or firebaseImage).'
-    );
+    return { ...DEFAULT_IMAGE_FIREBASE_CONFIG };
 }
