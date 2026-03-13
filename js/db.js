@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=9';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=2';
+} from './firebase.js?v=10';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=3';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
