@@ -15,9 +15,9 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=10';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail, listMyParentMembershipRequests } from './db.js?v=15';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail, listMyParentMembershipRequests } from './db.js?v=16';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=3';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
 
 async function cleanupFailedNewUser(user, context) {
