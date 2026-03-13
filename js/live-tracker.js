@@ -1,9 +1,9 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=14';
-import { db } from './firebase.js?v=9';
+import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=15';
+import { db } from './firebase.js?v=10';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
 import { checkAuth } from './auth.js?v=10';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=10';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';

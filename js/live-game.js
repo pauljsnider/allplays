@@ -12,13 +12,15 @@ import {
   getLiveChatHistory,
   getLiveReactions,
   getConfigs,
-  subscribeGame
-} from './db.js?v=14';
+  subscribeGame,
+  updateGame
+} from './db.js?v=15';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=10';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';
@@ -77,7 +79,10 @@ const state = {
   scoringRun: { team: null, points: 0 },
   lastRunAnnounced: 0,
   hasVideoStream: false,
-  lastResetAt: 0
+  lastResetAt: 0,
+  videoPlayback: null,
+  clipStartMs: null,
+  clipEndMs: null
 };
 
 const els = {
@@ -138,7 +143,18 @@ const els = {
   videoPanel: q('#video-panel'),
   playsPanel: q('#plays-panel'),
   statsPanel: q('#stats-panel'),
-  chatPanelMobile: q('#chat-panel')
+  chatPanelMobile: q('#chat-panel'),
+  recordedReplayVideo: q('#recorded-replay-video'),
+  recordedReplayTools: q('#recorded-replay-tools'),
+  recordedReplayMeta: q('#recorded-replay-meta'),
+  highlightStartInput: q('#highlight-start-input'),
+  highlightEndInput: q('#highlight-end-input'),
+  highlightTitleInput: q('#highlight-title-input'),
+  highlightSetStart: q('#highlight-set-start'),
+  highlightSetEnd: q('#highlight-set-end'),
+  highlightShareBtn: q('#highlight-share-btn'),
+  highlightSaveBtn: q('#highlight-save-btn'),
+  savedHighlightsList: q('#saved-highlights-list')
 };
 
 const mentionState = { active: false, atPos: null };
@@ -228,48 +244,93 @@ function updateTabs() {
   });
 }
 
-function setupVideoPanel() {
-  // Build embed URL: Twitch takes priority, then streamEmbedUrl, then legacy YouTube fields
-  let embedUrl = null;
-  let publicUrl = null;
-  let publicLabel = null;
+function resolveVideoPlayback() {
+  return resolveReplayVideoOptions({
+    team: state.team,
+    game: state.game,
+    isReplay: state.isReplay,
+    clipStartMs: state.clipStartMs,
+    clipEndMs: state.clipEndMs
+  });
+}
 
-  if (state.team?.twitchChannel) {
-    const host = window.location.hostname;
-    embedUrl = `https://player.twitch.tv/?channel=${state.team.twitchChannel}&parent=${host}&autoplay=true&muted=true`;
-    publicUrl = `https://twitch.tv/${state.team.twitchChannel}`;
-    publicLabel = 'Watch on Twitch ↗';
-  } else {
-    const src = state.team?.streamEmbedUrl ||
-      state.team?.youtubeEmbedUrl ||
-      (state.team?.youtubeVideoId
-        ? `https://www.youtube.com/embed/${state.team.youtubeVideoId}?autoplay=1&mute=1`
-        : null);
-    if (src) {
-      embedUrl = src;
-      const channelMatch = src.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
-      const videoMatch = src.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
-      publicUrl = channelMatch
-        ? `https://www.youtube.com/channel/${channelMatch[1]}`
-        : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
-      publicLabel = 'Watch on YouTube ↗';
-    }
+function refreshVideoPanel({ force = false } = {}) {
+  const nextPlayback = resolveVideoPlayback();
+  if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
+    return false;
   }
+  setupVideoPanel(nextPlayback);
+  return true;
+}
 
+function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
   const extLink = document.getElementById('stream-external-link');
-  state.hasVideoStream = Boolean(embedUrl);
+  const iframe = document.getElementById('youtube-stream-iframe');
+  const recordedVideo = els.recordedReplayVideo;
+  const previousPlayback = state.videoPlayback;
+  const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  state.videoPlayback = nextPlayback;
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
 
-  if (embedUrl) {
-    const iframe = document.getElementById('youtube-stream-iframe');
-    if (iframe) iframe.src = embedUrl;
+  if (state.videoPlayback?.mode === 'recorded') {
+    if (iframe) {
+      if (iframe.getAttribute('src')) iframe.src = '';
+      iframe.classList.add('hidden');
+    }
+    if (recordedVideo) {
+      if (shouldReloadPlayback) {
+        recordedVideo.src = state.videoPlayback.sourceUrl || '';
+      }
+      recordedVideo.poster = state.videoPlayback.posterUrl || '';
+      recordedVideo.classList.remove('hidden');
+    }
+    renderRecordedReplayTools();
     if (videoTab) videoTab.classList.remove('hidden');
-    if (extLink && publicUrl) {
-      extLink.href = publicUrl;
-      extLink.textContent = publicLabel;
+    if (extLink && state.videoPlayback.publicUrl) {
+      extLink.href = state.videoPlayback.publicUrl;
+      extLink.textContent = state.videoPlayback.publicLabel || 'Open replay video ↗';
+      extLink.classList.remove('hidden');
+    } else if (extLink) {
+      extLink.classList.add('hidden');
+      extLink.removeAttribute('href');
+    }
+  } else if (state.videoPlayback?.mode === 'embed') {
+    if (recordedVideo) {
+      recordedVideo.pause();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
+      recordedVideo.classList.add('hidden');
+    }
+    els.recordedReplayTools?.classList.add('hidden');
+    if (iframe) {
+      if (shouldReloadPlayback) {
+        iframe.src = state.videoPlayback.sourceUrl || '';
+      }
+      iframe.classList.remove('hidden');
+    }
+    if (videoTab) videoTab.classList.remove('hidden');
+    if (extLink && state.videoPlayback.publicUrl) {
+      extLink.href = state.videoPlayback.publicUrl;
+      extLink.textContent = state.videoPlayback.publicLabel || '';
       extLink.classList.remove('hidden');
     }
   } else {
+    if (recordedVideo) {
+      recordedVideo.pause();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
+      recordedVideo.classList.add('hidden');
+    }
+    if (iframe) {
+      if (iframe.getAttribute('src')) iframe.src = '';
+      iframe.classList.add('hidden');
+    }
+    els.recordedReplayTools?.classList.add('hidden');
     els.videoPanel?.classList.add('hidden');
     if (videoTab) videoTab.classList.add('hidden');
     if (extLink) {
@@ -277,6 +338,268 @@ function setupVideoPanel() {
       extLink.removeAttribute('href');
     }
     if (state.activeTab === 'video') state.activeTab = 'plays';
+  }
+
+  updateTabs();
+}
+
+function formatVideoTimestamp(ms) {
+  const totalSeconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getCurrentReplayVideoDurationMs() {
+  const video = els.recordedReplayVideo;
+  if (video && Number.isFinite(video.duration) && video.duration > 0) {
+    return Math.round(video.duration * 1000);
+  }
+  return state.videoPlayback?.durationMs ?? null;
+}
+
+function getHighlightDraftFromInputs() {
+  return createHighlightClipDraft({
+    startMs: Number(els.highlightStartInput?.value || 0) * 1000,
+    endMs: Number(els.highlightEndInput?.value || 0) * 1000,
+    durationMs: getCurrentReplayVideoDurationMs(),
+    title: els.highlightTitleInput?.value || ''
+  });
+}
+
+function syncHighlightUrl(startMs, endMs) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('teamId', state.teamId);
+  url.searchParams.set('gameId', state.gameId);
+  url.searchParams.set('replay', state.isReplay ? 'true' : 'false');
+  if (Number.isFinite(startMs)) {
+    url.searchParams.set('clipStart', `${Math.max(0, Math.round(startMs))}`);
+  } else {
+    url.searchParams.delete('clipStart');
+  }
+  if (Number.isFinite(endMs)) {
+    url.searchParams.set('clipEnd', `${Math.max(0, Math.round(endMs))}`);
+  } else {
+    url.searchParams.delete('clipEnd');
+  }
+  window.history.replaceState({}, '', url.toString());
+}
+
+function applyHighlightSelection(clip, { updateHistory = true, autoplay = false } = {}) {
+  if (!clip) return;
+  state.clipStartMs = clip.startMs;
+  state.clipEndMs = clip.endMs;
+  state.videoPlayback = {
+    ...(state.videoPlayback || {}),
+    clipStartMs: clip.startMs,
+    clipEndMs: clip.endMs
+  };
+  if (els.highlightStartInput) els.highlightStartInput.value = `${Math.round(clip.startMs / 1000)}`;
+  if (els.highlightEndInput) els.highlightEndInput.value = `${Math.round(clip.endMs / 1000)}`;
+  if (updateHistory) {
+    syncHighlightUrl(clip.startMs, clip.endMs);
+  }
+  const video = els.recordedReplayVideo;
+  if (video) {
+    const nextTime = clip.startMs / 1000;
+    if (Math.abs(video.currentTime - nextTime) > 0.5) {
+      video.currentTime = nextTime;
+    }
+    if (autoplay) {
+      video.play().catch(() => {});
+    }
+  }
+}
+
+function renderSavedHighlights() {
+  if (!els.savedHighlightsList) return;
+  const clips = state.videoPlayback?.savedHighlights || [];
+  if (!clips.length) {
+    els.savedHighlightsList.innerHTML = '<div class="rounded-lg border border-dashed border-teal/20 px-3 py-3 text-sm text-sand/50">No saved highlights yet.</div>';
+    return;
+  }
+
+  els.savedHighlightsList.innerHTML = clips.map((clip, index) => `
+    <button
+      type="button"
+      data-highlight-index="${index}"
+      class="flex w-full items-center justify-between rounded-lg border border-teal/20 bg-ink/50 px-3 py-2 text-left hover:bg-ink/80"
+    >
+      <span>
+        <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
+        <span class="block text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</span>
+      </span>
+      <span class="text-xs text-teal">Load</span>
+    </button>
+  `).join('');
+}
+
+function renderRecordedReplayTools() {
+  if (state.videoPlayback?.mode !== 'recorded') {
+    els.recordedReplayTools?.classList.add('hidden');
+    return;
+  }
+
+  const durationMs = getCurrentReplayVideoDurationMs();
+  const defaultClipEndMs = Number.isFinite(durationMs)
+    ? Math.min(durationMs, MAX_HIGHLIGHT_CLIP_MS)
+    : MAX_HIGHLIGHT_CLIP_MS;
+
+  if (els.recordedReplayMeta) {
+    const pieces = ['Create a highlight clip up to 60 seconds.'];
+    if (state.videoPlayback.title) {
+      pieces.unshift(state.videoPlayback.title);
+    }
+    if (Number.isFinite(durationMs)) {
+      pieces.push(`Replay length ${formatVideoTimestamp(durationMs)}.`);
+    }
+    els.recordedReplayMeta.textContent = pieces.join(' ');
+  }
+
+  if (els.highlightStartInput && document.activeElement !== els.highlightStartInput) {
+    els.highlightStartInput.value = `${Math.round((state.videoPlayback.clipStartMs ?? 0) / 1000)}`;
+  }
+  if (els.highlightEndInput && document.activeElement !== els.highlightEndInput) {
+    els.highlightEndInput.value = `${Math.round((state.videoPlayback.clipEndMs ?? defaultClipEndMs) / 1000)}`;
+  }
+  if (els.recordedReplayTools) {
+    els.recordedReplayTools.classList.remove('hidden');
+  }
+
+  renderSavedHighlights();
+}
+
+async function shareHighlightClip(clip) {
+  const url = buildHighlightShareUrl({
+    origin: window.location.origin,
+    teamId: state.teamId,
+    gameId: state.gameId,
+    startMs: clip.startMs,
+    endMs: clip.endMs
+  });
+  const result = await shareOrCopy({
+    title: clip.title || 'Game highlight',
+    text: clip.title || 'Watch this highlight',
+    url,
+    clipboardText: `${clip.title || 'Game highlight'}\n${url}`
+  });
+  if (result.status === 'shared') showToast('Clip share sheet opened!');
+  if (result.status === 'copied') showToast('Clip link copied!');
+  if (result.status === 'failed') showToast('Failed to share clip.');
+  return url;
+}
+
+async function saveHighlightClip() {
+  const draft = getHighlightDraftFromInputs();
+  if (!draft) {
+    showToast('Pick a valid highlight range.');
+    return;
+  }
+
+  applyHighlightSelection(draft);
+  if (!state.user) {
+    await shareHighlightClip(draft);
+    showToast('Sign in to save highlights. Clip link copied instead.');
+    return;
+  }
+
+  const nextHighlights = [
+    ...(state.videoPlayback?.savedHighlights || []).filter(clip => clip.startMs !== draft.startMs || clip.endMs !== draft.endMs || clip.title !== draft.title),
+    draft
+  ]
+    .sort((a, b) => a.startMs - b.startMs)
+    .slice(-12);
+
+  try {
+    await updateGame(state.teamId, state.gameId, {
+      highlightClips: nextHighlights
+    });
+    state.game = {
+      ...state.game,
+      highlightClips: nextHighlights
+    };
+    state.videoPlayback = {
+      ...state.videoPlayback,
+      savedHighlights: nextHighlights
+    };
+    renderRecordedReplayTools();
+    showToast('Highlight saved.');
+  } catch (error) {
+    console.warn('Failed to save highlight clip:', error);
+    await shareHighlightClip(draft);
+    showToast('Save unavailable for this account. Clip link copied.');
+  }
+}
+
+function initRecordedReplayControls() {
+  if (els.recordedReplayVideo && !els.recordedReplayVideo.dataset.bound) {
+    els.recordedReplayVideo.dataset.bound = 'true';
+    els.recordedReplayVideo.addEventListener('loadedmetadata', () => {
+      renderRecordedReplayTools();
+      if (Number.isFinite(state.videoPlayback?.clipStartMs)) {
+        applyHighlightSelection({
+          title: els.highlightTitleInput?.value || '',
+          startMs: state.videoPlayback.clipStartMs,
+          endMs: state.videoPlayback.clipEndMs ?? Math.min(getCurrentReplayVideoDurationMs() || MAX_HIGHLIGHT_CLIP_MS, MAX_HIGHLIGHT_CLIP_MS)
+        }, { updateHistory: false });
+      }
+    });
+    els.recordedReplayVideo.addEventListener('timeupdate', () => {
+      if (!Number.isFinite(state.videoPlayback?.clipEndMs)) return;
+      const clipEndSeconds = state.videoPlayback.clipEndMs / 1000;
+      if (els.recordedReplayVideo.currentTime >= clipEndSeconds) {
+        els.recordedReplayVideo.pause();
+        els.recordedReplayVideo.currentTime = clipEndSeconds;
+      }
+    });
+  }
+
+  if (els.highlightSetStart && !els.highlightSetStart.dataset.bound) {
+    els.highlightSetStart.dataset.bound = 'true';
+    els.highlightSetStart.addEventListener('click', () => {
+      const currentSeconds = Math.floor(els.recordedReplayVideo?.currentTime || 0);
+      if (els.highlightStartInput) els.highlightStartInput.value = `${currentSeconds}`;
+    });
+  }
+  if (els.highlightSetEnd && !els.highlightSetEnd.dataset.bound) {
+    els.highlightSetEnd.dataset.bound = 'true';
+    els.highlightSetEnd.addEventListener('click', () => {
+      const currentSeconds = Math.ceil(els.recordedReplayVideo?.currentTime || 0);
+      if (els.highlightEndInput) els.highlightEndInput.value = `${currentSeconds}`;
+    });
+  }
+  if (els.highlightShareBtn && !els.highlightShareBtn.dataset.bound) {
+    els.highlightShareBtn.dataset.bound = 'true';
+    els.highlightShareBtn.addEventListener('click', async () => {
+      const draft = getHighlightDraftFromInputs();
+      if (!draft) {
+        showToast('Pick a valid highlight range.');
+        return;
+      }
+      applyHighlightSelection(draft);
+      await shareHighlightClip(draft);
+    });
+  }
+  if (els.highlightSaveBtn && !els.highlightSaveBtn.dataset.bound) {
+    els.highlightSaveBtn.dataset.bound = 'true';
+    els.highlightSaveBtn.addEventListener('click', saveHighlightClip);
+  }
+  if (els.savedHighlightsList && !els.savedHighlightsList.dataset.bound) {
+    els.savedHighlightsList.dataset.bound = 'true';
+    els.savedHighlightsList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-highlight-index]');
+      if (!button) return;
+      const clip = state.videoPlayback?.savedHighlights?.[Number(button.dataset.highlightIndex)];
+      if (!clip) return;
+      if (els.highlightTitleInput) {
+        els.highlightTitleInput.value = clip.title || '';
+      }
+      applyHighlightSelection(clip, { autoplay: false });
+    });
   }
 }
 
@@ -1361,6 +1684,7 @@ function formatFirestoreError(error) {
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
+  refreshVideoPanel();
   renderGameInfo();
   const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;
   if (resetAt > state.lastResetAt) {
@@ -1430,6 +1754,8 @@ async function init() {
   state.teamId = params.teamId;
   state.gameId = params.gameId;
   state.isReplay = params.replay === 'true';
+  state.clipStartMs = Number.isFinite(Number(params.clipStart)) ? Number(params.clipStart) : null;
+  state.clipEndMs = Number.isFinite(Number(params.clipEnd)) ? Number(params.clipEnd) : null;
 
   if (!state.teamId || !state.gameId) {
     if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-sand/60 text-center py-6">Invalid game link.</div>';
@@ -1480,7 +1806,7 @@ async function init() {
   state.period = game.period || getDefaultLivePeriod({ game, team });
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
-  setupVideoPanel();
+  refreshVideoPanel({ force: true });
   renderGameInfo();
   renderScoreboard();
   renderLineup();
@@ -1488,6 +1814,7 @@ async function init() {
   initChat();
   initReactions();
   initReplayControls();
+  initRecordedReplayControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';

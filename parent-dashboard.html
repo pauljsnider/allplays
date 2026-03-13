@@ -287,8 +287,9 @@
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=3';
-        import { requireAuth, checkAuth } from './js/auth.js?v=9';
+        import { requireAuth, checkAuth } from './js/auth.js?v=10';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
+        import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
@@ -487,6 +488,16 @@
             const legacyEventId = typeof event?.calendarEventUid === 'string' ? event.calendarEventUid.trim() : '';
             if (!eventId || !legacyEventId || legacyEventId === eventId) return '';
             return legacyEventId;
+        }
+
+        function parseTeamGameKey(key) {
+            const delimiter = '::';
+            const delimiterIndex = key.indexOf(delimiter);
+            if (delimiterIndex === -1) return [key, ''];
+            return [
+                key.slice(0, delimiterIndex),
+                key.slice(delimiterIndex + delimiter.length)
+            ];
         }
 
         function getEventRideOffers(teamId, eventId) {
@@ -862,7 +873,7 @@
                 )];
                 const unsummarizedByTeam = new Map();
                 uniqueGameKeys.forEach((key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
                     if (!shouldLoadSummary) return;
                     if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
@@ -879,7 +890,7 @@
                 }));
 
                 await Promise.all(uniqueGameKeys.map(async (key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     try {
                         const rsvps = await getRsvps(teamId, gameId);
                         const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, currentUserId);
@@ -1006,10 +1017,11 @@
                 if (!Array.isArray(trackedUids)) trackedUids = [];
                 if (!Array.isArray(practiceSessions)) practiceSessions = [];
 
+                const visibleSessions = filterVisiblePracticeSessions(practiceSessions, dbGames);
                 const sessionsByEventId = new Map();
                 const sessions = [];
                 const matchedSessionIds = new Set();
-                practiceSessions.forEach((session) => {
+                visibleSessions.forEach((session) => {
                     if (!session?.eventId) return;
                     sessionsByEventId.set(session.eventId, session);
                     sessions.push({
@@ -1493,8 +1505,10 @@
             });
             for (const [teamId, teamChildren] of byTeam.entries()) {
                 const sessions = await getPracticeSessions(teamId);
+                const dbGames = await getGames(teamId);
+                const visibleSessions = filterVisiblePracticeSessions(sessions || [], dbGames);
                 const completionsBySessionId = new Map();
-                await Promise.all((sessions || []).map(async (session) => {
+                await Promise.all(visibleSessions.map(async (session) => {
                     try {
                         const completions = await getPracticePacketCompletions(teamId, session.id);
                         completionsBySessionId.set(session.id, completions || []);
@@ -1502,7 +1516,7 @@
                         completionsBySessionId.set(session.id, []);
                     }
                 }));
-                (sessions || []).forEach((session) => {
+                visibleSessions.forEach((session) => {
                     const d = session?.date?.toDate ? session.date.toDate() : new Date(session?.date);
                     if (!d || Number.isNaN(d.getTime())) return;
                     const hasAttendance = hasRecordedAttendance(session?.attendance);
@@ -1715,10 +1729,16 @@
                         </div>
                     </a>
                     <div class="border-t border-gray-100 px-3 py-2 bg-gray-50">
-                        <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
-                            class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
-                            💰 Incentives
-                        </button>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <a href="athlete-profile-builder.html?teamId=${child.teamId}&playerId=${child.playerId}"
+                                class="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition border border-primary-200">
+                                Athlete Profile
+                            </a>
+                            <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
+                                class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
+                                💰 Incentives
+                            </button>
+                        </div>
                     </div>
                 </div>
             `).join('');

@@ -146,6 +146,14 @@ service cloud.firestore {
                         isIncentivePaidGamePayloadValid(request.resource.data);
         allow delete: if isOwner(userId);
       }
+
+      match /notificationPreferences/{teamId} {
+        allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
+
+      match /notificationDevices/{deviceId} {
+        allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
     }
 
     // Access codes - allow public read for validation during signup
@@ -172,6 +180,19 @@ service cloud.firestore {
     // SECURITY: deny reads of any player doc that still contains sensitive fields.
     match /{path=**}/players/{playerId} {
       allow read: if !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+    }
+
+    // Parent-managed athlete profiles with explicit public/private sharing.
+    match /athleteProfiles/{profileId} {
+      allow read: if resource.data.privacy == 'public' ||
+                     (isSignedIn() && resource.data.parentUserId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       request.resource.data.parentUserId == request.auth.uid;
+      allow update: if isSignedIn() &&
+                       resource.data.parentUserId == request.auth.uid &&
+                       request.resource.data.parentUserId == resource.data.parentUserId;
+      allow delete: if isSignedIn() &&
+                       resource.data.parentUserId == request.auth.uid;
     }
 
     // Drill Library (top-level collection)
@@ -414,6 +435,14 @@ service cloud.firestore {
                              isRideshareSeatCountUpdateValid(teamId, gameId, offerId, resource.data.status, 'declined');
           }
         }
+      }
+
+      // Tournament brackets subcollection
+      match /brackets/{bracketId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isParentForTeam(teamId) ||
+                       resource.data.status == 'published';
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       // Stat tracker configs subcollection

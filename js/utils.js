@@ -1300,6 +1300,10 @@ export function getCalendarEventStatus(event) {
   return 'scheduled';
 }
 
+function stripCancelledCalendarPrefix(summary) {
+  return String(summary || '').replace(/^\s*\[(?:CANCELED|CANCELLED)\]\s*/i, '');
+}
+
 /**
  * Resolve the id used to track a parsed ICS event in Firestore and the UI.
  * Recurring occurrences should prefer their generated occurrence id.
@@ -1353,13 +1357,15 @@ export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
     return null;
   }
 
+  const title = stripCancelledCalendarPrefix(event?.summary) || 'Event';
+
   return {
     id: getCalendarEventTrackingId(event) || `ics-${eventDate.getTime()}`,
     teamId: team.id,
     teamName: team.name,
     teamColor,
     type: getCalendarEventType(event),
-    title: event.summary || 'Event',
+    title,
     date: eventDate,
     location: event.location || 'TBD',
     status: getCalendarEventStatus(event),

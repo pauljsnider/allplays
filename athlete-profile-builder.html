@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Athlete Profile Builder - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="max-w-5xl mx-auto space-y-6">
+            <div class="flex items-center justify-between gap-4">
+                <div>
+                    <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Athlete Profile Builder</h1>
+                    <p class="text-sm text-gray-600 mt-2">Selected Seasons, bio details, career stats, and Highlight Clips in one parent-managed profile.</p>
+                </div>
+                <a href="parent-dashboard.html" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Back</a>
+            </div>
+
+            <div class="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+                <section class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                    <form id="athlete-profile-form" class="space-y-6">
+                        <div class="grid md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-name">Athlete Name</label>
+                                <input id="athlete-name" type="text" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="Jordan Smith">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-headline">Headline</label>
+                                <input id="athlete-headline" type="text" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="2028 Guard">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-position">Position</label>
+                                <input id="athlete-position" type="text" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="Guard / Wing">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-grad-year">Graduation Year</label>
+                                <input id="athlete-grad-year" type="text" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="2028">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-hometown">Hometown</label>
+                                <input id="athlete-hometown" type="text" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="Austin, TX">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-hand">Dominant Hand</label>
+                                <input id="athlete-hand" type="text" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="Right">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-1" for="athlete-achievements">Achievements</label>
+                            <textarea id="athlete-achievements" rows="3" class="w-full rounded-xl border border-gray-300 px-3 py-2" placeholder="Captains, honors, goals, recruiting notes"></textarea>
+                        </div>
+
+                        <div>
+                            <h2 class="text-lg font-bold text-gray-900">Selected Seasons</h2>
+                            <p class="text-sm text-gray-500 mt-1">Choose which linked player seasons should roll into the career profile.</p>
+                            <div id="season-options" class="mt-3 grid gap-3"></div>
+                        </div>
+
+                        <div>
+                            <div class="flex items-center justify-between gap-3">
+                                <div>
+                                    <h2 class="text-lg font-bold text-gray-900">Highlight Clips</h2>
+                                    <p class="text-sm text-gray-500 mt-1">Attach favorite video links for family or coaches.</p>
+                                </div>
+                                <button type="button" id="add-clip-btn" class="px-3 py-2 rounded-xl border border-primary-200 bg-primary-50 text-primary-700 font-semibold hover:bg-primary-100">Add Clip</button>
+                            </div>
+                            <div id="clip-list" class="mt-3 space-y-3"></div>
+                        </div>
+
+                        <div>
+                            <h2 class="text-lg font-bold text-gray-900">Share on the web</h2>
+                            <div class="mt-3 grid sm:grid-cols-2 gap-3">
+                                <label class="rounded-xl border border-gray-200 p-4 flex gap-3 items-start">
+                                    <input type="radio" name="privacy" value="private" checked class="mt-1">
+                                    <span>
+                                        <span class="block font-semibold text-gray-900">Private</span>
+                                        <span class="block text-sm text-gray-500">Only the linked parent account can open it.</span>
+                                    </span>
+                                </label>
+                                <label class="rounded-xl border border-gray-200 p-4 flex gap-3 items-start">
+                                    <input type="radio" name="privacy" value="public" class="mt-1">
+                                    <span>
+                                        <span class="block font-semibold text-gray-900">Public</span>
+                                        <span class="block text-sm text-gray-500">Generates a read-only page you can share with anyone.</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-wrap items-center gap-3">
+                            <button type="submit" id="save-profile-btn" class="px-5 py-3 rounded-xl bg-primary-600 text-white font-semibold hover:bg-primary-700">Save Athlete Profile</button>
+                            <a id="preview-profile-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden px-4 py-3 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Open Share Page</a>
+                            <button type="button" id="share-profile-btn" class="hidden px-4 py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Share Profile</button>
+                            <span id="save-status" class="text-sm text-gray-500"></span>
+                        </div>
+                    </form>
+                </section>
+
+                <aside class="space-y-6">
+                    <section class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                        <h2 class="text-lg font-bold text-gray-900">Career Stats</h2>
+                        <div id="career-stats" class="mt-4 text-sm text-gray-500">Save the profile to build career totals from the selected seasons.</div>
+                    </section>
+                    <section class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                        <h2 class="text-lg font-bold text-gray-900">Saved Profiles</h2>
+                        <div id="saved-profiles-list" class="mt-4 space-y-3 text-sm text-gray-500">Loading...</div>
+                    </section>
+                </aside>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { requireAuth, checkAuth } from './js/auth.js?v=10';
+        import {
+            getUserProfile,
+            getAthleteProfile,
+            saveAthleteProfile,
+            listAthleteProfilesForParent
+        } from './js/db.js?v=24';
+        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=1';
+
+        const params = getUrlParams();
+        const clipList = document.getElementById('clip-list');
+        const seasonOptions = document.getElementById('season-options');
+        const saveStatus = document.getElementById('save-status');
+        const previewLink = document.getElementById('preview-profile-link');
+        const shareButton = document.getElementById('share-profile-btn');
+        const savedProfilesList = document.getElementById('saved-profiles-list');
+        const careerStats = document.getElementById('career-stats');
+
+        let currentUser = null;
+        let currentProfile = null;
+        let availableLinks = [];
+
+        renderFooter(document.getElementById('footer-container'));
+        checkAuth((user) => renderHeader(document.getElementById('header-container'), user));
+
+        function renderClipRow(clip = {}) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'grid gap-3 md:grid-cols-[1fr_1fr_auto]';
+            wrapper.innerHTML = `
+                <input type="text" data-clip-field="title" value="${escapeHtml(clip.title || '')}" placeholder="Clip title" class="rounded-xl border border-gray-300 px-3 py-2">
+                <input type="url" data-clip-field="url" value="${escapeHtml(clip.url || '')}" placeholder="https://..." class="rounded-xl border border-gray-300 px-3 py-2">
+                <button type="button" class="remove-clip-btn px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Remove</button>
+                <input type="text" data-clip-field="label" value="${escapeHtml(clip.label || '')}" placeholder="Optional note" class="md:col-span-2 rounded-xl border border-gray-300 px-3 py-2">
+            `;
+            wrapper.querySelector('.remove-clip-btn').addEventListener('click', () => wrapper.remove());
+            clipList.appendChild(wrapper);
+        }
+
+        function collectSelectedSeasonKeys() {
+            return Array.from(document.querySelectorAll('input[name="seasonKey"]:checked')).map((input) => input.value);
+        }
+
+        function collectClips() {
+            return Array.from(clipList.children).map((row) => ({
+                title: row.querySelector('[data-clip-field="title"]')?.value || '',
+                url: row.querySelector('[data-clip-field="url"]')?.value || '',
+                label: row.querySelector('[data-clip-field="label"]')?.value || ''
+            }));
+        }
+
+        function renderSeasonOptions(selectedKeys = []) {
+            seasonOptions.innerHTML = availableLinks.map((link) => {
+                const key = `${link.teamId}::${link.playerId}`;
+                const checked = selectedKeys.includes(key) ? 'checked' : '';
+                return `
+                    <label class="flex items-start gap-3 rounded-xl border border-gray-200 p-4">
+                        <input type="checkbox" name="seasonKey" value="${escapeHtml(key)}" ${checked} class="mt-1">
+                        <span>
+                            <span class="block font-semibold text-gray-900">${escapeHtml(link.playerName || 'Athlete')}</span>
+                            <span class="block text-sm text-gray-500">${escapeHtml(link.teamName || 'Team')}</span>
+                        </span>
+                    </label>
+                `;
+            }).join('');
+        }
+
+        function renderCareerSummary(summary) {
+            if (!summary) {
+                careerStats.innerHTML = '<div class="text-sm text-gray-500">Save the profile to build career totals from the selected seasons.</div>';
+                return;
+            }
+
+            const statCards = Object.entries(summary.statTotals || {}).slice(0, 6).map(([key, total]) => `
+                <div class="rounded-xl border border-gray-200 p-3">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">${escapeHtml(key)}</div>
+                    <div class="text-2xl font-bold text-gray-900">${escapeHtml(total)}</div>
+                    <div class="text-xs text-gray-500">${escapeHtml(summary.statAverages?.[key] || '0.0')} per game</div>
+                </div>
+            `).join('');
+
+            careerStats.innerHTML = `
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                    <div class="rounded-xl bg-primary-50 border border-primary-100 p-4">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-primary-700">Games</div>
+                        <div class="text-3xl font-bold text-primary-900">${escapeHtml(summary.gamesPlayed)}</div>
+                    </div>
+                    <div class="rounded-xl bg-emerald-50 border border-emerald-100 p-4">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Minutes</div>
+                        <div class="text-3xl font-bold text-emerald-900">${escapeHtml(summary.totalMinutes)}</div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">${statCards || '<div class="text-sm text-gray-500">No stats found for the selected seasons yet.</div>'}</div>
+            `;
+        }
+
+        function updateShareControls() {
+            if (!currentProfile?.id) {
+                previewLink.classList.add('hidden');
+                shareButton.classList.add('hidden');
+                return;
+            }
+
+            const shareUrl = buildAthleteProfileShareUrl(window.location.origin, currentProfile.id);
+            previewLink.href = shareUrl;
+            previewLink.classList.remove('hidden');
+
+            if (currentProfile.privacy === 'public') {
+                shareButton.classList.remove('hidden');
+            } else {
+                shareButton.classList.add('hidden');
+            }
+        }
+
+        async function refreshSavedProfiles() {
+            const profiles = await listAthleteProfilesForParent(currentUser.uid);
+            if (!profiles.length) {
+                savedProfilesList.innerHTML = '<div class="text-sm text-gray-500">No athlete profiles saved yet.</div>';
+                return;
+            }
+
+            savedProfilesList.innerHTML = profiles.map((profile) => `
+                <a href="athlete-profile-builder.html?profileId=${escapeHtml(profile.id)}" class="block rounded-xl border border-gray-200 p-4 hover:bg-gray-50">
+                    <div class="font-semibold text-gray-900">${escapeHtml(profile.athlete?.name || 'Athlete')}</div>
+                    <div class="text-xs text-gray-500 mt-1">${escapeHtml(profile.privacy || 'private')} · ${escapeHtml(profile.seasons?.length || 0)} seasons</div>
+                </a>
+            `).join('');
+        }
+
+        async function loadBuilder() {
+            currentUser = await requireAuth();
+            const profile = await getUserProfile(currentUser.uid);
+            availableLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
+
+            if (!availableLinks.length) {
+                saveStatus.textContent = 'No linked players were found for this account.';
+                return;
+            }
+
+            if (params.profileId) {
+                currentProfile = await getAthleteProfile(params.profileId);
+            }
+
+            const defaultKey = params.teamId && params.playerId ? `${params.teamId}::${params.playerId}` : '';
+            const selectedKeys = currentProfile?.seasons?.map((season) => season.seasonKey) || (defaultKey ? [defaultKey] : []);
+
+            document.getElementById('athlete-name').value = currentProfile?.athlete?.name || availableLinks[0]?.playerName || '';
+            document.getElementById('athlete-headline').value = currentProfile?.athlete?.headline || '';
+            document.getElementById('athlete-position').value = currentProfile?.bio?.position || '';
+            document.getElementById('athlete-grad-year').value = currentProfile?.bio?.graduationYear || '';
+            document.getElementById('athlete-hometown').value = currentProfile?.bio?.hometown || '';
+            document.getElementById('athlete-hand').value = currentProfile?.bio?.dominantHand || '';
+            document.getElementById('athlete-achievements').value = currentProfile?.bio?.achievements || '';
+            const privacyInput = document.querySelector(`input[name="privacy"][value="${currentProfile?.privacy || 'private'}"]`);
+            if (privacyInput) privacyInput.checked = true;
+
+            renderSeasonOptions(selectedKeys);
+            const clips = currentProfile?.clips?.length ? currentProfile.clips : [{ title: '', url: '', label: '' }];
+            clipList.innerHTML = '';
+            clips.forEach((clip) => renderClipRow(clip));
+            renderCareerSummary(currentProfile?.careerSummary || null);
+            updateShareControls();
+            await refreshSavedProfiles();
+        }
+
+        document.getElementById('add-clip-btn').addEventListener('click', () => renderClipRow({}));
+
+        shareButton.addEventListener('click', async () => {
+            if (!currentProfile?.id) return;
+            const shareUrl = buildAthleteProfileShareUrl(window.location.origin, currentProfile.id);
+            await shareOrCopy({
+                title: `${currentProfile.athlete?.name || 'Athlete'} profile`,
+                text: 'Take a look at this athlete profile on ALL PLAYS.',
+                url: shareUrl
+            });
+        });
+
+        document.getElementById('athlete-profile-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            saveStatus.textContent = 'Saving...';
+
+            try {
+                currentProfile = await saveAthleteProfile(currentUser.uid, {
+                    athlete: {
+                        name: document.getElementById('athlete-name').value,
+                        headline: document.getElementById('athlete-headline').value
+                    },
+                    bio: {
+                        position: document.getElementById('athlete-position').value,
+                        graduationYear: document.getElementById('athlete-grad-year').value,
+                        hometown: document.getElementById('athlete-hometown').value,
+                        dominantHand: document.getElementById('athlete-hand').value,
+                        achievements: document.getElementById('athlete-achievements').value
+                    },
+                    privacy: document.querySelector('input[name="privacy"]:checked')?.value || 'private',
+                    clips: collectClips(),
+                    selectedSeasonKeys: collectSelectedSeasonKeys()
+                }, {
+                    profileId: currentProfile?.id || params.profileId || null
+                });
+
+                params.profileId = currentProfile.id;
+                renderCareerSummary(currentProfile.careerSummary);
+                updateShareControls();
+                await refreshSavedProfiles();
+                saveStatus.textContent = 'Athlete profile saved.';
+                window.history.replaceState({}, '', `athlete-profile-builder.html?profileId=${encodeURIComponent(currentProfile.id)}`);
+            } catch (error) {
+                console.error('Failed to save athlete profile', error);
+                saveStatus.textContent = error?.message || 'Unable to save athlete profile.';
+            }
+        });
+
+        loadBuilder().catch((error) => {
+            console.error(error);
+            saveStatus.textContent = 'Unable to load athlete profile builder.';
+        });
+    </script>
+</body>
+</html>
