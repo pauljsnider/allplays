@@ -437,6 +437,14 @@ service cloud.firestore {
         }
       }
 
+      // Tournament brackets subcollection
+      match /brackets/{bracketId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isParentForTeam(teamId) ||
+                       resource.data.status == 'published';
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Stat tracker configs subcollection
       match /statTrackerConfigs/{configId} {
         allow read: if true;
