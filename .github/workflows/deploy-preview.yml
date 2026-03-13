@@ -18,12 +18,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -43,22 +43,71 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Configure Firebase service account
+        run: |
+          credentials_file="$RUNNER_TEMP/firebase-service-account.json"
+          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}' > "$credentials_file"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
+
+      - name: Prune stale Firebase preview channels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT_CHANNEL: pr-${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          open_channels="$(gh pr list --state open --limit 200 --json number --jq '.[].number' | sed 's/^/pr-/')"
+          channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
+          prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
+          npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
+          awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
+          while read -r channel; do
+            if [ -z "$channel" ] || [ "$channel" = "$CURRENT_CHANNEL" ]; then
+              continue
+            fi
+            if printf '%s\n' "$open_channels" | grep -qx "$channel"; then
+              continue
+            fi
+            npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force
+          done < "$prune_file"
+
       - name: Deploy Firebase Hosting preview
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GAME_FLOW_C6311 }}
-          projectId: game-flow-c6311
-          channelId: pr-${{ github.event.pull_request.number }}
-          expires: 7d
+        id: deploy_preview
+        run: |
+          set -euo pipefail
+          log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
+          npx firebase-tools@14.25.0 hosting:channel:deploy pr-${{ github.event.pull_request.number }} --project game-flow-c6311 --expires 7d --non-interactive | tee "$log_file"
+          preview_url="$(grep -Eo 'https://[^ ]+' "$log_file" | tail -n1)"
+          if [ -z "$preview_url" ]; then
+            echo "Failed to extract preview URL from Firebase deploy output." >&2
+            exit 1
+          fi
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+
+      - name: Report preview URL on pull request
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREVIEW_URL: ${{ steps.deploy_preview.outputs.preview_url }}
+        run: |
+          set -euo pipefail
+          marker='<!-- allplays-preview-url -->'
+          body="$marker
+
+          Preview URL: $PREVIEW_URL"
+          comment_id="$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"<!-- allplays-preview-url -->\")) | .id' | head -n1)"
+          if [ -n "$comment_id" ]; then
+            gh api repos/${{ github.repository }}/issues/comments/"$comment_id" --method PATCH -f body="$body" >/dev/null
+          else
+            gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --method POST -f body="$body" >/dev/null
+          fi
