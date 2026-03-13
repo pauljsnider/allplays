@@ -1,5 +1,5 @@
 import { escapeHtml } from './utils.js?v=8';
-import { getTeams } from './db.js?v=14';
+import { getTeams } from './db.js?v=15';
 import {
     db,
     collectionGroup,
@@ -8,7 +8,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=9';
+} from './firebase.js?v=10';
 
 let cachedTeams = null;
 let cachedTeamsLoadedAt = 0;

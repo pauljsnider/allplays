@@ -14,8 +14,8 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail, listMyParentMembershipRequests } from './db.js?v=14';
+} from './firebase.js?v=10';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail, listMyParentMembershipRequests } from './db.js?v=15';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=3';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';

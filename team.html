@@ -230,15 +230,15 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=9';
-        import { collection, getDocs } from "./js/firebase.js?v=9";
-        import { db } from './js/firebase.js?v=9';
+        import { checkAuth } from './js/auth.js?v=10';
+        import { collection, getDocs } from "./js/firebase.js?v=10";
+        import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));

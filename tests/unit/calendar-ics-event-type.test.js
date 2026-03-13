@@ -46,7 +46,7 @@ describe('getCalendarEventStatus', () => {
 });
 
 describe('buildGlobalCalendarIcsEvent', () => {
-    it('preserves cancelled status for synced ICS events in the global calendar', () => {
+    it('preserves cancelled status and cleans cancelled prefixes for synced ICS events in the global calendar', () => {
         const mappedEvent = buildGlobalCalendarIcsEvent({
             team: { id: 'team-1', name: 'Wildcats' },
             teamColor: '#f97316',
@@ -64,7 +64,7 @@ describe('buildGlobalCalendarIcsEvent', () => {
             teamName: 'Wildcats',
             teamColor: '#f97316',
             type: 'practice',
-            title: '[CANCELED] Practice',
+            title: 'Practice',
             location: 'Main Field',
             status: 'cancelled',
             source: 'ics'
