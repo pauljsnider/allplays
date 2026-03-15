@@ -37,6 +37,7 @@ describe('rideshare re-request policy', () => {
         expect(rules).toContain('resource.data.status in [\'declined\', \'waitlisted\']');
         expect(rules).toContain('request.resource.data.status == \'pending\'');
         expect(rules).toContain('request.resource.data.respondedAt == null');
+        expect(rules).toContain('isParentForPlayer(teamId, resource.data.childId)');
         expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasOnly([\'childName\', \'status\', \'requestedAt\', \'respondedAt\', \'updatedAt\'])');
         expect(rules).toContain('isRideshareOfferOpen(teamId, gameId, offerId)');
     });

@@ -440,6 +440,7 @@ service cloud.firestore {
                                  resource.data.parentUserId == request.auth.uid &&
                                  request.resource.data.parentUserId == resource.data.parentUserId &&
                                  request.resource.data.childId == resource.data.childId &&
+                                 isParentForPlayer(teamId, resource.data.childId) &&
                                  resource.data.status in ['declined', 'waitlisted'] &&
                                  request.resource.data.status == 'pending' &&
                                  request.resource.data.respondedAt == null &&
