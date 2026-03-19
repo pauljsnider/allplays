@@ -39,10 +39,9 @@ test('homepage footer support links navigate to live support destinations', asyn
     expectLiveSupportHref(helpHref, 'help.html');
     expectLiveSupportHref(contactHref, 'https://paulsnider.net');
 
-    await Promise.all([
-        page.waitForURL('**/help.html'),
-        helpLink.click()
-    ]);
+    const navigationPromise = page.waitForURL('**/help.html');
+    await helpLink.click();
+    await navigationPromise;
 
     expect(new URL(page.url()).pathname).toBe('/help.html');
 });
