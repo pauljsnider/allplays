@@ -6,7 +6,7 @@ import { checkAuth } from './auth.js?v=10';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=10';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=1';
+import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=2';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 
 let currentTeamId = null;
