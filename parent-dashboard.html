@@ -292,6 +292,7 @@
         import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
+        import { resolveSelectedRideChildId, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -328,10 +329,8 @@
         window.submitGameRsvpFromButton = submitGameRsvpFromButton;
         window.toggleRideOfferForm = toggleRideOfferForm;
         window.submitRideOfferFromForm = submitRideOfferFromForm;
-        window.requestRideSpotForChild = requestRideSpotForChild;
         window.updateRideRequestDecision = updateRideRequestDecision;
         window.toggleRideOfferClosed = toggleRideOfferClosed;
-        window.cancelMyRideRequest = cancelMyRideRequest;
         window.setRideChildSelection = setRideChildSelection;
         window.openIncentivesPanel = openIncentivesPanel;
         window.closeIncentivesPanel = closeIncentivesPanel;
@@ -541,11 +540,15 @@
         }
 
         function getSelectedRideChildId(teamId, eventId, offerId, defaultChildId, childChoices, includeChildPicker) {
-            if (!includeChildPicker) return defaultChildId;
             const selectionKey = getRideOfferSelectionKey(teamId, eventId, offerId);
-            const selectedChildId = selectedRideChildByOffer.get(selectionKey) || defaultChildId;
-            if (childChoices.some((child) => child.childId === selectedChildId)) return selectedChildId;
-            return childChoices[0]?.childId || '';
+            return resolveSelectedRideChildId({
+                includeChildPicker,
+                selectedChildId: selectedRideChildByOffer.get(selectionKey) || '',
+                defaultChildId,
+                childChoices,
+                offer: getEventRideOffers(teamId, eventId).find((offer) => offer?.id === offerId) || {},
+                parentUserId: currentUserId
+            });
         }
 
         function renderEventRideshare(event, { includeChildPicker = false } = {}) {
@@ -717,26 +720,23 @@
             }
         }
 
-        async function requestRideSpotForChild(teamId, gameId, legacyGameId, offerGameId, offerId, defaultChildId, defaultChildName, selectorId = '') {
-            try {
-                let childId = defaultChildId;
-                let childName = defaultChildName;
-                const selector = selectorId ? document.getElementById(selectorId) : null;
-                if (selector) {
-                    childId = selector.value || childId;
-                    const selected = resolveChildChoices(teamId).find((child) => child.childId === childId);
-                    childName = selected?.childName || childName;
-                }
-                if (!childId) throw new Error('Select a child first.');
-                await requestRideSpot(teamId, offerGameId, offerId, { childId, childName });
-                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
-                renderScheduleFromControls();
-                rerenderActiveDayModal();
-            } catch (err) {
-                console.error('Failed to request spot:', err);
-                alert(`Could not request spot: ${err?.message || err}`);
-            }
-        }
+        const rideshareRequestHandlers = createRideRequestHandlers({
+            documentRef: document,
+            resolveChildChoices,
+            getRideOfferSelectionKey,
+            selectedRideChildByOffer,
+            requestRideSpot,
+            cancelRideRequest,
+            refreshRideshareForEvent,
+            renderScheduleFromControls,
+            rerenderActiveDayModal,
+            alertFn: (message) => alert(message),
+            consoleRef: console
+        });
+
+        const { requestRideSpotForChild, cancelMyRideRequest } = rideshareRequestHandlers;
+        window.requestRideSpotForChild = requestRideSpotForChild;
+        window.cancelMyRideRequest = cancelMyRideRequest;
 
         async function updateRideRequestDecision(teamId, gameId, legacyGameId, offerGameId, offerId, requestId, status) {
             try {
@@ -760,18 +760,6 @@
             } catch (err) {
                 console.error('Failed to update offer status:', err);
                 alert(`Could not update offer: ${err?.message || err}`);
-            }
-        }
-
-        async function cancelMyRideRequest(teamId, gameId, legacyGameId, offerGameId, offerId, requestId) {
-            try {
-                await cancelRideRequest(teamId, offerGameId, offerId, requestId);
-                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
-                renderScheduleFromControls();
-                rerenderActiveDayModal();
-            } catch (err) {
-                console.error('Failed to cancel request:', err);
-                alert(`Could not cancel request: ${err?.message || err}`);
             }
         }
 
