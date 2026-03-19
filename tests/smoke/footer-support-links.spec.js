@@ -39,11 +39,14 @@ test('homepage footer support links navigate to live support destinations', asyn
     expectLiveSupportHref(helpHref, 'help.html');
     expectLiveSupportHref(contactHref, 'https://paulsnider.net');
 
-    const navigationPromise = page.waitForURL('**/help.html');
+    const navigationPromise = page.waitForNavigation({ url: '**/help.html' });
     await helpLink.click();
-    await navigationPromise;
+    const response = await navigationPromise;
 
+    expect(response).not.toBeNull();
+    expect(response.ok()).toBeTruthy();
     expect(new URL(page.url()).pathname).toBe('/help.html');
+    await expect(page.getByRole('heading', { name: 'ALL PLAYS Help Center' })).toBeVisible();
 });
 
 test('shared footer support links stay wired on login page', async ({ page, baseURL }) => {
