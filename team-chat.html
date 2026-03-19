@@ -363,6 +363,8 @@
         let pendingImageFiles = [];
         let pendingMediaPreviewUrls = [];
         let galleryMediaEntries = [];
+        const chatMediaShareFileCache = new Map();
+        const chatMediaShareFilePending = new Map();
         let activeReactionPickerMessageId = null;
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
@@ -1110,6 +1112,9 @@
         function renderMediaGallery(mediaEntries) {
             const grid = document.getElementById('media-gallery-grid');
             galleryMediaEntries = mediaEntries.slice();
+            galleryMediaEntries.forEach((entry) => {
+                void primeChatMediaShareFile(entry);
+            });
             if (mediaEntries.length === 0) {
                 grid.innerHTML = '<div class="text-sm text-gray-500">No media shared yet.</div>';
                 return;
@@ -1186,6 +1191,49 @@
             return response.blob();
         }
 
+        function getChatMediaShareCacheKey(entry) {
+            return `${entry.url}::${entry.name || ''}`;
+        }
+
+        async function primeChatMediaShareFile(entry) {
+            if (!navigator.canShare) {
+                return null;
+            }
+
+            const cacheKey = getChatMediaShareCacheKey(entry);
+            if (chatMediaShareFileCache.has(cacheKey)) {
+                return chatMediaShareFileCache.get(cacheKey);
+            }
+            if (chatMediaShareFilePending.has(cacheKey)) {
+                return chatMediaShareFilePending.get(cacheKey);
+            }
+
+            const pending = (async () => {
+                try {
+                    const blob = await fetchChatMediaBlob(entry);
+                    const file = new File([blob], getChatMediaDownloadName(entry), {
+                        type: blob.type || entry.mimeType || (entry.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+                        lastModified: entry.createdAt?.getTime?.() || Date.now()
+                    });
+                    if (!navigator.canShare({ files: [file] })) {
+                        chatMediaShareFileCache.set(cacheKey, null);
+                        return null;
+                    }
+                    chatMediaShareFileCache.set(cacheKey, file);
+                    return file;
+                } catch (error) {
+                    console.warn('Unable to prepare media file for native share:', error);
+                    chatMediaShareFileCache.set(cacheKey, null);
+                    return null;
+                } finally {
+                    chatMediaShareFilePending.delete(cacheKey);
+                }
+            })();
+
+            chatMediaShareFilePending.set(cacheKey, pending);
+            return pending;
+        }
+
         async function handleMediaCopyLink(entry) {
             try {
                 await copyTextToClipboard(entry.url);
@@ -1235,25 +1283,15 @@
 
             if (navigator.share) {
                 try {
+                    const cachedFile = chatMediaShareFileCache.get(getChatMediaShareCacheKey(entry));
                     const sharePayload = {
                         title: shareDetails.title,
                         text: shareDetails.text,
                         url: shareDetails.url
                     };
 
-                    if (navigator.canShare) {
-                        try {
-                            const blob = await fetchChatMediaBlob(entry);
-                            const file = new File([blob], getChatMediaDownloadName(entry), {
-                                type: blob.type || entry.mimeType || (entry.type === 'video' ? 'video/mp4' : 'image/jpeg'),
-                                lastModified: entry.createdAt?.getTime?.() || Date.now()
-                            });
-                            if (navigator.canShare({ files: [file] })) {
-                                sharePayload.files = [file];
-                            }
-                        } catch (error) {
-                            console.warn('Falling back to URL-only share payload:', error);
-                        }
+                    if (cachedFile) {
+                        sharePayload.files = [cachedFile];
                     }
 
                     await navigator.share(sharePayload);
