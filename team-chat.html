@@ -205,7 +205,14 @@
         import { checkAuth } from './js/auth.js?v=10';
         import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=21';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
-        import { MAX_CHAT_MEDIA_SIZE, getMessageAttachments, collectThreadMedia } from './js/team-chat-media.js?v=1';
+        import {
+            MAX_CHAT_MEDIA_SIZE,
+            getMessageAttachments,
+            collectThreadMedia,
+            buildChatMediaShareDetails,
+            getChatMediaActionState,
+            getChatMediaDownloadName
+        } from './js/team-chat-media.js?v=2';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -355,6 +362,7 @@
         let voiceListening = false;
         let pendingImageFiles = [];
         let pendingMediaPreviewUrls = [];
+        let galleryMediaEntries = [];
         let activeReactionPickerMessageId = null;
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
@@ -891,6 +899,14 @@
             setTimeout(() => errorEl.classList.add('hidden'), 5000);
         }
 
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        }
+
         function showAiThinking(show) {
             const el = document.getElementById('ai-thinking');
             if (!el) return;
@@ -1093,19 +1109,31 @@
 
         function renderMediaGallery(mediaEntries) {
             const grid = document.getElementById('media-gallery-grid');
+            galleryMediaEntries = mediaEntries.slice();
             if (mediaEntries.length === 0) {
                 grid.innerHTML = '<div class="text-sm text-gray-500">No media shared yet.</div>';
                 return;
             }
 
-            grid.innerHTML = mediaEntries.map((entry) => {
+            grid.innerHTML = mediaEntries.map((entry, index) => {
                 const timestamp = entry.createdAt
                     ? entry.createdAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
                     : '';
+                const actionState = getChatMediaActionState(entry, {
+                    canNativeShare: Boolean(navigator.share),
+                    canCopyLink: Boolean(navigator.clipboard?.writeText)
+                });
                 const footer = `
                     <div class="px-3 py-2 bg-white border-t border-gray-100">
                         <p class="text-sm font-medium text-gray-800 truncate">${escapeHtml(entry.name || (entry.type === 'video' ? 'Video' : 'Photo'))}</p>
                         <p class="text-xs text-gray-500 truncate">${escapeHtml(entry.senderName || 'Unknown')}${timestamp ? ` • ${escapeHtml(timestamp)}` : ''}</p>
+                    </div>
+                `;
+                const actions = `
+                    <div class="px-3 pb-3 bg-white flex flex-wrap gap-2">
+                        <button type="button" data-media-action="share" data-media-index="${index}" class="px-3 py-1.5 text-xs font-semibold rounded-full border border-primary-200 text-primary-700 hover:bg-primary-50" title="${actionState.canShare ? 'Share this media' : 'Share falls back when native share is unavailable'}">Share</button>
+                        <button type="button" data-media-action="download" data-media-index="${index}" class="px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 text-gray-700 hover:bg-gray-100" title="${actionState.canDownload ? 'Save this media to your device' : 'Download unavailable'}">Save</button>
+                        <button type="button" data-media-action="copy-link" data-media-index="${index}" class="px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 text-gray-700 hover:bg-gray-100" title="${actionState.canCopyLink ? 'Copy media link' : 'Copy media link'}">Copy link</button>
                     </div>
                 `;
 
@@ -1114,17 +1142,162 @@
                         <div class="rounded-xl overflow-hidden border border-gray-200 bg-black shadow-sm">
                             <video controls preload="metadata" class="w-full aspect-video bg-black" src="${escapeHtml(entry.url)}"></video>
                             ${footer}
+                            ${actions}
                         </div>
                     `;
                 }
 
                 return `
-                    <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer" class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm block">
-                        <img src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
+                    <div class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm">
+                        <a href="${escapeHtml(entry.url)}" target="_blank" rel="noopener noreferrer" class="block">
+                            <img src="${escapeHtml(entry.url)}" alt="${escapeHtml(entry.name || 'Photo')}" class="w-full aspect-video object-cover bg-white">
+                        </a>
                         ${footer}
-                    </a>
+                        ${actions}
+                    </div>
                 `;
             }).join('');
+        }
+
+        async function copyTextToClipboard(text) {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const helper = document.createElement('textarea');
+            helper.value = text;
+            helper.setAttribute('readonly', 'readonly');
+            helper.className = 'fixed -left-[9999px] top-0';
+            document.body.appendChild(helper);
+            helper.select();
+            const copied = document.execCommand('copy');
+            helper.remove();
+            if (!copied) {
+                throw new Error('Clipboard unavailable');
+            }
+        }
+
+        async function fetchChatMediaBlob(entry) {
+            const response = await fetch(entry.url);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch media: ${response.status}`);
+            }
+            return response.blob();
+        }
+
+        async function handleMediaCopyLink(entry) {
+            try {
+                await copyTextToClipboard(entry.url);
+                showToast('Media link copied.');
+            } catch (error) {
+                console.error('Failed to copy media link:', error);
+                showError('Failed to copy media link. Please try again.');
+            }
+        }
+
+        async function handleMediaDownload(entry) {
+            const filename = getChatMediaDownloadName(entry);
+            let objectUrl = null;
+
+            try {
+                const blob = await fetchChatMediaBlob(entry);
+                objectUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = objectUrl;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                showToast('Download started.');
+                return;
+            } catch (error) {
+                console.warn('Falling back to direct media download:', error);
+            } finally {
+                if (objectUrl) {
+                    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+                }
+            }
+
+            const link = document.createElement('a');
+            link.href = entry.url;
+            link.download = filename;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            showToast('Opened media in a new tab.');
+        }
+
+        async function handleMediaShare(entry) {
+            const shareDetails = buildChatMediaShareDetails(entry);
+
+            if (navigator.share) {
+                try {
+                    const sharePayload = {
+                        title: shareDetails.title,
+                        text: shareDetails.text,
+                        url: shareDetails.url
+                    };
+
+                    if (navigator.canShare) {
+                        try {
+                            const blob = await fetchChatMediaBlob(entry);
+                            const file = new File([blob], getChatMediaDownloadName(entry), {
+                                type: blob.type || entry.mimeType || (entry.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+                                lastModified: entry.createdAt?.getTime?.() || Date.now()
+                            });
+                            if (navigator.canShare({ files: [file] })) {
+                                sharePayload.files = [file];
+                            }
+                        } catch (error) {
+                            console.warn('Falling back to URL-only share payload:', error);
+                        }
+                    }
+
+                    await navigator.share(sharePayload);
+                    showToast('Share sheet opened.');
+                    return;
+                } catch (error) {
+                    if (error?.name === 'AbortError') {
+                        return;
+                    }
+                    console.warn('Native share failed, falling back to copy link:', error);
+                }
+            }
+
+            try {
+                await copyTextToClipboard(entry.url);
+                showToast('Share unavailable here. Link copied instead.');
+            } catch (error) {
+                console.error('Failed to fall back from media share:', error);
+                showError('Sharing is unavailable in this browser.');
+            }
+        }
+
+        async function handleGalleryMediaAction(button) {
+            const action = button?.dataset?.mediaAction || '';
+            const index = Number(button?.dataset?.mediaIndex);
+            const entry = Number.isInteger(index) ? galleryMediaEntries[index] : null;
+            if (!entry) return;
+
+            button.disabled = true;
+            try {
+                if (action === 'share') {
+                    await handleMediaShare(entry);
+                    return;
+                }
+                if (action === 'download') {
+                    await handleMediaDownload(entry);
+                    return;
+                }
+                if (action === 'copy-link') {
+                    await handleMediaCopyLink(entry);
+                }
+            } finally {
+                button.disabled = false;
+            }
         }
 
         function openMediaGallery() {
@@ -1546,6 +1719,11 @@
             document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
             document.getElementById('media-gallery-btn').addEventListener('click', openMediaGallery);
             document.getElementById('media-gallery-close-btn').addEventListener('click', closeMediaGallery);
+            document.getElementById('media-gallery-grid').addEventListener('click', (event) => {
+                const actionButton = event.target.closest('[data-media-action]');
+                if (!actionButton) return;
+                handleGalleryMediaAction(actionButton);
+            });
 
             // Enter key to send
             document.getElementById('message-input').addEventListener('keypress', (e) => {
