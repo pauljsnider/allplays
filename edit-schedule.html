@@ -2858,6 +2858,23 @@
             renderCsvImportPreview();
         }
 
+        async function refreshScheduleAfterCsvImport(successfulRowsCount, failedRowsCount = 0) {
+            if (successfulRowsCount <= 0) {
+                return null;
+            }
+
+            try {
+                await loadSchedule();
+                return null;
+            } catch (error) {
+                console.error('CSV import refresh failed after rows were persisted:', error);
+                const retryContext = failedRowsCount > 0
+                    ? ` ${failedRowsCount} failed row(s) remain in the preview for retry.`
+                    : '';
+                return `Imported ${successfulRowsCount} row(s), but the schedule refresh failed: ${error.message}. Reload the page to verify the latest schedule before retrying.${retryContext}`;
+            }
+        }
+
         async function persistCsvImportRow(row, options = {}) {
             const notificationSettings = getTeamScheduleNotificationSettings();
             const shouldNotify = !!options.shouldNotify;
@@ -3100,22 +3117,33 @@
                 }
 
                 if (failedRows.length > 0) {
-                    if (successfulRows.length > 0) {
-                        await loadSchedule();
-                    }
+                    const refreshWarning = await refreshScheduleAfterCsvImport(successfulRows.length, failedRows.length);
                     csvImportState.previewRows = failedRows;
                     csvImportState.previewErrors = [];
-                    showCsvImportErrors(['Some rows were imported, but others failed. Review the row errors below and retry only the remaining rows.']);
+                    const importErrors = ['Some rows were imported, but others failed. Review the row errors below and retry only the remaining rows.'];
+                    if (refreshWarning) {
+                        importErrors.push(refreshWarning);
+                    }
+                    showCsvImportErrors(importErrors);
                     renderCsvImportPreview();
                     const warningText = warnings.length ? ` ${warnings.length} imported row(s) also had notification follow-up warnings.` : '';
-                    alert(`Imported ${successfulRows.length} row(s). ${failedRows.length} row(s) failed and remain in the preview for retry.${warningText}`);
+                    const refreshText = refreshWarning ? ' Schedule refresh also failed; reload the page before retrying the remaining rows.' : '';
+                    alert(`Imported ${successfulRows.length} row(s). ${failedRows.length} row(s) failed and remain in the preview for retry.${warningText}${refreshText}`);
                     return;
                 }
 
                 resetCsvImportState();
-                await loadSchedule();
-                if (warnings.length > 0) {
-                    alert(`CSV import completed with ${warnings.length} warning(s). Check the console for notification follow-up details.`);
+                const refreshWarning = await refreshScheduleAfterCsvImport(successfulRows.length);
+                if (warnings.length > 0 || refreshWarning) {
+                    const warningParts = [];
+                    if (warnings.length > 0) {
+                        warningParts.push(`${warnings.length} notification follow-up warning(s)`);
+                    }
+                    if (refreshWarning) {
+                        warningParts.push('a schedule refresh warning');
+                    }
+                    const detailText = refreshWarning ? ` ${refreshWarning}` : ' Check the console for notification follow-up details.';
+                    alert(`CSV import completed with ${warningParts.join(' and ')}.${detailText}`);
                 } else {
                     showToast('CSV import completed.');
                 }
