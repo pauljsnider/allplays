@@ -20,7 +20,7 @@ describe('edit schedule CSV import wiring', () => {
     it('loads the deterministic CSV import helper module', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("from './js/schedule-csv-import.js?v=1'");
+        expect(source).toContain("from './js/schedule-csv-import.js?v=2'");
         expect(source).toContain('buildScheduleImportPreview');
         expect(source).toContain('inferScheduleCsvMapping');
         expect(source).toContain('parseCsvText');
