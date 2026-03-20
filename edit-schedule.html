@@ -108,6 +108,9 @@
                         <button id="tab-add-practice" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             Practice
                         </button>
+                        <button id="tab-csv-import" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            CSV
+                        </button>
                         <button id="tab-bulk-ai" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             ✨ AI
                         </button>
@@ -439,6 +442,58 @@
                         </form>
                     </div>
 
+                    <!-- CSV Import Tab Content -->
+                    <div id="content-csv-import" class="p-6 hidden">
+                        <div class="flex items-start justify-between gap-3 mb-3">
+                            <div>
+                                <h2 class="text-xl font-bold">CSV Import</h2>
+                                <p class="text-sm text-gray-600">Upload a CSV, map the columns, fix flagged rows, and import deterministic games or practices.</p>
+                            </div>
+                            <button id="download-schedule-csv-template" type="button" class="text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded px-3 py-2 hover:bg-indigo-100">
+                                Download template
+                            </button>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+                                <div>
+                                    <label for="schedule-csv-file-input" class="block text-sm font-semibold text-gray-800 mb-1">Upload CSV</label>
+                                    <input type="file" id="schedule-csv-file-input" accept=".csv,text/csv"
+                                        class="w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                                </div>
+                                <div id="csv-import-file-meta" class="hidden text-xs text-gray-600"></div>
+                                <div id="csv-import-errors" class="hidden rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+                                <div id="csv-import-mapping-section" class="hidden space-y-3">
+                                    <div class="flex items-center justify-between gap-3">
+                                        <div>
+                                            <h3 class="text-sm font-semibold text-gray-900">Field Mapping</h3>
+                                            <p class="text-xs text-gray-600">Confirm or adjust how the CSV columns map into schedule fields.</p>
+                                        </div>
+                                        <button id="preview-csv-import-btn" type="button" class="bg-indigo-600 text-white px-4 py-2 rounded-md text-sm hover:bg-indigo-700 transition">Preview Import</button>
+                                    </div>
+                                    <div id="csv-import-mapping-fields" class="grid grid-cols-1 gap-3"></div>
+                                </div>
+                            </div>
+
+                            <div id="csv-import-preview-section" class="hidden space-y-3">
+                                <div>
+                                    <h3 class="text-sm font-semibold text-gray-900">Preview & Validation</h3>
+                                    <p id="csv-import-preview-summary" class="text-xs text-gray-600"></p>
+                                </div>
+                                <label class="flex items-center gap-2 text-sm text-gray-700">
+                                    <input type="checkbox" id="csv-import-notify-team" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                    Notify the team after import
+                                </label>
+                                <textarea id="csv-import-notify-note" rows="2" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Optional note for the import notification"></textarea>
+                                <div id="csv-import-preview-list" class="space-y-3 max-h-[32rem] overflow-y-auto"></div>
+                                <div class="flex gap-2">
+                                    <button id="clear-csv-import-btn" type="button" class="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Clear</button>
+                                    <button id="import-csv-btn" type="button" class="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition">Import Rows</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Bulk AI Update Tab Content -->
                     <div id="content-bulk-ai" class="p-6 hidden">
                         <div class="flex items-start justify-between gap-3 mb-2">
@@ -721,6 +776,7 @@
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { collectTournamentAdvancementPatches, describeTournamentSource } from './js/tournament-brackets.js?v=1';
         import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=1';
+        import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2451,11 +2507,18 @@
         // ===== BULK AI UPDATE FUNCTIONALITY =====
 
         let proposedOperations = [];
+        let csvImportState = {
+            fileName: '',
+            parsed: null,
+            mapping: {},
+            previewRows: [],
+            previewErrors: []
+        };
 
         // Tab switching helper
         function switchTab(activeTab) {
-            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-bulk-ai'];
-            const contents = ['content-add-game', 'content-add-practice', 'content-bulk-ai'];
+            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-csv-import', 'tab-bulk-ai'];
+            const contents = ['content-add-game', 'content-add-practice', 'content-csv-import', 'content-bulk-ai'];
 
             tabs.forEach((tabId, index) => {
                 const tab = document.getElementById(tabId);
@@ -2478,6 +2541,7 @@
             if (!editingGameId) prefillAssignments();
         });
         document.getElementById('tab-add-practice').addEventListener('click', () => switchTab('tab-add-practice'));
+        document.getElementById('tab-csv-import').addEventListener('click', () => switchTab('tab-csv-import'));
         document.getElementById('tab-bulk-ai').addEventListener('click', () => switchTab('tab-bulk-ai'));
 
         // Recurrence builder toggle
@@ -2600,6 +2664,386 @@
                 assignments: normalizeAssignments(game?.assignments || [])
             };
         }
+
+        function showCsvImportErrors(errors = []) {
+            const container = document.getElementById('csv-import-errors');
+            if (!errors.length) {
+                container.classList.add('hidden');
+                container.innerHTML = '';
+                return;
+            }
+            container.classList.remove('hidden');
+            container.innerHTML = errors.map((error) => `<div>${escapeHtml(error)}</div>`).join('');
+        }
+
+        function resetCsvImportPreview() {
+            csvImportState.previewRows = [];
+            csvImportState.previewErrors = [];
+            document.getElementById('csv-import-preview-section').classList.add('hidden');
+            document.getElementById('csv-import-preview-list').innerHTML = '';
+            document.getElementById('csv-import-preview-summary').textContent = '';
+        }
+
+        function resetCsvImportState() {
+            csvImportState = {
+                fileName: '',
+                parsed: null,
+                mapping: {},
+                previewRows: [],
+                previewErrors: []
+            };
+            document.getElementById('schedule-csv-file-input').value = '';
+            document.getElementById('csv-import-file-meta').classList.add('hidden');
+            document.getElementById('csv-import-file-meta').textContent = '';
+            document.getElementById('csv-import-mapping-section').classList.add('hidden');
+            document.getElementById('csv-import-mapping-fields').innerHTML = '';
+            document.getElementById('csv-import-notify-team').checked = false;
+            document.getElementById('csv-import-notify-note').value = '';
+            showCsvImportErrors([]);
+            resetCsvImportPreview();
+        }
+
+        function renderCsvImportMapping() {
+            const container = document.getElementById('csv-import-mapping-fields');
+            const headers = csvImportState.parsed?.headers || [];
+            container.innerHTML = SCHEDULE_CSV_IMPORT_FIELDS.map((field) => {
+                const options = ['<option value="">Do not map</option>']
+                    .concat(headers.map((header) => {
+                        const selected = csvImportState.mapping[field.key] === header ? 'selected' : '';
+                        return `<option value="${escapeHtml(header)}" ${selected}>${escapeHtml(header)}</option>`;
+                    }))
+                    .join('');
+
+                return `
+                    <label class="block">
+                        <span class="block text-sm font-medium text-gray-700">${escapeHtml(field.label)}${field.required ? ' *' : ''}</span>
+                        <span class="block text-xs text-gray-500 mb-1">${escapeHtml(field.description)}</span>
+                        <select data-csv-map-field="${escapeHtml(field.key)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            ${options}
+                        </select>
+                    </label>
+                `;
+            }).join('');
+            document.getElementById('csv-import-mapping-section').classList.remove('hidden');
+        }
+
+        function renderCsvImportPreview() {
+            const section = document.getElementById('csv-import-preview-section');
+            const summary = document.getElementById('csv-import-preview-summary');
+            const list = document.getElementById('csv-import-preview-list');
+
+            if (!csvImportState.previewRows.length) {
+                section.classList.add('hidden');
+                list.innerHTML = '';
+                summary.textContent = '';
+                return;
+            }
+
+            const invalidCount = csvImportState.previewRows.filter((row) => row.errors.length > 0).length;
+            section.classList.remove('hidden');
+            summary.textContent = `${csvImportState.previewRows.length} row(s) ready for review. ${invalidCount} row(s) still need fixes.`;
+            list.innerHTML = csvImportState.previewRows.map((row, index) => {
+                const typeBadge = row.normalized.eventType === 'game'
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : 'bg-emerald-100 text-emerald-700';
+                const errorMarkup = row.errors.length
+                    ? `<div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">${row.errors.map((error) => `<div>${escapeHtml(error)}</div>`).join('')}</div>`
+                    : '<div class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">Row is valid.</div>';
+
+                return `
+                    <div class="rounded-lg border ${row.errors.length ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-white'} p-4" data-csv-preview-row="${index}">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2">
+                                <span class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold ${typeBadge}">${escapeHtml(row.normalized.eventType)}</span>
+                                <span class="text-xs text-gray-500">CSV row ${row.rowNumber}</span>
+                            </div>
+                        </div>
+                        <div class="mt-3 grid grid-cols-1 gap-3">
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Event Type</span>
+                                <select data-csv-row-field="eventType" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    <option value="game" ${row.draft.eventType === 'game' ? 'selected' : ''}>Game</option>
+                                    <option value="practice" ${row.draft.eventType === 'practice' ? 'selected' : ''}>Practice</option>
+                                </select>
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Start</span>
+                                <input data-csv-row-field="startsAt" type="datetime-local" value="${escapeHtml(row.draft.startsAt)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">End</span>
+                                <input data-csv-row-field="endsAt" type="datetime-local" value="${escapeHtml(row.draft.endsAt)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Opponent</span>
+                                <input data-csv-row-field="opponent" type="text" value="${escapeHtml(row.draft.opponent)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Title</span>
+                                <input data-csv-row-field="title" type="text" value="${escapeHtml(row.draft.title)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Location</span>
+                                <input data-csv-row-field="location" type="text" value="${escapeHtml(row.draft.location)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Arrival Time</span>
+                                <input data-csv-row-field="arrivalTime" type="datetime-local" value="${escapeHtml(row.draft.arrivalTime)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Home / Away</span>
+                                <select data-csv-row-field="isHome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    <option value="" ${row.draft.isHome === '' ? 'selected' : ''}>Unknown</option>
+                                    <option value="home" ${row.draft.isHome === 'home' ? 'selected' : ''}>Home</option>
+                                    <option value="away" ${row.draft.isHome === 'away' ? 'selected' : ''}>Away</option>
+                                </select>
+                            </label>
+                            <label class="block">
+                                <span class="block text-xs font-semibold text-gray-700 mb-1">Notes</span>
+                                <textarea data-csv-row-field="notes" rows="2" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">${escapeHtml(row.draft.notes)}</textarea>
+                            </label>
+                        </div>
+                        ${errorMarkup}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function previewCsvImportRows() {
+            const preview = buildScheduleImportPreview({
+                rows: csvImportState.parsed?.rows || [],
+                mapping: csvImportState.mapping,
+                teamName: currentTeam?.name || ''
+            });
+
+            csvImportState.previewRows = preview.rows;
+            csvImportState.previewErrors = preview.errors;
+            showCsvImportErrors(preview.errors);
+            renderCsvImportPreview();
+        }
+
+        async function persistCsvImportRow(row, options = {}) {
+            const notificationSettings = getTeamScheduleNotificationSettings();
+            const shouldNotify = !!options.shouldNotify;
+            const note = options.note || '';
+
+            if (row.normalized.eventType === 'practice') {
+                const startDate = new Date(row.normalized.startsAt);
+                const endDate = row.normalized.endsAt ? new Date(row.normalized.endsAt) : getDefaultEndTime(startDate, 'practice');
+                const practiceData = {
+                    title: row.normalized.title || 'Practice',
+                    date: Timestamp.fromDate(startDate),
+                    end: Timestamp.fromDate(endDate),
+                    location: row.normalized.location,
+                    notes: row.normalized.notes,
+                    arrivalTime: row.normalized.arrivalTime ? Timestamp.fromDate(new Date(row.normalized.arrivalTime)) : null,
+                    scheduleNotifications: buildScheduleNotificationMetadata({
+                        settings: notificationSettings,
+                        action: 'created',
+                        sent: false,
+                        note
+                    })
+                };
+                const practiceId = await addPractice(currentTeamId, practiceData);
+                const sent = await maybeNotifyScheduleChange({
+                    eventType: 'practice',
+                    eventTitle: practiceData.title,
+                    eventDate: practiceData.date,
+                    location: practiceData.location,
+                    note,
+                    action: 'created',
+                    shouldNotify
+                });
+                if (sent) {
+                    await updateEvent(currentTeamId, practiceId, {
+                        scheduleNotifications: buildScheduleNotificationMetadata({
+                            settings: notificationSettings,
+                            action: 'created',
+                            sent: true,
+                            userId: currentUser?.uid || null,
+                            note
+                        })
+                    });
+                }
+                return;
+            }
+
+            const normalizedGame = normalizeBulkGameForAdd({
+                date: row.normalized.startsAt,
+                opponent: row.normalized.opponent,
+                location: row.normalized.location,
+                arrivalTime: row.normalized.arrivalTime,
+                isHome: row.draft.isHome,
+                notes: row.normalized.notes,
+                kitColor: row.draft.isHome === 'home' ? 'Home kit' : (row.draft.isHome === 'away' ? 'Away kit' : '')
+            });
+            const gameData = {
+                type: 'game',
+                date: Timestamp.fromDate(new Date(row.normalized.startsAt)),
+                opponent: normalizedGame.opponent,
+                location: normalizedGame.location,
+                statTrackerConfigId: getSelectedConfigId() || null,
+                isHome: normalizeIsHome(row.draft.isHome),
+                kitColor: normalizedGame.kitColor,
+                seasonLabel: inferSeasonLabel(row.normalized.startsAt),
+                competitionType: 'league',
+                countsTowardSeasonRecord: true,
+                arrivalTime: normalizedGame.arrivalTime ? Timestamp.fromDate(new Date(normalizedGame.arrivalTime)) : null,
+                notes: normalizedGame.notes,
+                assignments: [],
+                scheduleNotifications: buildScheduleNotificationMetadata({
+                    settings: notificationSettings,
+                    action: 'created',
+                    sent: false,
+                    note
+                }),
+                status: 'scheduled',
+                homeScore: 0,
+                awayScore: 0
+            };
+            const gameId = await addGame(currentTeamId, gameData);
+            const sent = await maybeNotifyScheduleChange({
+                eventType: 'game',
+                eventTitle: getEventDisplayTitle({ eventType: 'game', opponent: gameData.opponent }),
+                eventDate: gameData.date,
+                location: gameData.location,
+                note,
+                action: 'created',
+                shouldNotify
+            });
+            if (sent) {
+                await updateGame(currentTeamId, gameId, {
+                    scheduleNotifications: buildScheduleNotificationMetadata({
+                        settings: notificationSettings,
+                        action: 'created',
+                        sent: true,
+                        userId: currentUser?.uid || null,
+                        note
+                    })
+                });
+            }
+        }
+
+        document.getElementById('download-schedule-csv-template').addEventListener('click', () => {
+            const csvTemplate = [
+                'Event Type,Date,Start Time,End Time,Opponent,Title,Location,Arrival Time,Home/Away,Notes',
+                'Game,04/02/2026,6:30 PM,8:00 PM,Tigers,,Main Field,5:45 PM,Away,League opener',
+                'Practice,04/04/2026,7:00 AM,8:30 AM,,Speed Session,Training Field,6:45 AM,,Bring water'
+            ].join('\n');
+            const blob = new Blob([csvTemplate], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'allplays-schedule-import-template.csv';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('schedule-csv-file-input').addEventListener('change', async (event) => {
+            const file = event.target.files?.[0];
+            resetCsvImportPreview();
+            showCsvImportErrors([]);
+
+            if (!file) {
+                csvImportState.fileName = '';
+                csvImportState.parsed = null;
+                document.getElementById('csv-import-file-meta').classList.add('hidden');
+                document.getElementById('csv-import-mapping-section').classList.add('hidden');
+                return;
+            }
+
+            try {
+                const fileText = await file.text();
+                const parsed = parseCsvText(fileText);
+                csvImportState.fileName = file.name;
+                csvImportState.parsed = parsed;
+                csvImportState.mapping = inferScheduleCsvMapping(parsed.headers);
+                document.getElementById('csv-import-file-meta').textContent = `${file.name}: ${parsed.rows.length} row(s), ${parsed.headers.length} column(s)`;
+                document.getElementById('csv-import-file-meta').classList.remove('hidden');
+                renderCsvImportMapping();
+            } catch (error) {
+                console.error('CSV import parse failed:', error);
+                showCsvImportErrors(['Could not read the CSV file. Please upload a valid UTF-8 CSV export.']);
+            }
+        });
+
+        document.getElementById('csv-import-mapping-fields').addEventListener('change', (event) => {
+            const select = event.target.closest('[data-csv-map-field]');
+            if (!select) return;
+            csvImportState.mapping[select.dataset.csvMapField] = select.value || '';
+            resetCsvImportPreview();
+        });
+
+        document.getElementById('preview-csv-import-btn').addEventListener('click', async () => {
+            await previewCsvImportRows();
+        });
+
+        function handleCsvPreviewFieldChange(event) {
+            const rowElement = event.target.closest('[data-csv-preview-row]');
+            const field = event.target.dataset.csvRowField;
+            if (!rowElement || !field) return;
+            const index = Number(rowElement.dataset.csvPreviewRow);
+            const existing = csvImportState.previewRows[index];
+            if (!existing) return;
+
+            existing.draft = {
+                ...existing.draft,
+                [field]: event.target.value
+            };
+            csvImportState.previewRows[index] = normalizeScheduleImportDraft(existing.draft, {
+                rowNumber: existing.rowNumber,
+                teamName: currentTeam?.name || ''
+            });
+            renderCsvImportPreview();
+        }
+
+        document.getElementById('csv-import-preview-list').addEventListener('input', handleCsvPreviewFieldChange);
+        document.getElementById('csv-import-preview-list').addEventListener('change', handleCsvPreviewFieldChange);
+
+        document.getElementById('clear-csv-import-btn').addEventListener('click', () => {
+            resetCsvImportState();
+        });
+
+        document.getElementById('import-csv-btn').addEventListener('click', async () => {
+            if (!csvImportState.previewRows.length) {
+                alert('Preview the CSV before importing.');
+                return;
+            }
+
+            const invalidRows = csvImportState.previewRows.filter((row) => row.errors.length > 0);
+            if (invalidRows.length > 0) {
+                alert('Fix all validation errors before importing.');
+                return;
+            }
+
+            const shouldNotify = document.getElementById('csv-import-notify-team').checked;
+            const note = document.getElementById('csv-import-notify-note').value.trim();
+            const button = document.getElementById('import-csv-btn');
+            const clearButton = document.getElementById('clear-csv-import-btn');
+
+            try {
+                button.disabled = true;
+                clearButton.disabled = true;
+                button.textContent = 'Importing...';
+
+                for (const row of csvImportState.previewRows) {
+                    await persistCsvImportRow(row, { shouldNotify, note });
+                }
+
+                resetCsvImportState();
+                await loadSchedule();
+                showToast('CSV import completed.');
+            } catch (error) {
+                console.error('CSV import failed:', error);
+                alert(`CSV import failed: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                clearButton.disabled = false;
+                button.textContent = 'Import Rows';
+            }
+        });
 
         // Process with AI
         document.getElementById('process-ai-btn').addEventListener('click', async () => {
