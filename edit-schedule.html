@@ -776,7 +776,7 @@
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { collectTournamentAdvancementPatches, describeTournamentSource } from './js/tournament-brackets.js?v=1';
         import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=1';
-        import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=1';
+        import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2727,7 +2727,78 @@
             document.getElementById('csv-import-mapping-section').classList.remove('hidden');
         }
 
-        function renderCsvImportPreview() {
+        function getCsvImportPreviewSummaryText() {
+            const invalidCount = csvImportState.previewRows.filter((row) => row.errors.length > 0).length;
+            return `${csvImportState.previewRows.length} row(s) ready for review. ${invalidCount} row(s) still need fixes.`;
+        }
+
+        function renderCsvImportPreviewRow(row, index) {
+            const typeBadge = row.normalized.eventType === 'game'
+                ? 'bg-indigo-100 text-indigo-700'
+                : 'bg-emerald-100 text-emerald-700';
+            const errorMarkup = row.errors.length
+                ? `<div data-csv-preview-errors class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">${row.errors.map((error) => `<div>${escapeHtml(error)}</div>`).join('')}</div>`
+                : '<div data-csv-preview-errors class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">Row is valid.</div>';
+
+            return `
+                <div class="rounded-lg border ${row.errors.length ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-white'} p-4" data-csv-preview-row="${index}">
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="flex items-center gap-2">
+                            <span data-csv-preview-type-badge class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold ${typeBadge}">${escapeHtml(row.normalized.eventType)}</span>
+                            <span class="text-xs text-gray-500">CSV row ${row.rowNumber}</span>
+                        </div>
+                    </div>
+                    <div class="mt-3 grid grid-cols-1 gap-3">
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Event Type</span>
+                            <select data-csv-row-field="eventType" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                <option value="game" ${row.draft.eventType === 'game' ? 'selected' : ''}>Game</option>
+                                <option value="practice" ${row.draft.eventType === 'practice' ? 'selected' : ''}>Practice</option>
+                            </select>
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Start</span>
+                            <input data-csv-row-field="startsAt" type="datetime-local" value="${escapeHtml(row.draft.startsAt)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">End</span>
+                            <input data-csv-row-field="endsAt" type="datetime-local" value="${escapeHtml(row.draft.endsAt)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Opponent</span>
+                            <input data-csv-row-field="opponent" type="text" value="${escapeHtml(row.draft.opponent)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Title</span>
+                            <input data-csv-row-field="title" type="text" value="${escapeHtml(row.draft.title)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Location</span>
+                            <input data-csv-row-field="location" type="text" value="${escapeHtml(row.draft.location)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Arrival Time</span>
+                            <input data-csv-row-field="arrivalTime" type="datetime-local" value="${escapeHtml(row.draft.arrivalTime)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Home / Away</span>
+                            <select data-csv-row-field="isHome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                <option value="" ${row.draft.isHome === '' ? 'selected' : ''}>Unknown</option>
+                                <option value="home" ${row.draft.isHome === 'home' ? 'selected' : ''}>Home</option>
+                                <option value="away" ${row.draft.isHome === 'away' ? 'selected' : ''}>Away</option>
+                            </select>
+                        </label>
+                        <label class="block">
+                            <span class="block text-xs font-semibold text-gray-700 mb-1">Notes</span>
+                            <textarea data-csv-row-field="notes" rows="2" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">${escapeHtml(row.draft.notes)}</textarea>
+                        </label>
+                    </div>
+                    ${errorMarkup}
+                </div>
+            `;
+        }
+
+        function updateCsvImportPreviewSummary() {
             const section = document.getElementById('csv-import-preview-section');
             const summary = document.getElementById('csv-import-preview-summary');
             const list = document.getElementById('csv-import-preview-list');
@@ -2739,74 +2810,39 @@
                 return;
             }
 
-            const invalidCount = csvImportState.previewRows.filter((row) => row.errors.length > 0).length;
             section.classList.remove('hidden');
-            summary.textContent = `${csvImportState.previewRows.length} row(s) ready for review. ${invalidCount} row(s) still need fixes.`;
-            list.innerHTML = csvImportState.previewRows.map((row, index) => {
-                const typeBadge = row.normalized.eventType === 'game'
-                    ? 'bg-indigo-100 text-indigo-700'
-                    : 'bg-emerald-100 text-emerald-700';
-                const errorMarkup = row.errors.length
-                    ? `<div class="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">${row.errors.map((error) => `<div>${escapeHtml(error)}</div>`).join('')}</div>`
-                    : '<div class="mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">Row is valid.</div>';
+            summary.textContent = getCsvImportPreviewSummaryText();
+        }
 
-                return `
-                    <div class="rounded-lg border ${row.errors.length ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-white'} p-4" data-csv-preview-row="${index}">
-                        <div class="flex items-center justify-between gap-3">
-                            <div class="flex items-center gap-2">
-                                <span class="inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold ${typeBadge}">${escapeHtml(row.normalized.eventType)}</span>
-                                <span class="text-xs text-gray-500">CSV row ${row.rowNumber}</span>
-                            </div>
-                        </div>
-                        <div class="mt-3 grid grid-cols-1 gap-3">
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Event Type</span>
-                                <select data-csv-row-field="eventType" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                                    <option value="game" ${row.draft.eventType === 'game' ? 'selected' : ''}>Game</option>
-                                    <option value="practice" ${row.draft.eventType === 'practice' ? 'selected' : ''}>Practice</option>
-                                </select>
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Start</span>
-                                <input data-csv-row-field="startsAt" type="datetime-local" value="${escapeHtml(row.draft.startsAt)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">End</span>
-                                <input data-csv-row-field="endsAt" type="datetime-local" value="${escapeHtml(row.draft.endsAt)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Opponent</span>
-                                <input data-csv-row-field="opponent" type="text" value="${escapeHtml(row.draft.opponent)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Title</span>
-                                <input data-csv-row-field="title" type="text" value="${escapeHtml(row.draft.title)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Location</span>
-                                <input data-csv-row-field="location" type="text" value="${escapeHtml(row.draft.location)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Arrival Time</span>
-                                <input data-csv-row-field="arrivalTime" type="datetime-local" value="${escapeHtml(row.draft.arrivalTime)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Home / Away</span>
-                                <select data-csv-row-field="isHome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                                    <option value="" ${row.draft.isHome === '' ? 'selected' : ''}>Unknown</option>
-                                    <option value="home" ${row.draft.isHome === 'home' ? 'selected' : ''}>Home</option>
-                                    <option value="away" ${row.draft.isHome === 'away' ? 'selected' : ''}>Away</option>
-                                </select>
-                            </label>
-                            <label class="block">
-                                <span class="block text-xs font-semibold text-gray-700 mb-1">Notes</span>
-                                <textarea data-csv-row-field="notes" rows="2" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">${escapeHtml(row.draft.notes)}</textarea>
-                            </label>
-                        </div>
-                        ${errorMarkup}
-                    </div>
-                `;
-            }).join('');
+        function updateCsvImportPreviewRowState(rowElement, row) {
+            rowElement.className = `rounded-lg border ${row.errors.length ? 'border-red-200 bg-red-50/30' : 'border-gray-200 bg-white'} p-4`;
+
+            const typeBadge = rowElement.querySelector('[data-csv-preview-type-badge]');
+            if (typeBadge) {
+                typeBadge.className = `inline-flex items-center rounded-full px-2 py-1 text-[11px] font-semibold ${row.normalized.eventType === 'game' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-700'}`;
+                typeBadge.textContent = row.normalized.eventType;
+            }
+
+            const errorsElement = rowElement.querySelector('[data-csv-preview-errors]');
+            if (errorsElement) {
+                if (row.errors.length) {
+                    errorsElement.className = 'mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700';
+                    errorsElement.innerHTML = row.errors.map((error) => `<div>${escapeHtml(error)}</div>`).join('');
+                } else {
+                    errorsElement.className = 'mt-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700';
+                    errorsElement.textContent = 'Row is valid.';
+                }
+            }
+        }
+
+        function renderCsvImportPreview() {
+            const list = document.getElementById('csv-import-preview-list');
+            updateCsvImportPreviewSummary();
+            if (!csvImportState.previewRows.length) {
+                return;
+            }
+
+            list.innerHTML = csvImportState.previewRows.map((row, index) => renderCsvImportPreviewRow(row, index)).join('');
         }
 
         async function previewCsvImportRows() {
@@ -2826,6 +2862,7 @@
             const notificationSettings = getTeamScheduleNotificationSettings();
             const shouldNotify = !!options.shouldNotify;
             const note = options.note || '';
+            let warning = null;
 
             if (row.normalized.eventType === 'practice') {
                 const startDate = new Date(row.normalized.startsAt);
@@ -2845,27 +2882,32 @@
                     })
                 };
                 const practiceId = await addPractice(currentTeamId, practiceData);
-                const sent = await maybeNotifyScheduleChange({
-                    eventType: 'practice',
-                    eventTitle: practiceData.title,
-                    eventDate: practiceData.date,
-                    location: practiceData.location,
-                    note,
-                    action: 'created',
-                    shouldNotify
-                });
-                if (sent) {
-                    await updateEvent(currentTeamId, practiceId, {
-                        scheduleNotifications: buildScheduleNotificationMetadata({
-                            settings: notificationSettings,
-                            action: 'created',
-                            sent: true,
-                            userId: currentUser?.uid || null,
-                            note
-                        })
+                try {
+                    const sent = await maybeNotifyScheduleChange({
+                        eventType: 'practice',
+                        eventTitle: practiceData.title,
+                        eventDate: practiceData.date,
+                        location: practiceData.location,
+                        note,
+                        action: 'created',
+                        shouldNotify
                     });
+                    if (sent) {
+                        await updateEvent(currentTeamId, practiceId, {
+                            scheduleNotifications: buildScheduleNotificationMetadata({
+                                settings: notificationSettings,
+                                action: 'created',
+                                sent: true,
+                                userId: currentUser?.uid || null,
+                                note
+                            })
+                        });
+                    }
+                } catch (error) {
+                    console.warn('CSV import notification follow-up failed for practice:', error);
+                    warning = `Row ${row.rowNumber} imported, but notification follow-up failed: ${error.message}`;
                 }
-                return;
+                return { warning };
             }
 
             const normalizedGame = normalizeBulkGameForAdd({
@@ -2902,26 +2944,32 @@
                 awayScore: 0
             };
             const gameId = await addGame(currentTeamId, gameData);
-            const sent = await maybeNotifyScheduleChange({
-                eventType: 'game',
-                eventTitle: getEventDisplayTitle({ eventType: 'game', opponent: gameData.opponent }),
-                eventDate: gameData.date,
-                location: gameData.location,
-                note,
-                action: 'created',
-                shouldNotify
-            });
-            if (sent) {
-                await updateGame(currentTeamId, gameId, {
-                    scheduleNotifications: buildScheduleNotificationMetadata({
-                        settings: notificationSettings,
-                        action: 'created',
-                        sent: true,
-                        userId: currentUser?.uid || null,
-                        note
-                    })
+            try {
+                const sent = await maybeNotifyScheduleChange({
+                    eventType: 'game',
+                    eventTitle: getEventDisplayTitle({ eventType: 'game', opponent: gameData.opponent }),
+                    eventDate: gameData.date,
+                    location: gameData.location,
+                    note,
+                    action: 'created',
+                    shouldNotify
                 });
+                if (sent) {
+                    await updateGame(currentTeamId, gameId, {
+                        scheduleNotifications: buildScheduleNotificationMetadata({
+                            settings: notificationSettings,
+                            action: 'created',
+                            sent: true,
+                            userId: currentUser?.uid || null,
+                            note
+                        })
+                    });
+                }
+            } catch (error) {
+                console.warn('CSV import notification follow-up failed for game:', error);
+                warning = `Row ${row.rowNumber} imported, but notification follow-up failed: ${error.message}`;
             }
+            return { warning };
         }
 
         document.getElementById('download-schedule-csv-template').addEventListener('click', () => {
@@ -2996,7 +3044,8 @@
                 rowNumber: existing.rowNumber,
                 teamName: currentTeam?.name || ''
             });
-            renderCsvImportPreview();
+            updateCsvImportPreviewRowState(rowElement, csvImportState.previewRows[index]);
+            updateCsvImportPreviewSummary();
         }
 
         document.getElementById('csv-import-preview-list').addEventListener('input', handleCsvPreviewFieldChange);
@@ -3028,15 +3077,50 @@
                 clearButton.disabled = true;
                 button.textContent = 'Importing...';
 
+                const successfulRows = [];
+                const failedRows = [];
+                const warnings = [];
+
                 for (const row of csvImportState.previewRows) {
-                    await persistCsvImportRow(row, { shouldNotify, note });
+                    try {
+                        const result = await persistCsvImportRow(row, { shouldNotify, note });
+                        successfulRows.push(row);
+                        if (result?.warning) {
+                            warnings.push(result.warning);
+                        }
+                    } catch (error) {
+                        console.error(`CSV import failed for row ${row.rowNumber}:`, error);
+                        const retryRow = normalizeScheduleImportDraft(row.draft, {
+                            rowNumber: row.rowNumber,
+                            teamName: currentTeam?.name || ''
+                        });
+                        retryRow.errors = retryRow.errors.concat(`Import failed: ${error.message}`);
+                        failedRows.push(retryRow);
+                    }
+                }
+
+                if (failedRows.length > 0) {
+                    if (successfulRows.length > 0) {
+                        await loadSchedule();
+                    }
+                    csvImportState.previewRows = failedRows;
+                    csvImportState.previewErrors = [];
+                    showCsvImportErrors(['Some rows were imported, but others failed. Review the row errors below and retry only the remaining rows.']);
+                    renderCsvImportPreview();
+                    const warningText = warnings.length ? ` ${warnings.length} imported row(s) also had notification follow-up warnings.` : '';
+                    alert(`Imported ${successfulRows.length} row(s). ${failedRows.length} row(s) failed and remain in the preview for retry.${warningText}`);
+                    return;
                 }
 
                 resetCsvImportState();
                 await loadSchedule();
-                showToast('CSV import completed.');
+                if (warnings.length > 0) {
+                    alert(`CSV import completed with ${warnings.length} warning(s). Check the console for notification follow-up details.`);
+                } else {
+                    showToast('CSV import completed.');
+                }
             } catch (error) {
-                console.error('CSV import failed:', error);
+                console.error('CSV import batch failed before completion:', error);
                 alert(`CSV import failed: ${error.message}`);
             } finally {
                 button.disabled = false;

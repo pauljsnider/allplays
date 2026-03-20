@@ -197,11 +197,21 @@ export function buildScheduleImportPreview({ rows = [], mapping = {}, teamName =
             const draft = {
                 eventType: readMappedValue(row, mapping.eventType),
                 startsAt: readMappedDateTime(row, mapping),
-                endsAt: readMappedDateTime(row, { startDateTime: null, date: mapping.date, startTime: mapping.endTime }),
+                endsAt: readMappedDateTime(row, {
+                    startDateTime: null,
+                    date: mapping.date,
+                    startTime: mapping.endTime,
+                    fallbackDateTime: mapping.startDateTime
+                }),
                 opponent: readMappedValue(row, mapping.opponent),
                 title: readMappedValue(row, mapping.title),
                 location: readMappedValue(row, mapping.location),
-                arrivalTime: readMappedDateTime(row, { startDateTime: null, date: mapping.date, startTime: mapping.arrivalTime }),
+                arrivalTime: readMappedDateTime(row, {
+                    startDateTime: null,
+                    date: mapping.date,
+                    startTime: mapping.arrivalTime,
+                    fallbackDateTime: mapping.startDateTime
+                }),
                 isHome: readMappedValue(row, mapping.isHome),
                 notes: readMappedValue(row, mapping.notes)
             };
@@ -223,13 +233,41 @@ function readMappedDateTime(row, mapping = {}) {
     if (mapping.startDateTime) {
         return readMappedValue(row, mapping.startDateTime);
     }
-    if (!mapping.date || !mapping.startTime) {
+    if (!mapping.startTime) {
         return '';
     }
 
-    const dateValue = readMappedValue(row, mapping.date);
     const timeValue = readMappedValue(row, mapping.startTime);
-    return [dateValue, timeValue].filter(Boolean).join(' ').trim();
+    if (!timeValue) {
+        return '';
+    }
+    if (parseFlexibleDateTime(timeValue)) {
+        return timeValue;
+    }
+
+    const dateValue = readMappedValue(row, mapping.date);
+    if (dateValue) {
+        return [dateValue, timeValue].filter(Boolean).join(' ').trim();
+    }
+
+    if (!mapping.fallbackDateTime) {
+        return '';
+    }
+
+    const fallbackDateValue = readMappedValue(row, mapping.fallbackDateTime);
+    const parsedFallback = parseFlexibleDateTime(fallbackDateValue);
+    if (!parsedFallback) {
+        return '';
+    }
+
+    return `${formatLocalDate(parsedFallback)} ${timeValue}`.trim();
+}
+
+function formatLocalDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 }
 
 function inferEventType(draft) {
