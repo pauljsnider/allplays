@@ -76,12 +76,6 @@ export function buildFinishCompletionPlan({
 
   if (scoreReconciliation.mismatch) {
     reconciliationNote = buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway);
-    effectiveLog.unshift({
-      text: reconciliationNote,
-      ts: Date.now(),
-      period: currentPeriod,
-      clock: currentClock
-    });
   }
 
   const eventWrites = effectiveLog.map((entry) => ({

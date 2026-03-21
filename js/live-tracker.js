@@ -1455,7 +1455,7 @@ async function saveAndComplete() {
     teamNotificationEmail: currentTeam?.notificationEmail,
     userEmail: currentUser?.email
   });
-  const finishPlan = buildFinishCompletionPlan({
+  const finishPlanArgs = {
     requestedHome,
     requestedAway,
     liveHome: state.home,
@@ -1477,7 +1477,26 @@ async function saveAndComplete() {
     opponentEntries: state.opp,
     currentUserUid: currentUser?.uid,
     buildEmailBody: (finalHome, finalAway, recapSummary, logEntries) => generateEmailBody(finalHome, finalAway, recapSummary, logEntries)
-  });
+  };
+  let finishPlan = buildFinishCompletionPlan(finishPlanArgs);
+  let addedReconciliationLogEntry = null;
+
+  if (finishPlan.scoreReconciliation.mismatch) {
+    addedReconciliationLogEntry = {
+      text: finishPlan.reconciliationNote,
+      ts: Date.now(),
+      period: state.period,
+      clock: formatClock(state.clock)
+    };
+    state.log.unshift(addedReconciliationLogEntry);
+    renderLog();
+    els.homeFinal.value = String(finishPlan.finalHome);
+    els.awayFinal.value = String(finishPlan.finalAway);
+    finishPlan = buildFinishCompletionPlan({
+      ...finishPlanArgs,
+      log: state.log
+    });
+  }
 
   try {
     const batch = writeBatch(db);
@@ -1502,14 +1521,12 @@ async function saveAndComplete() {
     await endLiveBroadcast();
     isFinishing = true;
 
-    if (finishPlan.scoreReconciliation.mismatch) {
-      addLog(finishPlan.reconciliationNote);
-      els.homeFinal.value = String(finishPlan.finalHome);
-      els.awayFinal.value = String(finishPlan.finalAway);
-    }
-
     executeFinishNavigationPlan(finishPlan.navigation);
   } catch (error) {
+    if (addedReconciliationLogEntry && state.log[0] === addedReconciliationLogEntry) {
+      state.log.shift();
+      renderLog();
+    }
     releaseSingleFlightLock(finishSubmissionLock);
     isFinishing = false;
     if (els.finishSave) {
