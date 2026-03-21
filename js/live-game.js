@@ -1775,9 +1775,16 @@ async function init() {
 
   let team, game, players, configs;
   try {
-    const playersPromise = state.isReplay
+    const playersPromise = (state.isReplay
       ? getPlayers(state.teamId, { includeInactive: true })
-      : getPlayers(state.teamId);
+      : getPlayers(state.teamId)
+    ).catch((error) => {
+      if (error?.code === 'permission-denied') {
+        console.warn('Failed to load public roster for live game viewer:', error);
+        return [];
+      }
+      throw error;
+    });
     [team, game, players, configs] = await Promise.all([
       // Replay/live links should still load team metadata for inactive teams.
       getTeam(state.teamId, { includeInactive: true }),

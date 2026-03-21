@@ -7,11 +7,11 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=10'
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
+import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=2';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
-import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
+import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
@@ -1285,8 +1285,8 @@ async function generateAISummary() {
   els.aiSummaryOutput.classList.remove('hidden');
 
   try {
-    const finalHome = parseInt(els.homeFinal.value) || state.home;
-    const finalAway = parseInt(els.awayFinal.value) || state.away;
+    const finalHome = resolveFinalScore(els.homeFinal.value, state.home);
+    const finalAway = resolveFinalScore(els.awayFinal.value, state.away);
 
     let context = `Game: ${currentTeam.name} vs ${currentGame.opponent}\n`;
     context += `Final Score: ${finalHome} - ${finalAway}\n`;
@@ -1422,8 +1422,8 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
 }
 
 function generateEmailRecap() {
-  const finalHome = parseInt(els.homeFinal.value) || state.home;
-  const finalAway = parseInt(els.awayFinal.value) || state.away;
+  const finalHome = resolveFinalScore(els.homeFinal.value, state.home);
+  const finalAway = resolveFinalScore(els.awayFinal.value, state.away);
   const summary = els.notesFinal.value.trim();
 
   const body = generateEmailBody(finalHome, finalAway, summary);
@@ -1442,20 +1442,19 @@ async function saveAndComplete() {
   const rawFinalAway = parseInt(els.awayFinal.value, 10);
   const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
   const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
-  let finalHome = requestedHome;
-  let finalAway = requestedAway;
+  const resolvedFinalScore = resolveFinalScoreForCompletion({
+    requestedHome,
+    requestedAway,
+    liveHome: state.home,
+    liveAway: state.away,
+    log: state.log,
+    scoreLogIsComplete: state.scoreLogIsComplete
+  });
+  let finalHome = resolvedFinalScore.home;
+  let finalAway = resolvedFinalScore.away;
 
-  if (state.scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome: state.home, liveAway: state.away, log: state.log })) {
-    const reconciledScore = reconcileFinalScoreFromLog({
-      requestedHome,
-      requestedAway,
-      log: state.log
-    });
-    if (reconciledScore.mismatch) {
-      addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${reconciledScore.home}-${reconciledScore.away} based on scoring events`);
-    }
-    finalHome = reconciledScore.home;
-    finalAway = reconciledScore.away;
+  if (resolvedFinalScore.reconciled && resolvedFinalScore.mismatch) {
+    addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${resolvedFinalScore.home}-${resolvedFinalScore.away} based on scoring events`);
   }
   const summary = els.notesFinal.value.trim();
   const sendEmail = els.finishSendEmail?.checked;
