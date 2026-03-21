@@ -1294,6 +1294,7 @@ async function startReplay() {
   state.unsubscribers = [];
   state.engagementsActive = false;
   state.liveEventsActive = false;
+  updateChatAvailability();
 
   // Show REPLAY badge instead of LIVE
   if (els.liveBadge) {
@@ -1355,7 +1356,6 @@ async function startReplay() {
   els.replayControls?.classList.remove('hidden');
   els.reactionsBar?.classList.add('hidden');
   els.endedOverlay?.classList.add('hidden');
-  els.chatInput?.setAttribute('disabled', 'disabled');
   if (els.replayGameLink) {
     els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
   }
