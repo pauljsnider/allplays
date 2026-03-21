@@ -762,16 +762,16 @@ Write the match report now:`;
             cancelBtn.addEventListener('click', closeEditor);
         }
 
+        function formatMMSS(ms) {
+            const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
         function renderPlayerStatsTable({ teamId, gameId, players, statsMap, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
             const tbody = document.getElementById('stats-body');
             if (!tbody) return;
-
-            function formatMMSS(ms) {
-                const totalSeconds = Math.max(0, Math.floor((ms || 0) / 1000));
-                const minutes = Math.floor(totalSeconds / 60);
-                const seconds = totalSeconds % 60;
-                return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            }
 
             if ((players || []).length === 0) {
                 tbody.innerHTML = '<tr><td colspan="100%" class="p-8 text-center"><div class="text-gray-400 text-sm">No players found.</div></td></tr>';
