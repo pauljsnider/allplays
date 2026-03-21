@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   applySubstitution,
   canApplySubstitution,
   canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog,
+  resolveFinalScoreForCompletion,
   acquireSingleFlightLock,
   releaseSingleFlightLock
 } from '../../js/live-tracker-integrity.js';
@@ -78,6 +80,59 @@ describe('live tracker integrity helpers', () => {
     expect(result.away).toBe(1);
   });
 
+  it('keeps resumed final score when persisted data makes the score log incomplete', () => {
+    const result = resolveFinalScoreForCompletion({
+      requestedHome: 51,
+      requestedAway: 48,
+      liveHome: 51,
+      liveAway: 48,
+      log: [
+        { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } }
+      ],
+      scoreLogIsComplete: false
+    });
+
+    expect(result.reconciled).toBe(false);
+    expect(result.mismatch).toBe(false);
+    expect(result.home).toBe(51);
+    expect(result.away).toBe(48);
+  });
+
+  it('keeps entered final score after a resumed game log is cleared', () => {
+    const result = resolveFinalScoreForCompletion({
+      requestedHome: 40,
+      requestedAway: 39,
+      liveHome: 40,
+      liveAway: 39,
+      log: [],
+      scoreLogIsComplete: false
+    });
+
+    expect(result.reconciled).toBe(false);
+    expect(result.home).toBe(40);
+    expect(result.away).toBe(39);
+  });
+
+  it('reconciles final score only when the score log is complete and trustworthy', () => {
+    const result = resolveFinalScoreForCompletion({
+      requestedHome: 4,
+      requestedAway: 1,
+      liveHome: 5,
+      liveAway: 2,
+      log: [
+        { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },
+        { undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: false } },
+        { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: true } }
+      ],
+      scoreLogIsComplete: true
+    });
+
+    expect(result.reconciled).toBe(true);
+    expect(result.mismatch).toBe(true);
+    expect(result.home).toBe(5);
+    expect(result.away).toBe(2);
+  });
+
   it('trusts score log when derived totals match live score and contains scoring events', () => {
     const log = [
       { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },
@@ -124,5 +179,11 @@ describe('live tracker integrity helpers', () => {
 
     releaseSingleFlightLock(lock);
     expect(acquireSingleFlightLock(lock)).toBe(true);
+  });
+
+  it('wires final score completion through the shared integrity helper in live tracker', () => {
+    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    expect(source).toContain('resolveFinalScoreForCompletion');
+    expect(source).toContain('scoreLogIsComplete: state.scoreLogIsComplete');
   });
 });
