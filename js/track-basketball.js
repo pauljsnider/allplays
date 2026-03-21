@@ -7,7 +7,7 @@ import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=10';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=2';
-import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
+import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -485,8 +485,8 @@ async function generateAISummary() {
   els.aiSummaryOutput.classList.remove('hidden');
 
   try {
-    const finalHome = parseInt(els.homeFinal.value) || state.home;
-    const finalAway = parseInt(els.awayFinal.value) || state.away;
+    const finalHome = resolveFinalScore(els.homeFinal.value, state.home);
+    const finalAway = resolveFinalScore(els.awayFinal.value, state.away);
 
     let context = `Game: ${currentTeam.name} vs ${currentGame.opponent}\n`;
     context += `Final Score: ${finalHome} - ${finalAway}\n`;
@@ -622,8 +622,8 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
 }
 
 function generateEmailRecap() {
-  const finalHome = parseInt(els.homeFinal.value) || state.home;
-  const finalAway = parseInt(els.awayFinal.value) || state.away;
+  const finalHome = resolveFinalScore(els.homeFinal.value, state.home);
+  const finalAway = resolveFinalScore(els.awayFinal.value, state.away);
   const summary = els.notesFinal.value.trim();
 
   const body = generateEmailBody(finalHome, finalAway, summary);

@@ -11,7 +11,7 @@ import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
-import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
+import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
@@ -1285,8 +1285,8 @@ async function generateAISummary() {
   els.aiSummaryOutput.classList.remove('hidden');
 
   try {
-    const finalHome = parseInt(els.homeFinal.value) || state.home;
-    const finalAway = parseInt(els.awayFinal.value) || state.away;
+    const finalHome = resolveFinalScore(els.homeFinal.value, state.home);
+    const finalAway = resolveFinalScore(els.awayFinal.value, state.away);
 
     let context = `Game: ${currentTeam.name} vs ${currentGame.opponent}\n`;
     context += `Final Score: ${finalHome} - ${finalAway}\n`;
@@ -1422,8 +1422,8 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
 }
 
 function generateEmailRecap() {
-  const finalHome = parseInt(els.homeFinal.value) || state.home;
-  const finalAway = parseInt(els.awayFinal.value) || state.away;
+  const finalHome = resolveFinalScore(els.homeFinal.value, state.home);
+  const finalAway = resolveFinalScore(els.awayFinal.value, state.away);
   const summary = els.notesFinal.value.trim();
 
   const body = generateEmailBody(finalHome, finalAway, summary);
