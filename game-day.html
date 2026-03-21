@@ -499,6 +499,12 @@
             buildLineupPublishMessage,
             countLineupChanges
         } from './js/game-day-lineup-publish.js?v=1';
+        import {
+            shouldPromptWrapupOnCompletion,
+            getWrapupFormState,
+            buildFinishGamePayload,
+            buildMatchReportUrl
+        } from './js/game-day-wrapup.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1063,7 +1069,11 @@
                     // Detect transitions
                     if (updatedGame.liveStatus === 'live' && prevLiveStatus !== 'live' && state.mode !== 'gameday') {
                         if (confirm('The game is now live! Switch to Game Day mode?')) setMode('gameday');
-                    } else if (updatedGame.liveStatus === 'completed' && prevLiveStatus !== 'completed' && state.mode !== 'wrapup') {
+                    } else if (shouldPromptWrapupOnCompletion({
+                        prevLiveStatus,
+                        nextLiveStatus: updatedGame.liveStatus,
+                        mode: state.mode
+                    })) {
                         if (confirm('Game marked as completed. Open Wrap-Up?')) setMode('wrapup');
                     }
                 }, (err) => console.error('subscribeGame error', err));
@@ -2418,9 +2428,13 @@ Respond ONLY with valid JSON.`;
 
         // ==================== WRAP-UP ====================
         function renderWrapup() {
-            document.getElementById('wrapup-home-score').value = state.score.home;
-            document.getElementById('wrapup-away-score').value = state.score.away;
-            document.getElementById('post-game-notes').value = state.game?.postGameNotes || '';
+            const wrapupFormState = getWrapupFormState({
+                score: state.score,
+                game: state.game
+            });
+            document.getElementById('wrapup-home-score').value = wrapupFormState.homeScore;
+            document.getElementById('wrapup-away-score').value = wrapupFormState.awayScore;
+            document.getElementById('post-game-notes').value = wrapupFormState.postGameNotes;
         }
 
         window.closeWrapup = function() {
@@ -2490,16 +2504,18 @@ Be encouraging and specific. No markdown.`;
         };
 
         window.finishGame = async function() {
-            const homeScore = parseInt(document.getElementById('wrapup-home-score').value) || 0;
-            const awayScore = parseInt(document.getElementById('wrapup-away-score').value) || 0;
-            const postGameNotes = document.getElementById('post-game-notes').value.trim();
+            const completionPayload = buildFinishGamePayload({
+                homeScoreValue: document.getElementById('wrapup-home-score').value,
+                awayScoreValue: document.getElementById('wrapup-away-score').value,
+                postGameNotesValue: document.getElementById('post-game-notes').value
+            });
 
             try {
-                await updateGame(state.teamId, state.gameId, {
-                    homeScore, awayScore, postGameNotes,
-                    status: 'completed', liveStatus: 'completed'
+                await updateGame(state.teamId, state.gameId, completionPayload);
+                window.location.href = buildMatchReportUrl({
+                    teamId: state.teamId,
+                    gameId: state.gameId
                 });
-                window.location.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
             } catch (err) {
                 console.error('finishGame error', err);
                 alert('Error saving: ' + err.message);

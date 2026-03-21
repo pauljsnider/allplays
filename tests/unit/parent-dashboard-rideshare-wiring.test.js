@@ -27,4 +27,13 @@ describe('parent dashboard rideshare wiring', () => {
 
         expect(html).toContain('.filter((ev) => canShowRideshareForEvent(ev))');
     });
+
+    it('wires the extracted rideshare control helpers into the dashboard modal flow', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).toContain("from './js/parent-dashboard-rideshare-controls.js?v=1'");
+        expect(html).toContain('resolveSelectedRideChildId({');
+        expect(html).toContain('createRideRequestHandlers({');
+        expect(html).toContain('selectedRideChildByOffer');
+    });
 });

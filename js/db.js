@@ -3768,15 +3768,36 @@ export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
     if (!childId) throw new Error('childId is required to request a ride.');
     const childName = (payload.childName || '').toString().trim();
     const requestId = `${user.uid}__${childId}`;
-    await setDoc(doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId), {
+    const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
+    const existingRequestSnap = await getDoc(requestRef);
+    const requestedAt = Timestamp.now();
+
+    if (existingRequestSnap.exists()) {
+        const existingRequest = existingRequestSnap.data() || {};
+        const existingStatus = normalizeRideRequestStatus(existingRequest.status);
+        if (existingStatus && existingStatus !== RIDE_REQUEST_STATUS.DECLINED && existingStatus !== RIDE_REQUEST_STATUS.WAITLISTED) {
+            throw new Error('Ride request is already active.');
+        }
+
+        await updateDoc(requestRef, {
+            childName: childName || null,
+            status: RIDE_REQUEST_STATUS.PENDING,
+            requestedAt: requestedAt,
+            respondedAt: null,
+            updatedAt: Timestamp.now()
+        });
+        return requestId;
+    }
+
+    await setDoc(requestRef, {
         parentUserId: user.uid,
         childId,
         childName: childName || null,
         status: RIDE_REQUEST_STATUS.PENDING,
-        requestedAt: Timestamp.now(),
+        requestedAt: requestedAt,
         respondedAt: null,
         updatedAt: Timestamp.now()
-    }, { merge: true });
+    });
     return requestId;
 }
 

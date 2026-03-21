@@ -245,7 +245,7 @@
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=10';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
-        import { hasFullTeamAccess } from './js/team-access.js';
+        import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';
 
         renderFooter(document.getElementById('footer-container'));
@@ -294,8 +294,8 @@
             list.querySelectorAll('.remove-admin-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const email = btn.dataset.email;
-                    adminEmails = adminEmails.filter(e => e !== email);
-                    pendingAdminInviteEmails = pendingAdminInviteEmails.filter(e => e !== email);
+                    adminEmails = normalizeAdminEmailList(adminEmails.filter(e => e !== email));
+                    pendingAdminInviteEmails = normalizeAdminEmailList(pendingAdminInviteEmails.filter(e => e !== email));
                     renderAdminList();
                 });
             });
@@ -337,7 +337,7 @@
                     streamInput.value = team.streamEmbedUrl || team.youtubeEmbedUrl;
                 }
                 streamInput.dispatchEvent(new Event('input')); // trigger detection badge
-                adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
+                adminEmails = normalizeAdminEmailList(team.adminEmails);
                 renderAdminList();
 
                 if (team.photoUrl) {
@@ -402,7 +402,7 @@
             const input = document.getElementById('admin-email-input');
             const btn = document.getElementById('save-admin-btn');
             const statusDiv = document.getElementById('admin-invite-status');
-            const email = (input.value || '').trim().toLowerCase();
+            const email = String(input.value || '').trim().toLowerCase();
 
             if (!email) {
                 showAdminStatus('Please enter an email.', 'error');
@@ -462,7 +462,7 @@
                 }
 
                 // Add to local list and update UI
-                adminEmails.push(email);
+                adminEmails = normalizeAdminEmailList([...adminEmails, email]);
                 renderAdminList();
                 input.value = '';
 
@@ -624,6 +624,8 @@
                     .map((value) => value.trim())
                     .filter(Boolean);
 
+                const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
+                adminEmails = normalizedAdminEmails;
                 const teamData = {
                     name: document.getElementById('name').value,
                     description: document.getElementById('description').value,
@@ -638,7 +640,7 @@
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
-                    adminEmails,
+                    adminEmails: normalizedAdminEmails,
                     ...((() => {
                         const sr = parseStreamUrl(document.getElementById('streamUrl').value);
                         return {
