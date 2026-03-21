@@ -1365,6 +1365,17 @@ export async function updatePlayerStats(teamId, gameId, playerId, statKey, chang
     }, { merge: true });
 }
 
+export async function setCompletedGamePlayerStats(teamId, gameId, playerId, statsPayload = {}) {
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
+    await setDoc(docRef, {
+        playerName: statsPayload.playerName || '',
+        playerNumber: statsPayload.playerNumber || '',
+        stats: statsPayload.stats || {},
+        timeMs: Number.isFinite(Number(statsPayload.timeMs)) ? Number(statsPayload.timeMs) : 0,
+        didNotPlay: statsPayload.didNotPlay === true
+    }, { merge: true });
+}
+
 // Calendar Functions
 export async function addCalendarToTeam(teamId, calendarUrl) {
     const team = await getTeam(teamId);
