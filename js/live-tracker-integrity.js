@@ -105,3 +105,38 @@ export function reconcileFinalScoreFromLog({ requestedHome, requestedAway, log =
     derived
   };
 }
+
+export function resolveFinalScoreForCompletion({
+  requestedHome,
+  requestedAway,
+  liveHome,
+  liveAway,
+  log = [],
+  scoreLogIsComplete = true
+} = {}) {
+  const home = Number.isFinite(Number(requestedHome)) ? Number(requestedHome) : 0;
+  const away = Number.isFinite(Number(requestedAway)) ? Number(requestedAway) : 0;
+
+  if (!scoreLogIsComplete || !canTrustScoreLogForFinalization({ liveHome, liveAway, log })) {
+    return {
+      home,
+      away,
+      mismatch: false,
+      reconciled: false
+    };
+  }
+
+  const reconciled = reconcileFinalScoreFromLog({
+    requestedHome: home,
+    requestedAway: away,
+    log
+  });
+
+  return {
+    home: reconciled.home,
+    away: reconciled.away,
+    mismatch: reconciled.mismatch,
+    reconciled: true,
+    derived: reconciled.derived
+  };
+}

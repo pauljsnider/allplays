@@ -766,11 +766,13 @@
     <script type="module">
         import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer } from './js/db.js?v=20';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
+        import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
         import { checkAuth } from './js/auth.js?v=10';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
+        import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { Timestamp, deleteField } from "./js/firebase.js?v=10";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -1195,37 +1197,16 @@
                     try {
                         const calendarEvents = await fetchAndParseCalendar(calendarUrl);
 
-                        calendarEvents.forEach(event => {
-                            // Skip if already tracked
-                            if (isTrackedCalendarEvent(event, trackedUids)) return;
-
-                            // Normalize common ICS and TeamSnap cancelled variants via shared helper
-                            const isCancelled = getCalendarEventStatus(event) === 'cancelled';
-
-                            // Skip if conflicts with DB event
-                            const hasConflict = dbEvents.some(dbEvent => {
-                                const dbDate = dbEvent.date?.toDate ? dbEvent.date.toDate() : new Date(dbEvent.date);
-                                const eventDate = event.dtstart;
-                                return Math.abs(dbDate - eventDate) < 60000;
-                            });
-                            if (hasConflict) return;
-
-                            const isPractice = isPracticeEvent(event.summary);
-                            // Clean cancelled prefix from summary before extracting opponent
-                            const cleanSummary = event.summary?.replace(/\[(?:CANCELED|CANCELLED)\]\s*/gi, '') || '';
-                            const opponent = extractOpponent(cleanSummary, currentTeam.name);
-
-                            allEvents.push({
-                                source: 'calendar',
-                                eventType: isPractice ? 'practice' : 'game',
-                                date: event.dtstart,
-                                opponent: opponent,
-                                location: event.location || 'TBD',
-                                isPractice: isPractice,
-                                isCancelled: isCancelled,
-                                calendarEvent: event
-                            });
-                        });
+                        allEvents.push(...mergeCalendarImportEvents({
+                            calendarEvents,
+                            dbEvents,
+                            trackedUids,
+                            currentTeamName: currentTeam.name,
+                            isTrackedCalendarEvent,
+                            getCalendarEventStatus,
+                            isPracticeEvent,
+                            extractOpponent
+                        }));
                     } catch (error) {
                         console.error('Error fetching calendar:', calendarUrl, error);
                     }
@@ -2107,40 +2088,25 @@
                     })
                 };
 
-                // Handle recurring practice
-                if (isRecurring) {
-                    const freq = document.getElementById('recurrenceFreq').value;
-                    const interval = parseInt(document.getElementById('recurrenceInterval').value) || 1;
-                    const byDays = Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value);
-                    const endType = document.querySelector('input[name="recurrenceEnd"]:checked').value;
-
-                    practiceData.isSeriesMaster = true;
-                    // Preserve existing seriesId on edit; generate new on create
-                    practiceData.seriesId = editingPracticeId
-                        ? (editingSeriesId || practiceData.seriesId || generateSeriesId())
-                        : generateSeriesId();
-
-                    // Store start/end as time strings for recurring (HH:mm)
-                    practiceData.startTime = startDate.toTimeString().slice(0, 5);
-                    practiceData.endTime = endDate.toTimeString().slice(0, 5);
-
-                    practiceData.recurrence = { freq, interval, byDays };
-
-                    if (endType === 'until') {
-                        const untilVal = document.getElementById('recurrenceUntil').value;
-                        if (untilVal) {
-                            practiceData.recurrence.until = Timestamp.fromDate(new Date(untilVal));
-                        }
-                    } else if (endType === 'count') {
-                        practiceData.recurrence.count = parseInt(document.getElementById('recurrenceCount').value) || 10;
-                    }
-
-                    // Initialize empty exDates and overrides
-                    if (!editingPracticeId) {
-                        practiceData.exDates = [];
-                        practiceData.overrides = {};
-                    }
-                }
+                applyPracticeRecurrenceFields({
+                    practiceData,
+                    isRecurring,
+                    editingPracticeId,
+                    editingSeriesId,
+                    recurrenceConfig: {
+                        freq: document.getElementById('recurrenceFreq').value,
+                        interval: parseInt(document.getElementById('recurrenceInterval').value) || 1,
+                        byDays: Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value),
+                        endType: document.querySelector('input[name="recurrenceEnd"]:checked').value,
+                        untilValue: document.getElementById('recurrenceUntil').value,
+                        countValue: document.getElementById('recurrenceCount').value
+                    },
+                    startDate,
+                    endDate,
+                    Timestamp,
+                    deleteField,
+                    generateSeriesId
+                });
 
                 let savedPracticeId = editingPracticeId;
                 if (editingPracticeId) {
@@ -2390,19 +2356,14 @@
         });
 
         document.getElementById('save-calendar-btn').addEventListener('click', async () => {
-            const url = document.getElementById('calendar-url-input').value.trim();
-            if (!url) {
-                alert('Please enter a calendar URL');
-                return;
-            }
-
-            if (!url.includes('.ics')) {
-                alert('Please enter a valid .ics calendar URL (must include .ics)');
+            const validation = validateCalendarImportUrl(document.getElementById('calendar-url-input').value);
+            if (!validation.isValid) {
+                alert(validation.message);
                 return;
             }
 
             try {
-                await addCalendarToTeam(currentTeamId, url);
+                await addCalendarToTeam(currentTeamId, validation.normalizedUrl);
                 document.getElementById('add-calendar-form').classList.add('hidden');
                 document.getElementById('calendar-url-input').value = '';
 

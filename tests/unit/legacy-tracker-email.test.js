@@ -26,6 +26,7 @@ describe('legacy tracker summary email recipient', () => {
     it('wires recipient resolution into the beta basketball tracker finish flow', () => {
         const source = readFileSync(new URL('../../js/track-basketball.js', import.meta.url), 'utf8');
         expect(source).toContain('resolveSummaryRecipient');
+        expect(source).toContain('resolveFinalScore');
         expect(source).toContain('teamNotificationEmail: currentTeam?.notificationEmail');
     });
 });
