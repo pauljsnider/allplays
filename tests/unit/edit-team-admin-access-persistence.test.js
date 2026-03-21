@@ -244,7 +244,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js';",
+            "import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';",
             'const { hasFullTeamAccess, normalizeAdminEmailList } = deps.teamAccess;'
         )
         .replace(
