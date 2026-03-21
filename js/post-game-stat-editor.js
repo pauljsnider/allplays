@@ -54,7 +54,7 @@ export function buildCompletedGamePlayerStatsPayload({
         playerNumber: player.number || player.num || '',
         stats,
         didNotPlay: !!didNotPlay,
-        timeMs: Number.isFinite(Number(existingTimeMs)) ? Number(existingTimeMs) : 0
+        timeMs: didNotPlay ? 0 : (Number.isFinite(Number(existingTimeMs)) ? Number(existingTimeMs) : 0)
     };
 }
 

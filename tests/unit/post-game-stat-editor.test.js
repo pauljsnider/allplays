@@ -44,7 +44,7 @@ describe('post-game stat editor helpers', () => {
                 fouls: 0
             },
             didNotPlay: true,
-            timeMs: 900000
+            timeMs: 0
         });
     });
 

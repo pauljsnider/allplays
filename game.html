@@ -1195,37 +1195,47 @@ Write the match report now:`;
 
                 // Setup summary controls
                 setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels);
-
-                // Check if we have any playing time data
-                const hasPlayingTime = Object.values(timeMap).some(t => t > 0);
-
-                // Render Table Header
                 const headerRow = document.getElementById('stats-header-row');
-                statKeys.forEach(key => {
-                    const th = document.createElement('th');
-                    th.className = "px-4 py-4 text-center";
-                    th.textContent = statLabels[key] || key.toUpperCase();
-                    headerRow.appendChild(th);
-                });
+                function renderStatsTable() {
+                    const { statKeys: tableStatKeys, statLabels: tableStatLabels } = resolveReportStatColumns({
+                        statsMap,
+                        resolvedConfig
+                    });
+                    const hasPlayingTime = Object.values(timeMap).some((t) => t > 0);
 
-                // Add Minutes column if we have playing time data
-                if (hasPlayingTime) {
-                    const minTh = document.createElement('th');
-                    minTh.className = "px-4 py-4 text-center";
-                    minTh.textContent = "MIN";
-                    headerRow.appendChild(minTh);
+                    if (headerRow) {
+                        headerRow.innerHTML = `
+                            <th class="px-4 py-4 text-left">#</th>
+                            <th class="px-4 py-4 text-left">Player</th>
+                        `;
+                        tableStatKeys.forEach((key) => {
+                            const th = document.createElement('th');
+                            th.className = 'px-4 py-4 text-center';
+                            th.textContent = tableStatLabels[key] || key.toUpperCase();
+                            headerRow.appendChild(th);
+                        });
+
+                        if (hasPlayingTime) {
+                            const minTh = document.createElement('th');
+                            minTh.className = 'px-4 py-4 text-center';
+                            minTh.textContent = 'MIN';
+                            headerRow.appendChild(minTh);
+                        }
+                    }
+
+                    renderPlayerStatsTable({
+                        teamId,
+                        gameId,
+                        players,
+                        statsMap,
+                        didNotPlayMap,
+                        timeMap,
+                        statKeys: tableStatKeys,
+                        hasPlayingTime
+                    });
                 }
 
-                renderPlayerStatsTable({
-                    teamId,
-                    gameId,
-                    players,
-                    statsMap,
-                    didNotPlayMap,
-                    timeMap,
-                    statKeys,
-                    hasPlayingTime
-                });
+                renderStatsTable();
 
                 setupPostGameStatEditor({
                     teamId,
@@ -1236,16 +1246,7 @@ Write the match report now:`;
                     didNotPlayMap,
                     timeMap,
                     resolvedConfig,
-                    rerenderTable: () => renderPlayerStatsTable({
-                        teamId,
-                        gameId,
-                        players,
-                        statsMap,
-                        didNotPlayMap,
-                        timeMap,
-                        statKeys,
-                        hasPlayingTime
-                    })
+                    rerenderTable: renderStatsTable
                 });
 
                 // Render Playing Time Insights
