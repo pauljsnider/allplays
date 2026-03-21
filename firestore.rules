@@ -434,6 +434,18 @@ service cloud.firestore {
                                  request.resource.data.status == resource.data.status &&
                                  request.resource.data.status == 'pending' &&
                                  request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'updatedAt'])
+                               ) ||
+                               // Request owner can re-request after a decline or waitlist while the offer stays open.
+                               (
+                                 resource.data.parentUserId == request.auth.uid &&
+                                 request.resource.data.parentUserId == resource.data.parentUserId &&
+                                 request.resource.data.childId == resource.data.childId &&
+                                 isParentForPlayer(teamId, resource.data.childId) &&
+                                 resource.data.status in ['declined', 'waitlisted'] &&
+                                 request.resource.data.status == 'pending' &&
+                                 request.resource.data.respondedAt == null &&
+                                 isRideshareOfferOpen(teamId, gameId, offerId) &&
+                                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'status', 'requestedAt', 'respondedAt', 'updatedAt'])
                                )
                              );
             allow delete: if isSignedIn() &&

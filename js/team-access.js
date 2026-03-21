@@ -1,5 +1,15 @@
 function getNormalizedUserEmail(user) {
-  return String(user?.email || user?.profileEmail || '').toLowerCase();
+  return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+}
+
+export function normalizeAdminEmailList(adminEmails) {
+  return Array.from(
+    new Set(
+      (Array.isArray(adminEmails) ? adminEmails : [])
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
 }
 
 /**
@@ -11,7 +21,7 @@ export function hasFullTeamAccess(user, team) {
 
   const isOwner = team.ownerId === user.uid;
   const normalizedEmail = getNormalizedUserEmail(user);
-  const adminEmails = (team.adminEmails || []).map((email) => String(email || '').toLowerCase());
+  const adminEmails = normalizeAdminEmailList(team.adminEmails);
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;
 
