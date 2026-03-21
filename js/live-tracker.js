@@ -1347,7 +1347,7 @@ Write the match report now:`;
   }
 }
 
-function generateEmailBody(finalHome, finalAway, summary = '') {
+function generateEmailBody(finalHome, finalAway, summary = '', logEntries = state.log) {
   const gameData = {
     opponent: currentGame.opponent || 'Unknown Opponent',
     date: currentGame.date ? new Date(currentGame.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString(),
@@ -1400,10 +1400,10 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
     body += `\n`;
   });
 
-  if (state.log.length > 0) {
+  if (logEntries.length > 0) {
     body += `\nGAME LOG:\n`;
     body += `${'='.repeat(40)}\n`;
-    state.log.slice().reverse().forEach(ev => {
+    logEntries.slice().reverse().forEach(ev => {
       body += `${ev.period} ${ev.clock} - ${ev.text}\n`;
     });
   }
@@ -1462,6 +1462,8 @@ async function saveAndComplete() {
     liveAway: state.away,
     scoreLogIsComplete: state.scoreLogIsComplete,
     log: state.log,
+    currentPeriod: state.period,
+    currentClock: formatClock(state.clock),
     summary,
     sendEmail,
     teamId: currentTeamId,
@@ -1474,7 +1476,7 @@ async function saveAndComplete() {
     statsByPlayerId: state.stats,
     opponentEntries: state.opp,
     currentUserUid: currentUser?.uid,
-    buildEmailBody: (finalHome, finalAway, recapSummary) => generateEmailBody(finalHome, finalAway, recapSummary)
+    buildEmailBody: (finalHome, finalAway, recapSummary, logEntries) => generateEmailBody(finalHome, finalAway, recapSummary, logEntries)
   });
 
   try {
@@ -1501,7 +1503,7 @@ async function saveAndComplete() {
     isFinishing = true;
 
     if (finishPlan.scoreReconciliation.mismatch) {
-      addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${finishPlan.finalHome}-${finishPlan.finalAway} based on scoring events`);
+      addLog(finishPlan.reconciliationNote);
       els.homeFinal.value = String(finishPlan.finalHome);
       els.awayFinal.value = String(finishPlan.finalAway);
     }

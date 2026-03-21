@@ -14,6 +14,8 @@ describe('live tracker finish completion plan', () => {
         { text: 'Home three', clock: '00:40', period: 'Q1', ts: 12, undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: false, playerId: 'p2' } },
         { text: 'Away bucket', clock: '00:20', period: 'Q1', ts: 13, undoData: { type: 'stat', statKey: 'points', value: 2, isOpponent: true } }
       ],
+      currentPeriod: 'Q4',
+      currentClock: '00:00',
       summary: 'Closed well in the final minute.',
       sendEmail: false,
       teamId: 'team-1',
@@ -42,6 +44,7 @@ describe('live tracker finish completion plan', () => {
       mismatch: true,
       derived: { home: 5, away: 2 }
     });
+    expect(plan.reconciliationNote).toBe('Score reconciled from 44-41 to 5-2 based on scoring events');
     expect(plan.gameUpdate).toEqual({
       homeScore: 5,
       awayScore: 2,
@@ -59,7 +62,21 @@ describe('live tracker finish completion plan', () => {
         }
       }
     });
-    expect(plan.eventWrites).toHaveLength(3);
+    expect(plan.eventWrites).toHaveLength(4);
+    expect(plan.eventWrites[0]).toEqual({
+      data: {
+        text: 'Score reconciled from 44-41 to 5-2 based on scoring events',
+        gameTime: '00:00',
+        period: 'Q4',
+        timestamp: expect.any(Number),
+        type: 'game_log',
+        playerId: null,
+        statKey: null,
+        value: null,
+        isOpponent: false,
+        createdBy: null
+      }
+    });
     expect(plan.aggregatedStatsWrites).toEqual([
       {
         playerId: 'p1',
@@ -119,5 +136,74 @@ describe('live tracker finish completion plan', () => {
         delayMs: 500
       }
     ]);
+  });
+
+  it('includes the reconciliation note in recap generation inputs when email is enabled', () => {
+    let bodyArgs = null;
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 44,
+      requestedAway: 41,
+      liveHome: 5,
+      liveAway: 2,
+      scoreLogIsComplete: true,
+      log: [
+        { text: 'Home layup', clock: '01:20', period: 'Q1', ts: 11, undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false, playerId: 'p1' } },
+        { text: 'Home three', clock: '00:40', period: 'Q1', ts: 12, undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: false, playerId: 'p2' } },
+        { text: 'Away bucket', clock: '00:20', period: 'Q1', ts: 13, undoData: { type: 'stat', statKey: 'points', value: 2, isOpponent: true } }
+      ],
+      currentPeriod: 'Q4',
+      currentClock: '00:00',
+      summary: 'Closed well in the final minute.',
+      sendEmail: true,
+      teamId: 'team-1',
+      gameId: 'game-9',
+      teamName: 'Tigers',
+      opponentName: 'Bears',
+      recipientEmail: 'coach@example.com',
+      columns: [],
+      roster: [],
+      statsByPlayerId: {},
+      opponentEntries: [],
+      buildEmailBody: (finalHome, finalAway, summary, logEntries) => {
+        bodyArgs = { finalHome, finalAway, summary, logEntries };
+        return 'body';
+      }
+    });
+
+    expect(plan.navigation[0].href).toContain('body=body');
+    expect(bodyArgs).toEqual({
+      finalHome: 5,
+      finalAway: 2,
+      summary: 'Closed well in the final minute.',
+      logEntries: [
+        {
+          text: 'Score reconciled from 44-41 to 5-2 based on scoring events',
+          ts: expect.any(Number),
+          period: 'Q4',
+          clock: '00:00'
+        },
+        {
+          text: 'Home layup',
+          clock: '01:20',
+          period: 'Q1',
+          ts: 11,
+          undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false, playerId: 'p1' }
+        },
+        {
+          text: 'Home three',
+          clock: '00:40',
+          period: 'Q1',
+          ts: 12,
+          undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: false, playerId: 'p2' }
+        },
+        {
+          text: 'Away bucket',
+          clock: '00:20',
+          period: 'Q1',
+          ts: 13,
+          undoData: { type: 'stat', statKey: 'points', value: 2, isOpponent: true }
+        }
+      ]
+    });
   });
 });

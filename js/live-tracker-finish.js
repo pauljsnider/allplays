@@ -1,5 +1,9 @@
 import { canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js';
 
+export function buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway) {
+  return `Score reconciled from ${requestedHome}-${requestedAway} to ${finalHome}-${finalAway} based on scoring events`;
+}
+
 export function buildOpponentStatsSnapshotFromEntries({ opponentEntries = [], columns = [] } = {}) {
   const opponentStats = {};
   const safeColumns = Array.isArray(columns) ? columns : [];
@@ -29,6 +33,8 @@ export function buildFinishCompletionPlan({
   liveAway,
   scoreLogIsComplete = false,
   log = [],
+  currentPeriod = '',
+  currentClock = '',
   summary = '',
   sendEmail = false,
   teamId,
@@ -65,7 +71,20 @@ export function buildFinishCompletionPlan({
   const safeColumns = Array.isArray(columns) ? columns : [];
   const safeRoster = Array.isArray(roster) ? roster : [];
   const safeStatsByPlayerId = statsByPlayerId && typeof statsByPlayerId === 'object' ? statsByPlayerId : {};
-  const eventWrites = (Array.isArray(log) ? log : []).map((entry) => ({
+  const effectiveLog = Array.isArray(log) ? [...log] : [];
+  let reconciliationNote = '';
+
+  if (scoreReconciliation.mismatch) {
+    reconciliationNote = buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway);
+    effectiveLog.unshift({
+      text: reconciliationNote,
+      ts: Date.now(),
+      period: currentPeriod,
+      clock: currentClock
+    });
+  }
+
+  const eventWrites = effectiveLog.map((entry) => ({
     data: {
       text: entry.text,
       gameTime: entry.clock,
@@ -115,7 +134,7 @@ export function buildFinishCompletionPlan({
 
   if (sendEmail) {
     const subject = `${teamName} vs ${opponentName || 'Unknown Opponent'} - Game Summary`;
-    const body = buildEmailBody(finalHome, finalAway, summary);
+    const body = buildEmailBody(finalHome, finalAway, summary, effectiveLog);
     navigation.push({
       type: 'mailto',
       href: `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
@@ -138,6 +157,7 @@ export function buildFinishCompletionPlan({
     finalHome,
     finalAway,
     scoreReconciliation,
+    reconciliationNote,
     eventWrites,
     aggregatedStatsWrites,
     gameUpdate,
