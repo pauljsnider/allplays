@@ -1176,7 +1176,9 @@ EXAMPLES:
                 // Reset and reload
                 proposedOperations = [];
                 document.getElementById('proposed-changes-section').classList.add('hidden');
-                resetBulkAiDraftState();
+                if (errorCount === 0) {
+                    resetBulkAiDraftState();
+                }
                 await loadRoster();
 
             } catch (error) {
