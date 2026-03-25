@@ -1,5 +1,5 @@
 export function createParentDashboardRsvpController({
-    allScheduleEvents,
+    getAllScheduleEvents,
     getCurrentUserId,
     getCurrentUser,
     documentRef,
@@ -12,6 +12,7 @@ export function createParentDashboardRsvpController({
 }) {
     async function submitGameRsvp(teamId, gameId, response, childContext = {}) {
         try {
+            const allScheduleEvents = typeof getAllScheduleEvents === 'function' ? getAllScheduleEvents() : [];
             const playerIds = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext);
             const isSinglePlayerSelection = playerIds.length === 1;
             const currentUser = typeof getCurrentUser === 'function' ? getCurrentUser() : null;

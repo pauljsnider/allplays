@@ -327,7 +327,6 @@
         window.openPracticePacketPreview = openPracticePacketPreview;
         window.closePracticePacketPreview = closePracticePacketPreview;
         window.markPracticePacketComplete = markPracticePacketComplete;
-        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
         window.toggleRideOfferForm = toggleRideOfferForm;
         window.submitRideOfferFromForm = submitRideOfferFromForm;
         window.updateRideRequestDecision = updateRideRequestDecision;
@@ -765,7 +764,7 @@
         }
 
         const { submitGameRsvp, submitGameRsvpFromButton } = createParentDashboardRsvpController({
-            allScheduleEvents,
+            getAllScheduleEvents: () => allScheduleEvents,
             getCurrentUserId: () => currentUserId,
             getCurrentUser: () => currentUser,
             documentRef: document,
@@ -777,6 +776,7 @@
             consoleRef: console
         });
         window.submitGameRsvp = submitGameRsvp;
+        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
 
         function hasRecordedAttendance(attendance) {
             if (!attendance || !Array.isArray(attendance.players) || attendance.players.length === 0) return false;
