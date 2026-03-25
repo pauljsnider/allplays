@@ -18,7 +18,7 @@ describe('parent dashboard RSVP controller', () => {
         const submitRsvpForPlayer = vi.fn();
         const renderScheduleFromControls = vi.fn();
         const controller = createParentDashboardRsvpController({
-            allScheduleEvents,
+            getAllScheduleEvents: () => allScheduleEvents,
             getCurrentUserId: () => 'parent-1',
             getCurrentUser: () => ({ displayName: 'Parent One', email: 'parent@example.com' }),
             documentRef: {
@@ -67,7 +67,7 @@ describe('parent dashboard RSVP controller', () => {
         const submitRsvpForPlayer = vi.fn().mockResolvedValue({ going: 1, maybe: 0, notGoing: 1, notResponded: 0, total: 2 });
         const renderScheduleFromControls = vi.fn();
         const controller = createParentDashboardRsvpController({
-            allScheduleEvents,
+            getAllScheduleEvents: () => allScheduleEvents,
             getCurrentUserId: () => 'parent-1',
             getCurrentUser: () => ({ email: 'parent@example.com' }),
             documentRef: {
@@ -105,6 +105,49 @@ describe('parent dashboard RSVP controller', () => {
         expect(allScheduleEvents[2].myRsvp).toBeNull();
         expect(renderScheduleFromControls).toHaveBeenCalledTimes(1);
     });
+
+    it('reads the current schedule array from the accessor after init-time reassignment', async () => {
+        let allScheduleEvents = [];
+        const submitRsvp = vi.fn().mockResolvedValue({ going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 });
+        const submitRsvpForPlayer = vi.fn();
+        const renderScheduleFromControls = vi.fn();
+        const controller = createParentDashboardRsvpController({
+            getAllScheduleEvents: () => allScheduleEvents,
+            getCurrentUserId: () => 'parent-1',
+            getCurrentUser: () => ({ displayName: 'Parent One', email: 'parent@example.com' }),
+            documentRef: {
+                getElementById(id) {
+                    if (id === 'player-filter') return { value: '' };
+                    return null;
+                }
+            },
+            resolveRsvpPlayerIdsForSubmission,
+            submitRsvp,
+            submitRsvpForPlayer,
+            renderScheduleFromControls,
+            alertFn: vi.fn(),
+            consoleRef: { error: vi.fn() }
+        });
+
+        allScheduleEvents = [
+            { teamId: 'team-1', id: 'game-1', childId: 'child-a', myRsvp: null, rsvpSummary: null }
+        ];
+
+        await controller.submitGameRsvpFromButton({
+            dataset: {
+                teamId: 'team-1',
+                gameId: 'game-1',
+                childId: 'child-a'
+            }
+        }, 'going');
+
+        expect(submitRsvpForPlayer).toHaveBeenCalledWith('team-1', 'game-1', 'parent-1', {
+            displayName: 'Parent One',
+            playerId: 'child-a',
+            response: 'going'
+        });
+        expect(allScheduleEvents[0].myRsvp).toBe('going');
+    });
 });
 
 describe('parent dashboard RSVP wiring', () => {
@@ -115,5 +158,13 @@ describe('parent dashboard RSVP wiring', () => {
         expect(html).toContain('const { submitGameRsvp, submitGameRsvpFromButton } = createParentDashboardRsvpController({');
         expect(html).toContain('data-child-ids="${escapeAttr((ev.childIds || []).join(\',\'))}"');
         expect(html).toContain('data-child-id="${escapeAttr(game.childId || game.playerId || \'\')}"');
+    });
+
+    it('exports the RSVP button handler only after the controller destructuring runs', () => {
+        const controllerInitIndex = html.indexOf('const { submitGameRsvp, submitGameRsvpFromButton } = createParentDashboardRsvpController({');
+        const windowExportIndex = html.indexOf('window.submitGameRsvpFromButton = submitGameRsvpFromButton;');
+
+        expect(controllerInitIndex).toBeGreaterThan(-1);
+        expect(windowExportIndex).toBeGreaterThan(controllerInitIndex);
     });
 });
