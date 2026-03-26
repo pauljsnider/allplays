@@ -14,6 +14,10 @@ function matchesAnyPattern(patterns, text) {
     return patterns.some((pattern) => pattern.test(text));
 }
 
+function shouldIgnoreError(patterns, text) {
+    return matchesAnyPattern(patterns, text);
+}
+
 function isAppAssetRequest(urlString, baseURL) {
     const requestUrl = new URL(urlString);
     const appUrl = new URL(baseURL);
@@ -29,7 +33,10 @@ function isAppAssetRequest(urlString, baseURL) {
 }
 
 export function buildUrl(baseURL, path) {
-    const url = new URL(path, `${baseURL}/`);
+    const base = new URL(baseURL);
+    const relativePath = path.startsWith('/') ? path.slice(1) : path;
+    const basePath = base.pathname.endsWith('/') ? base.pathname : `${base.pathname}/`;
+    const url = new URL(relativePath, `${base.origin}${basePath}`);
     url.searchParams.set('cb', String(Date.now()));
     return url.toString();
 }
@@ -51,7 +58,7 @@ export function createBootIssueCollector(page, options = {}) {
         }
 
         const text = msg.text();
-        if (matchesAnyPattern(ignoredPatterns, text)) {
+        if (shouldIgnoreError(ignoredPatterns, text)) {
             return;
         }
 
@@ -62,7 +69,7 @@ export function createBootIssueCollector(page, options = {}) {
 
     page.on('pageerror', (error) => {
         const message = error.message || String(error);
-        if (matchesAnyPattern(ignoredPatterns, message)) {
+        if (shouldIgnoreError(ignoredPatterns, message)) {
             return;
         }
 

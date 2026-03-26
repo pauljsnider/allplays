@@ -17,30 +17,27 @@ test('login page survives real Firebase auth bootstrap', async ({ page, baseURL 
 test('reset-password page renders invalid-code state after real Firebase bootstrap', async ({ page, baseURL }) => {
     await page.route('https://identitytoolkit.googleapis.com/**', async (route) => {
         const request = route.request();
-        const isResetPasswordRequest = request.url().includes('accounts:resetPassword');
-        if (!isResetPasswordRequest) {
+        if (!request.url().includes('accounts:resetPassword')) {
             await route.continue();
             return;
         }
 
         const postData = request.postData() || '';
-        const isBadCodeRequest = postData.includes('"oobCode":"bad-code"');
-
-        if (!isBadCodeRequest) {
-            await route.continue();
+        if (postData.includes('"oobCode":"bad-code"')) {
+            await route.fulfill({
+                status: 400,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    error: {
+                        code: 400,
+                        message: 'INVALID_OOB_CODE'
+                    }
+                })
+            });
             return;
         }
 
-        await route.fulfill({
-            status: 400,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                error: {
-                    code: 400,
-                    message: 'INVALID_OOB_CODE'
-                }
-            })
-        });
+        await route.abort('failed');
     });
 
     const issues = createBootIssueCollector(page, {
