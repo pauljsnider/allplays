@@ -245,7 +245,7 @@
                     // Fetch profile to determine redirect
                     const profile = await getUserProfile(userCredential.user.uid);
                     const userWithRoles = { ...userCredential.user, ...profile };
-                    window.location.href = getPostAuthRedirect(userWithRoles, shouldRedeemInviteFromLogin);
+                    window.location.href = redirectCoordinator.getPostAuthRedirect(userWithRoles, shouldRedeemInviteFromLogin);
                 } else {
                     // Signup mode - validate password confirmation
                     const confirmPassword = document.getElementById('confirm-password').value;
