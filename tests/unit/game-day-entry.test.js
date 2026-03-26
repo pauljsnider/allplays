@@ -35,16 +35,27 @@ describe('game day entry routing', () => {
         );
     });
 
-    it('ignores a stale requested id and falls back to the nearest valid upcoming game', () => {
+    it('honors an explicitly requested completed game id', () => {
         const now = at('2026-03-26T20:25:00Z');
         const games = [
-            { id: 'stale-completed', type: 'game', status: 'completed', liveStatus: 'completed', date: at('2026-03-25T18:00:00Z') },
+            { id: 'completed-wrapup', type: 'game', status: 'completed', liveStatus: 'completed', date: at('2026-03-25T18:00:00Z') },
+            { id: 'soon-1', type: 'game', status: 'scheduled', date: at('2026-03-26T21:00:00Z') },
+            { id: 'live-1', type: 'game', status: 'scheduled', liveStatus: 'live', date: at('2026-03-26T20:15:00Z') }
+        ];
+
+        expect(pickBestGameId(games, 'completed-wrapup', now)).toBe('completed-wrapup');
+    });
+
+    it('ignores a stale requested scheduled id and falls back to the nearest valid upcoming game', () => {
+        const now = at('2026-03-26T20:25:00Z');
+        const games = [
+            { id: 'stale-scheduled', type: 'game', status: 'scheduled', date: at('2026-03-25T18:00:00Z') },
             { id: 'cancelled-1', type: 'game', status: 'cancelled', date: at('2026-03-26T20:45:00Z') },
             { id: 'soon-1', type: 'game', status: 'scheduled', date: at('2026-03-26T21:00:00Z') },
             { id: 'recent-1', type: 'game', status: 'scheduled', date: at('2026-03-26T15:00:00Z') }
         ];
 
-        expect(pickBestGameId(games, 'stale-completed', now)).toBe('soon-1');
+        expect(pickBestGameId(games, 'stale-scheduled', now)).toBe('soon-1');
     });
 });
 

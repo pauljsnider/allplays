@@ -22,7 +22,8 @@ function isCompleted(game) {
 }
 
 function canHonorRequestedGame(game, now) {
-    if (!game || isCancelled(game) || isCompleted(game)) return false;
+    if (!game || isCancelled(game)) return false;
+    if (isCompleted(game)) return true;
 
     const date = getGameDate(game);
     if (!date) return true;
