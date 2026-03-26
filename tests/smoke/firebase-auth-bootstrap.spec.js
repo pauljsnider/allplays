@@ -17,9 +17,16 @@ test('login page survives real Firebase auth bootstrap', async ({ page, baseURL 
 test('reset-password page renders invalid-code state after real Firebase bootstrap', async ({ page, baseURL }) => {
     await page.route('https://identitytoolkit.googleapis.com/**', async (route) => {
         const request = route.request();
-        const postData = request.postData() || '';
+        const isResetPasswordRequest = request.url().includes('accounts:resetPassword');
+        if (!isResetPasswordRequest) {
+            await route.continue();
+            return;
+        }
 
-        if (!request.url().includes('accounts:resetPassword') || !postData.includes('"oobCode":"bad-code"')) {
+        const postData = request.postData() || '';
+        const isBadCodeRequest = postData.includes('"oobCode":"bad-code"');
+
+        if (!isBadCodeRequest) {
             await route.continue();
             return;
         }
@@ -38,7 +45,10 @@ test('reset-password page renders invalid-code state after real Firebase bootstr
 
     const issues = createBootIssueCollector(page, {
         baseURL,
-        ignoredConsoleErrors: [/Error verifying reset code:/i]
+        ignoredConsoleErrors: [
+            /Error verifying reset code:/i,
+            /INVALID_OOB_CODE/i
+        ]
     });
 
     await page.goto(

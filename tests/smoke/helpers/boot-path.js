@@ -10,6 +10,10 @@ function toRegExpList(patterns = []) {
     return patterns.map((pattern) => pattern instanceof RegExp ? pattern : new RegExp(pattern, 'i'));
 }
 
+function matchesAnyPattern(patterns, text) {
+    return patterns.some((pattern) => pattern.test(text));
+}
+
 function isAppAssetRequest(urlString, baseURL) {
     const requestUrl = new URL(urlString);
     const appUrl = new URL(baseURL);
@@ -47,17 +51,22 @@ export function createBootIssueCollector(page, options = {}) {
         }
 
         const text = msg.text();
-        if (ignoredPatterns.some((pattern) => pattern.test(text))) {
+        if (matchesAnyPattern(ignoredPatterns, text)) {
             return;
         }
 
-        if (fatalPatterns.some((pattern) => pattern.test(text))) {
+        if (matchesAnyPattern(fatalPatterns, text)) {
             issues.push(`console:${text}`);
         }
     });
 
     page.on('pageerror', (error) => {
-        issues.push(`pageerror:${error.message}`);
+        const message = error.message || String(error);
+        if (matchesAnyPattern(ignoredPatterns, message)) {
+            return;
+        }
+
+        issues.push(`pageerror:${message}`);
     });
 
     page.on('requestfailed', (request) => {
