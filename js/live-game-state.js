@@ -1,4 +1,20 @@
+import { escapeHtml } from './utils.js';
 import { getDefaultLivePeriod } from './live-sport-config.js';
+
+const statKeyMap = {
+  PTS: 'pts',
+  POINTS: 'pts',
+  REB: 'reb',
+  AST: 'ast',
+  STL: 'stl',
+  BLK: 'blk',
+  BLOCK: 'blk',
+  TO: 'to',
+  TOV: 'to',
+  FOUL: 'fouls',
+  FOULS: 'fouls',
+  FLS: 'fouls'
+};
 
 export function resolveOpponentDisplayName(game) {
   const opponent = String(game?.opponent || '').trim();
@@ -63,6 +79,117 @@ export function resolveLiveStatColumns({ columns = [], configs = [], game = null
   }
 
   return directColumns;
+}
+
+export function resolveViewerLineup({ players = [], onCourt = [], bench = [] } = {}) {
+  const rosterIds = Array.isArray(players)
+    ? players.map((player) => String(player?.id || '').trim()).filter(Boolean)
+    : [];
+  const rosterSet = new Set(rosterIds);
+  const benchProvided = Array.isArray(bench);
+  const seen = new Set();
+
+  const keepPlayer = (playerId) => {
+    const normalizedId = String(playerId || '').trim();
+    if (!rosterSet.has(normalizedId)) return false;
+    if (seen.has(normalizedId)) return false;
+    seen.add(normalizedId);
+    return true;
+  };
+
+  const rawOnCourt = Array.isArray(onCourt) ? onCourt : [];
+  rawOnCourt.forEach((playerId) => keepPlayer(playerId));
+  const onCourtSet = new Set(seen);
+  const onCourtIds = rosterIds.filter((playerId) => onCourtSet.has(playerId));
+
+  let benchIds;
+  if (benchProvided) {
+    const rawBench = Array.isArray(bench) ? bench : [];
+    rawBench.forEach((playerId) => keepPlayer(playerId));
+    const benchSet = new Set(seen);
+    benchIds = rosterIds.filter((playerId) => benchSet.has(playerId) && !onCourtSet.has(playerId));
+  } else {
+    benchIds = rosterIds.filter((playerId) => !onCourtSet.has(playerId));
+  }
+
+  return { onCourtIds, benchIds };
+}
+
+function renderViewerLineupList({
+  ids = [],
+  emptyLabel = '',
+  players = [],
+  stats = {},
+  statColumns = [],
+  lastStatChange = null
+} = {}) {
+  if (!ids.length) {
+    return `<div class="text-sand/40 text-xs">${emptyLabel}</div>`;
+  }
+
+  const columns = normalizeLiveStatColumns(statColumns);
+  return ids.map((id) => {
+    const player = players.find((entry) => entry?.id === id);
+    const playerStats = stats[id] || {};
+    const highlight = lastStatChange?.playerId === id && !lastStatChange?.isOpponent;
+    const nameClass = highlight ? 'text-teal' : 'text-sand';
+    const statClass = highlight ? 'text-teal' : 'text-sand';
+    const statItems = columns.map((column) => {
+      const key = statKeyMap[column] || column.toLowerCase();
+      const value = playerStats[key] || 0;
+      return `<span class="${statClass}">${value} ${escapeHtml(column)}</span>`;
+    }).join('');
+
+    return `
+      <div class="bg-slate/50 rounded-lg px-3 py-2">
+        <div class="flex items-center gap-2 min-w-0">
+          ${player?.photoUrl ? `
+            <img src="${escapeHtml(player.photoUrl)}" class="w-6 h-6 rounded-full object-cover" alt="${escapeHtml(player?.name || 'Player')}">
+          ` : `
+            <div class="w-6 h-6 rounded-full bg-teal/20 text-teal text-[10px] flex items-center justify-center">
+              ${escapeHtml((player?.name || 'P')[0])}
+            </div>
+          `}
+          <span class="text-teal font-mono text-xs">#${escapeHtml(player?.num || '')}</span>
+          <span class="${nameClass} text-xs truncate">${escapeHtml(player?.name || 'Player')}</span>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
+          ${statItems}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+export function renderViewerLineupSections({
+  players = [],
+  stats = {},
+  statColumns = [],
+  onCourt = [],
+  bench = [],
+  lastStatChange = null
+} = {}) {
+  const { onCourtIds, benchIds } = resolveViewerLineup({ players, onCourt, bench });
+  return {
+    onCourtIds,
+    benchIds,
+    onCourtHtml: renderViewerLineupList({
+      ids: onCourtIds,
+      emptyLabel: 'No players currently on field',
+      players,
+      stats,
+      statColumns,
+      lastStatChange
+    }),
+    benchHtml: renderViewerLineupList({
+      ids: benchIds,
+      emptyLabel: 'No players currently on bench',
+      players,
+      stats,
+      statColumns,
+      lastStatChange
+    })
+  };
 }
 
 export function applyResetEventState(currentState, event) {
