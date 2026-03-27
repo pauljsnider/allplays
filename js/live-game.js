@@ -1195,6 +1195,12 @@ function processNewEvents(events) {
   });
 }
 
+function processReplayEventsSequentially(events) {
+  events.forEach((event) => {
+    processNewEvents([event]);
+  });
+}
+
 function startLiveMode() {
   state.isLive = true;
   els.liveBadge?.classList.remove('hidden');
@@ -1471,7 +1477,7 @@ function seekReplay(targetMs) {
     elapsedMs: targetMs
   });
   if (replayWindow.events.length) {
-    processNewEvents(replayWindow.events);
+    processReplayEventsSequentially(replayWindow.events);
   }
   state.replayIndex = replayWindow.nextReplayIndex;
 
