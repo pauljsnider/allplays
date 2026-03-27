@@ -30,7 +30,7 @@ import {
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
@@ -1113,11 +1113,10 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
 }
 
 function processNewEvents(events) {
-  const resetBoundaryMs = Number(state.lastResetAt) || 0;
-  const newEvents = events.filter(ev => (
-    !state.eventIds.has(ev.id) &&
-    isLiveEventVisibleForResetBoundary(ev, resetBoundaryMs)
-  ));
+  const newEvents = collectVisibleLiveEventsSequentially(events, {
+    seenIds: state.eventIds,
+    resetBoundaryMs: state.lastResetAt
+  });
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
     if (event.type === 'reset') {
@@ -1192,12 +1191,6 @@ function processNewEvents(events) {
     } else {
       showEventCelebration(event);
     }
-  });
-}
-
-function processReplayEventsSequentially(events) {
-  events.forEach((event) => {
-    processNewEvents([event]);
   });
 }
 
@@ -1477,7 +1470,7 @@ function seekReplay(targetMs) {
     elapsedMs: targetMs
   });
   if (replayWindow.events.length) {
-    processReplayEventsSequentially(replayWindow.events);
+    processNewEvents(replayWindow.events);
   }
   state.replayIndex = replayWindow.nextReplayIndex;
 
