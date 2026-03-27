@@ -107,13 +107,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.deploy_preview.outputs.preview_url }}
+          JQ_FILTER: '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- allplays-preview-url -->")) | .id'
         run: |
           set -euo pipefail
           marker='<!-- allplays-preview-url -->'
           body="$marker
 
           Preview URL: $PREVIEW_URL"
-          comment_id="$(gh api repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- allplays-preview-url -->")) | .id' | head -n1)"
+          comment_id="$(gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq "$JQ_FILTER" | head -n1)"
           if [ -n "$comment_id" ]; then
             gh api repos/${{ github.repository }}/issues/comments/"$comment_id" --method PATCH -f body="$body" >/dev/null
           else
