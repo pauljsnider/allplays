@@ -23,7 +23,7 @@ import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-g
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=4';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
@@ -726,49 +726,16 @@ function renderStats() {
 
 function renderLineup() {
   if (!els.lineupOnCourt || !els.lineupBench) return;
-  const rosterIds = state.players.map(p => p.id);
-  const onCourtSet = new Set((state.onCourt || []).filter(id => rosterIds.includes(id)));
-  const onCourtIds = rosterIds.filter(id => onCourtSet.has(id));
-  const benchIds = rosterIds.filter(id => !onCourtSet.has(id));
-  const renderList = (ids, emptyLabel) => {
-    if (!ids || !ids.length) {
-      return `<div class="text-sand/40 text-xs">${emptyLabel}</div>`;
-    }
-    return ids.map(id => {
-      const player = state.players.find(p => p.id === id);
-      const stats = state.stats[id] || {};
-      const highlight = state.lastStatChange?.playerId === id && !state.lastStatChange?.isOpponent;
-      const nameClass = highlight ? 'text-teal' : 'text-sand';
-      const statClass = highlight ? 'text-teal' : 'text-sand';
-      const columns = normalizeLiveStatColumns(state.statColumns);
-      const statItems = columns.map(col => {
-        const key = statKeyMap[col] || col.toLowerCase();
-        const val = stats[key] || 0;
-        return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
-      }).join('');
-      return `
-        <div class="bg-slate/50 rounded-lg px-3 py-2">
-          <div class="flex items-center gap-2 min-w-0">
-            ${player?.photoUrl ? `
-              <img src="${player.photoUrl}" class="w-6 h-6 rounded-full object-cover" alt="${escapeHtml(player?.name || 'Player')}">
-            ` : `
-              <div class="w-6 h-6 rounded-full bg-teal/20 text-teal text-[10px] flex items-center justify-center">
-                ${escapeHtml((player?.name || 'P')[0])}
-              </div>
-            `}
-            <span class="text-teal font-mono text-xs">#${escapeHtml(player?.num || '')}</span>
-            <span class="${nameClass} text-xs truncate">${escapeHtml(player?.name || 'Player')}</span>
-          </div>
-          <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
-            ${statItems}
-          </div>
-        </div>
-      `;
-    }).join('');
-  };
-
-  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'No players currently on field');
-  els.lineupBench.innerHTML = renderList(benchIds, 'No players currently on bench');
+  const rendered = renderViewerLineupSections({
+    players: state.players,
+    stats: state.stats,
+    statColumns: state.statColumns,
+    onCourt: state.onCourt,
+    bench: state.bench,
+    lastStatChange: state.lastStatChange
+  });
+  els.lineupOnCourt.innerHTML = rendered.onCourtHtml;
+  els.lineupBench.innerHTML = rendered.benchHtml;
 }
 
 function renderChat() {
