@@ -252,8 +252,8 @@ function buildModuleSource() {
             'const { getApp } = deps.firebaseApp;'
         )
         .replace(
-            "import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';",
-            'const { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } = deps.liveGameState;'
+            "import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=4';",
+            'const { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } = deps.liveGameState;'
         )
         .replace(
             "import { getDefaultLivePeriod } from './live-sport-config.js?v=1';",
@@ -362,8 +362,60 @@ async function bootReplayPage({ replayEvents }) {
         },
         liveGameChat: { isViewerChatEnabled },
         liveGameReplay: {
+            buildReplaySessionState: ({ teamId, gameId, game = {}, defaultPeriod = 'Q1', replayEvents = [], replayChat = [], replayReactions = [] } = {}) => ({
+                hasReplayEvents: replayEvents.length > 0,
+                showReplayControls: true,
+                hideReactionsBar: true,
+                hideEndedOverlay: true,
+                replayGameHref: `game.html#teamId=${teamId}&gameId=${gameId}`,
+                emptyStateMessage: 'No play-by-play data available for this game.',
+                scoreboard: {
+                    homeScore: replayEvents.length ? 0 : (game.homeScore ?? 0),
+                    awayScore: replayEvents.length ? 0 : (game.awayScore ?? 0),
+                    period: replayEvents.length ? defaultPeriod : (game.period || defaultPeriod),
+                    gameClockMs: 0
+                },
+                replayEvents: [...replayEvents].sort((a, b) => (a?.gameClockMs || 0) - (b?.gameClockMs || 0)),
+                replayChat: [...replayChat],
+                replayReactions: [...replayReactions],
+                replayStartAt: 0
+            }),
+            collectReplayEventWindow: ({ replayEvents = [], replayIndex = 0, elapsedMs = 0 } = {}) => {
+                const events = [];
+                let nextReplayIndex = replayIndex;
+                while (nextReplayIndex < replayEvents.length && (replayEvents[nextReplayIndex]?.gameClockMs || 0) <= elapsedMs) {
+                    events.push(replayEvents[nextReplayIndex]);
+                    nextReplayIndex += 1;
+                }
+                return { events, nextReplayIndex };
+            },
+            collectReplayStreamWindow: ({ replayChat = [], replayReactions = [], replayChatIndex = 0, replayReactionIndex = 0, replayStartAt = 0 } = {}, elapsedMs = 0) => {
+                const replayTime = replayStartAt + elapsedMs;
+                const chatMessages = [];
+                let nextReplayChatIndex = replayChatIndex;
+                while (nextReplayChatIndex < replayChat.length) {
+                    const message = replayChat[nextReplayChatIndex];
+                    const timestamp = message?.createdAt?.toMillis?.() ?? message?.createdAt ?? null;
+                    if (timestamp != null && timestamp > replayTime) break;
+                    chatMessages.push(message);
+                    nextReplayChatIndex += 1;
+                }
+
+                const reactions = [];
+                let nextReplayReactionIndex = replayReactionIndex;
+                while (nextReplayReactionIndex < replayReactions.length) {
+                    const reaction = replayReactions[nextReplayReactionIndex];
+                    const timestamp = reaction?.createdAt?.toMillis?.() ?? reaction?.createdAt ?? null;
+                    if (timestamp != null && timestamp > replayTime) break;
+                    reactions.push(reaction);
+                    nextReplayReactionIndex += 1;
+                }
+
+                return { chatMessages, nextReplayChatIndex, reactions, nextReplayReactionIndex };
+            },
             getReplayElapsedMs: () => 0,
-            getReplayStartTimeAfterSpeedChange: () => 0
+            getReplayStartTimeAfterSpeedChange: () => 0,
+            getReplayTimestampMs: (value) => value?.toMillis?.() ?? value ?? null
         },
         liveGameVideo: {
             MAX_HIGHLIGHT_CLIP_MS: 60000,
@@ -382,6 +434,12 @@ async function bootReplayPage({ replayEvents }) {
             resolveOpponentDisplayName: () => 'Opponent',
             normalizeLiveStatColumns: (columns) => columns || [],
             resolveLiveStatColumns: () => [],
+            renderViewerLineupSections: () => ({
+                onCourtIds: [],
+                benchIds: [],
+                onCourtHtml: '',
+                benchHtml: ''
+            }),
             applyResetEventState() {},
             shouldResetViewerFromGameDoc: () => false,
             isLiveEventVisibleForResetBoundary: () => true
