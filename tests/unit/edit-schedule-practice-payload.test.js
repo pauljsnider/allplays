@@ -72,9 +72,11 @@ describe('edit schedule practice recurrence payload', () => {
 
     it('wires the practice submit flow through the shared recurrence payload helper', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
+        const helperSource = readFileSync(new URL('../../js/edit-schedule-practice-submit.js', import.meta.url), 'utf8');
 
-        expect(source).toContain("import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';");
-        expect(source).toContain('applyPracticeRecurrenceFields({');
-        expect(source).toContain('deleteField,');
+        expect(source).toContain("import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';");
+        expect(helperSource).toContain("import { applyPracticeRecurrenceFields } from './edit-schedule-practice-payload.js';");
+        expect(helperSource).toContain('applyPracticeRecurrenceFields({');
+        expect(helperSource).toContain('deleteField,');
     });
 });
