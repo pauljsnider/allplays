@@ -141,6 +141,22 @@ async function mockLoginPageModules(page, resetScenario = {}) {
                         }
                     };
                 }
+
+                export function createLoginRedirectCoordinator() {
+                    return {
+                        urlCodeParam: null,
+                        shouldRedeemInviteFromLogin: false,
+                        getPostAuthRedirect(userWithRoles) {
+                            return userWithRoles?.redirectUrl || 'dashboard.html';
+                        },
+                        getGoogleRedirectUrl(userWithRoles) {
+                            return userWithRoles?.redirectUrl || 'dashboard.html';
+                        },
+                        getAutoRedirectUrl(userWithRoles) {
+                            return userWithRoles?.redirectUrl || 'dashboard.html';
+                        }
+                    };
+                }
             `
         });
     });
