@@ -1267,6 +1267,7 @@ async function startReplay() {
   state.unsubscribers = [];
   state.engagementsActive = false;
   state.liveEventsActive = false;
+  updateChatAvailability();
 
   // Show REPLAY badge instead of LIVE
   if (els.liveBadge) {
