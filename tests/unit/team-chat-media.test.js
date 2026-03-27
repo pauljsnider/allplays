@@ -4,7 +4,10 @@ import path from 'node:path';
 import {
     MAX_CHAT_MEDIA_SIZE,
     normalizeChatAttachments,
-    collectThreadMedia
+    collectThreadMedia,
+    buildChatMediaShareDetails,
+    getChatMediaActionState,
+    getChatMediaDownloadName
 } from '../../js/team-chat-media.js';
 
 describe('team chat media normalization', () => {
@@ -119,6 +122,48 @@ describe('team chat media gallery', () => {
                 senderName: 'Coach'
             }
         ]);
+    });
+
+    it('builds share details, action availability, and download names for gallery items', () => {
+        const entry = {
+            type: 'video',
+            url: 'https://cdn.example.com/highlight.mp4',
+            name: 'Varsity Finals Clip.mp4',
+            senderName: 'Coach Kim',
+            createdAt: new Date('2026-03-09T20:02:00Z')
+        };
+
+        expect(buildChatMediaShareDetails(entry)).toEqual({
+            title: 'Team chat video',
+            text: 'Shared by Coach Kim on Mar 9, 2026',
+            url: 'https://cdn.example.com/highlight.mp4'
+        });
+
+        expect(getChatMediaActionState(entry, {
+            canNativeShare: true,
+            canCopyLink: true
+        })).toEqual({
+            canShare: true,
+            canDownload: true,
+            canCopyLink: true
+        });
+
+        expect(getChatMediaActionState(entry, {
+            canNativeShare: false,
+            canCopyLink: false
+        })).toEqual({
+            canShare: false,
+            canDownload: true,
+            canCopyLink: false
+        });
+
+        expect(getChatMediaDownloadName(entry)).toBe('Varsity_Finals_Clip.mp4');
+        expect(getChatMediaDownloadName({
+            type: 'image',
+            url: 'https://cdn.example.com/media',
+            name: '',
+            createdAt: new Date('2026-03-09T20:02:00Z')
+        })).toBe('team-chat-photo-2026-03-09.jpg');
     });
 });
 
