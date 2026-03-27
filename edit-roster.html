@@ -873,10 +873,19 @@
         });
 
         // Remove image handler
-        document.getElementById('remove-roster-image').addEventListener('click', () => {
+        function resetBulkAiImageState() {
             document.getElementById('roster-image-input').value = '';
             document.getElementById('roster-image-preview').classList.add('hidden');
             document.getElementById('roster-image-preview-img').src = '';
+        }
+
+        function resetBulkAiDraftState() {
+            resetBulkAiImageState();
+            document.getElementById('bulk-text-input').value = '';
+        }
+
+        document.getElementById('remove-roster-image').addEventListener('click', () => {
+            resetBulkAiImageState();
         });
 
         // Helper function to convert image file to base64 for Gemini
@@ -1112,7 +1121,7 @@ EXAMPLES:
         document.getElementById('cancel-changes-btn').addEventListener('click', () => {
             proposedOperations = [];
             document.getElementById('proposed-changes-section').classList.add('hidden');
-            document.getElementById('bulk-text-input').value = '';
+            resetBulkAiDraftState();
         });
 
         // Apply changes to database
@@ -1167,7 +1176,9 @@ EXAMPLES:
                 // Reset and reload
                 proposedOperations = [];
                 document.getElementById('proposed-changes-section').classList.add('hidden');
-                document.getElementById('bulk-text-input').value = '';
+                if (errorCount === 0) {
+                    resetBulkAiDraftState();
+                }
                 await loadRoster();
 
             } catch (error) {
