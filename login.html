@@ -100,6 +100,7 @@
         import { getUserProfile } from './js/db.js?v=15';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=1';
+        import { createForgotPasswordHandler } from './js/login-page.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -312,48 +313,11 @@
             }
         });
 
-        document.getElementById('forgot-password-btn').addEventListener('click', async () => {
-            const email = document.getElementById('email').value;
-            const errorDiv = document.getElementById('error-message');
-            errorDiv.classList.add('hidden');
-
-            if (!email) {
-                errorDiv.textContent = 'Please enter your email address';
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-
-            try {
-                // Firebase will validate if the email exists in Auth
-                // No need to check Firestore - user may exist in Auth but not in DB
-                await resetPassword(email);
-
-                // Clear the email field for security
-                document.getElementById('email').value = '';
-
-                errorDiv.classList.remove('hidden');
-                errorDiv.classList.remove('text-red-500');
-                errorDiv.classList.add('text-green-600');
-                errorDiv.textContent = 'Password reset email sent! Please check your inbox and spam folder.';
-            } catch (error) {
-                errorDiv.classList.remove('text-green-600');
-                errorDiv.classList.add('text-red-500');
-
-                // Handle specific Firebase error codes
-                let errorMessage = error.message;
-                if (error.code === 'auth/invalid-email') {
-                    errorMessage = 'Invalid email address format.';
-                } else if (error.code === 'auth/user-not-found') {
-                    errorMessage = 'No account found with this email address.';
-                } else if (error.code === 'auth/too-many-requests') {
-                    errorMessage = 'Too many requests. Please try again later.';
-                }
-
-                errorDiv.textContent = errorMessage;
-                errorDiv.classList.remove('hidden');
-                console.error('Password reset error:', error);
-            }
-        });
+        document.getElementById('forgot-password-btn').addEventListener('click', createForgotPasswordHandler({
+            emailInput: document.getElementById('email'),
+            errorDiv: document.getElementById('error-message'),
+            resetPassword
+        }));
     </script>
 </body>
 
