@@ -232,7 +232,7 @@ function extractEditTeamModule() {
             'const { renderHeader, renderFooter, getUrlParams } = deps.utils;'
         )
         .replace(
-            "import { checkAuth, sendInviteEmail } from './js/auth.js?v=10';",
+            /import\s+\{\s*checkAuth,\s*sendInviteEmail\s*\}\s+from\s+'\.\/js\/auth\.js\?v=\d+';/,
             'const { checkAuth, sendInviteEmail } = deps.auth;'
         )
         .replace(

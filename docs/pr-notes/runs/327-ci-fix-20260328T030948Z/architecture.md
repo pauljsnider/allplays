@@ -1,0 +1,1 @@
+Architecture role unavailable; inline analysis: failure is test harness string replacement drift after auth import cache-bust moved from ?v=10 to ?v=11. Minimal fix is to make replacements version-agnostic for the affected imports only.

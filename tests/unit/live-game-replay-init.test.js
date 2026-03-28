@@ -228,7 +228,7 @@ function buildModuleSource() {
             'const { computePanelVisibility } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { checkAuth } from './auth.js?v=10';",
+            /import\s+\{\s*checkAuth\s*\}\s+from\s+'\.\/auth\.js\?v=\d+';/,
             'const { checkAuth } = deps.auth;'
         )
         .replace(
