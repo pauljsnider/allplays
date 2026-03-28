@@ -101,35 +101,42 @@ function replaceImport(source, pattern, replacement) {
   return updated;
 }
 
-function buildModuleSource() {
-  const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+function rewriteModuleImports(source, modulePath, replacement) {
+  const escapedModulePath = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const importPattern = new RegExp(
+    `^import\\s*\\{[^}]*\\}\\s*from\\s*['"]${escapedModulePath}(?:\\?v=[^'"]+)?['"];\\s*$`,
+    'gm'
+  );
+  const matches = source.match(importPattern);
+  if (!matches?.length) {
+    throw new Error(`Failed to rewrite imports for module: ${modulePath}`);
+  }
+  return source.replace(importPattern, '').replace(/^/, `${replacement}\n`);
+}
+
+function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
   let rewritten = source;
-  rewritten = replaceImport(
+  rewritten = rewriteModuleImports(
     rewritten,
-    /import\s*\{\s*getTeam,\s*getTeams,\s*getGame,\s*getPlayers,\s*getConfigs,\s*updateGame,\s*collection,\s*getDocs,\s*deleteDoc,\s*query,\s*broadcastLiveEvent,\s*subscribeLiveChat,\s*postLiveChatMessage,\s*setGameLiveStatus\s*\}\s*from\s*['"]\.\/db\.js(?:\?v=[^'"]+)?['"];/,
+    './db.js',
     'const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;'
   );
-  rewritten = replaceImport(
+  rewritten = rewriteModuleImports(
     rewritten,
-    /import\s*\{\s*db\s*\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];/,
+    './firebase.js',
     'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;'
   );
-  rewritten = replaceImport(
+  rewritten = rewriteModuleImports(
     rewritten,
-    /import\s*\{\s*getUrlParams,\s*escapeHtml\s*\}\s*from\s*['"]\.\/utils\.js(?:\?v=[^'"]+)?['"];/,
+    './utils.js',
     'const { getUrlParams, escapeHtml } = deps.utils;'
   );
-  rewritten = replaceImport(
+  rewritten = rewriteModuleImports(
     rewritten,
-    /import\s*\{\s*checkAuth\s*\}\s*from\s*['"]\.\/auth\.js(?:\?v=[^'"]+)?['"];/,
+    './auth.js',
     'const { checkAuth } = deps.auth;'
-  );
-  rewritten = replaceImport(
-    rewritten,
-    /import\s*\{\s*writeBatch,\s*doc,\s*setDoc,\s*addDoc,\s*onSnapshot\s*\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];\s*/,
-    ''
   );
   rewritten = replaceImport(
     rewritten,
@@ -367,6 +374,22 @@ async function bootLiveTracker({ updateGame }) {
     flushTimers
   };
 }
+
+describe('live tracker opponent stats harness', () => {
+  it('rewrites module imports when cache-buster versions change', () => {
+    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')
+      .replace('./db.js?v=15', './db.js?v=999')
+      .replace('./firebase.js?v=10', './firebase.js?v=77')
+      .replace('./utils.js?v=9', './utils.js?v=123')
+      .replace('./auth.js?v=11', './auth.js?v=456');
+
+    const rewritten = buildModuleSource(source);
+
+    expect(rewritten).toContain('const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;');
+    expect(rewritten).toContain('const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;');
+    expect(rewritten).not.toMatch(/import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/(?:db|firebase|utils|auth)\.js\?v=/);
+  });
+});
 
 describe('live tracker opponent stats hydration', () => {
   it('preserves persisted fouls when resuming opponent stats', () => {
