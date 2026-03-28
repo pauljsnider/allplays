@@ -1805,15 +1805,17 @@
                 const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
                 const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
                 const parsedValue = Number(value) || 0;
+                let appliedDelta = 0;
 
                 if (isOpponent) {
                     const currentVal = Number(gameState.opponentStats[playerId]?.[statKey] || statEl?.textContent || 0);
                     const newVal = Math.max(0, currentVal - parsedValue);
+                    appliedDelta = currentVal - newVal;
                     if (!gameState.opponentStats[playerId]) gameState.opponentStats[playerId] = {};
                     gameState.opponentStats[playerId][statKey] = newVal;
                     if (statEl) statEl.textContent = `${newVal}`;
                     if (isPoints) {
-                        awayScore = Math.max(0, awayScore - parsedValue);
+                        awayScore = Math.max(0, awayScore - appliedDelta);
                         updateScoreDisplay();
                         scheduleScoreSync();
                     }
@@ -1822,10 +1824,11 @@
                     if (!gameState.playerStats[playerId]) gameState.playerStats[playerId] = {};
                     const currentVal = Number(gameState.playerStats[playerId][statKey] || statEl?.textContent || 0);
                     const newVal = Math.max(0, currentVal - parsedValue);
+                    appliedDelta = currentVal - newVal;
                     gameState.playerStats[playerId][statKey] = newVal;
                     if (statEl) statEl.textContent = `${newVal}`;
                     if (isPoints) {
-                        homeScore = Math.max(0, homeScore - parsedValue);
+                        homeScore = Math.max(0, homeScore - appliedDelta);
                         updateScoreDisplay();
                         scheduleScoreSync();
                     }
@@ -1845,7 +1848,7 @@
                 broadcastReversedStatEvent({
                     playerId,
                     statKey,
-                    value: -parsedValue,
+                    value: -appliedDelta,
                     isOpponent,
                     description: `Undo stat: ${entry.text}`
                 });
