@@ -101,106 +101,109 @@ function replaceImport(source, pattern, replacement) {
   return updated;
 }
 
-function rewriteModuleImports(source, modulePath, replacement) {
-  const escapedModulePath = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const importPattern = new RegExp(
-    `^import\\s*\\{[^}]*\\}\\s*from\\s*['"]${escapedModulePath}(?:\\?v=[^'"]+)?['"];\\s*$`,
-    'gm'
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function replaceNamedImportByModulePath(source, modulePath, replacement) {
+  const pattern = new RegExp(
+    `import\\s*\\{[\\s\\S]*?\\}\\s*from\\s*['"]${escapeRegex(modulePath)}(?:\\?v=[^'"]+)?['"];?\\s*`
   );
-  const matches = source.match(importPattern);
-  if (!matches?.length) {
-    throw new Error(`Failed to rewrite imports for module: ${modulePath}`);
-  }
-  return source.replace(importPattern, '').replace(/^/, `${replacement}\n`);
+  return replaceImport(source, pattern, replacement);
 }
 
 function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')) {
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
   let rewritten = source;
-  rewritten = rewriteModuleImports(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
     './db.js',
     'const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;'
   );
-  rewritten = rewriteModuleImports(
+  rewritten = replaceImport(
     rewritten,
-    './firebase.js',
+    /import\s*\{(?=[\s\S]*\bdb\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
     'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;'
   );
-  rewritten = rewriteModuleImports(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
     './utils.js',
     'const { getUrlParams, escapeHtml } = deps.utils;'
   );
-  rewritten = rewriteModuleImports(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
     './auth.js',
     'const { checkAuth } = deps.auth;'
   );
   rewritten = replaceImport(
     rewritten,
-    /import\s*\{\s*getAI,\s*getGenerativeModel,\s*GoogleAIBackend\s*\}\s*from\s*['"]\.\/vendor\/firebase-ai\.js['"];/,
+    /import\s*\{(?=[\s\S]*\bwriteBatch\b)(?=[\s\S]*\bonSnapshot\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
+    ''
+  );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
+    './vendor/firebase-ai.js',
     'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*getApp\s*\}\s*from\s*['"]\.\/vendor\/firebase-app\.js['"];/,
+    './vendor/firebase-app.js',
     'const { getApp } = deps.firebaseApp;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*isVoiceRecognitionSupported,\s*normalizeGameNoteText,\s*appendGameSummaryLine,\s*buildGameNoteLogText\s*\}\s*from\s*['"]\.\/live-tracker-notes\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-notes.js',
     'const { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } = deps.liveTrackerNotes;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*canApplySubstitution,\s*applySubstitution,\s*resolveFinalScoreForCompletion,\s*acquireSingleFlightLock,\s*releaseSingleFlightLock\s*\}\s*from\s*['"]\.\/live-tracker-integrity\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-integrity.js',
     'const { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion, acquireSingleFlightLock, releaseSingleFlightLock } = deps.liveTrackerIntegrity;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*hydrateOpponentStats\s*\}\s*from\s*['"]\.\/live-tracker-opponent-stats\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-opponent-stats.js',
     'const { hydrateOpponentStats } = deps.liveTrackerOpponentStats;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*buildPersistedResumeClockState,\s*deriveResumeClockState\s*\}\s*from\s*['"]\.\/live-tracker-resume\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-resume.js',
     'const { buildPersistedResumeClockState, deriveResumeClockState } = deps.liveTrackerResume;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*restoreLiveLineup\s*\}\s*from\s*['"]\.\/live-tracker-lineup\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-lineup.js',
     'const { restoreLiveLineup } = deps.liveTrackerLineup;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*resolveFinalScore,\s*resolveSummaryRecipient\s*\}\s*from\s*['"]\.\/live-tracker-email\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-email.js',
     'const { resolveFinalScore, resolveSummaryRecipient } = deps.liveTrackerEmail;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*buildLiveResetEvent\s*\}\s*from\s*['"]\.\/live-tracker-reset\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-reset.js',
     'const { buildLiveResetEvent } = deps.liveTrackerReset;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*advanceLiveChatUnreadState\s*\}\s*from\s*['"]\.\/live-tracker-chat-unread\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-chat-unread.js',
     'const { advanceLiveChatUnreadState } = deps.liveTrackerChatUnread;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*resolveLiveStatConfig,\s*resolveLiveStatColumns\s*\}\s*from\s*['"]\.\/live-game-state\.js(?:\?v=[^'"]+)?['"];/,
+    './live-game-state.js',
     'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*getDefaultLivePeriod,\s*getSportPeriodLabels\s*\}\s*from\s*['"]\.\/live-sport-config\.js(?:\?v=[^'"]+)?['"];/,
+    './live-sport-config.js',
     'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;'
   );
-  rewritten = replaceImport(
+  rewritten = replaceNamedImportByModulePath(
     rewritten,
-    /import\s*\{\s*buildOpponentStatsSnapshotFromEntries,\s*buildFinishCompletionPlan,\s*executeFinishNavigationPlan\s*\}\s*from\s*['"]\.\/live-tracker-finish\.js(?:\?v=[^'"]+)?['"];/,
+    './live-tracker-finish.js',
     'const { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } = deps.liveTrackerFinish;'
   );
 
@@ -376,9 +379,12 @@ async function bootLiveTracker({ updateGame }) {
 }
 
 describe('live tracker opponent stats harness', () => {
-  it('rewrites module imports when cache-buster versions change', () => {
+  it('rewrites module imports when cache-buster versions and formatting change', () => {
     const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')
-      .replace('./db.js?v=15', './db.js?v=999')
+      .replace(
+        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=15';",
+        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=999';"
+      )
       .replace('./firebase.js?v=10', './firebase.js?v=77')
       .replace('./utils.js?v=9', './utils.js?v=123')
       .replace('./auth.js?v=11', './auth.js?v=456');
