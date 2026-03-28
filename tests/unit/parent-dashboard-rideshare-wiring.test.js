@@ -8,10 +8,10 @@ function readRepoFile(relativePath) {
 describe('parent dashboard rideshare wiring', () => {
     it('keeps a single submitGameRsvp assignment and no accidental wrapper around rideshare helpers', () => {
         const html = readRepoFile('parent-dashboard.html');
-        const submitAssignments = html.match(/window\.submitGameRsvp\s*=\s*async function\s*\(/g) || [];
+        const submitAssignments = html.match(/window\.submitGameRsvp\s*=\s*submitGameRsvp/g) || [];
 
         expect(submitAssignments).toHaveLength(1);
-        expect(html).not.toMatch(/window\.submitGameRsvp\s*=\s*async function\s*\([^)]*\)\s*\{\s*function\s+getEventRideKey\s*\(/s);
+        expect(html).not.toMatch(/window\.submitGameRsvp\s*=\s*submitGameRsvp\s*;\s*function\s+getEventRideKey\s*\(/s);
     });
 
     it('allows rideshare rendering for practice events even when not db-tracked', () => {

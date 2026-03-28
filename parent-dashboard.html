@@ -291,6 +291,7 @@
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
         import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
+        import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';
         import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
         import { resolveSelectedRideChildId, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
@@ -326,7 +327,6 @@
         window.openPracticePacketPreview = openPracticePacketPreview;
         window.closePracticePacketPreview = closePracticePacketPreview;
         window.markPracticePacketComplete = markPracticePacketComplete;
-        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
         window.toggleRideOfferForm = toggleRideOfferForm;
         window.submitRideOfferFromForm = submitRideOfferFromForm;
         window.updateRideRequestDecision = updateRideRequestDecision;
@@ -763,47 +763,20 @@
             }
         }
 
-        window.submitGameRsvp = async function(teamId, gameId, response, childContext = {}) {
-            try {
-                const playerIds = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext);
-                const isSinglePlayerSelection = playerIds.length === 1;
-                const summary = isSinglePlayerSelection
-                    ? await submitRsvpForPlayer(teamId, gameId, currentUserId, {
-                        displayName: currentUser?.displayName || currentUser?.email,
-                        playerId: playerIds[0],
-                        response
-                    })
-                    : await submitRsvp(teamId, gameId, currentUserId, {
-                        displayName: currentUser?.displayName || currentUser?.email,
-                        playerIds,
-                        response
-                    });
-                // Update local state and re-render
-                allScheduleEvents.forEach((event) => {
-                    if (event?.teamId !== teamId || event?.id !== gameId) return;
-                    if (isSinglePlayerSelection && (event?.childId || event?.playerId) !== playerIds[0]) return;
-                    event.myRsvp = response;
-                    if (summary) event.rsvpSummary = summary;
-                    else if (!event.rsvpSummary) event.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-                });
-                renderScheduleFromControls();
-            } catch (err) {
-                console.error('RSVP error:', err);
-                alert('Failed to submit RSVP: ' + err.message);
-            }
-        };
-
-        function submitGameRsvpFromButton(btn, response) {
-            const teamId = btn?.dataset?.teamId || '';
-            const gameId = btn?.dataset?.gameId || '';
-            if (!teamId || !gameId) return;
-            const selectedChildId = document.getElementById('player-filter')?.value || '';
-            window.submitGameRsvp(teamId, gameId, response, {
-                selectedChildId,
-                childId: btn?.dataset?.childId || '',
-                childIds: btn?.dataset?.childIds || ''
-            });
-        }
+        const { submitGameRsvp, submitGameRsvpFromButton } = createParentDashboardRsvpController({
+            getAllScheduleEvents: () => allScheduleEvents,
+            getCurrentUserId: () => currentUserId,
+            getCurrentUser: () => currentUser,
+            documentRef: document,
+            resolveRsvpPlayerIdsForSubmission,
+            submitRsvp,
+            submitRsvpForPlayer,
+            renderScheduleFromControls,
+            alertFn: (message) => alert(message),
+            consoleRef: console
+        });
+        window.submitGameRsvp = submitGameRsvp;
+        window.submitGameRsvpFromButton = submitGameRsvpFromButton;
 
         function hasRecordedAttendance(attendance) {
             if (!attendance || !Array.isArray(attendance.players) || attendance.players.length === 0) return false;
