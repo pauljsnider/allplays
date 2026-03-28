@@ -18,6 +18,10 @@ function shouldIgnoreError(patterns, text) {
     return matchesAnyPattern(patterns, text);
 }
 
+function isFirebaseInitRequest(urlString) {
+    return /\/__(?:\/)?firebase\/init\.json$/.test(urlString);
+}
+
 function isAppAssetRequest(urlString, baseURL) {
     const requestUrl = new URL(urlString);
     const appUrl = new URL(baseURL);
@@ -81,6 +85,10 @@ export function createBootIssueCollector(page, options = {}) {
             return;
         }
 
+        if (isFirebaseInitRequest(request.url())) {
+            return;
+        }
+
         const failure = request.failure();
         issues.push(`requestfailed:${failure?.errorText || 'unknown'}:${request.url()}`);
     });
@@ -89,7 +97,7 @@ export function createBootIssueCollector(page, options = {}) {
         const url = response.url();
         const status = response.status();
 
-        if (/\/__(?:\/)?firebase\/init\.json$/.test(url) && status === 404) {
+        if (isFirebaseInitRequest(url) && status === 404) {
             return;
         }
 
