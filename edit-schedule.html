@@ -773,6 +773,7 @@
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
+        import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
         import { Timestamp, deleteField } from "./js/firebase.js?v=10";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -2074,26 +2075,25 @@
                 const notifyNote = document.getElementById('practice-notify-note').value.trim();
                 const notificationSettings = getTeamScheduleNotificationSettings();
 
-                const practiceData = {
-                    title,
-                    date: Timestamp.fromDate(startDate),
-                    end: Timestamp.fromDate(endDate),
-                    location,
-                    notes,
-                    scheduleNotifications: buildScheduleNotificationMetadata({
-                        settings: notificationSettings,
-                        action: editingPracticeId ? 'updated' : 'created',
-                        sent: false,
-                        note: notifyNote
-                    })
-                };
-
-                applyPracticeRecurrenceFields({
-                    practiceData,
-                    isRecurring,
+                const { savedPracticeId } = await savePracticeForm({
+                    teamId: currentTeamId,
                     editingPracticeId,
                     editingSeriesId,
-                    recurrenceConfig: {
+                    formState: {
+                        title,
+                        startDate,
+                        endDate,
+                        location,
+                        notes,
+                        scheduleNotifications: buildScheduleNotificationMetadata({
+                            settings: notificationSettings,
+                            action: editingPracticeId ? 'updated' : 'created',
+                            sent: false,
+                            note: notifyNote
+                        })
+                    },
+                    recurrenceState: {
+                        isRecurring,
                         freq: document.getElementById('recurrenceFreq').value,
                         interval: parseInt(document.getElementById('recurrenceInterval').value) || 1,
                         byDays: Array.from(document.querySelectorAll('.day-checkbox:checked')).map(cb => cb.value),
@@ -2101,19 +2101,12 @@
                         untilValue: document.getElementById('recurrenceUntil').value,
                         countValue: document.getElementById('recurrenceCount').value
                     },
-                    startDate,
-                    endDate,
                     Timestamp,
                     deleteField,
-                    generateSeriesId
+                    generateSeriesId,
+                    addPractice,
+                    updateEvent
                 });
-
-                let savedPracticeId = editingPracticeId;
-                if (editingPracticeId) {
-                    await updateEvent(currentTeamId, editingPracticeId, practiceData);
-                } else {
-                    savedPracticeId = await addPractice(currentTeamId, practiceData);
-                }
 
                 try {
                     const sent = await maybeNotifyScheduleChange({

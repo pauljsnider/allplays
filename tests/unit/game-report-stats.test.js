@@ -58,6 +58,26 @@ describe('game report stat helpers', () => {
     });
   });
 
+  it('adds the fouls column once edited stats expose that field', () => {
+    const result = resolveReportStatColumns({
+      statsMap: {
+        p1: { pts: 12, reb: 5, ast: 4 },
+        p2: { pts: 3, fouls: 1 }
+      },
+      resolvedConfig: {
+        columns: ['PTS', 'REB', 'AST']
+      }
+    });
+
+    expect(result.statKeys).toEqual(['pts', 'reb', 'ast', 'fouls']);
+    expect(result.statLabels).toEqual({
+      pts: 'PTS',
+      reb: 'REB',
+      ast: 'AST',
+      fouls: 'FOULS'
+    });
+  });
+
   it('falls back to discovered stat keys when no config is available', () => {
     const result = resolveReportStatColumns({
       statsMap: {
