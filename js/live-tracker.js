@@ -469,6 +469,8 @@ function renderOpponents() {
   els.oppCards.querySelectorAll('[data-opp-del]').forEach(btn => {
     btn.addEventListener('click', () => {
       state.opp = state.opp.filter(o => o.id !== btn.dataset.oppDel);
+      scheduleOpponentStatsSync();
+      scheduleLiveHasData();
       renderOpponents();
     });
   });
