@@ -19,11 +19,18 @@ import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, 
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=11';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
-import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
+import {
+  buildReplaySessionState,
+  collectReplayEventWindow,
+  collectReplayStreamWindow,
+  getReplayElapsedMs,
+  getReplayStartTimeAfterSpeedChange,
+  getReplayTimestampMs
+} from './live-game-replay.js?v=3';
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=4';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
@@ -726,49 +733,16 @@ function renderStats() {
 
 function renderLineup() {
   if (!els.lineupOnCourt || !els.lineupBench) return;
-  const rosterIds = state.players.map(p => p.id);
-  const onCourtSet = new Set((state.onCourt || []).filter(id => rosterIds.includes(id)));
-  const onCourtIds = rosterIds.filter(id => onCourtSet.has(id));
-  const benchIds = rosterIds.filter(id => !onCourtSet.has(id));
-  const renderList = (ids, emptyLabel) => {
-    if (!ids || !ids.length) {
-      return `<div class="text-sand/40 text-xs">${emptyLabel}</div>`;
-    }
-    return ids.map(id => {
-      const player = state.players.find(p => p.id === id);
-      const stats = state.stats[id] || {};
-      const highlight = state.lastStatChange?.playerId === id && !state.lastStatChange?.isOpponent;
-      const nameClass = highlight ? 'text-teal' : 'text-sand';
-      const statClass = highlight ? 'text-teal' : 'text-sand';
-      const columns = normalizeLiveStatColumns(state.statColumns);
-      const statItems = columns.map(col => {
-        const key = statKeyMap[col] || col.toLowerCase();
-        const val = stats[key] || 0;
-        return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
-      }).join('');
-      return `
-        <div class="bg-slate/50 rounded-lg px-3 py-2">
-          <div class="flex items-center gap-2 min-w-0">
-            ${player?.photoUrl ? `
-              <img src="${player.photoUrl}" class="w-6 h-6 rounded-full object-cover" alt="${escapeHtml(player?.name || 'Player')}">
-            ` : `
-              <div class="w-6 h-6 rounded-full bg-teal/20 text-teal text-[10px] flex items-center justify-center">
-                ${escapeHtml((player?.name || 'P')[0])}
-              </div>
-            `}
-            <span class="text-teal font-mono text-xs">#${escapeHtml(player?.num || '')}</span>
-            <span class="${nameClass} text-xs truncate">${escapeHtml(player?.name || 'Player')}</span>
-          </div>
-          <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
-            ${statItems}
-          </div>
-        </div>
-      `;
-    }).join('');
-  };
-
-  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'No players currently on field');
-  els.lineupBench.innerHTML = renderList(benchIds, 'No players currently on bench');
+  const rendered = renderViewerLineupSections({
+    players: state.players,
+    stats: state.stats,
+    statColumns: state.statColumns,
+    onCourt: state.onCourt,
+    bench: state.bench,
+    lastStatChange: state.lastStatChange
+  });
+  els.lineupOnCourt.innerHTML = rendered.onCourtHtml;
+  els.lineupBench.innerHTML = rendered.benchHtml;
 }
 
 function renderChat() {
@@ -1106,11 +1080,10 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
 }
 
 function processNewEvents(events) {
-  const resetBoundaryMs = Number(state.lastResetAt) || 0;
-  const newEvents = events.filter(ev => (
-    !state.eventIds.has(ev.id) &&
-    isLiveEventVisibleForResetBoundary(ev, resetBoundaryMs)
-  ));
+  const newEvents = collectVisibleLiveEventsSequentially(events, {
+    seenIds: state.eventIds,
+    resetBoundaryMs: state.lastResetAt
+  });
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
     if (event.type === 'reset') {
@@ -1294,6 +1267,7 @@ async function startReplay() {
   state.unsubscribers = [];
   state.engagementsActive = false;
   state.liveEventsActive = false;
+  updateChatAvailability();
 
   // Show REPLAY badge instead of LIVE
   if (els.liveBadge) {
@@ -1319,46 +1293,49 @@ async function startReplay() {
     return;
   }
 
-  if (!replayEvents || replayEvents.length === 0) {
-    if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-center text-sand/60 py-8">No play-by-play data available for this game.</div>';
-    els.replayControls?.classList.remove('hidden');
-    els.reactionsBar?.classList.add('hidden');
-    els.endedOverlay?.classList.add('hidden');
-    if (els.replayGameLink) {
-      els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
-    }
-    // Show final score from game doc even if no replay events
+  const replaySession = buildReplaySessionState({
+    teamId: state.teamId,
+    gameId: state.gameId,
+    game: state.game,
+    defaultPeriod: getDefaultLivePeriod({ game: state.game, team: state.team }),
+    replayEvents,
+    replayChat,
+    replayReactions
+  });
+
+  state.replayEvents = replaySession.replayEvents;
+  state.replayChat = replaySession.replayChat;
+  state.replayReactions = replaySession.replayReactions;
+  state.homeScore = replaySession.scoreboard.homeScore;
+  state.awayScore = replaySession.scoreboard.awayScore;
+  state.period = replaySession.scoreboard.period;
+  state.gameClockMs = replaySession.scoreboard.gameClockMs;
+  state.replayIndex = 0;
+  state.replayChatIndex = 0;
+  state.replayReactionIndex = 0;
+  state.replayStartAt = replaySession.replayStartAt;
+
+  els.replayControls?.classList.toggle('hidden', !replaySession.showReplayControls);
+  els.reactionsBar?.classList.toggle('hidden', replaySession.hideReactionsBar);
+  els.endedOverlay?.classList.toggle('hidden', replaySession.hideEndedOverlay);
+  if (els.replayGameLink) {
+    els.replayGameLink.href = replaySession.replayGameHref;
+  }
+  updateChatAvailability();
+
+  if (!replaySession.hasReplayEvents) {
+    if (els.playsFeed) els.playsFeed.innerHTML = `<div class="text-center text-sand/60 py-8">${replaySession.emptyStateMessage}</div>`;
+    if (els.chatMessages) els.chatMessages.innerHTML = '';
+    if (els.replayDuration) els.replayDuration.textContent = formatClock(0);
+    if (els.replayCurrent) els.replayCurrent.textContent = formatClock(0);
     renderScoreboard();
     return;
   }
-
-  state.replayEvents = replayEvents;
-  state.replayChat = replayChat || [];
-  state.replayReactions = replayReactions || [];
-
-  state.replayEvents.sort((a, b) => (a.gameClockMs || 0) - (b.gameClockMs || 0));
-  state.replayChat.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
 
   state.events = [];
   state.eventIds = new Set();
   state.stats = {};
   state.opponentStats = {};
-  state.homeScore = 0;
-  state.awayScore = 0;
-  state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
-  state.gameClockMs = 0;
-  state.replayIndex = 0;
-  state.replayChatIndex = 0;
-  state.replayReactionIndex = 0;
-  state.replayStartAt = getReplayStartAt();
-
-  els.replayControls?.classList.remove('hidden');
-  els.reactionsBar?.classList.add('hidden');
-  els.endedOverlay?.classList.add('hidden');
-  els.chatInput?.setAttribute('disabled', 'disabled');
-  if (els.replayGameLink) {
-    els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
-  }
 
   renderScoreboard();
   if (els.playsFeed) els.playsFeed.innerHTML = '';
@@ -1379,15 +1356,15 @@ function playReplay() {
 function replayTick() {
   if (!state.replayPlaying) return;
   const elapsed = getReplayElapsedMs(Date.now(), state.replayStartTime, state.replaySpeed);
-
-  while (
-    state.replayIndex < state.replayEvents.length &&
-    (state.replayEvents[state.replayIndex].gameClockMs || 0) <= elapsed
-  ) {
-    const event = state.replayEvents[state.replayIndex];
-    processNewEvents([event]);
-    state.replayIndex += 1;
+  const replayWindow = collectReplayEventWindow({
+    replayEvents: state.replayEvents,
+    replayIndex: state.replayIndex,
+    elapsedMs: elapsed
+  });
+  if (replayWindow.events.length) {
+    processNewEvents(replayWindow.events);
   }
+  state.replayIndex = replayWindow.nextReplayIndex;
 
   state.gameClockMs = elapsed;
   renderScoreboard();
@@ -1406,47 +1383,24 @@ function replayTick() {
   }
 }
 
-function getReplayStartAt() {
-  const timestamps = [];
-  state.replayEvents.forEach(ev => {
-    const ts = getTimestampMs(ev.createdAt);
-    if (ts) timestamps.push(ts);
-  });
-  state.replayChat.forEach(msg => {
-    const ts = getTimestampMs(msg.createdAt);
-    if (ts) timestamps.push(ts);
-  });
-  state.replayReactions.forEach(rx => {
-    const ts = getTimestampMs(rx.createdAt);
-    if (ts) timestamps.push(ts);
-  });
-  return timestamps.length ? Math.min(...timestamps) : Date.now();
-}
-
 function advanceReplayStreams(elapsed) {
-  const replayTime = state.replayStartAt + elapsed;
+  const replayWindow = collectReplayStreamWindow({
+    replayChat: state.replayChat,
+    replayReactions: state.replayReactions,
+    replayChatIndex: state.replayChatIndex,
+    replayReactionIndex: state.replayReactionIndex,
+    replayStartAt: state.replayStartAt
+  }, elapsed);
 
-  while (state.replayChatIndex < state.replayChat.length) {
-    const msg = state.replayChat[state.replayChatIndex];
-    const ts = getTimestampMs(msg.createdAt);
-    if (!ts || ts <= replayTime) {
-      state.chatMessages.push(msg);
-      state.replayChatIndex += 1;
-    } else {
-      break;
-    }
+  if (replayWindow.chatMessages.length) {
+    state.chatMessages.push(...replayWindow.chatMessages);
   }
+  state.replayChatIndex = replayWindow.nextReplayChatIndex;
 
-  while (state.replayReactionIndex < state.replayReactions.length) {
-    const reaction = state.replayReactions[state.replayReactionIndex];
-    const ts = getTimestampMs(reaction.createdAt);
-    if (!ts || ts <= replayTime) {
-      showFloatingReaction(reaction);
-      state.replayReactionIndex += 1;
-    } else {
-      break;
-    }
-  }
+  replayWindow.reactions.forEach((reaction) => {
+    showFloatingReaction(reaction);
+  });
+  state.replayReactionIndex = replayWindow.nextReplayReactionIndex;
 
   if (state.chatMessages.length) {
     renderChat();
@@ -1478,14 +1432,15 @@ function seekReplay(targetMs) {
     els.chatMessages.innerHTML = '';
   }
 
-  while (
-    state.replayIndex < state.replayEvents.length &&
-    (state.replayEvents[state.replayIndex].gameClockMs || 0) <= targetMs
-  ) {
-    const event = state.replayEvents[state.replayIndex];
-    processNewEvents([event]);
-    state.replayIndex += 1;
+  const replayWindow = collectReplayEventWindow({
+    replayEvents: state.replayEvents,
+    replayIndex: state.replayIndex,
+    elapsedMs: targetMs
+  });
+  if (replayWindow.events.length) {
+    processNewEvents(replayWindow.events);
   }
+  state.replayIndex = replayWindow.nextReplayIndex;
 
   advanceReplayStreams(targetMs);
   renderScoreboard();
@@ -1493,10 +1448,7 @@ function seekReplay(targetMs) {
 }
 
 function getTimestampMs(ts) {
-  if (!ts) return null;
-  if (typeof ts === 'number') return ts;
-  if (ts.toMillis) return ts.toMillis();
-  return null;
+  return getReplayTimestampMs(ts);
 }
 
 function initReplayControls() {

@@ -16,6 +16,7 @@ import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
+import { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -156,21 +157,10 @@ function schedulePlayerStatsSync(playerId) {
 }
 
 function buildOpponentStatsSnapshot() {
-  const opponentStats = {};
-  state.opp.forEach(opp => {
-    opponentStats[opp.id] = {
-      name: opp.name || '',
-      number: opp.number || '',
-      playerId: opp.playerId || null,
-      photoUrl: opp.photoUrl || ''
-    };
-    (currentConfig?.columns || []).forEach(col => {
-      const key = col.toLowerCase();
-      opponentStats[opp.id][key] = opp.stats?.[key] || 0;
-    });
-    opponentStats[opp.id].fouls = opp.stats?.fouls || 0;
+  return buildOpponentStatsSnapshotFromEntries({
+    opponentEntries: state.opp,
+    columns: currentConfig?.columns || []
   });
-  return opponentStats;
 }
 
 function scheduleOpponentStatsSync() {
@@ -1357,7 +1347,7 @@ Write the match report now:`;
   }
 }
 
-function generateEmailBody(finalHome, finalAway, summary = '') {
+function generateEmailBody(finalHome, finalAway, summary = '', logEntries = state.log) {
   const gameData = {
     opponent: currentGame.opponent || 'Unknown Opponent',
     date: currentGame.date ? new Date(currentGame.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString(),
@@ -1410,10 +1400,10 @@ function generateEmailBody(finalHome, finalAway, summary = '') {
     body += `\n`;
   });
 
-  if (state.log.length > 0) {
+  if (logEntries.length > 0) {
     body += `\nGAME LOG:\n`;
     body += `${'='.repeat(40)}\n`;
-    state.log.slice().reverse().forEach(ev => {
+    logEntries.slice().reverse().forEach(ev => {
       body += `${ev.period} ${ev.clock} - ${ev.text}\n`;
     });
   }
@@ -1442,6 +1432,7 @@ async function saveAndComplete() {
   const rawFinalAway = parseInt(els.awayFinal.value, 10);
   const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
   const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
+<<<<<<< HEAD
   const resolvedFinalScore = resolveFinalScoreForCompletion({
     requestedHome,
     requestedAway,
@@ -1456,80 +1447,86 @@ async function saveAndComplete() {
   if (resolvedFinalScore.reconciled && resolvedFinalScore.mismatch) {
     addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${resolvedFinalScore.home}-${resolvedFinalScore.away} based on scoring events`);
   }
+=======
+>>>>>>> e3dab44 (Add live tracker finish flow coverage for #377)
   const summary = els.notesFinal.value.trim();
   const sendEmail = els.finishSendEmail?.checked;
+  const recipientEmail = resolveSummaryRecipient({
+    teamNotificationEmail: currentTeam?.notificationEmail,
+    userEmail: currentUser?.email
+  });
+  const finishPlanArgs = {
+    requestedHome,
+    requestedAway,
+    liveHome: state.home,
+    liveAway: state.away,
+    scoreLogIsComplete: state.scoreLogIsComplete,
+    log: state.log,
+    currentPeriod: state.period,
+    currentClock: formatClock(state.clock),
+    summary,
+    sendEmail,
+    teamId: currentTeamId,
+    gameId: currentGameId,
+    teamName: currentTeam?.name || '',
+    opponentName: currentGame?.opponent || 'Unknown Opponent',
+    recipientEmail,
+    columns: currentConfig?.columns || [],
+    roster,
+    statsByPlayerId: state.stats,
+    opponentEntries: state.opp,
+    currentUserUid: currentUser?.uid,
+    buildEmailBody: (finalHome, finalAway, recapSummary, logEntries) => generateEmailBody(finalHome, finalAway, recapSummary, logEntries)
+  };
+  let finishPlan = buildFinishCompletionPlan(finishPlanArgs);
+  let addedReconciliationLogEntry = null;
+
+  if (finishPlan.scoreReconciliation.mismatch) {
+    addedReconciliationLogEntry = {
+      text: finishPlan.reconciliationNote,
+      ts: Date.now(),
+      period: state.period,
+      clock: formatClock(state.clock)
+    };
+    state.log.unshift(addedReconciliationLogEntry);
+    renderLog();
+    els.homeFinal.value = String(finishPlan.finalHome);
+    els.awayFinal.value = String(finishPlan.finalAway);
+    finishPlan = buildFinishCompletionPlan({
+      ...finishPlanArgs,
+      log: state.log
+    });
+  }
 
   try {
     const batch = writeBatch(db);
 
     // 1. Write all game log events
-    state.log.forEach(entry => {
+    finishPlan.eventWrites.forEach(({ data }) => {
       const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-      batch.set(eventRef, {
-        text: entry.text,
-        gameTime: entry.clock,
-        period: entry.period,
-        timestamp: entry.ts || Date.now(),
-        type: entry.undoData?.type || 'game_log',
-        playerId: entry.undoData?.playerId || null,
-        statKey: entry.undoData?.statKey || null,
-        value: entry.undoData?.value || null,
-        isOpponent: entry.undoData?.isOpponent || false,
-        createdBy: currentUser.uid
-      });
+      batch.set(eventRef, data);
     });
 
     // 2. Write aggregated stats for each player
-    roster.forEach(player => {
-      const statsObj = {};
-      (currentConfig?.columns || []).forEach(col => {
-        const key = col.toLowerCase();
-        statsObj[key] = state.stats[player.id]?.[key] || 0;
-      });
-      // Always include fouls
-      statsObj.fouls = state.stats[player.id]?.fouls || 0;
-      const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, player.id);
-      batch.set(statsRef, {
-        playerName: player.name,
-        playerNumber: player.num,
-        stats: statsObj,
-        timeMs: state.stats[player.id]?.time || 0
-      });
+    finishPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
+      const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+      batch.set(statsRef, data);
     });
-
-    // 3. Build opponentStats in same shape as track.html
-    const opponentStats = buildOpponentStatsSnapshot();
 
     // 4. Update game doc
     const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
-    batch.update(gameRef, {
-      homeScore: finalHome,
-      awayScore: finalAway,
-      summary,
-      status: 'completed',
-      opponentStats
-    });
+    batch.update(gameRef, finishPlan.gameUpdate);
 
     await batch.commit();
     await endLiveBroadcast();
     isFinishing = true;
 
-    if (sendEmail) {
-      const subject = `${currentTeam.name} vs ${currentGame.opponent || 'Unknown Opponent'} - Game Summary`;
-      const body = generateEmailBody(finalHome, finalAway, summary);
-      const recipientEmail = resolveSummaryRecipient({
-        teamNotificationEmail: currentTeam?.notificationEmail,
-        userEmail: currentUser?.email
-      });
-      const mailto = `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      window.location.href = mailto;
-      setTimeout(() => {
-        window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
-      }, 500);
-    } else {
-      window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;
-    }
+    executeFinishNavigationPlan(finishPlan.navigation);
   } catch (error) {
+    if (addedReconciliationLogEntry && state.log[0] === addedReconciliationLogEntry) {
+      state.log.shift();
+      renderLog();
+    }
     releaseSingleFlightLock(finishSubmissionLock);
     isFinishing = false;
     if (els.finishSave) {
