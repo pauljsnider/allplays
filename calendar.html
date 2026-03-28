@@ -152,6 +152,7 @@
         let currentTeamFilter = '';
         let calendarMonth = new Date().getMonth();
         let calendarYear = new Date().getFullYear();
+        let activeDayDetail = null;
         let linkedPlayersByTeam = new Map();
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
@@ -623,6 +624,7 @@
         }
 
         function openDayDetail(year, month, day) {
+            activeDayDetail = { year, month, day };
             const dayStart = new Date(year, month, day);
             const dayEnd = new Date(year, month, day, 23, 59, 59);
             const dayEvents = allEvents.filter(ev => {
@@ -668,6 +670,7 @@
         }
 
         function closeDayModal() {
+            activeDayDetail = null;
             document.getElementById('day-modal').classList.add('hidden');
         }
 
@@ -696,12 +699,9 @@
                     }
                 });
                 applyFilters();
-                if (currentView === 'calendar') {
-                    // Keep day modal content fresh for current selection
-                    const title = document.getElementById('day-modal-title')?.textContent;
-                    if (title && !document.getElementById('day-modal')?.classList.contains('hidden')) {
-                        // No-op: user can click date again; avoid parsing locale title.
-                    }
+                const dayModal = document.getElementById('day-modal');
+                if (currentView === 'calendar' && activeDayDetail && dayModal && !dayModal.classList.contains('hidden')) {
+                    openDayDetail(activeDayDetail.year, activeDayDetail.month, activeDayDetail.day);
                 }
             } catch (err) {
                 alert('Failed to submit RSVP: ' + (err?.message || err));
