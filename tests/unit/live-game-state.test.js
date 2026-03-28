@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -148,5 +148,33 @@ describe('live game state helpers', () => {
   it('always keeps reset events and unknown timestamps', () => {
     expect(isLiveEventVisibleForResetBoundary({ type: 'reset', createdAt: { toMillis: () => 1000 } }, 2000)).toBe(true);
     expect(isLiveEventVisibleForResetBoundary({ type: 'stat' }, 2000)).toBe(true);
+  });
+
+  it('recomputes the reset boundary while scanning replay batches', () => {
+    const events = [
+      {
+        id: 'reset-1',
+        type: 'reset',
+        gameClockMs: 10000,
+        createdAt: { toMillis: () => 5000 }
+      },
+      {
+        id: 'stale-pre-reset',
+        type: 'stat',
+        gameClockMs: 30000,
+        createdAt: { toMillis: () => 4000 }
+      },
+      {
+        id: 'fresh-post-reset',
+        type: 'stat',
+        gameClockMs: 35000,
+        createdAt: { toMillis: () => 6000 }
+      }
+    ];
+
+    expect(collectVisibleLiveEventsSequentially(events)).toEqual([
+      events[0],
+      events[2]
+    ]);
   });
 });
