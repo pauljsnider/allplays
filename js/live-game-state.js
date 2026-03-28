@@ -256,3 +256,34 @@ export function isLiveEventVisibleForResetBoundary(event = {}, resetBoundaryMs =
   if (!Number.isFinite(eventMs)) return true;
   return eventMs >= resetBoundaryMs;
 }
+
+function getLiveEventTimestampMs(event = {}) {
+  const createdAt = event?.createdAt;
+  if (typeof createdAt === 'number') return createdAt;
+  if (createdAt && typeof createdAt.toMillis === 'function') {
+    return createdAt.toMillis();
+  }
+  return null;
+}
+
+export function collectVisibleLiveEventsSequentially(events = [], { seenIds = new Set(), resetBoundaryMs = 0 } = {}) {
+  const visibleEvents = [];
+  const seenEventIds = seenIds instanceof Set ? seenIds : new Set();
+  let currentResetBoundaryMs = Number(resetBoundaryMs) || 0;
+
+  events.forEach((event) => {
+    if (!event || seenEventIds.has(event.id)) return;
+    if (!isLiveEventVisibleForResetBoundary(event, currentResetBoundaryMs)) return;
+
+    visibleEvents.push(event);
+
+    if (event.type === 'reset') {
+      const resetAt = getLiveEventTimestampMs(event);
+      if (Number.isFinite(resetAt) && resetAt > currentResetBoundaryMs) {
+        currentResetBoundaryMs = resetAt;
+      }
+    }
+  });
+
+  return visibleEvents;
+}

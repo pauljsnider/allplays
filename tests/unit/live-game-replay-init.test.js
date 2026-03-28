@@ -236,8 +236,8 @@ function buildModuleSource() {
             'const { isViewerChatEnabled } = deps.liveGameChat;'
         )
         .replace(
-            "import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';",
-            'const { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } = deps.liveGameReplay;'
+            "import {\n  buildReplaySessionState,\n  collectReplayEventWindow,\n  collectReplayStreamWindow,\n  getReplayElapsedMs,\n  getReplayStartTimeAfterSpeedChange,\n  getReplayTimestampMs\n} from './live-game-replay.js?v=3';",
+            'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs } = deps.liveGameReplay;'
         )
         .replace(
             "import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';",
@@ -252,8 +252,8 @@ function buildModuleSource() {
             'const { getApp } = deps.firebaseApp;'
         )
         .replace(
-            "import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=4';",
-            'const { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } = deps.liveGameState;'
+            "import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=4';",
+            'const { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } = deps.liveGameState;'
         )
         .replace(
             "import { getDefaultLivePeriod } from './live-sport-config.js?v=1';",
@@ -442,7 +442,7 @@ async function bootReplayPage({ replayEvents }) {
             }),
             applyResetEventState() {},
             shouldResetViewerFromGameDoc: () => false,
-            isLiveEventVisibleForResetBoundary: () => true
+            collectVisibleLiveEventsSequentially: (events) => events
         },
         liveSportConfig: {
             getDefaultLivePeriod: () => 'Final'
