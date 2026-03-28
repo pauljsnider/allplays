@@ -93,83 +93,111 @@ function createEnvironment() {
   };
 }
 
+function replaceImport(source, pattern, replacement) {
+  const updated = source.replace(pattern, replacement);
+  if (updated === source) {
+    throw new Error(`Failed to rewrite import for pattern: ${pattern}`);
+  }
+  return updated;
+}
+
 function buildModuleSource() {
   const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
   const authHook = `checkAuth(async (user) => {\n  if (!user) {\n    window.location.href = 'login.html';\n    return;\n  }\n  currentUser = user;\n  await init();\n});`;
 
-  return source
-    .replace(
-      "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=15';",
-      'const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;'
-    )
-    .replace(
-      "import { db } from './firebase.js?v=10';",
-      'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;'
-    )
-    .replace(
-      "import { getUrlParams, escapeHtml } from './utils.js?v=9';",
-      'const { getUrlParams, escapeHtml } = deps.utils;'
-    )
-    .replace(
-      "import { checkAuth } from './auth.js?v=11';",
-      'const { checkAuth } = deps.auth;'
-    )
-    .replace(
-      "import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=10';",
-      ''
-    )
-    .replace(
-      "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
-      'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;'
-    )
-    .replace(
-      "import { getApp } from './vendor/firebase-app.js';",
-      'const { getApp } = deps.firebaseApp;'
-    )
-    .replace(
-      "import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';",
-      'const { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } = deps.liveTrackerNotes;'
-    )
-    .replace(
-      "import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=2';",
-      'const { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion, acquireSingleFlightLock, releaseSingleFlightLock } = deps.liveTrackerIntegrity;'
-    )
-    .replace(
-      "import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';",
-      'const { hydrateOpponentStats } = deps.liveTrackerOpponentStats;'
-    )
-    .replace(
-      "import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';",
-      'const { buildPersistedResumeClockState, deriveResumeClockState } = deps.liveTrackerResume;'
-    )
-    .replace(
-      "import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';",
-      'const { restoreLiveLineup } = deps.liveTrackerLineup;'
-    )
-    .replace(
-      "import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';",
-      'const { resolveFinalScore, resolveSummaryRecipient } = deps.liveTrackerEmail;'
-    )
-    .replace(
-      "import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';",
-      'const { buildLiveResetEvent } = deps.liveTrackerReset;'
-    )
-    .replace(
-      "import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';",
-      'const { advanceLiveChatUnreadState } = deps.liveTrackerChatUnread;'
-    )
-    .replace(
-      "import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';",
-      'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;'
-    )
-    .replace(
-      "import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';",
-      'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;'
-    )
-    .replace(
-      "import { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=1';",
-      'const { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } = deps.liveTrackerFinish;'
-    )
+  let rewritten = source;
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*getTeam,\s*getTeams,\s*getGame,\s*getPlayers,\s*getConfigs,\s*updateGame,\s*collection,\s*getDocs,\s*deleteDoc,\s*query,\s*broadcastLiveEvent,\s*subscribeLiveChat,\s*postLiveChatMessage,\s*setGameLiveStatus\s*\}\s*from\s*['"]\.\/db\.js(?:\?v=[^'"]+)?['"];/,
+    'const { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } = deps.db;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*db\s*\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];/,
+    'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*getUrlParams,\s*escapeHtml\s*\}\s*from\s*['"]\.\/utils\.js(?:\?v=[^'"]+)?['"];/,
+    'const { getUrlParams, escapeHtml } = deps.utils;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*checkAuth\s*\}\s*from\s*['"]\.\/auth\.js(?:\?v=[^'"]+)?['"];/,
+    'const { checkAuth } = deps.auth;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*writeBatch,\s*doc,\s*setDoc,\s*addDoc,\s*onSnapshot\s*\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];\s*/,
+    ''
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*getAI,\s*getGenerativeModel,\s*GoogleAIBackend\s*\}\s*from\s*['"]\.\/vendor\/firebase-ai\.js['"];/,
+    'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*getApp\s*\}\s*from\s*['"]\.\/vendor\/firebase-app\.js['"];/,
+    'const { getApp } = deps.firebaseApp;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*isVoiceRecognitionSupported,\s*normalizeGameNoteText,\s*appendGameSummaryLine,\s*buildGameNoteLogText\s*\}\s*from\s*['"]\.\/live-tracker-notes\.js(?:\?v=[^'"]+)?['"];/,
+    'const { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } = deps.liveTrackerNotes;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*canApplySubstitution,\s*applySubstitution,\s*resolveFinalScoreForCompletion,\s*acquireSingleFlightLock,\s*releaseSingleFlightLock\s*\}\s*from\s*['"]\.\/live-tracker-integrity\.js(?:\?v=[^'"]+)?['"];/,
+    'const { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion, acquireSingleFlightLock, releaseSingleFlightLock } = deps.liveTrackerIntegrity;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*hydrateOpponentStats\s*\}\s*from\s*['"]\.\/live-tracker-opponent-stats\.js(?:\?v=[^'"]+)?['"];/,
+    'const { hydrateOpponentStats } = deps.liveTrackerOpponentStats;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*buildPersistedResumeClockState,\s*deriveResumeClockState\s*\}\s*from\s*['"]\.\/live-tracker-resume\.js(?:\?v=[^'"]+)?['"];/,
+    'const { buildPersistedResumeClockState, deriveResumeClockState } = deps.liveTrackerResume;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*restoreLiveLineup\s*\}\s*from\s*['"]\.\/live-tracker-lineup\.js(?:\?v=[^'"]+)?['"];/,
+    'const { restoreLiveLineup } = deps.liveTrackerLineup;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*resolveFinalScore,\s*resolveSummaryRecipient\s*\}\s*from\s*['"]\.\/live-tracker-email\.js(?:\?v=[^'"]+)?['"];/,
+    'const { resolveFinalScore, resolveSummaryRecipient } = deps.liveTrackerEmail;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*buildLiveResetEvent\s*\}\s*from\s*['"]\.\/live-tracker-reset\.js(?:\?v=[^'"]+)?['"];/,
+    'const { buildLiveResetEvent } = deps.liveTrackerReset;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*advanceLiveChatUnreadState\s*\}\s*from\s*['"]\.\/live-tracker-chat-unread\.js(?:\?v=[^'"]+)?['"];/,
+    'const { advanceLiveChatUnreadState } = deps.liveTrackerChatUnread;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*resolveLiveStatConfig,\s*resolveLiveStatColumns\s*\}\s*from\s*['"]\.\/live-game-state\.js(?:\?v=[^'"]+)?['"];/,
+    'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*getDefaultLivePeriod,\s*getSportPeriodLabels\s*\}\s*from\s*['"]\.\/live-sport-config\.js(?:\?v=[^'"]+)?['"];/,
+    'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;'
+  );
+  rewritten = replaceImport(
+    rewritten,
+    /import\s*\{\s*buildOpponentStatsSnapshotFromEntries,\s*buildFinishCompletionPlan,\s*executeFinishNavigationPlan\s*\}\s*from\s*['"]\.\/live-tracker-finish\.js(?:\?v=[^'"]+)?['"];/,
+    'const { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } = deps.liveTrackerFinish;'
+  );
+
+  return rewritten
     .replace(authHook, '')
     .concat(`
 return {
@@ -199,6 +227,8 @@ const runModule = new AsyncFunction(
 
 async function bootLiveTracker({ updateGame }) {
   const { document } = createEnvironment();
+  const scheduledTimeouts = new Map();
+  let nextTimeoutId = 1;
   const deps = {
     db: {
       getTeam: async () => ({}),
@@ -303,19 +333,39 @@ async function bootLiveTracker({ updateGame }) {
     }
   };
   const window = { location: { href: '' } };
+  const setTimeoutStub = (callback) => {
+    const timeoutId = nextTimeoutId++;
+    scheduledTimeouts.set(timeoutId, callback);
+    return timeoutId;
+  };
+  const clearTimeoutStub = (timeoutId) => {
+    scheduledTimeouts.delete(timeoutId);
+  };
+  const flushTimers = async () => {
+    while (scheduledTimeouts.size) {
+      const pending = [...scheduledTimeouts.entries()];
+      scheduledTimeouts.clear();
+      for (const [, callback] of pending) {
+        await callback();
+      }
+      await Promise.resolve();
+    }
+  };
 
-  return runModule(
+  const page = await runModule(
     deps,
     window,
     document,
     console,
-    (callback) => {
-      callback();
-      return 1;
-    },
-    () => {},
+    setTimeoutStub,
+    clearTimeoutStub,
     () => {}
   );
+
+  return {
+    ...page,
+    flushTimers
+  };
 }
 
 describe('live tracker opponent stats hydration', () => {
@@ -367,8 +417,7 @@ describe('live tracker opponent stats hydration', () => {
 
     page.renderOpponents();
     page.els.oppCards.querySelectorAll('[data-opp-del]')[0].click();
-    await Promise.resolve();
-    await Promise.resolve();
+    await page.flushTimers();
 
     expect(page.state.opp.map((opp) => opp.id)).toEqual(['opp2']);
     expect(updateCalls).toContainEqual({
