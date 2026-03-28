@@ -6,10 +6,16 @@ function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 }
 
+function createLocalDate(year, monthIndex, day, hours, minutes) {
+    return new Date(year, monthIndex, day, hours, minutes, 0, 0);
+}
+
 describe('edit schedule practice save flow', () => {
     it('persists recurring practice creation through addPractice with a series payload', async () => {
         const addPractice = vi.fn().mockResolvedValue('practice-new');
         const updateEvent = vi.fn();
+        const startDate = createLocalDate(2026, 2, 16, 17, 0);
+        const endDate = createLocalDate(2026, 2, 16, 18, 30);
         const Timestamp = {
             fromDate: (value) => ({
                 iso: value.toISOString()
@@ -22,8 +28,8 @@ describe('edit schedule practice save flow', () => {
             editingSeriesId: null,
             formState: {
                 title: 'Recurring Practice',
-                startDate: new Date('2026-03-16T17:00:00.000Z'),
-                endDate: new Date('2026-03-16T18:30:00.000Z'),
+                startDate,
+                endDate,
                 location: 'Main Gym',
                 notes: 'Ball movement',
                 scheduleNotifications: {
@@ -50,8 +56,8 @@ describe('edit schedule practice save flow', () => {
         expect(updateEvent).not.toHaveBeenCalled();
         expect(addPractice).toHaveBeenCalledWith('team-1', {
             title: 'Recurring Practice',
-            date: { iso: '2026-03-16T17:00:00.000Z' },
-            end: { iso: '2026-03-16T18:30:00.000Z' },
+            date: { iso: startDate.toISOString() },
+            end: { iso: endDate.toISOString() },
             location: 'Main Gym',
             notes: 'Ball movement',
             scheduleNotifications: {
@@ -80,6 +86,8 @@ describe('edit schedule practice save flow', () => {
     it('persists recurring practice edits through updateEvent and preserves the existing series id', async () => {
         const addPractice = vi.fn();
         const updateEvent = vi.fn().mockResolvedValue(undefined);
+        const startDate = createLocalDate(2026, 2, 18, 17, 15);
+        const endDate = createLocalDate(2026, 2, 18, 18, 45);
         const Timestamp = {
             fromDate: (value) => ({
                 iso: value.toISOString()
@@ -92,8 +100,8 @@ describe('edit schedule practice save flow', () => {
             editingSeriesId: 'series-existing',
             formState: {
                 title: 'Recurring Practice',
-                startDate: new Date('2026-03-18T17:15:00.000Z'),
-                endDate: new Date('2026-03-18T18:45:00.000Z'),
+                startDate,
+                endDate,
                 location: 'Aux Gym',
                 notes: 'Update cadence',
                 scheduleNotifications: {
@@ -120,8 +128,8 @@ describe('edit schedule practice save flow', () => {
         expect(addPractice).not.toHaveBeenCalled();
         expect(updateEvent).toHaveBeenCalledWith('team-1', 'practice-123', {
             title: 'Recurring Practice',
-            date: { iso: '2026-03-18T17:15:00.000Z' },
-            end: { iso: '2026-03-18T18:45:00.000Z' },
+            date: { iso: startDate.toISOString() },
+            end: { iso: endDate.toISOString() },
             location: 'Aux Gym',
             notes: 'Update cadence',
             scheduleNotifications: {
