@@ -13,7 +13,7 @@ function isCompletedGame(game) {
 }
 
 function getPointsValue(stats = {}) {
-    return toNumber(stats.pts) || toNumber(stats.points) || toNumber(stats.point);
+    return toNumber(stats.pts) || toNumber(stats.points) || toNumber(stats.point) || toNumber(stats.goals) || toNumber(stats.goal);
 }
 
 function getTurnoverValue(stats = {}) {
@@ -26,6 +26,22 @@ function getAssistValue(stats = {}) {
 
 function getReboundValue(stats = {}) {
     return toNumber(stats.reb) || toNumber(stats.rebs) || toNumber(stats.rebounds);
+}
+
+function getShotValue(stats = {}) {
+    return toNumber(stats.shots) || toNumber(stats.shot);
+}
+
+function getPassValue(stats = {}) {
+    return toNumber(stats.passes) || toNumber(stats.pass);
+}
+
+function getBlockValue(stats = {}) {
+    return toNumber(stats.blocks) || toNumber(stats.block);
+}
+
+function getHustleValue(stats = {}) {
+    return toNumber(stats.hustle);
 }
 
 function getFoulValue(stats = {}) {
@@ -44,6 +60,30 @@ function formatMoment(event) {
     return [period, clock].filter(Boolean).join(' ');
 }
 
+function detectPrimaryScoringStat(statsMap = {}) {
+    const statEntries = Object.values(statsMap || {});
+    if (statEntries.some((stats) => toNumber(stats?.goals) > 0 || toNumber(stats?.goal) > 0)) {
+        return {
+            singular: 'goal',
+            plural: 'goals'
+        };
+    }
+
+    return {
+        singular: 'point',
+        plural: 'points'
+    };
+}
+
+function isClosingPeriod(periodValue) {
+    const period = String(periodValue || '').trim().toUpperCase();
+    return period === 'Q4'
+        || period.startsWith('OT')
+        || period === 'H2'
+        || period === '2H'
+        || period === 'SECOND HALF';
+}
+
 function getEventStatKey(event) {
     return normalizeStatKey(event?.statKey || event?.undoData?.statKey);
 }
@@ -57,11 +97,12 @@ function getEventValue(event) {
 
 function extractEventPoints(event) {
     const statKey = getEventStatKey(event);
-    if (statKey === 'pts' || statKey === 'points' || statKey === 'point') {
+    if (statKey === 'pts' || statKey === 'points' || statKey === 'point' || statKey === 'goals' || statKey === 'goal') {
         return Math.max(0, getEventValue(event));
     }
 
     const text = String(event?.text || '').toLowerCase();
+    if (text.includes(' goal')) return 1;
     if (text.includes('3-pointer') || text.includes('three-pointer') || text.includes('3 point')) return 3;
     if (text.includes('free throw')) return 1;
     if (text.includes('layup') || text.includes('jumper') || text.includes('hook shot') || text.includes('dunk')) return 2;
@@ -95,7 +136,7 @@ function buildLateGameSwing(events = []) {
         const clock = String(event?.clock || event?.gameTime || '');
         const [minutesPart = '99'] = clock.split(':');
         const minutes = Number.parseInt(minutesPart, 10);
-        return (period === 'Q4' || period.startsWith('OT')) && Number.isFinite(minutes) && minutes <= 3;
+        return isClosingPeriod(period) && Number.isFinite(minutes) && minutes <= 3;
     });
 
     if (!lateEvents.length) return null;
@@ -148,16 +189,21 @@ export function generatePlayerGameInsights({
     const points = getPointsValue(playerStats);
     const assists = getAssistValue(playerStats);
     const rebounds = getReboundValue(playerStats);
+    const shots = getShotValue(playerStats);
+    const passes = getPassValue(playerStats);
+    const blocks = getBlockValue(playerStats);
+    const hustle = getHustleValue(playerStats);
     const fouls = getFoulValue(playerStats);
     const turnovers = getTurnoverValue(playerStats);
     const totalTeamPoints = Object.values(gameTeamStats).reduce((sum, stats) => sum + getPointsValue(stats), 0);
+    const scoringLabel = detectPrimaryScoringStat(gameTeamStats);
     const insights = [];
 
     if (points > 0 && totalTeamPoints > 0) {
         const share = Math.round((points / totalTeamPoints) * 100);
         insights.push({
             title: 'Scoring load',
-            body: `${player.name} produced ${points} points, accounting for ${share}% of the team's scoring.`,
+            body: `${player.name} produced ${points} ${points === 1 ? scoringLabel.singular : scoringLabel.plural}, accounting for ${share}% of the team's scoring.`,
             tone: share >= 30 ? 'positive' : 'neutral'
         });
     }
@@ -165,6 +211,10 @@ export function generatePlayerGameInsights({
     const supportStats = [];
     if (assists > 0) supportStats.push(`${assists} assist${assists === 1 ? '' : 's'}`);
     if (rebounds > 0) supportStats.push(`${rebounds} rebound${rebounds === 1 ? '' : 's'}`);
+    if (shots > 0) supportStats.push(`${shots} shot${shots === 1 ? '' : 's'}`);
+    if (passes > 0) supportStats.push(`${passes} pass${passes === 1 ? '' : 'es'}`);
+    if (blocks > 0) supportStats.push(`${blocks} block${blocks === 1 ? '' : 's'}`);
+    if (hustle > 0) supportStats.push(`${hustle} hustle play${hustle === 1 ? '' : 's'}`);
     if (supportStats.length) {
         insights.push({
             title: 'All-around impact',
@@ -202,7 +252,7 @@ export function generatePlayerGameInsights({
         const period = String(event?.period || '').toUpperCase();
         const [minutesPart = '99'] = String(event?.clock || event?.gameTime || '').split(':');
         const minutes = Number.parseInt(minutesPart, 10);
-        return (period === 'Q4' || period.startsWith('OT')) && Number.isFinite(minutes) && minutes <= 3;
+        return isClosingPeriod(period) && Number.isFinite(minutes) && minutes <= 3;
     });
     if (closingScores.length) {
         const lastMoment = formatMoment(closingScores[closingScores.length - 1]) || 'the closing stretch';
@@ -237,6 +287,7 @@ export function generateGameInsights({
     const totalPoints = playerStatsEntries.reduce((sum, [, stats]) => sum + getPointsValue(stats), 0);
     const totalTurnovers = playerStatsEntries.reduce((sum, [, stats]) => sum + getTurnoverValue(stats), 0);
     const totalFouls = playerStatsEntries.reduce((sum, [, stats]) => sum + getFoulValue(stats), 0);
+    const scoringLabel = detectPrimaryScoringStat(statsMap);
     const teamInsights = [];
 
     if (totalPoints > 0) {
@@ -249,7 +300,7 @@ export function generateGameInsights({
             const share = Math.round((leaderPoints / totalPoints) * 100);
             teamInsights.push({
                 title: 'Offensive catalyst',
-                body: `${leader.name} led the scoring with ${leaderPoints} points, supplying ${share}% of ${team?.name || 'the team'}'s offense.`,
+                body: `${leader.name} led the scoring with ${leaderPoints} ${leaderPoints === 1 ? scoringLabel.singular : scoringLabel.plural}, supplying ${share}% of ${team?.name || 'the team'}'s offense.`,
                 tone: share >= 30 ? 'positive' : 'neutral'
             });
         }

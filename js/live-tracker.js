@@ -1432,23 +1432,6 @@ async function saveAndComplete() {
   const rawFinalAway = parseInt(els.awayFinal.value, 10);
   const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
   const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
-<<<<<<< HEAD
-  const resolvedFinalScore = resolveFinalScoreForCompletion({
-    requestedHome,
-    requestedAway,
-    liveHome: state.home,
-    liveAway: state.away,
-    log: state.log,
-    scoreLogIsComplete: state.scoreLogIsComplete
-  });
-  let finalHome = resolvedFinalScore.home;
-  let finalAway = resolvedFinalScore.away;
-
-  if (resolvedFinalScore.reconciled && resolvedFinalScore.mismatch) {
-    addLog(`Score reconciled from ${requestedHome}-${requestedAway} to ${resolvedFinalScore.home}-${resolvedFinalScore.away} based on scoring events`);
-  }
-=======
->>>>>>> e3dab44 (Add live tracker finish flow coverage for #377)
   const summary = els.notesFinal.value.trim();
   const sendEmail = els.finishSendEmail?.checked;
   const recipientEmail = resolveSummaryRecipient({
