@@ -69,7 +69,6 @@ jobs:
           open_channels="$(gh pr list --state open --limit 200 --json number --jq '.[].number' | sed 's/^/pr-/')"
           channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
           prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
-          delete_log="$RUNNER_TEMP/firebase-preview-delete.log"
           npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
           awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
           while read -r channel; do
@@ -79,8 +78,10 @@ jobs:
             if printf '%s\n' "$open_channels" | grep -qx "$channel"; then
               continue
             fi
-            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force > "$delete_log" 2>&1; then
+            delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
+            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
               if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
+                echo "Skipping already-missing Firebase preview channel: $channel"
                 continue
               fi
               cat "$delete_log" >&2
