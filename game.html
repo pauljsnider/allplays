@@ -1195,13 +1195,14 @@ Write the match report now:`;
 
                 // Setup summary controls
                 setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels);
+                let hasPlayingTime = Object.values(timeMap).some((t) => t > 0);
                 const headerRow = document.getElementById('stats-header-row');
                 function renderStatsTable() {
                     const { statKeys: tableStatKeys, statLabels: tableStatLabels } = resolveReportStatColumns({
                         statsMap,
                         resolvedConfig
                     });
-                    const hasPlayingTime = Object.values(timeMap).some((t) => t > 0);
+                    hasPlayingTime = Object.values(timeMap).some((t) => t > 0);
 
                     if (headerRow) {
                         headerRow.innerHTML = `
