@@ -61,6 +61,58 @@ describe('generateGameInsights', () => {
         expect(result.playerInsightsById).toEqual({});
         expect(result.emptyMessage).toContain('No post-game insights');
     });
+
+    it('supports non-basketball scoring stats such as goals and generic support actions', () => {
+        const result = generateGameInsights({
+            team: { name: 'Dogs', sport: 'Soccer' },
+            game: { opponent: 'Todo', homeScore: 2, awayScore: 3, status: 'completed', liveStatus: 'completed' },
+            players: [
+                { id: 'p1', name: 'paul', number: '1' },
+                { id: 'p2', name: 'jack', number: '2' }
+            ],
+            statsMap: {
+                p1: { goals: 1, shots: 1, blocks: 1 },
+                p2: { goals: 1, passes: 1, hustle: 1 }
+            },
+            timeMap: {},
+            events: [
+                { playerId: 'p1', text: '#1 paul +1 GOALS', period: 'H1', clock: '4:53', statKey: 'GOALS', value: 1, isOpponent: false },
+                { playerId: 'p2', text: '#2 jack +1 GOALS', period: 'H1', clock: '4:54', statKey: 'GOALS', value: 1, isOpponent: false }
+            ]
+        });
+
+        expect(result.teamInsights.map((item) => item.title)).toContain('Offensive catalyst');
+        expect(result.teamInsights.find((item) => item.title === 'Offensive catalyst')?.body).toContain('goal');
+        expect(result.playerInsightsById.p1.map((item) => item.title)).toEqual(expect.arrayContaining([
+            'Scoring load',
+            'All-around impact'
+        ]));
+        expect(result.playerInsightsById.p2.map((item) => item.title)).toEqual(expect.arrayContaining([
+            'Scoring load',
+            'All-around impact'
+        ]));
+    });
+
+    it('does not treat non-scoring goal-like text as a scoring event', () => {
+        const result = generateGameInsights({
+            team: { name: 'Dogs', sport: 'Soccer' },
+            game: { opponent: 'Todo', homeScore: 0, awayScore: 0, status: 'completed', liveStatus: 'completed' },
+            players: [
+                { id: 'p1', name: 'Keeper', number: '1' }
+            ],
+            statsMap: {
+                p1: { shots: 0, passes: 1 }
+            },
+            timeMap: {},
+            events: [
+                { playerId: 'p1', text: 'Keeper +1 GOALKEEPER SAVE', period: 'H2', clock: '2:10', statKey: 'goalkeeper_saves', value: 1, isOpponent: false },
+                { playerId: 'p1', text: 'Keeper +1 GOAL KICK', period: 'H2', clock: '1:40', statKey: 'goal_kicks', value: 1, isOpponent: false }
+            ]
+        });
+
+        expect(result.teamInsights.map((item) => item.title)).not.toContain('Late-game swing');
+        expect(result.playerInsightsById.p1?.map((item) => item.title) || []).not.toContain('Closing presence');
+    });
 });
 
 describe('generatePlayerGameInsights', () => {
