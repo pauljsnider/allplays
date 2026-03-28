@@ -1,10 +1,5 @@
 import { test, expect } from '@playwright/test';
-
-function buildUrl(baseURL, path) {
-    const url = new URL(path, `${baseURL}/`);
-    url.searchParams.set('cb', String(Date.now()));
-    return url.toString();
-}
+import { buildUrl } from './helpers/boot-path.js';
 
 async function getFooterSupportLinks(page) {
     const footer = page.locator('footer').last();
@@ -30,6 +25,14 @@ function expectLiveSupportHref(href, expectedValue) {
     expect(href).not.toBe('');
     expect(href?.startsWith('#')).toBeFalsy();
 }
+
+test('buildUrl preserves base path prefixes for absolute smoke routes', async () => {
+    const builtUrl = new URL(buildUrl('https://example.com/app', '/login.html'));
+
+    expect(builtUrl.origin).toBe('https://example.com');
+    expect(builtUrl.pathname).toBe('/app/login.html');
+    expect(builtUrl.searchParams.get('cb')).toBeTruthy();
+});
 
 test('homepage footer support links navigate to live support destinations', async ({ page, baseURL }) => {
     await page.goto(buildUrl(baseURL, '/'), { waitUntil: 'domcontentloaded' });
