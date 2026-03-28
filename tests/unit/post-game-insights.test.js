@@ -92,6 +92,27 @@ describe('generateGameInsights', () => {
             'All-around impact'
         ]));
     });
+
+    it('does not treat non-scoring goal-like text as a scoring event', () => {
+        const result = generateGameInsights({
+            team: { name: 'Dogs', sport: 'Soccer' },
+            game: { opponent: 'Todo', homeScore: 0, awayScore: 0, status: 'completed', liveStatus: 'completed' },
+            players: [
+                { id: 'p1', name: 'Keeper', number: '1' }
+            ],
+            statsMap: {
+                p1: { shots: 0, passes: 1 }
+            },
+            timeMap: {},
+            events: [
+                { playerId: 'p1', text: 'Keeper +1 GOALKEEPER SAVE', period: 'H2', clock: '2:10', statKey: 'goalkeeper_saves', value: 1, isOpponent: false },
+                { playerId: 'p1', text: 'Keeper +1 GOAL KICK', period: 'H2', clock: '1:40', statKey: 'goal_kicks', value: 1, isOpponent: false }
+            ]
+        });
+
+        expect(result.teamInsights.map((item) => item.title)).not.toContain('Late-game swing');
+        expect(result.playerInsightsById.p1?.map((item) => item.title) || []).not.toContain('Closing presence');
+    });
 });
 
 describe('generatePlayerGameInsights', () => {

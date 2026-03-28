@@ -102,7 +102,6 @@ function extractEventPoints(event) {
     }
 
     const text = String(event?.text || '').toLowerCase();
-    if (text.includes(' goal')) return 1;
     if (text.includes('3-pointer') || text.includes('three-pointer') || text.includes('3 point')) return 3;
     if (text.includes('free throw')) return 1;
     if (text.includes('layup') || text.includes('jumper') || text.includes('hook shot') || text.includes('dunk')) return 2;
