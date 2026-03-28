@@ -45,6 +45,9 @@ describe('live game clock sync ingestion', () => {
     expect(result.state.period).toBe('Q2');
     expect(result.state.gameClockMs).toBe(123_000);
     expect(result.state.events).toEqual(current.events);
+    expect(result.state.events).toBe(current.events);
+    expect(result.state.stats).toBe(current.stats);
+    expect(result.state.opponentStats).toBe(current.opponentStats);
     expect(result.shouldRenderPlayByPlay).toBe(false);
   });
 

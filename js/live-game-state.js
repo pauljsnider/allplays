@@ -226,9 +226,9 @@ export function applyResetEventState(currentState, event) {
 export function applyViewerEventToState(currentState = {}, event = {}) {
   const nextState = {
     ...currentState,
-    events: Array.isArray(currentState?.events) ? [...currentState.events] : [],
-    stats: currentState?.stats ? { ...currentState.stats } : {},
-    opponentStats: currentState?.opponentStats ? { ...currentState.opponentStats } : {}
+    events: Array.isArray(currentState?.events) ? currentState.events : [],
+    stats: currentState?.stats || {},
+    opponentStats: currentState?.opponentStats || {}
   };
 
   let shouldRenderLineup = false;
@@ -273,7 +273,7 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
     };
   }
 
-  nextState.events.push(event);
+  nextState.events = Array.isArray(currentState?.events) ? [...currentState.events, event] : [event];
 
   if (event.homeScore !== undefined) nextState.homeScore = event.homeScore;
   if (event.awayScore !== undefined) nextState.awayScore = event.awayScore;
@@ -283,6 +283,7 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
   if (event.type === 'stat' && event.playerId && event.statKey) {
     if (event.isOpponent) {
       const existing = currentState?.opponentStats?.[event.playerId] || {};
+      nextState.opponentStats = { ...currentState?.opponentStats };
       nextState.opponentStats[event.playerId] = {
         ...existing,
         name: event.opponentPlayerName || existing.name || '',
@@ -293,6 +294,7 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
         (nextState.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
     } else {
       const existing = currentState?.stats?.[event.playerId] || {};
+      nextState.stats = { ...currentState?.stats };
       nextState.stats[event.playerId] = { ...existing };
       nextState.stats[event.playerId][event.statKey] =
         (nextState.stats[event.playerId][event.statKey] || 0) + (event.value || 0);
