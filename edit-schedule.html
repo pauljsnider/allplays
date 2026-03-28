@@ -1402,7 +1402,7 @@
                                 scheduleNotifications: buildScheduleNotificationMetadata({
                                     settings: getTeamScheduleNotificationSettings(),
                                     action: 'cancelled',
-                                    sent: true,
+                                    sent: !result.notificationError,
                                     userId: currentUser.uid
                                 })
                             });

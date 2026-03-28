@@ -32,7 +32,7 @@ describe('team management page access wiring', () => {
 
     it('uses shared full-access helper in edit config page', () => {
         const html = readRepoFile('edit-config.html');
-        expect(html).toContain("from './js/edit-config-access.js'");
+        expect(html).toContain("from './js/edit-config-access.js?v=1'");
         expect(html).toContain('getEditConfigAccessDecision(');
     });
 });
