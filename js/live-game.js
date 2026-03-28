@@ -17,7 +17,7 @@ import {
 } from './db.js?v=15';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=10';
+import { checkAuth } from './auth.js?v=11';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import {
   buildReplaySessionState,

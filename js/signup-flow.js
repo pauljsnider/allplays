@@ -13,7 +13,6 @@ export async function executeEmailPasswordSignup({
         updateUserProfile,
         markAccessCodeAsUsed,
         getTeam,
-        addTeamAdminEmail,
         getUserProfile,
         sendEmailVerification,
         signOut
@@ -75,11 +74,8 @@ export async function executeEmailPasswordSignup({
                 userEmail: email,
                 teamId: validation?.data?.teamId,
                 codeId: validation.codeId,
-                markAccessCodeAsUsed,
                 getTeam,
-                addTeamAdminEmail,
-                getUserProfile,
-                updateUserProfile
+                getUserProfile
             });
             await updateUserProfile(userId, {
                 email: email,

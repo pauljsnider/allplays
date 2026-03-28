@@ -1550,6 +1550,9 @@ export async function redeemAdminInviteAtomicPersistence({
         if (codeData.used === true) {
             throw new Error('Access code has already been used');
         }
+        if (isAccessCodeExpired(codeData.expiresAt)) {
+            throw new Error('Code has expired');
+        }
 
         const existingUserData = userSnapshot.exists() ? (userSnapshot.data() || {}) : {};
         const existingCoachOf = Array.isArray(existingUserData.coachOf) ? existingUserData.coachOf : [];
@@ -1587,6 +1590,9 @@ export async function redeemAdminInviteAtomicPersistence({
             }
             if (latestCodeData.used === true) {
                 throw new Error('Access code has already been used');
+            }
+            if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+                throw new Error('Code has expired');
             }
 
             const now = Timestamp.now();

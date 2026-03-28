@@ -15,9 +15,9 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=10';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail, listMyParentMembershipRequests } from './db.js?v=15';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests } from './db.js?v=16';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=3';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
 
 async function cleanupFailedNewUser(user, context) {
@@ -85,7 +85,6 @@ export async function signup(email, password, activationCode) {
             updateUserProfile,
             markAccessCodeAsUsed,
             getTeam,
-            addTeamAdminEmail,
             getUserProfile,
             sendEmailVerification,
             signOut
@@ -193,11 +192,8 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     userEmail: result.user.email,
                     teamId: validation.data.teamId,
                     codeId: validation.codeId,
-                    markAccessCodeAsUsed,
                     getTeam,
-                    addTeamAdminEmail,
-                    getUserProfile,
-                    updateUserProfile
+                    getUserProfile
                 });
             } catch (e) {
                 console.error('Error linking admin invite:', e);

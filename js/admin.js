@@ -1,6 +1,6 @@
 import { getTeams, getAllUsers, deleteTeam } from './db.js?v=15';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=10';
+import { checkAuth } from './auth.js?v=11';
 
 let allTeams = [];
 let allUsers = [];
