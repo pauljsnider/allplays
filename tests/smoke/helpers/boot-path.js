@@ -3,7 +3,19 @@ import { expect } from '@playwright/test';
 const DEFAULT_FATAL_CONSOLE_PATTERNS = [
     /Missing Firebase image config/i,
     /Firebase config request failed/i,
-    /Uncaught/i
+    /Uncaught/i,
+    /ReferenceError/i,
+    /TypeError/i,
+    /Identifier .* has already been declared/i,
+    /Failed to fetch dynamically imported module/i
+];
+
+const DEFAULT_FORBIDDEN_TEXT_PATTERNS = [
+    /Error loading game\./i,
+    /Error loading player details/i,
+    /Game not found\.?/i,
+    /Player not found/i,
+    /Team not found/i
 ];
 
 function toRegExpList(patterns = []) {
@@ -119,7 +131,7 @@ export function createBootIssueCollector(page, options = {}) {
 }
 
 export async function assertPageBootsWithoutFatalErrors(page, options) {
-    const { baseURL, path, titlePatterns } = options;
+    const { baseURL, path, titlePatterns, readySelectors = [], forbiddenTexts = [] } = options;
     const issues = createBootIssueCollector(page, options);
 
     await page.goto(buildUrl(baseURL, path), { waitUntil: 'domcontentloaded' });
@@ -130,6 +142,23 @@ export async function assertPageBootsWithoutFatalErrors(page, options) {
         const matchers = Array.isArray(titlePatterns) ? titlePatterns : [titlePatterns];
         expect(matchers.some((pattern) => pattern.test(title))).toBeTruthy();
     }
+
+    if (readySelectors.length > 0) {
+        await Promise.any(
+            readySelectors.map((selector) =>
+                page.locator(selector).first().waitFor({ state: 'attached', timeout: 10000 })
+            )
+        );
+    }
+
+    const bodyText = await page.locator('body').innerText();
+    const forbiddenPatterns = [
+        ...DEFAULT_FORBIDDEN_TEXT_PATTERNS,
+        ...toRegExpList(forbiddenTexts)
+    ];
+    forbiddenPatterns.forEach((pattern) => {
+        expect(bodyText).not.toMatch(pattern);
+    });
 
     expect(issues).toEqual([]);
 }
