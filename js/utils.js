@@ -1344,45 +1344,6 @@ export function isTrackedCalendarEvent(event, trackedCalendarEventIds) {
 }
 
 /**
- * Resolve the id used to track a parsed ICS event in Firestore and the UI.
- * Recurring occurrences should prefer their generated occurrence id.
- * @param {Object} event - Parsed ICS event
- * @returns {string} Stable tracking id or empty string
- */
-export function getCalendarEventTrackingId(event) {
-  const occurrenceId = typeof event?.id === 'string' ? event.id.trim() : '';
-  if (occurrenceId) return occurrenceId;
-
-  const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
-  return uid;
-}
-
-/**
- * Check whether a parsed ICS event is already tracked in Firestore.
- * Recurring occurrences match by occurrence id; single events fall back to uid.
- * @param {Object} event - Parsed ICS event
- * @param {string[]|Set<string>} trackedCalendarEventIds - Stored tracked ids
- * @returns {boolean}
- */
-export function isTrackedCalendarEvent(event, trackedCalendarEventIds) {
-  const trackedIds = trackedCalendarEventIds instanceof Set
-    ? trackedCalendarEventIds
-    : new Set(Array.isArray(trackedCalendarEventIds) ? trackedCalendarEventIds : []);
-  const trackingId = getCalendarEventTrackingId(event);
-  if (trackingId && trackedIds.has(trackingId)) {
-    return true;
-  }
-
-  const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
-  const hasOccurrenceId = typeof event?.id === 'string' && event.id.includes('__');
-  if (!hasOccurrenceId && uid && trackedIds.has(uid)) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
  * Convert a parsed ICS event into the view model used by the global calendar.
  * @param {Object} options
  * @param {Object} options.team
