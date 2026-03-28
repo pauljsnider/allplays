@@ -223,6 +223,102 @@ export function applyResetEventState(currentState, event) {
   };
 }
 
+export function applyViewerEventToState(currentState = {}, event = {}) {
+  const nextState = {
+    ...currentState,
+    events: Array.isArray(currentState?.events) ? [...currentState.events] : [],
+    stats: currentState?.stats ? { ...currentState.stats } : {},
+    opponentStats: currentState?.opponentStats ? { ...currentState.opponentStats } : {}
+  };
+
+  let shouldRenderLineup = false;
+
+  if (Array.isArray(event?.onCourt)) {
+    nextState.onCourt = [...event.onCourt];
+    shouldRenderLineup = true;
+  }
+  if (Array.isArray(event?.bench)) {
+    nextState.bench = [...event.bench];
+    shouldRenderLineup = true;
+  }
+
+  if (event?.type === 'lineup') {
+    return {
+      state: nextState,
+      shouldRenderLineup,
+      shouldRenderScoreboard: false,
+      shouldRenderPlayByPlay: false,
+      shouldRenderStats: false,
+      animateScoreboard: false,
+      shouldCelebrateScore: false,
+      shouldCelebrateEvent: false
+    };
+  }
+
+  if (event?.type === 'clock_sync') {
+    if (event.homeScore !== undefined) nextState.homeScore = event.homeScore;
+    if (event.awayScore !== undefined) nextState.awayScore = event.awayScore;
+    if (event.period) nextState.period = event.period;
+    if (event.gameClockMs !== undefined) nextState.gameClockMs = event.gameClockMs;
+
+    return {
+      state: nextState,
+      shouldRenderLineup,
+      shouldRenderScoreboard: true,
+      shouldRenderPlayByPlay: false,
+      shouldRenderStats: false,
+      animateScoreboard: false,
+      shouldCelebrateScore: false,
+      shouldCelebrateEvent: false
+    };
+  }
+
+  nextState.events.push(event);
+
+  if (event.homeScore !== undefined) nextState.homeScore = event.homeScore;
+  if (event.awayScore !== undefined) nextState.awayScore = event.awayScore;
+  if (event.period) nextState.period = event.period;
+  if (event.gameClockMs !== undefined) nextState.gameClockMs = event.gameClockMs;
+
+  if (event.type === 'stat' && event.playerId && event.statKey) {
+    if (event.isOpponent) {
+      const existing = currentState?.opponentStats?.[event.playerId] || {};
+      nextState.opponentStats[event.playerId] = {
+        ...existing,
+        name: event.opponentPlayerName || existing.name || '',
+        number: event.opponentPlayerNumber || existing.number || '',
+        photoUrl: event.opponentPlayerPhoto || existing.photoUrl || ''
+      };
+      nextState.opponentStats[event.playerId][event.statKey] =
+        (nextState.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
+    } else {
+      const existing = currentState?.stats?.[event.playerId] || {};
+      nextState.stats[event.playerId] = { ...existing };
+      nextState.stats[event.playerId][event.statKey] =
+        (nextState.stats[event.playerId][event.statKey] || 0) + (event.value || 0);
+    }
+    nextState.lastStatChange = {
+      playerId: event.playerId,
+      statKey: event.statKey,
+      isOpponent: !!event.isOpponent
+    };
+    shouldRenderLineup = true;
+  }
+
+  const isScoreEvent = event.type === 'stat' && event.statKey === 'pts';
+
+  return {
+    state: nextState,
+    shouldRenderLineup,
+    shouldRenderScoreboard: true,
+    shouldRenderPlayByPlay: true,
+    shouldRenderStats: true,
+    animateScoreboard: isScoreEvent,
+    shouldCelebrateScore: isScoreEvent,
+    shouldCelebrateEvent: !isScoreEvent
+  };
+}
+
 export function shouldResetViewerFromGameDoc(gameDoc = {}, currentState = {}) {
   const isScheduledReset =
     gameDoc?.liveStatus === 'scheduled' &&

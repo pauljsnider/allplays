@@ -30,7 +30,7 @@ import {
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=4';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
@@ -1102,60 +1102,26 @@ function processNewEvents(events) {
       renderLineup();
       return;
     }
-    if (Array.isArray(event.onCourt)) state.onCourt = event.onCourt;
-    if (Array.isArray(event.bench)) state.bench = event.bench;
-    if (Array.isArray(event.onCourt) || Array.isArray(event.bench)) {
+    const transition = applyViewerEventToState(state, event);
+    Object.assign(state, transition.state);
+
+    if (transition.shouldRenderLineup) {
       renderLineup();
     }
-    if (event.type === 'lineup') {
-      return;
+    if (transition.shouldRenderScoreboard) {
+      renderScoreboard(transition.animateScoreboard);
+    }
+    if (transition.shouldRenderPlayByPlay) {
+      renderPlayByPlay(event, true);
+    }
+    if (transition.shouldRenderStats) {
+      renderStats();
     }
 
-    // Tracker emits heartbeat events to keep late-joining viewers on an accurate clock.
-    // Apply score/period/clock updates but don't add feed noise.
-    if (event.type === 'clock_sync') {
-      if (event.homeScore !== undefined) state.homeScore = event.homeScore;
-      if (event.awayScore !== undefined) state.awayScore = event.awayScore;
-      if (event.period) state.period = event.period;
-      if (event.gameClockMs !== undefined) state.gameClockMs = event.gameClockMs;
-      renderScoreboard();
-      return;
-    }
-    state.events.push(event);
-
-    if (event.homeScore !== undefined) state.homeScore = event.homeScore;
-    if (event.awayScore !== undefined) state.awayScore = event.awayScore;
-    if (event.period) state.period = event.period;
-    if (event.gameClockMs !== undefined) state.gameClockMs = event.gameClockMs;
-
-    if (event.type === 'stat' && event.playerId && event.statKey) {
-      if (event.isOpponent) {
-        const existing = state.opponentStats[event.playerId] || {};
-        state.opponentStats[event.playerId] = {
-          ...existing,
-          name: event.opponentPlayerName || existing.name || '',
-          number: event.opponentPlayerNumber || existing.number || '',
-          photoUrl: event.opponentPlayerPhoto || existing.photoUrl || ''
-        };
-        state.opponentStats[event.playerId][event.statKey] =
-          (state.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
-      } else {
-        state.stats[event.playerId] = state.stats[event.playerId] || {};
-        state.stats[event.playerId][event.statKey] =
-          (state.stats[event.playerId][event.statKey] || 0) + (event.value || 0);
-      }
-      state.lastStatChange = { playerId: event.playerId, statKey: event.statKey, isOpponent: !!event.isOpponent };
-      renderLineup();
-    }
-
-    renderScoreboard(event.type === 'stat' && event.statKey === 'pts');
-    renderPlayByPlay(event, true);
-    renderStats();
-
-    if (event.type === 'stat' && event.statKey === 'pts') {
+    if (transition.shouldCelebrateScore) {
       showScoreCelebration(event);
       updateMomentum(event);
-    } else {
+    } else if (transition.shouldCelebrateEvent) {
       showEventCelebration(event);
     }
   });
