@@ -11,6 +11,7 @@ export async function redeemAdminInviteAcceptance({
 }) {
     if (!userId) throw new Error('Missing userId');
     if (!teamId) throw new Error('Missing teamId');
+    if (!codeId) throw new Error('Missing codeId');
 
     const team = await getTeam(teamId);
     if (!team) {
@@ -44,9 +45,7 @@ export async function redeemAdminInviteAcceptance({
 
     await addTeamAdminEmail(teamId, resolvedUserEmail);
 
-    if (codeId) {
-        await markAccessCodeAsUsed(codeId, userId);
-    }
+    await markAccessCodeAsUsed(codeId, userId);
 
     return team;
 }

@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Parent Dashboard - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -90,6 +91,36 @@
                     <div class="mt-4">
                         <input type="text" id="redeem-code-input" placeholder="Enter Invite Code" class="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm mb-2 uppercase">
                         <button id="redeem-code-btn" class="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition">Redeem Code</button>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 bg-gray-50">
+                        <h2 class="text-lg font-bold text-gray-900">Request Team Access</h2>
+                        <p class="text-xs text-gray-500 mt-1">Don't have an invite code yet? Request parent access from a coach or team admin.</p>
+                    </div>
+                    <div class="p-4 space-y-3">
+                        <select id="request-team-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="">Select Team</option>
+                        </select>
+                        <select id="request-player-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" disabled>
+                            <option value="">Select Player</option>
+                        </select>
+                        <select id="request-relation-select" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="Parent">Parent</option>
+                            <option value="Mother">Mother</option>
+                            <option value="Father">Father</option>
+                            <option value="Guardian">Guardian</option>
+                            <option value="Other">Other</option>
+                        </select>
+                        <button id="submit-parent-access-request-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition">Request Access</button>
+                        <div id="parent-membership-request-status" class="hidden text-xs rounded-lg px-3 py-2"></div>
+                    </div>
+                    <div class="p-4 border-t border-gray-100 bg-gray-50">
+                        <h3 class="text-sm font-semibold text-gray-900">My Requests</h3>
+                        <div id="parent-membership-request-list" class="mt-3 space-y-2 text-sm text-gray-600">
+                            <div class="text-xs text-gray-500">Loading requests...</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -185,11 +216,37 @@
         </div>
     </div>
 
+    <!-- Incentives Panel (slide-out, parent-only) -->
+    <div id="incentives-panel" class="hidden fixed inset-0 z-50">
+        <div class="absolute inset-0 bg-black/50" onclick="closeIncentivesPanel()"></div>
+        <div class="absolute inset-y-0 right-0 w-full max-w-lg bg-white shadow-2xl overflow-y-auto">
+            <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+                <div>
+                    <h3 id="incentives-panel-title" class="text-lg font-bold text-gray-900">Incentives</h3>
+                    <p class="text-xs text-gray-500 mt-0.5">Private — only you can see this</p>
+                </div>
+                <button onclick="closeIncentivesPanel()" class="text-gray-400 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="incentives-panel-content" class="px-6 py-5">
+                <div class="text-center py-12">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                    <p class="text-sm text-gray-500">Loading incentives...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
         import {
             getParentDashboardData,
             redeemParentInvite,
             getTeam,
+            getTeams,
+            getPlayers,
             getGames,
             getTrackedCalendarEventUids,
             getUnreadChatCounts,
@@ -199,19 +256,40 @@
             updateUserProfile,
             getUserProfile,
             submitRsvp,
-            getMyRsvp,
+            submitRsvpForPlayer,
+            getRsvps,
             getRsvpSummaries,
             createRideOffer,
             listRideOffersForEvent,
             requestRideSpot,
             updateRideRequestStatus,
             closeRideOffer,
-            cancelRideRequest
-        } from './js/db.js?v=23';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence } from './js/utils.js?v=8';
+            cancelRideRequest,
+            getAggregatedStatsForPlayer,
+            createParentMembershipRequest,
+            listMyParentMembershipRequests
+        } from './js/db.js?v=25';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=9';
+        import {
+            getIncentiveRules,
+            saveIncentiveRule as saveIncentiveRuleFn,
+            toggleIncentiveRule as toggleIncentiveRuleFn,
+            retireIncentiveRule as retireIncentiveRuleFn,
+            markGamePaid as markGamePaidFn,
+            unmarkGamePaid as unmarkGamePaidFn,
+            getPaidGames,
+            calculateEarnings,
+            formatCents,
+            getApplicableRulesForGame,
+            getStatOptionsForTeam,
+            renderIncentivesPanel,
+            renderRuleBuilder,
+            getCapSetting,
+            saveCapSetting as saveCapSettingFn,
+        } from './js/parent-incentives.js?v=3';
         import { requireAuth, checkAuth } from './js/auth.js?v=9';
         import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
-        import { resolveRsvpPlayerIdsForSubmission } from './js/parent-dashboard-rsvp.js?v=4';
+        import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
@@ -231,6 +309,12 @@
         const rideshareOffersByEvent = new Map();
         const teamChildrenByTeamId = new Map();
         const selectedRideChildByOffer = new Map();
+        const requestablePlayersByTeam = new Map();
+        let publicRequestTeams = [];
+        let parentMembershipRequests = [];
+        let incentivesPanelPlayer = null;  // { id, name, teamId }
+        let incentivesPanelRules = [];
+        const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
         window.setScheduleView = setScheduleView;
@@ -248,6 +332,17 @@
         window.toggleRideOfferClosed = toggleRideOfferClosed;
         window.cancelMyRideRequest = cancelMyRideRequest;
         window.setRideChildSelection = setRideChildSelection;
+        window.openIncentivesPanel = openIncentivesPanel;
+        window.closeIncentivesPanel = closeIncentivesPanel;
+        window.openIncentiveRuleBuilder = openIncentiveRuleBuilder;
+        window.editIncentiveRule = editIncentiveRule;
+        window.closeIncentiveRuleBuilder = closeIncentiveRuleBuilder;
+        window.saveIncentiveRuleFromBuilder = saveIncentiveRuleFromBuilder;
+        window.toggleIncentiveRule = handleToggleIncentiveRule;
+        window.deleteIncentiveRule = handleDeleteIncentiveRule;
+        window.markGamePaid = handleMarkGamePaid;
+        window.saveIncentiveCap = handleSaveIncentiveCap;
+        window.removeIncentiveCap = handleRemoveIncentiveCap;
 
         function escapeAttr(value) {
             return String(value ?? '')
@@ -256,6 +351,126 @@
                 .replace(/'/g, '&#39;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
+        }
+
+        function setParentMembershipRequestStatus(message, tone = 'neutral') {
+            const el = document.getElementById('parent-membership-request-status');
+            if (!el) return;
+            const toneClasses = {
+                neutral: 'bg-gray-50 text-gray-700 border border-gray-200',
+                success: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+                error: 'bg-red-50 text-red-700 border border-red-200'
+            };
+            el.className = `text-xs rounded-lg px-3 py-2 ${toneClasses[tone] || toneClasses.neutral}`;
+            el.textContent = message;
+            el.classList.remove('hidden');
+        }
+
+        function renderParentMembershipRequests() {
+            const listEl = document.getElementById('parent-membership-request-list');
+            if (!listEl) return;
+            if (!parentMembershipRequests.length) {
+                listEl.innerHTML = '<div class="text-xs text-gray-500">No access requests yet.</div>';
+                return;
+            }
+
+            listEl.innerHTML = parentMembershipRequests.map((request) => {
+                const statusTone = request.status === 'approved'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : request.status === 'denied'
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-amber-200 bg-amber-50 text-amber-700';
+                return `
+                    <div class="rounded-xl border border-gray-200 bg-white p-3">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="font-semibold text-gray-900">${escapeHtml(request.teamName || 'Team')} · ${escapeHtml(request.playerName || 'Player')}</div>
+                                <div class="text-xs text-gray-500 mt-1">${escapeHtml(request.relation || 'Parent')} access request</div>
+                                ${request.decisionNote ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(request.decisionNote)}</div>` : ''}
+                            </div>
+                            <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusTone}">${escapeHtml(request.status || 'pending')}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function populateRequestTeamOptions() {
+            const selectEl = document.getElementById('request-team-select');
+            if (!selectEl) return;
+            selectEl.innerHTML = '<option value="">Select Team</option>' + publicRequestTeams.map((team) => (
+                `<option value="${escapeAttr(team.id)}">${escapeHtml(team.name || 'Team')}</option>`
+            )).join('');
+        }
+
+        function populateRequestPlayerOptions(players = []) {
+            const selectEl = document.getElementById('request-player-select');
+            if (!selectEl) return;
+            if (!players.length) {
+                selectEl.innerHTML = '<option value="">Select Player</option>';
+                selectEl.disabled = true;
+                return;
+            }
+            selectEl.innerHTML = '<option value="">Select Player</option>' + players.map((player) => (
+                `<option value="${escapeAttr(player.id)}">${escapeHtml(player.number ? `#${player.number} ${player.name}` : player.name || 'Player')}</option>`
+            )).join('');
+            selectEl.disabled = false;
+        }
+
+        async function handleRequestTeamSelection() {
+            const teamId = document.getElementById('request-team-select')?.value || '';
+            if (!teamId) {
+                populateRequestPlayerOptions([]);
+                return;
+            }
+
+            if (!requestablePlayersByTeam.has(teamId)) {
+                const players = await getPlayers(teamId);
+                requestablePlayersByTeam.set(teamId, (players || []).filter((player) => player?.active !== false));
+            }
+
+            populateRequestPlayerOptions(requestablePlayersByTeam.get(teamId) || []);
+        }
+
+        async function loadRequestAccessOptions() {
+            publicRequestTeams = (await getTeams()).filter((team) => team?.isPublic !== false);
+            populateRequestTeamOptions();
+            await handleRequestTeamSelection();
+        }
+
+        async function refreshParentMembershipRequestList(userId) {
+            parentMembershipRequests = await listMyParentMembershipRequests(userId);
+            renderParentMembershipRequests();
+        }
+
+        async function submitParentAccessRequest() {
+            const teamId = document.getElementById('request-team-select')?.value || '';
+            const playerId = document.getElementById('request-player-select')?.value || '';
+            const relation = document.getElementById('request-relation-select')?.value || 'Parent';
+            if (!teamId || !playerId) {
+                setParentMembershipRequestStatus('Select a team and player before requesting access.', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('submit-parent-access-request-btn');
+            const originalText = btn?.textContent || 'Request Access';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Submitting...';
+            }
+
+            try {
+                await createParentMembershipRequest(teamId, playerId, relation);
+                setParentMembershipRequestStatus('Access request submitted. A coach or admin can approve it from roster management.', 'success');
+                await refreshParentMembershipRequestList(currentUserId);
+            } catch (err) {
+                setParentMembershipRequestStatus(err?.message || 'Unable to submit access request.', 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            }
         }
 
         function formatRsvpSummary(summary) {
@@ -267,9 +482,22 @@
             return `${teamId || ''}::${eventId || ''}`;
         }
 
+        function getLegacyRideEventId(event) {
+            const eventId = typeof event?.id === 'string' ? event.id.trim() : '';
+            const legacyEventId = typeof event?.calendarEventUid === 'string' ? event.calendarEventUid.trim() : '';
+            if (!eventId || !legacyEventId || legacyEventId === eventId) return '';
+            return legacyEventId;
+        }
+
         function getEventRideOffers(teamId, eventId) {
             const key = getEventRideKey(teamId, eventId);
             return rideshareOffersByEvent.get(key) || [];
+        }
+
+        function canShowRideshareForEvent(event) {
+            if (event?.isCancelled) return false;
+            if (!event?.teamId || !event?.id) return false;
+            return event?.isDbGame || event?.type === 'practice';
         }
 
         function resolveChildChoices(teamId) {
@@ -301,8 +529,9 @@
         }
 
         function renderEventRideshare(event, { includeChildPicker = false } = {}) {
-            if (!event?.isDbGame || event?.isCancelled || !event?.teamId || !event?.id) return '';
+            if (!canShowRideshareForEvent(event)) return '';
             const offers = getEventRideOffers(event.teamId, event.id);
+            const legacyRideEventId = getLegacyRideEventId(event);
             const summary = getEventRideshareSummary(offers);
             const eventKey = getEventRideKey(event.teamId, event.id);
             const renderKey = `${eventKey}::${includeChildPicker ? 'modal' : (event.childId || 'row')}`.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -331,13 +560,14 @@
                                 <option value="from">From Event</option>
                                 <option value="round-trip">Round Trip</option>
                             </select>
-                            <button onclick="submitRideOfferFromForm('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(renderKey)}')" class="col-span-1 px-2 py-1 text-xs rounded bg-primary-600 text-white font-semibold hover:bg-primary-700">Save</button>
+                            <button onclick="submitRideOfferFromForm('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(renderKey)}')" class="col-span-1 px-2 py-1 text-xs rounded bg-primary-600 text-white font-semibold hover:bg-primary-700">Save</button>
                         </div>
                         <input id="ride-note-${escapeAttr(renderKey)}" type="text" maxlength="160" class="mt-2 w-full px-2 py-1 text-xs border border-gray-300 rounded" placeholder="Optional note">
                     </div>
                     ${offers.length === 0
                         ? '<div class="text-xs text-gray-500 mt-2">No ride offers yet for this event.</div>'
                         : `<div class="mt-2 space-y-2">${offers.map((offer) => {
+                            const offerGameId = offer.sourceGameId || event.id;
                             const seatInfo = getOfferSeatInfo(offer);
                             const canManageOffer = offer.driverUserId === currentUserId;
                             const childSelectorId = `ride-child-${renderKey}-${offer.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -369,13 +599,13 @@
                                                 </select>
                                             ` : ''}
                                             ${canRequest ? `
-                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(selectedChildId)}','${escapeAttr(selectedChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
+                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(selectedChildId)}','${escapeAttr(selectedChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
                                             ` : ''}
                                             ${myRequest ? `
-                                                <button onclick="cancelMyRideRequest('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(myRequest.id)}')" class="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 font-semibold hover:bg-gray-50">Cancel</button>
+                                                <button onclick="cancelMyRideRequest('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(myRequest.id)}')" class="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 font-semibold hover:bg-gray-50">Cancel</button>
                                             ` : ''}
                                             ${canManageOffer ? `
-                                                <button onclick="toggleRideOfferClosed('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(offer.status)}')" class="px-2 py-1 text-xs rounded border border-orange-300 bg-orange-50 text-orange-700 font-semibold hover:bg-orange-100">${offer.status === 'open' ? 'Close' : 'Reopen'}</button>
+                                                <button onclick="toggleRideOfferClosed('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(offer.status)}')" class="px-2 py-1 text-xs rounded border border-orange-300 bg-orange-50 text-orange-700 font-semibold hover:bg-orange-100">${offer.status === 'open' ? 'Close' : 'Reopen'}</button>
                                             ` : ''}
                                         </div>
                                     </div>
@@ -386,9 +616,9 @@
                                                 <div class="flex items-center justify-between gap-2 text-[11px]">
                                                     <span class="text-gray-700">${escapeHtml(request.childName || 'Player')} · ${escapeHtml(request.status || 'pending')}</span>
                                                     <div class="flex items-center gap-1">
-                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','confirmed')" class="px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50">Confirm</button>
-                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','waitlisted')" class="px-1.5 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Waitlist</button>
-                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','declined')" class="px-1.5 py-0.5 rounded border border-red-300 text-red-700 bg-red-50">Decline</button>
+                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','confirmed')" class="px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50">Confirm</button>
+                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','waitlisted')" class="px-1.5 py-0.5 rounded border border-amber-300 text-amber-700 bg-amber-50">Waitlist</button>
+                                                        <button onclick="updateRideRequestDecision('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(request.id)}','declined')" class="px-1.5 py-0.5 rounded border border-red-300 text-red-700 bg-red-50">Decline</button>
                                                     </div>
                                                 </div>
                                             `).join('')}
@@ -408,10 +638,12 @@
             openScheduleDayModal(activeDayModal.year, activeDayModal.month, activeDayModal.day);
         }
 
-        async function refreshRideshareForEvent(teamId, gameId) {
+        async function refreshRideshareForEvent(teamId, gameId, legacyGameId = '') {
             const key = getEventRideKey(teamId, gameId);
             try {
-                const offers = await listRideOffersForEvent(teamId, gameId);
+                const offers = await listRideOffersForEvent(teamId, gameId, {
+                    fallbackGameIds: legacyGameId ? [legacyGameId] : []
+                });
                 rideshareOffersByEvent.set(key, offers);
             } catch (err) {
                 console.warn('Unable to load rideshare offers for event:', teamId, gameId, err);
@@ -420,14 +652,17 @@
         }
 
         async function hydrateRideshareOffersForSchedule(events = []) {
-            const uniqueDbEvents = [...new Set(
+            const uniqueEvents = Array.from(new Map(
                 (events || [])
-                    .filter((ev) => ev?.isDbGame && ev?.teamId && ev?.id)
-                    .map((ev) => getEventRideKey(ev.teamId, ev.id))
-            )];
-            await Promise.all(uniqueDbEvents.map(async (key) => {
-                const [teamId, gameId] = key.split('::');
-                await refreshRideshareForEvent(teamId, gameId);
+                    .filter((ev) => canShowRideshareForEvent(ev))
+                    .map((ev) => [getEventRideKey(ev.teamId, ev.id), {
+                        teamId: ev.teamId,
+                        gameId: ev.id,
+                        legacyGameId: getLegacyRideEventId(ev)
+                    }])
+            ).values());
+            await Promise.all(uniqueEvents.map(async ({ teamId, gameId, legacyGameId }) => {
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
             }));
         }
 
@@ -437,19 +672,22 @@
             panel.classList.toggle('hidden');
         }
 
-        async function submitRideOfferFromForm(teamId, gameId, eventKey) {
+        async function submitRideOfferFromForm(teamId, gameId, legacyGameId, eventKey) {
             try {
                 const seatsEl = document.getElementById(`ride-seats-${eventKey}`);
                 const directionEl = document.getElementById(`ride-direction-${eventKey}`);
                 const noteEl = document.getElementById(`ride-note-${eventKey}`);
                 const seatCapacity = Number.parseInt(seatsEl?.value || '0', 10);
+                await ensureParentTeamAccess(currentUserId, [teamId], { strict: true });
                 await createRideOffer(teamId, gameId, {
                     seatCapacity,
                     direction: directionEl?.value || 'to',
                     note: noteEl?.value || '',
                     driverName: currentUser?.displayName || currentUser?.email || 'Parent Driver'
+                }, {
+                    fallbackGameIds: legacyGameId ? [legacyGameId] : []
                 });
-                await refreshRideshareForEvent(teamId, gameId);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
                 toggleRideOfferForm(eventKey);
@@ -459,7 +697,7 @@
             }
         }
 
-        async function requestRideSpotForChild(teamId, gameId, offerId, defaultChildId, defaultChildName, selectorId = '') {
+        async function requestRideSpotForChild(teamId, gameId, legacyGameId, offerGameId, offerId, defaultChildId, defaultChildName, selectorId = '') {
             try {
                 let childId = defaultChildId;
                 let childName = defaultChildName;
@@ -470,8 +708,8 @@
                     childName = selected?.childName || childName;
                 }
                 if (!childId) throw new Error('Select a child first.');
-                await requestRideSpot(teamId, gameId, offerId, { childId, childName });
-                await refreshRideshareForEvent(teamId, gameId);
+                await requestRideSpot(teamId, offerGameId, offerId, { childId, childName });
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -480,10 +718,10 @@
             }
         }
 
-        async function updateRideRequestDecision(teamId, gameId, offerId, requestId, status) {
+        async function updateRideRequestDecision(teamId, gameId, legacyGameId, offerGameId, offerId, requestId, status) {
             try {
-                await updateRideRequestStatus(teamId, gameId, offerId, requestId, status);
-                await refreshRideshareForEvent(teamId, gameId);
+                await updateRideRequestStatus(teamId, offerGameId, offerId, requestId, status);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -492,11 +730,11 @@
             }
         }
 
-        async function toggleRideOfferClosed(teamId, gameId, offerId, currentStatus) {
+        async function toggleRideOfferClosed(teamId, gameId, legacyGameId, offerGameId, offerId, currentStatus) {
             try {
                 const nextStatus = currentStatus === 'open' ? 'closed' : 'open';
-                await closeRideOffer(teamId, gameId, offerId, nextStatus);
-                await refreshRideshareForEvent(teamId, gameId);
+                await closeRideOffer(teamId, offerGameId, offerId, nextStatus);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -505,10 +743,10 @@
             }
         }
 
-        async function cancelMyRideRequest(teamId, gameId, offerId, requestId) {
+        async function cancelMyRideRequest(teamId, gameId, legacyGameId, offerGameId, offerId, requestId) {
             try {
-                await cancelRideRequest(teamId, gameId, offerId, requestId);
-                await refreshRideshareForEvent(teamId, gameId);
+                await cancelRideRequest(teamId, offerGameId, offerId, requestId);
+                await refreshRideshareForEvent(teamId, gameId, legacyGameId);
                 renderScheduleFromControls();
                 rerenderActiveDayModal();
             } catch (err) {
@@ -520,18 +758,26 @@
         window.submitGameRsvp = async function(teamId, gameId, response, childContext = {}) {
             try {
                 const playerIds = resolveRsvpPlayerIdsForSubmission(allScheduleEvents, teamId, gameId, childContext);
-                const summary = await submitRsvp(teamId, gameId, currentUserId, {
-                    displayName: currentUser?.displayName || currentUser?.email,
-                    playerIds,
-                    response
-                });
+                const isSinglePlayerSelection = playerIds.length === 1;
+                const summary = isSinglePlayerSelection
+                    ? await submitRsvpForPlayer(teamId, gameId, currentUserId, {
+                        displayName: currentUser?.displayName || currentUser?.email,
+                        playerId: playerIds[0],
+                        response
+                    })
+                    : await submitRsvp(teamId, gameId, currentUserId, {
+                        displayName: currentUser?.displayName || currentUser?.email,
+                        playerIds,
+                        response
+                    });
                 // Update local state and re-render
-                const game = allScheduleEvents.find(e => e.teamId === teamId && e.id === gameId);
-                if (game) {
-                    game.myRsvp = response;
-                    if (summary) game.rsvpSummary = summary;
-                    else if (!game.rsvpSummary) game.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
-                }
+                allScheduleEvents.forEach((event) => {
+                    if (event?.teamId !== teamId || event?.id !== gameId) return;
+                    if (isSinglePlayerSelection && (event?.childId || event?.playerId) !== playerIds[0]) return;
+                    event.myRsvp = response;
+                    if (summary) event.rsvpSummary = summary;
+                    else if (!event.rsvpSummary) event.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
+                });
                 renderScheduleFromControls();
             } catch (err) {
                 console.error('RSVP error:', err);
@@ -589,6 +835,8 @@
                 });
 
                 const data = await getParentDashboardData(user.uid);
+                await loadRequestAccessOptions();
+                await refreshParentMembershipRequestList(user.uid);
                 renderPlayers(data.children);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
@@ -633,11 +881,19 @@
                 await Promise.all(uniqueGameKeys.map(async (key) => {
                     const [teamId, gameId] = key.split('::');
                     try {
-                        const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
+                        const rsvps = await getRsvps(teamId, gameId);
+                        const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, currentUserId);
                         const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
                         applyRsvpHydration(allScheduleEvents, teamId, gameId, {
-                            myRsvp: myRsvp ? myRsvp.response : null,
                             summary
+                        });
+                        allScheduleEvents.forEach((event) => {
+                            if (event?.teamId !== teamId || event?.id !== gameId) return;
+                            const childId = event?.childId || event?.playerId || '';
+                            if (!childId) return;
+                            event.myRsvp = Object.prototype.hasOwnProperty.call(myRsvpByChild, childId)
+                                ? myRsvpByChild[childId]
+                                : null;
                         });
                     } catch (e) {
                         // Ignore per-game RSVP read failures.
@@ -673,13 +929,22 @@
                         btn.disabled = false;
                     }
                 });
+                document.getElementById('request-team-select')?.addEventListener('change', async () => {
+                    try {
+                        await handleRequestTeamSelection();
+                    } catch (err) {
+                        setParentMembershipRequestStatus('Unable to load roster for that team.', 'error');
+                    }
+                });
+                document.getElementById('submit-parent-access-request-btn')?.addEventListener('click', submitParentAccessRequest);
 
             } catch (error) {
                 console.error(error);
             }
         }
 
-        async function ensureParentTeamAccess(userId, teamIds) {
+        async function ensureParentTeamAccess(userId, teamIds, options = {}) {
+            const strict = !!options?.strict;
             if (!userId || !Array.isArray(teamIds) || teamIds.length === 0) return;
             try {
                 const profile = await getUserProfile(userId);
@@ -701,6 +966,9 @@
                 }
             } catch (err) {
                 console.warn('Failed to ensure parent team access:', err);
+                if (strict) {
+                    throw err;
+                }
             }
         }
 
@@ -861,7 +1129,7 @@
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
 
                             calendarEvents.forEach(event => {
-                                if (trackedUids.includes(event.uid)) return;
+                                if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                                 // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                                 const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
@@ -886,13 +1154,14 @@
                                 const session = isPractice ? resolvePracticeSession(event, eventDate) : null;
 
                                 for (const child of teamChildren) {
-                                    allEvents.push({
+                                allEvents.push({
                                         type,
                                         date: eventDate,
                                         location,
                                         opponent,
                                         teamId,
-                                        id: event.uid || null,
+                                        id: getCalendarEventTrackingId(event) || null,
+                                        calendarEventUid: event.uid || null,
                                         isDbGame: false,
                                         childId: child.playerId,
                                         childName: child.playerName,
@@ -1423,27 +1692,35 @@
             }
 
             container.innerHTML = children.map(child => `
-                <a href="player.html?teamId=${child.teamId}&playerId=${child.playerId}" 
-                   class="flex items-center gap-4 p-3 rounded-xl border border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition group">
-                    <div class="h-12 w-12 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
-                        ${child.playerPhotoUrl 
-                            ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">` 
-                            : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>`
-                        }
+                <div class="rounded-xl border border-gray-200 overflow-hidden">
+                    <a href="player.html?teamId=${child.teamId}&playerId=${child.playerId}"
+                       class="flex items-center gap-4 p-3 hover:border-primary-300 hover:bg-primary-50 transition group">
+                        <div class="h-12 w-12 flex-shrink-0 rounded-full bg-gray-200 overflow-hidden border border-gray-300">
+                            ${child.playerPhotoUrl
+                                ? `<img src="${escapeHtml(child.playerPhotoUrl)}" class="w-full h-full object-cover">`
+                                : `<div class="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>`
+                            }
+                        </div>
+                        <div class="flex-grow min-w-0">
+                            <div class="font-bold text-gray-900 group-hover:text-primary-700 truncate">${escapeHtml(child.playerName)}</div>
+                            <div class="text-xs text-gray-500 truncate">${escapeHtml(child.teamName)}</div>
+                        </div>
+                        <div class="flex-shrink-0 flex items-center gap-2 text-gray-300 group-hover:text-primary-400">
+                            <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2 py-1 rounded-full border border-primary-100">
+                                Profile
+                            </span>
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </div>
+                    </a>
+                    <div class="border-t border-gray-100 px-3 py-2 bg-gray-50">
+                        <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
+                            class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
+                            💰 Incentives
+                        </button>
                     </div>
-                    <div class="flex-grow min-w-0">
-                        <div class="font-bold text-gray-900 group-hover:text-primary-700 truncate">${escapeHtml(child.playerName)}</div>
-                        <div class="text-xs text-gray-500 truncate">${escapeHtml(child.teamName)}</div>
-                    </div>
-                    <div class="flex-shrink-0 flex items-center gap-2 text-gray-300 group-hover:text-primary-400">
-                        <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2 py-1 rounded-full border border-primary-100">
-                            Edit
-                        </span>
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
-                        </svg>
-                    </div>
-                </a>
+                </div>
             `).join('');
         }
 
@@ -1574,6 +1851,19 @@
                             </svg>
                             ${escapeHtml(game.location || 'TBD')}
                         </div>
+                        ${(() => {
+                            // Show earnings chip for past tracked games where incentives have been calculated
+                            const cacheKey = `${game.id}__${game.childId}`;
+                            const earnedCents = incentivesEarningsCache.get(cacheKey);
+                            if (game.type === 'game' && game.isDbGame && !game.isCancelled && earnedCents !== undefined && earnedCents !== 0) {
+                                const isPositive = earnedCents >= 0;
+                                return `<button onclick="openIncentivesPanel('${escapeAttr(game.childId)}', '${escapeAttr(game.childName || '')}', '${escapeAttr(game.teamId)}')"
+                                    class="inline-flex items-center gap-1 text-xs font-semibold ${isPositive ? 'text-green-700 bg-green-50 border-green-200' : 'text-red-600 bg-red-50 border-red-200'} px-2 py-0.5 rounded-full mt-1 mr-1 border hover:opacity-80 transition">
+                                    💰 ${isPositive ? '+' : ''}${formatCents(earnedCents, { sign: false })} earned →
+                                </button>`;
+                            }
+                            return '';
+                        })()}
                         ${game.type !== 'practice' && game.isHome === true ? '<span class="inline-block text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">HOME</span>' : ''}
                         ${game.type !== 'practice' && game.isHome === false ? '<span class="inline-block text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold mt-1 mr-1">AWAY</span>' : ''}
                         ${game.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(game.kitColor)}</div>` : ''}
@@ -1708,6 +1998,280 @@
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
         });
+
+        // ── Incentives Panel ──────────────────────────────────────────────
+
+        async function openIncentivesPanel(playerId, playerName, teamId) {
+            incentivesPanelPlayer = { id: playerId, name: playerName, teamId };
+            const panel = document.getElementById('incentives-panel');
+            const title = document.getElementById('incentives-panel-title');
+            const content = document.getElementById('incentives-panel-content');
+            title.textContent = `${playerName} · Incentives`;
+            content.innerHTML = `<div class="text-center py-12"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div><p class="text-sm text-gray-500">Loading...</p></div>`;
+            panel.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            await refreshIncentivesPanel();
+        }
+
+        function closeIncentivesPanel() {
+            document.getElementById('incentives-panel').classList.add('hidden');
+            document.body.style.overflow = '';
+            incentivesPanelPlayer = null;
+        }
+
+        async function refreshIncentivesPanel() {
+            if (!incentivesPanelPlayer || !currentUserId) return;
+            const { id: playerId, name: playerName, teamId } = incentivesPanelPlayer;
+            const content = document.getElementById('incentives-panel-content');
+            try {
+                const [rules, paidGamesMap, statOptions, maxPerGameCents] = await Promise.all([
+                    getIncentiveRules(currentUserId, playerId),
+                    getPaidGames(currentUserId, playerId),
+                    getStatOptionsForTeam(teamId),
+                    getCapSetting(currentUserId, playerId),
+                ]);
+
+                // Fetch stats for recent past games for this player
+                const pastGames = allScheduleEvents
+                    .filter(g => g.isDbGame && g.type === 'game' && !g.isCancelled && g.childId === playerId && g.teamId === teamId && new Date(g.date) < new Date())
+                    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                const recentGames = pastGames.slice(0, 5);
+                const recentGameIds = new Set(recentGames.map(game => game.id));
+
+                const seasonGameStats = await Promise.all(
+                    pastGames.map(async (game) => {
+                        const stats = await getAggregatedStatsForPlayer(teamId, game.id, playerId);
+                        return { game, stats };
+                    })
+                );
+                incentivesPanelRules = rules;
+
+                // Update earnings cache for schedule chips
+                for (const { game, stats } of seasonGameStats) {
+                    if (stats) {
+                        const { totalCents } = calculateEarnings(getApplicableRulesForGame(rules, game.date), stats, maxPerGameCents);
+                        incentivesEarningsCache.set(`${game.id}__${playerId}`, totalCents);
+                    }
+                }
+
+                content.innerHTML = renderIncentivesPanel({
+                    player: { id: playerId, name: playerName, teamId },
+                    rules,
+                    paidGames: paidGamesMap,
+                    seasonGameStats,
+                    recentGameStats: seasonGameStats.filter(({ game }) => recentGameIds.has(game.id)),
+                    statOptions,
+                    userId: currentUserId,
+                    maxPerGameCents,
+                });
+
+                // Attach rule builder interactivity
+                attachRuleBuilderListeners();
+            } catch (error) {
+                console.error('Failed to load incentives panel:', error);
+                content.innerHTML = `
+                    <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-5">
+                        <p class="text-sm font-semibold text-red-800">Failed to load incentives.</p>
+                        <p class="text-xs text-red-700 mt-1">${error?.message ? escapeHtml(error.message) : 'Check your connection and try again.'}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function openIncentiveRuleBuilder(teamId, playerId) {
+            if (!incentivesPanelPlayer) return;
+            getStatOptionsForTeam(teamId).then(statOptions => {
+                const builderEl = document.getElementById('incentive-rule-builder');
+                if (!builderEl) return;
+                builderEl.innerHTML = renderRuleBuilder(statOptions, teamId, playerId);
+                builderEl.classList.remove('hidden');
+                attachRuleBuilderListeners();
+                updateIncentivePreview();
+            });
+        }
+
+        function editIncentiveRule(userId, ruleId) {
+            if (!incentivesPanelPlayer || userId !== currentUserId) return;
+            const rule = incentivesPanelRules.find(candidate => candidate.id === ruleId);
+            if (!rule) return;
+            getStatOptionsForTeam(incentivesPanelPlayer.teamId).then(statOptions => {
+                const builderEl = document.getElementById('incentive-rule-builder');
+                if (!builderEl) return;
+                builderEl.innerHTML = renderRuleBuilder(statOptions, incentivesPanelPlayer.teamId, incentivesPanelPlayer.id, rule);
+                builderEl.classList.remove('hidden');
+                attachRuleBuilderListeners();
+                updateIncentivePreview();
+            });
+        }
+
+        function closeIncentiveRuleBuilder() {
+            const builderEl = document.getElementById('incentive-rule-builder');
+            if (builderEl) {
+                builderEl.classList.add('hidden');
+                builderEl.innerHTML = '';
+            }
+        }
+
+        function attachRuleBuilderListeners() {
+            // selectIncentiveStat and selectIncentiveType need to be global for onclick attributes
+            window.selectIncentiveStat = function(key) {
+                document.getElementById('incentive-stat-key').value = key;
+                document.querySelectorAll('.stat-pill').forEach(btn => {
+                    const isSelected = btn.dataset.stat === key;
+                    btn.classList.toggle('bg-primary-600', isSelected);
+                    btn.classList.toggle('text-white', isSelected);
+                    btn.classList.toggle('border-primary-600', isSelected);
+                    btn.classList.toggle('bg-white', !isSelected);
+                    btn.classList.toggle('text-gray-600', !isSelected);
+                    btn.classList.toggle('border-gray-200', !isSelected);
+                });
+                const label = document.getElementById('incentive-threshold-stat-label');
+                if (label) label.textContent = key.toUpperCase();
+                updateIncentivePreview();
+            };
+
+            window.selectIncentiveType = function(type) {
+                document.getElementById('incentive-type').value = type;
+                const perUnitBtn = document.getElementById('type-per-unit');
+                const thresholdBtn = document.getElementById('type-threshold');
+                const perUnitField = document.getElementById('field-per-unit');
+                const thresholdField = document.getElementById('field-threshold');
+                if (!perUnitBtn || !thresholdBtn) return;
+                if (type === 'per_unit') {
+                    perUnitBtn.classList.replace('bg-white', 'bg-primary-600');
+                    perUnitBtn.classList.replace('text-gray-600', 'text-white');
+                    thresholdBtn.classList.replace('bg-primary-600', 'bg-white');
+                    thresholdBtn.classList.replace('text-white', 'text-gray-600');
+                    perUnitField?.classList.remove('hidden');
+                    thresholdField?.classList.add('hidden');
+                } else {
+                    thresholdBtn.classList.replace('bg-white', 'bg-primary-600');
+                    thresholdBtn.classList.replace('text-gray-600', 'text-white');
+                    perUnitBtn.classList.replace('bg-primary-600', 'bg-white');
+                    perUnitBtn.classList.replace('text-white', 'text-gray-600');
+                    thresholdField?.classList.remove('hidden');
+                    perUnitField?.classList.add('hidden');
+                }
+                updateIncentivePreview();
+            };
+
+            // Live preview update on amount/threshold change
+            ['incentive-amount', 'incentive-bonus-amount', 'incentive-threshold', 'incentive-threshold-op'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('input', updateIncentivePreview);
+            });
+        }
+
+        function updateIncentivePreview() {
+            const previewEl = document.getElementById('incentive-preview');
+            if (!previewEl) return;
+            const statKey = document.getElementById('incentive-stat-key')?.value;
+            const type = document.getElementById('incentive-type')?.value;
+            if (!statKey) { previewEl.classList.add('hidden'); return; }
+            const label = statKey.toUpperCase();
+            let text = '';
+            if (type === 'per_unit') {
+                const amt = parseFloat(document.getElementById('incentive-amount')?.value);
+                if (!isNaN(amt) && amt !== 0) {
+                    const cents = Math.round(amt * 100);
+                    text = `Example: 10 ${label} × ${formatCents(Math.abs(cents), { sign: false })} = ${formatCents(10 * cents, { sign: true })}`;
+                }
+            } else {
+                const threshold = parseInt(document.getElementById('incentive-threshold')?.value, 10);
+                const op = document.getElementById('incentive-threshold-op')?.value;
+                const amt = parseFloat(document.getElementById('incentive-bonus-amount')?.value);
+                if (!isNaN(threshold) && !isNaN(amt) && amt !== 0) {
+                    const cents = Math.round(amt * 100);
+                    const opLabel = op === 'gte' ? '≥' : '>';
+                    text = `If ${label} ${opLabel} ${threshold}: earn ${formatCents(cents, { sign: true })}`;
+                }
+            }
+            if (text) {
+                previewEl.textContent = text;
+                previewEl.classList.remove('hidden');
+            } else {
+                previewEl.classList.add('hidden');
+            }
+        }
+
+        async function saveIncentiveRuleFromBuilder(teamId, playerId) {
+            const editRuleId = document.getElementById('incentive-edit-rule-id')?.value || null;
+            const existingRule = editRuleId ? incentivesPanelRules.find(candidate => candidate.id === editRuleId) : null;
+            const statKey = document.getElementById('incentive-stat-key')?.value;
+            const type = document.getElementById('incentive-type')?.value || 'per_unit';
+            if (!statKey) { alert('Please select a stat.'); return; }
+
+            let amountCents, threshold = null, thresholdOp = null;
+            if (type === 'per_unit') {
+                const amt = parseFloat(document.getElementById('incentive-amount')?.value);
+                if (isNaN(amt) || amt === 0) { alert('Please enter a non-zero amount.'); return; }
+                amountCents = Math.round(amt * 100);
+            } else {
+                const th = parseInt(document.getElementById('incentive-threshold')?.value, 10);
+                const amt = parseFloat(document.getElementById('incentive-bonus-amount')?.value);
+                const op = document.getElementById('incentive-threshold-op')?.value || 'gt';
+                if (isNaN(th) || isNaN(amt) || amt === 0) { alert('Please fill in the threshold and amount.'); return; }
+                threshold = th;
+                thresholdOp = op;
+                amountCents = Math.round(amt * 100);
+            }
+
+            await saveIncentiveRuleFn(currentUserId, {
+                ...(editRuleId ? { id: editRuleId } : {}),
+                teamId,
+                playerId,
+                playerName: incentivesPanelPlayer?.name || '',
+                statKey,
+                type,
+                amountCents,
+                threshold,
+                thresholdOp,
+                active: existingRule ? existingRule.active !== false : true,
+            });
+            closeIncentiveRuleBuilder();
+            await refreshIncentivesPanel();
+        }
+
+        async function handleToggleIncentiveRule(userId, ruleId) {
+            const rule = incentivesPanelRules.find(candidate => candidate.id === ruleId);
+            if (!rule) return;
+            await toggleIncentiveRuleFn(userId, rule);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleDeleteIncentiveRule(userId, ruleId) {
+            if (!confirm('Stop using this rule for future games? Past earnings will stay unchanged.')) return;
+            await retireIncentiveRuleFn(userId, ruleId);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleMarkGamePaid(userId, gameId, playerId, teamId, amountCents) {
+            await markGamePaidFn(userId, gameId, playerId, teamId, amountCents);
+            await refreshIncentivesPanel();
+        }
+
+        async function handleSaveIncentiveCap(userId, playerId) {
+            const teamId = incentivesPanelPlayer?.teamId;
+            if (!teamId) return;
+            const input = document.getElementById('incentive-cap-input');
+            const raw = input ? input.value.trim() : '';
+            if (raw === '') {
+                await saveCapSettingFn(userId, teamId, playerId, null);
+            } else {
+                const dollars = parseFloat(raw);
+                if (isNaN(dollars) || dollars < 0) { alert('Enter a valid dollar amount (or leave blank for no cap).'); return; }
+                await saveCapSettingFn(userId, teamId, playerId, Math.round(dollars * 100));
+            }
+            await refreshIncentivesPanel();
+        }
+
+        async function handleRemoveIncentiveCap(userId, playerId) {
+            const teamId = incentivesPanelPlayer?.teamId;
+            if (!teamId) return;
+            await saveCapSettingFn(userId, teamId, playerId, null);
+            await refreshIncentivesPanel();
+        }
 
         init();
     </script>

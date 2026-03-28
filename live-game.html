@@ -13,6 +13,7 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="robots" content="noindex,nofollow">
   <title>Live Game - ALL PLAYS</title>
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -150,6 +151,22 @@
       border-color: rgba(255, 107, 107, 0.65);
     }
 
+    .panel-shell {
+      background: linear-gradient(165deg, rgba(28, 37, 65, 0.74), rgba(11, 19, 43, 0.78));
+      border: 1px solid rgba(91, 192, 190, 0.22);
+      border-radius: 14px;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28);
+    }
+
+    #mobile-tabs {
+      background: rgba(15, 27, 53, 0.84);
+      backdrop-filter: blur(8px);
+    }
+
+    #mobile-tabs [data-tab] {
+      transition: color 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+    }
+
     @keyframes float-up {
       0% { transform: translateY(0) scale(1); opacity: 1; }
       100% { transform: translateY(-200px) scale(1.4); opacity: 0; }
@@ -241,8 +258,8 @@
     <div class="md:grid md:grid-cols-4 md:gap-4 md:h-[52vh] mb-6">
 
       <!-- PLAY-BY-PLAY (left sidebar) -->
-      <section id="plays-panel" class="md:col-span-1 md:flex md:flex-col md:overflow-hidden">
-        <h2 class="text-teal font-medium mb-2 flex items-center gap-2 shrink-0">
+      <section id="plays-panel" class="panel-shell p-3 md:col-span-1 md:flex md:flex-col md:overflow-hidden">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2 shrink-0 uppercase tracking-[0.14em] text-xs">
           <span>&#9654;</span>
           Play-by-Play
         </h2>
@@ -252,10 +269,10 @@
       </section>
 
       <!-- VIDEO (center, double-wide) -->
-      <section id="video-panel" class="hidden md:flex md:col-span-2 md:flex-col md:overflow-hidden">
+      <section id="video-panel" class="panel-shell p-3 hidden md:flex md:col-span-2 md:flex-col md:overflow-hidden">
         <iframe
           id="youtube-stream-iframe"
-          class="w-full aspect-video md:aspect-auto md:flex-1 rounded-xl"
+          class="w-full aspect-video md:aspect-auto md:flex-1 rounded-xl border border-teal/20"
           src=""
           title="Live Stream"
           frameborder="0"
@@ -269,15 +286,15 @@
       </section>
 
       <!-- STATS (right sidebar) -->
-      <section id="stats-panel" class="hidden md:flex md:col-span-1 md:flex-col md:overflow-hidden">
-        <h2 class="text-teal font-medium mb-2 flex items-center gap-2 shrink-0">
+      <section id="stats-panel" class="panel-shell p-3 hidden md:flex md:col-span-1 md:flex-col md:overflow-hidden">
+        <h2 class="text-teal font-medium mb-3 flex items-center gap-2 shrink-0 uppercase tracking-[0.14em] text-xs">
           <span>&#9205;</span>
           Player Stats
         </h2>
         <div class="overflow-y-auto flex-1 pr-1 space-y-4">
           <div>
             <div class="text-teal/70 text-xs uppercase tracking-[0.2em] mb-2">Lineup</div>
-            <div class="text-sand/60 text-xs mb-1">On Court</div>
+            <div class="text-sand/60 text-xs mb-1">On Field</div>
             <div id="lineup-oncourt" class="grid grid-cols-1 gap-2"></div>
             <div class="text-sand/60 text-xs mt-3 mb-1">Bench</div>
             <div id="lineup-bench" class="grid grid-cols-1 gap-2"></div>
@@ -298,7 +315,7 @@
         <span class="text-lg">&#128172;</span>
         Live Chat
       </h2>
-      <div id="chat-container" class="bg-slate/50 rounded-lg border border-teal/20 flex flex-col">
+      <div id="chat-container" class="panel-shell flex flex-col">
 
         <!-- Messages on top -->
         <div id="chat-messages" class="h-36 overflow-y-auto p-3 space-y-2"></div>
@@ -396,7 +413,7 @@
   <!-- GAME NOT LIVE STATE -->
   <div id="not-live-overlay" class="hidden fixed right-4 bottom-24 z-40 max-w-xs w-[90%] bg-slate/95 border border-teal/30 rounded-2xl p-4 shadow-xl">
     <div class="flex items-start gap-3">
-      <div class="text-3xl">&#127936;</div>
+      <div class="text-3xl">&#127939;</div>
       <div>
         <h2 class="text-base font-bold mb-1">Game Not Live Yet</h2>
         <p class="text-sand/70 text-xs mb-2">Chat is open while you wait.</p>

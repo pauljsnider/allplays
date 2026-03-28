@@ -17,4 +17,17 @@ describe('team management page access wiring', () => {
         expect(html).toContain("from './js/team-access.js'");
         expect(html).toContain('hasFullTeamAccess(');
     });
+
+    it('guards edit mode when team id resolves to no team', () => {
+        const html = readRepoFile('edit-team.html');
+        expect(html).toContain('if (!team)');
+        expect(html).toContain('window.location.href = \'dashboard.html\'');
+        expect(html).toContain('Team not found or no longer active');
+    });
+
+    it('uses shared full-access helper in edit config page', () => {
+        const html = readRepoFile('edit-config.html');
+        expect(html).toContain("from './js/team-access.js'");
+        expect(html).toContain('hasFullTeamAccess(');
+    });
 });

@@ -199,4 +199,43 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
     });
+
+    it('fails closed and cleans up when standard access code claim fails', async () => {
+        const expectedError = new Error('Code already used');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'standard',
+                codeId: 'code-standard-1',
+                data: { code: 'STANDARD1' }
+            }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-456',
+                    delete: deleteAuthUser
+                }
+            }),
+            markAccessCodeAsUsed: vi.fn().mockRejectedValue(expectedError)
+        });
+        const auth = {
+            currentUser: {
+                email: 'user@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'user@example.com',
+            password: 'password123',
+            activationCode: 'STANDARD1',
+            auth,
+            dependencies
+        })).rejects.toThrow('Code already used');
+
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
+    });
 });

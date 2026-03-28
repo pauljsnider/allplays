@@ -183,7 +183,7 @@ export function renderHeader(container, user) {
 
     // Add logout handler
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=9');
+      const { logout } = await import('./auth.js?v=10');
       await logout();
       window.location.href = 'index.html';
     });
@@ -237,8 +237,7 @@ export function renderFooter(container) {
               <h4 class="text-white font-semibold mb-4">Support</h4>
               <ul class="space-y-2 text-sm">
                 <li><a href="help.html" class="hover:text-white transition">Help Center</a></li>
-                <li><a href="#" class="hover:text-white transition">Contact</a></li>
-                <li><a href="https://github.com/pauljsnider/paulsnidernet" class="hover:text-white transition" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="https://paulsnider.net" class="hover:text-white transition" target="_blank" rel="noopener noreferrer">Contact</a></li>
               </ul>
             </div>
           </div>
@@ -261,6 +260,21 @@ export function renderFooter(container) {
  */
 export async function fetchAndParseCalendar(url) {
   const timeoutMs = 5000;
+  const cleanedUrl = url.trim();
+  const normalizedUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+
+  function resolveCalendarFunctionUrl() {
+    const globalConfig = window.__ALLPLAYS_CONFIG__;
+    const configuredUrl = globalConfig?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+    if (typeof configuredUrl === 'string' && configuredUrl.trim()) {
+      return configuredUrl.trim();
+    }
+    const metaTagUrl = document.querySelector('meta[name="allplays-calendar-function-url"]')?.content;
+    if (typeof metaTagUrl === 'string' && metaTagUrl.trim()) {
+      return metaTagUrl.trim();
+    }
+    return null;
+  }
 
   function normalizeIcsText(text) {
     const marker = 'BEGIN:VCALENDAR';
@@ -279,19 +293,47 @@ export async function fetchAndParseCalendar(url) {
     return response;
   }
 
+  async function fetchViaFunction(targetUrl) {
+    const calendarFetchFunctionUrl = resolveCalendarFunctionUrl();
+    if (!calendarFetchFunctionUrl) {
+      throw new Error('Calendar fetch function URL is not configured');
+    }
+    const functionUrl = `${calendarFetchFunctionUrl}?url=${encodeURIComponent(targetUrl)}&forceRefresh=true`;
+    const response = await fetchWithTimeout(functionUrl);
+    if (!response.ok) {
+      throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+    }
+    const payload = await response.json();
+    if (!payload?.ok || !payload?.icsText) {
+      throw new Error(payload?.error || 'Invalid function response');
+    }
+    return payload.icsText;
+  }
+
   function buildProxyUrls(targetUrl) {
-    const cleanedUrl = targetUrl.trim();
-    const httpsUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+    const httpsUrl = targetUrl.trim().replace(/^http:\/\//i, 'https://');
+    const cacheBustUrl = httpsUrl.includes('?')
+      ? `${httpsUrl}&cachebust=${Date.now()}`
+      : `${httpsUrl}?cachebust=${Date.now()}`;
     return [
       `https://corsproxy.io/?${encodeURIComponent(httpsUrl)}`,
+      `https://r.jina.ai/https://${cacheBustUrl.replace(/^https:\/\//i, '')}`,
       `https://r.jina.ai/https://${httpsUrl.replace(/^https:\/\//i, '')}`,
       `https://r.jina.ai/http://${httpsUrl.replace(/^https?:\/\//i, '')}`
     ];
   }
 
   try {
+    // First try Firebase function to avoid browser CORS/proxy issues
+    try {
+      const functionIcsText = await fetchViaFunction(normalizedUrl);
+      return parseICS(normalizeIcsText(functionIcsText));
+    } catch (functionError) {
+      console.warn('Function calendar fetch failed, falling back to client fetch:', functionError);
+    }
+
     // Try direct fetch first
-    const response = await fetchWithTimeout(url);
+    const response = await fetchWithTimeout(normalizedUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch calendar: ${response.statusText}`);
     }
@@ -331,7 +373,7 @@ export async function fetchAndParseCalendar(url) {
  * @returns {Array} Array of parsed events
  */
 export function parseICS(icsText) {
-  const events = [];
+  const rawEvents = [];
   const lines = icsText.split(/\r\n|\n|\r/);
 
   let currentEvent = null;
@@ -349,8 +391,14 @@ export function parseICS(icsText) {
     if (line === 'BEGIN:VEVENT') {
       currentEvent = {};
     } else if (line === 'END:VEVENT' && currentEvent) {
-      if (currentEvent.dtstart && currentEvent.summary) {
-        events.push(currentEvent);
+      const hasStandardEventFields = currentEvent.dtstart && currentEvent.summary;
+      const hasRecurringOverrideFields =
+        typeof currentEvent.uid === 'string' &&
+        currentEvent.uid.trim() &&
+        currentEvent.recurrenceId instanceof Date &&
+        !Number.isNaN(currentEvent.recurrenceId.getTime());
+      if (hasStandardEventFields || hasRecurringOverrideFields) {
+        rawEvents.push(currentEvent);
       }
       currentEvent = null;
     } else if (currentEvent) {
@@ -365,9 +413,19 @@ export function parseICS(icsText) {
         switch (fieldName) {
           case 'DTSTART':
             currentEvent.dtstart = parseICSDate(value, parsedField.params);
+            if (isRecurringWallClockDateTime(value)) {
+              const recurrenceTimeZone = normalizeICSTzid(parsedField.params.TZID);
+              if (recurrenceTimeZone) {
+                currentEvent.recurrenceTimeZone = recurrenceTimeZone;
+              }
+            }
+            currentEvent.recurrenceAbsoluteTime = isAbsoluteRecurringDateTime(value);
             break;
           case 'DTEND':
             currentEvent.dtend = parseICSDate(value, parsedField.params);
+            break;
+          case 'RECURRENCE-ID':
+            currentEvent.recurrenceId = parseICSDate(value, parsedField.params);
             break;
           case 'SUMMARY':
             currentEvent.summary = value;
@@ -385,12 +443,392 @@ export function parseICS(icsText) {
           case 'STATUS':
             currentEvent.status = value;
             break;
+          case 'RRULE':
+            currentEvent.rrule = parseICSRRule(value);
+            break;
+          case 'EXDATE': {
+            const rawDates = value.split(',').map((token) => token.trim()).filter(Boolean);
+            const parsedDates = rawDates
+              .map((rawDate) => parseICSDate(rawDate, parsedField.params))
+              .filter((parsedDate) => parsedDate instanceof Date && !Number.isNaN(parsedDate.getTime()));
+            if (parsedDates.length) {
+              if (!Array.isArray(currentEvent.exDates)) currentEvent.exDates = [];
+              currentEvent.exDates.push(...parsedDates);
+            }
+            break;
+          }
         }
       }
     }
   }
 
+  return buildICSOccurrences(rawEvents);
+}
+
+const ICS_DAY_TO_INDEX = {
+  SU: 0,
+  MO: 1,
+  TU: 2,
+  WE: 3,
+  TH: 4,
+  FR: 5,
+  SA: 6
+};
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
+
+function addDaysPreservingLocalTime(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function addDaysPreservingAbsoluteTime(date, days) {
+  return new Date(date.getTime() + (days * MS_PER_DAY));
+}
+
+function isRecurringWallClockDateTime(icsDate) {
+  return (
+    typeof icsDate === 'string' &&
+    icsDate.length > 8 &&
+    !icsDate.endsWith('Z') &&
+    !/([+-])(\d{2}):?(\d{2})$/.test(icsDate)
+  );
+}
+
+function normalizeICSTzid(rawTzid) {
+  if (typeof rawTzid !== 'string') return null;
+  const tzid = rawTzid.replace(/^\//, '');
+  return tzid || null;
+}
+
+function isAbsoluteRecurringDateTime(icsDate) {
+  return (
+    typeof icsDate === 'string' &&
+    icsDate.length > 8 &&
+    (
+      icsDate.endsWith('Z') ||
+      /([+-])(\d{2}):?(\d{2})$/.test(icsDate)
+    )
+  );
+}
+
+function addDaysPreservingRecurrenceWallTime(date, days, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return addDaysPreservingAbsoluteTime(date, days);
+  }
+
+  if (!recurrenceTimeZone) {
+    return addDaysPreservingLocalTime(date, days);
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, recurrenceTimeZone);
+  if (!wallClock) {
+    return addDaysPreservingLocalTime(date, days);
+  }
+
+  const shiftedDay = new Date(Date.UTC(wallClock.year, wallClock.month, wallClock.day + days));
+  const shifted = parseDateTimeInTimeZone({
+    year: shiftedDay.getUTCFullYear(),
+    month: shiftedDay.getUTCMonth(),
+    day: shiftedDay.getUTCDate(),
+    hour: wallClock.hour,
+    minute: wallClock.minute,
+    second: wallClock.second,
+    timeZone: recurrenceTimeZone
+  });
+
+  return shifted || addDaysPreservingLocalTime(date, days);
+}
+
+function getRecurrenceWeekday(date, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return date.getUTCDay();
+  }
+
+  if (!recurrenceTimeZone) {
+    return date.getDay();
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, recurrenceTimeZone);
+  if (!wallClock) {
+    return date.getDay();
+  }
+
+  return new Date(Date.UTC(wallClock.year, wallClock.month, wallClock.day)).getUTCDay();
+}
+
+function getRecurrenceDayNumber(date, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / MS_PER_DAY);
+  }
+
+  if (!recurrenceTimeZone) {
+    return toCalendarDayNumber(date);
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, recurrenceTimeZone);
+  if (!wallClock) {
+    return toCalendarDayNumber(date);
+  }
+
+  return Math.floor(Date.UTC(wallClock.year, wallClock.month, wallClock.day) / MS_PER_DAY);
+}
+
+function toCalendarDayNumber(date) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY);
+}
+
+function parseICSRRule(rawRule) {
+  if (!rawRule || typeof rawRule !== 'string') return null;
+  const parts = rawRule.split(';');
+  const parsed = {};
+
+  for (const part of parts) {
+    const equalsIndex = part.indexOf('=');
+    if (equalsIndex <= 0) continue;
+    const key = part.substring(0, equalsIndex).trim().toUpperCase();
+    const value = part.substring(equalsIndex + 1).trim();
+    if (!value) continue;
+
+    switch (key) {
+      case 'FREQ':
+        parsed.freq = value.toUpperCase();
+        break;
+      case 'INTERVAL':
+        parsed.interval = Math.max(1, parseInt(value, 10) || 1);
+        break;
+      case 'COUNT': {
+        const count = parseInt(value, 10);
+        if (!Number.isNaN(count) && count > 0) parsed.count = count;
+        break;
+      }
+      case 'UNTIL': {
+        const untilDate = parseICSDate(value);
+        if (untilDate instanceof Date && !Number.isNaN(untilDate.getTime())) {
+          parsed.until = untilDate;
+        }
+        break;
+      }
+      case 'BYDAY':
+        parsed.byDays = value
+          .split(',')
+          .map((dayCode) => dayCode.trim().toUpperCase())
+          .filter((dayCode) => dayCode in ICS_DAY_TO_INDEX);
+        break;
+    }
+  }
+
+  if (!parsed.freq) return null;
+  return parsed;
+}
+
+function expandRecurringICSEvent(event) {
+  const {
+    rrule,
+    exDates = [],
+    recurrenceTimeZone = null,
+    recurrenceAbsoluteTime = false,
+    ...baseEvent
+  } = event;
+  if (!rrule) return [baseEvent];
+
+  const freq = String(rrule.freq || '').toUpperCase();
+  if (freq !== 'DAILY' && freq !== 'WEEKLY') return [baseEvent];
+
+  const startDate = baseEvent.dtstart;
+  if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime())) return [baseEvent];
+  const durationMs =
+    baseEvent.dtend instanceof Date && !Number.isNaN(baseEvent.dtend.getTime())
+      ? baseEvent.dtend.getTime() - startDate.getTime()
+      : null;
+
+  let untilBoundary = null;
+  if (rrule.until instanceof Date && !Number.isNaN(rrule.until.getTime())) {
+    untilBoundary = new Date(rrule.until);
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    if (isLocalMidnight) {
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
+
+  const interval = Math.max(1, Number(rrule.interval) || 1);
+  const countLimit = Number(rrule.count) > 0 ? Number(rrule.count) : Infinity;
+  const exDateTimes = new Set(
+    exDates
+      .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+      .map((date) => date.getTime())
+  );
+
+  const occurrences = [];
+  const pushOccurrence = (occurrenceStart) => {
+    const timestamp = occurrenceStart.getTime();
+    if (exDateTimes.has(timestamp)) return;
+    const occurrence = {
+      ...baseEvent,
+      dtstart: new Date(timestamp),
+      recurrenceId: new Date(timestamp)
+    };
+    if (durationMs != null) {
+      occurrence.dtend = new Date(timestamp + durationMs);
+    } else {
+      delete occurrence.dtend;
+    }
+    occurrence.id = buildICSOccurrenceId(occurrence.uid, occurrence.recurrenceId);
+    occurrences.push(occurrence);
+  };
+
+  if (freq === 'DAILY') {
+    let cursor = new Date(startDate);
+    let generated = 0;
+
+    while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+      if (untilBoundary && cursor > untilBoundary) break;
+      pushOccurrence(cursor);
+      generated++;
+      cursor = addDaysPreservingRecurrenceWallTime(cursor, interval, recurrenceTimeZone, recurrenceAbsoluteTime);
+    }
+
+    return occurrences;
+  }
+
+  const defaultDayCode = DAY_CODES[getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime)];
+  const byDays = Array.isArray(rrule.byDays) && rrule.byDays.length
+    ? Array.from(new Set(rrule.byDays))
+    : [defaultDayCode];
+  const byDayIndexes = new Set(byDays.map((dayCode) => ICS_DAY_TO_INDEX[dayCode]).filter((idx) => idx != null));
+  if (!byDayIndexes.size) {
+    byDayIndexes.add(getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
+  }
+
+  const startWeekAnchor = new Date(startDate);
+  startWeekAnchor.setHours(0, 0, 0, 0);
+  startWeekAnchor.setDate(startWeekAnchor.getDate() - getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
+
+  let cursor = new Date(startDate);
+  let generated = 0;
+  while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+    if (untilBoundary && cursor > untilBoundary) break;
+    const cursorDayStart = new Date(cursor);
+    cursorDayStart.setHours(0, 0, 0, 0);
+    const cursorWeekAnchor = new Date(cursorDayStart);
+    const cursorWeekday = getRecurrenceWeekday(cursor, recurrenceTimeZone, recurrenceAbsoluteTime);
+    cursorWeekAnchor.setDate(cursorWeekAnchor.getDate() - cursorWeekday);
+    const weekDiff = Math.floor((getRecurrenceDayNumber(cursorWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime) - getRecurrenceDayNumber(startWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime)) / 7);
+    const isCadencedWeek = weekDiff >= 0 && weekDiff % interval === 0;
+    const isMatchingWeekday = byDayIndexes.has(cursorWeekday);
+
+    if (isCadencedWeek && isMatchingWeekday && cursor >= startDate) {
+      pushOccurrence(cursor);
+      generated++;
+    }
+
+    cursor = addDaysPreservingRecurrenceWallTime(cursor, 1, recurrenceTimeZone, recurrenceAbsoluteTime);
+  }
+
+  return occurrences;
+}
+
+function buildICSOccurrences(rawEvents) {
+  const events = [];
+  const overridesByUid = new Map();
+  const mastersByUid = new Map();
+
+  rawEvents.forEach((event) => {
+    if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
+      if (!overridesByUid.has(event.uid)) overridesByUid.set(event.uid, []);
+      overridesByUid.get(event.uid).push(event);
+      return;
+    }
+
+    if (event?.uid && event.rrule) {
+      if (!mastersByUid.has(event.uid)) mastersByUid.set(event.uid, []);
+      mastersByUid.get(event.uid).push(event);
+    }
+  });
+
+  rawEvents.forEach((event) => {
+    if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
+      if (!hasMasterForRecurringOverride(mastersByUid, event.uid)) {
+        const overrideEvent = buildICSOverrideOccurrence(event);
+        if (overrideEvent) events.push(overrideEvent);
+      }
+      return;
+    }
+
+    if (event?.uid && event.rrule) {
+      const overrides = overridesByUid.get(event.uid) || [];
+      const overrideExDates = overrides
+        .map((overrideEvent) => overrideEvent.recurrenceId)
+        .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()));
+      const expandedEvents = expandRecurringICSEvent({
+        ...event,
+        exDates: [...(event.exDates || []), ...overrideExDates]
+      });
+      events.push(...expandedEvents);
+      overrides.forEach((overrideEvent) => {
+        const resolvedOverride = buildICSOverrideOccurrence(overrideEvent, event);
+        if (resolvedOverride) events.push(resolvedOverride);
+      });
+      return;
+    }
+
+    events.push(event);
+  });
+
   return events;
+}
+
+function hasMasterForRecurringOverride(mastersByUid, uid) {
+  const masters = mastersByUid.get(uid);
+  return Array.isArray(masters) && masters.length > 0;
+}
+
+function buildICSOverrideOccurrence(overrideEvent, masterEvent = null) {
+  const occurrenceAnchor = overrideEvent?.recurrenceId;
+  if (!(occurrenceAnchor instanceof Date) || Number.isNaN(occurrenceAnchor.getTime())) {
+    return null;
+  }
+
+  if (String(overrideEvent?.status || '').toUpperCase() === 'CANCELLED') {
+    return null;
+  }
+
+  const {
+    rrule: ignoredRule,
+    exDates: ignoredExDates,
+    recurrenceTimeZone: ignoredTimeZone,
+    recurrenceAbsoluteTime: ignoredAbsoluteTime,
+    ...baseMaster
+  } = masterEvent || {};
+  const {
+    rrule,
+    exDates,
+    recurrenceTimeZone,
+    recurrenceAbsoluteTime,
+    ...baseOverride
+  } = overrideEvent || {};
+
+  return {
+    ...baseMaster,
+    ...baseOverride,
+    recurrenceId: new Date(occurrenceAnchor.getTime()),
+    id: buildICSOccurrenceId(baseOverride.uid || baseMaster.uid, occurrenceAnchor)
+  };
+}
+
+function buildICSOccurrenceId(uid, recurrenceId) {
+  const normalizedUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!normalizedUid) return '';
+  if (!(recurrenceId instanceof Date) || Number.isNaN(recurrenceId.getTime())) {
+    return normalizedUid;
+  }
+  return `${normalizedUid}__${recurrenceId.toISOString()}`;
 }
 
 /**
@@ -527,7 +965,7 @@ function parseICSDate(icsDate, params = {}) {
     }
 
     const rawTzid = typeof params.TZID === 'string' ? params.TZID : '';
-    const tzid = rawTzid ? rawTzid.replace(/^\//, '') : '';
+    const tzid = normalizeICSTzid(rawTzid);
     if (rawTzid && !tzid) {
       console.warn('Malformed ICS TZID value, dropping event date:', rawTzid, icsDate);
       return null;
@@ -843,6 +1281,92 @@ export function getCalendarEventType(event) {
   return isPractice ? 'practice' : 'game';
 }
 
+/**
+ * Resolve normalized calendar event status for ICS events.
+ * @param {Object} event - Parsed ICS event
+ * @returns {'scheduled'|'cancelled'} Event status
+ */
+export function getCalendarEventStatus(event) {
+  const normalizedStatus = String(event?.status || '').trim().toUpperCase();
+  if (normalizedStatus === 'CANCELLED' || normalizedStatus === 'CANCELED') {
+    return 'cancelled';
+  }
+
+  const normalizedSummary = String(event?.summary || '').toUpperCase();
+  if (normalizedSummary.includes('[CANCELED]') || normalizedSummary.includes('[CANCELLED]')) {
+    return 'cancelled';
+  }
+
+  return 'scheduled';
+}
+
+/**
+ * Resolve the id used to track a parsed ICS event in Firestore and the UI.
+ * Recurring occurrences should prefer their generated occurrence id.
+ * @param {Object} event - Parsed ICS event
+ * @returns {string} Stable tracking id or empty string
+ */
+export function getCalendarEventTrackingId(event) {
+  const occurrenceId = typeof event?.id === 'string' ? event.id.trim() : '';
+  if (occurrenceId) return occurrenceId;
+
+  const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
+  return uid;
+}
+
+/**
+ * Check whether a parsed ICS event is already tracked in Firestore.
+ * Recurring occurrences match by occurrence id; single events fall back to uid.
+ * @param {Object} event - Parsed ICS event
+ * @param {string[]|Set<string>} trackedCalendarEventIds - Stored tracked ids
+ * @returns {boolean}
+ */
+export function isTrackedCalendarEvent(event, trackedCalendarEventIds) {
+  const trackedIds = trackedCalendarEventIds instanceof Set
+    ? trackedCalendarEventIds
+    : new Set(Array.isArray(trackedCalendarEventIds) ? trackedCalendarEventIds : []);
+  const trackingId = getCalendarEventTrackingId(event);
+  if (trackingId && trackedIds.has(trackingId)) {
+    return true;
+  }
+
+  const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
+  const hasOccurrenceId = typeof event?.id === 'string' && event.id.includes('__');
+  if (!hasOccurrenceId && uid && trackedIds.has(uid)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Convert a parsed ICS event into the view model used by the global calendar.
+ * @param {Object} options
+ * @param {Object} options.team
+ * @param {string} options.teamColor
+ * @param {Object} options.event
+ * @returns {Object|null}
+ */
+export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
+  const eventDate = event?.dtstart instanceof Date ? event.dtstart : new Date(event?.dtstart);
+  if (Number.isNaN(eventDate.getTime())) {
+    return null;
+  }
+
+  return {
+    id: getCalendarEventTrackingId(event) || `ics-${eventDate.getTime()}`,
+    teamId: team.id,
+    teamName: team.name,
+    teamColor,
+    type: getCalendarEventType(event),
+    title: event.summary || 'Event',
+    date: eventDate,
+    location: event.location || 'TBD',
+    status: getCalendarEventStatus(event),
+    source: 'ics'
+  };
+}
+
 // ============================================
 // Practice & Event Utilities - Phase 1
 // ============================================
@@ -890,12 +1414,6 @@ export function generateSeriesId() {
     return v.toString(16);
   });
 }
-
-/**
- * Day code mapping for recurrence
- */
-const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function toLocalDateKey(date) {
   const year = date.getFullYear();
@@ -966,10 +1484,70 @@ export function expandRecurrence(master, windowDays = 180) {
   const seriesStartDayOfWeek = seriesStart.getDay();
   const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStartDayOfWeek;
   let current = new Date(seriesStart);
-  let generated = 0;
+  if (current < windowStart) {
+    // Start iteration near the visible window so old series are still expanded.
+    current = new Date(windowStart);
+    current.setHours(
+      seriesStart.getHours(),
+      seriesStart.getMinutes(),
+      seriesStart.getSeconds(),
+      seriesStart.getMilliseconds()
+    );
 
-  // For weekly recurrence, we need to check each day
-  const maxIterations = windowDays * 2; // Safety limit
+    if (freq === 'weekly') {
+      const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+      const currentDayOfWeek = current.getDay();
+      const currentWeekStartDayNumber = currentDayNumber - currentDayOfWeek;
+      const weeksSinceSeriesStartAtCursor = Math.floor(
+        (currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7
+      );
+      const weekOffset = ((weeksSinceSeriesStartAtCursor % normalizedInterval) + normalizedInterval) % normalizedInterval;
+
+      if (weekOffset !== 0) {
+        current.setDate(current.getDate() + ((normalizedInterval - weekOffset) * 7));
+      }
+    }
+  }
+  let generated = 0;
+  if (count && current > seriesStart) {
+    const precountCursor = new Date(seriesStart);
+    const precountMaxIterations = Math.max(366, Math.ceil((current.getTime() - seriesStart.getTime()) / MS_PER_DAY) + 366);
+    let precountIterations = 0;
+
+    while (precountCursor < current && generated < count && precountIterations < precountMaxIterations) {
+      precountIterations++;
+
+      const precountDayOfWeek = precountCursor.getDay();
+      const precountDayCode = DAY_CODES[precountDayOfWeek];
+      const precountDayNumber = Math.floor(precountCursor.getTime() / MS_PER_DAY);
+      const precountDaysSinceSeriesStart = precountDayNumber - seriesStartDayNumber;
+      const precountWeekStartDayNumber = precountDayNumber - precountDayOfWeek;
+      const precountWeeksSinceSeriesStart = Math.floor((precountWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
+      const precountWeeklyIntervalMatch =
+        precountWeeksSinceSeriesStart >= 0 &&
+        (precountWeeksSinceSeriesStart % normalizedInterval === 0);
+
+      let matches = false;
+      if (freq === 'weekly' && byDays.length > 0) {
+        matches = byDays.includes(precountDayCode) && precountWeeklyIntervalMatch && precountDaysSinceSeriesStart >= 0;
+      } else if (freq === 'daily') {
+        matches = precountDaysSinceSeriesStart >= 0 && (precountDaysSinceSeriesStart % normalizedInterval === 0);
+      } else if (freq === 'weekly' && byDays.length === 0) {
+        matches = precountDayOfWeek === seriesStartDayOfWeek && precountWeeklyIntervalMatch;
+        matches = matches && precountDaysSinceSeriesStart >= 0;
+      }
+
+      if (matches) {
+        generated++;
+      }
+
+      precountCursor.setDate(precountCursor.getDate() + 1);
+    }
+  }
+
+  // Safety limit for day-by-day traversal plus one-year buffer for edge cases.
+  const daysToTraverse = Math.ceil((windowEnd.getTime() - current.getTime()) / MS_PER_DAY);
+  const maxIterations = Math.max(366, daysToTraverse + 366);
   let iterations = 0;
 
   while (current <= windowEnd && iterations < maxIterations) {
@@ -1002,6 +1580,10 @@ export function expandRecurrence(master, windowDays = 180) {
       // If no specific days, match the same day as series start
       matches = currentDayOfWeek === seriesStartDayOfWeek && weeklyIntervalMatch;
       matches = matches && daysSinceSeriesStart >= 0;
+    }
+
+    if (matches) {
+      generated++;
     }
 
     // Only process if within visible window and matches pattern
@@ -1043,7 +1625,6 @@ export function expandRecurrence(master, windowDays = 180) {
       }
 
       occurrences.push(occurrence);
-      generated++;
     }
 
     // Advance to next day
