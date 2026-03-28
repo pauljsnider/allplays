@@ -38,6 +38,10 @@ jobs:
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
         env:
           SMOKE_BASE_URL: http://127.0.0.1:4173
+          SMOKE_SUITE: preview
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
 
       - name: Upload server log on failure
         if: failure()

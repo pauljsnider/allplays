@@ -41,3 +41,9 @@ jobs:
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai
+          SMOKE_SUITE: production
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+          SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
+          SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}
