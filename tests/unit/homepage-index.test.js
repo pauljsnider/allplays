@@ -179,4 +179,53 @@ describe('homepage index workflow', () => {
         expect(elements.get('live-games-list').textContent).toBe('No upcoming live games scheduled');
         expect(elements.get('past-games-list').textContent).toBe('Unable to load replays');
     });
+
+    it('escapes untrusted homepage game fields before inserting markup', async () => {
+        const hostileLiveGame = createGame({
+            id: 'game-1"&bad=<svg>',
+            teamId: 'team-1"&evil=<script>',
+            opponent: '<img src=x onerror=alert(1)>',
+            liveViewerCount: '7<script>alert(1)</script>',
+            homeScore: '<b>12</b>',
+            awayScore: '"10"',
+            team: {
+                id: 'team-1',
+                name: 'Tigers"><script>alert(1)</script>',
+                photoUrl: 'https://img.example.com/logo.png" onerror="alert(1)'
+            }
+        });
+        const hostileReplayGame = createGame({
+            id: 'game-2"&replay=false',
+            teamId: 'team-2"&x=<img>',
+            opponent: '<svg onload=alert(2)>',
+            team: {
+                id: 'team-2',
+                name: 'Bears & <wolves>',
+                photoUrl: ''
+            }
+        });
+
+        const { elements } = await runHomepage({
+            liveGames: [hostileLiveGame],
+            replayGames: [hostileReplayGame]
+        });
+
+        const liveMarkup = elements.get('live-games-list').innerHTML;
+        expect(liveMarkup).toContain('Tigers&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+        expect(liveMarkup).toContain('vs &lt;img src=x onerror=alert(1)&gt;');
+        expect(liveMarkup).toContain('7&lt;script&gt;alert(1)&lt;/script&gt; watching');
+        expect(liveMarkup).toContain('&lt;b&gt;12&lt;/b&gt; - &quot;10&quot;');
+        expect(liveMarkup).toContain('teamId=team-1%22%26evil%3D%3Cscript%3E');
+        expect(liveMarkup).toContain('gameId=game-1%22%26bad%3D%3Csvg%3E');
+        expect(liveMarkup).toContain('src="https://img.example.com/logo.png&quot; onerror=&quot;alert(1)"');
+        expect(liveMarkup).not.toContain('<script>alert(1)</script>');
+        expect(liveMarkup).not.toContain('<img src=x onerror=alert(1)>');
+
+        const replayMarkup = elements.get('past-games-list').innerHTML;
+        expect(replayMarkup).toContain('Bears &amp; &lt;wolves&gt;');
+        expect(replayMarkup).toContain('vs &lt;svg onload=alert(2)&gt;');
+        expect(replayMarkup).toContain('teamId=team-2%22%26x%3D%3Cimg%3E');
+        expect(replayMarkup).toContain('gameId=game-2%22%26replay%3Dfalse&replay=true');
+        expect(replayMarkup).not.toContain('<svg onload=alert(2)>');
+    });
 });

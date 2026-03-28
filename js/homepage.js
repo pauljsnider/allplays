@@ -2,6 +2,44 @@ function resolveTeamId(game) {
     return game.teamId || game.team?.id || '';
 }
 
+function escapeHtml(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function buildLiveGameHref(game, replay = false) {
+    const params = new URLSearchParams({
+        teamId: String(resolveTeamId(game) ?? ''),
+        gameId: String(game?.id ?? '')
+    });
+
+    if (replay) {
+        params.set('replay', 'true');
+    }
+
+    return `live-game.html?${params.toString()}`;
+}
+
+function renderTeamAvatar(game) {
+    const teamName = escapeHtml(game.team?.name || 'Team');
+    const teamPhotoUrl = game.team?.photoUrl ? escapeHtml(game.team.photoUrl) : '';
+    const teamInitial = escapeHtml(game.team?.name?.[0] || '?');
+
+    if (teamPhotoUrl) {
+        return `<img src="${teamPhotoUrl}" class="w-10 h-10 rounded-full object-cover" alt="${teamName}">`;
+    }
+
+    return `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${teamInitial}</div>`;
+}
+
 export function applyHeroCta(user, heroCta) {
     if (!heroCta) {
         return;
@@ -56,29 +94,26 @@ export async function loadLiveGames({
         }
 
         container.innerHTML = combined.map((game) => `
-          <a href="live-game.html?teamId=${resolveTeamId(game)}&gameId=${game.id}"
+          <a href="${buildLiveGameHref(game)}"
              class="block bg-white rounded-xl shadow hover:shadow-lg transition border border-gray-200 p-5 ${game.isLive ? 'ring-2 ring-red-500' : ''}">
             ${game.isLive ? `
               <div class="flex items-center gap-2 mb-2">
                 <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
                 <span class="text-red-600 text-xs font-semibold uppercase">Live Now</span>
-                ${game.liveViewerCount ? `<span class="text-gray-400 text-xs">${game.liveViewerCount} watching</span>` : ''}
+                ${game.liveViewerCount ? `<span class="text-gray-400 text-xs">${escapeHtml(game.liveViewerCount)} watching</span>` : ''}
               </div>
             ` : ''}
             <div class="flex items-center gap-3 mb-2">
-              ${game.team?.photoUrl
-                ? `<img src="${game.team.photoUrl}" class="w-10 h-10 rounded-full object-cover" alt="${game.team?.name || 'Team'}">`
-                : `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${game.team?.name?.[0] || '?'}</div>`
-              }
+              ${renderTeamAvatar(game)}
               <div>
-                <div class="font-semibold text-gray-900">${game.team?.name || 'Team'}</div>
-                <div class="text-sm text-gray-500">vs ${game.opponent || 'Opponent'}</div>
+                <div class="font-semibold text-gray-900">${escapeHtml(game.team?.name || 'Team')}</div>
+                <div class="text-sm text-gray-500">vs ${escapeHtml(game.opponent || 'Opponent')}</div>
               </div>
             </div>
             ${game.isLive ? `
-              <div class="text-2xl font-bold text-center py-2">${game.homeScore || 0} - ${game.awayScore || 0}</div>
+              <div class="text-2xl font-bold text-center py-2">${escapeHtml(game.homeScore || 0)} - ${escapeHtml(game.awayScore || 0)}</div>
             ` : `
-              <div class="text-sm text-gray-500">${formatDate(game.date)} • ${formatTime(game.date)}</div>
+              <div class="text-sm text-gray-500">${escapeHtml(formatDate(game.date))} • ${escapeHtml(formatTime(game.date))}</div>
             `}
             <div class="mt-2 text-center text-primary-600 text-sm font-semibold">${game.isLive ? 'Watch Now →' : 'View Details →'}</div>
           </a>
@@ -107,20 +142,17 @@ export async function loadPastGames({
         }
 
         container.innerHTML = pastGames.map((game) => `
-          <a href="live-game.html?teamId=${resolveTeamId(game)}&gameId=${game.id}&replay=true"
+          <a href="${buildLiveGameHref(game, true)}"
              class="block bg-white rounded-xl shadow hover:shadow-lg transition border border-gray-200 p-5">
             <div class="flex items-center gap-3 mb-3">
-              ${game.team?.photoUrl
-                ? `<img src="${game.team.photoUrl}" class="w-10 h-10 rounded-full object-cover" alt="${game.team?.name || 'Team'}">`
-                : `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${game.team?.name?.[0] || '?'}</div>`
-              }
+              ${renderTeamAvatar(game)}
               <div>
-                <div class="font-semibold text-gray-900">${game.team?.name || 'Team'}</div>
-                <div class="text-sm text-gray-500">vs ${game.opponent || 'Opponent'}</div>
+                <div class="font-semibold text-gray-900">${escapeHtml(game.team?.name || 'Team')}</div>
+                <div class="text-sm text-gray-500">vs ${escapeHtml(game.opponent || 'Opponent')}</div>
               </div>
             </div>
-            <div class="text-2xl font-bold text-center py-2 text-gray-900">${game.homeScore || 0} - ${game.awayScore || 0}</div>
-            <div class="text-xs text-gray-400 text-center mb-2">${formatDate(game.date)}</div>
+            <div class="text-2xl font-bold text-center py-2 text-gray-900">${escapeHtml(game.homeScore || 0)} - ${escapeHtml(game.awayScore || 0)}</div>
+            <div class="text-xs text-gray-400 text-center mb-2">${escapeHtml(formatDate(game.date))}</div>
             <div class="text-center text-teal-600 text-sm font-semibold">Watch Replay →</div>
           </a>
         `).join('');
