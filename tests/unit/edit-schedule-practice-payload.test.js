@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { applyPracticeRecurrenceFields } from '../../js/edit-schedule-practice-payload.js';
 
 describe('edit schedule practice recurrence payload', () => {
+    function createLocalDate(year, monthIndex, day, hours, minutes) {
+        return new Date(year, monthIndex, day, hours, minutes, 0, 0);
+    }
+
     it('clears recurrence-only fields when editing a series into a one-time practice', () => {
         const deleteSentinel = Symbol('deleteField');
         const practiceData = {
@@ -13,8 +17,8 @@ describe('edit schedule practice recurrence payload', () => {
             practiceData,
             isRecurring: false,
             editingPracticeId: 'practice-1',
-            startDate: new Date('2026-03-16T17:00:00.000Z'),
-            endDate: new Date('2026-03-16T18:30:00.000Z'),
+            startDate: createLocalDate(2026, 2, 16, 17, 0),
+            endDate: createLocalDate(2026, 2, 16, 18, 30),
             Timestamp: { fromDate: (value) => value },
             deleteField: () => deleteSentinel,
             generateSeriesId: () => 'series-new'
@@ -49,8 +53,8 @@ describe('edit schedule practice recurrence payload', () => {
                 endType: 'count',
                 countValue: '8'
             },
-            startDate: new Date('2026-03-16T17:00:00.000Z'),
-            endDate: new Date('2026-03-16T18:30:00.000Z'),
+            startDate: createLocalDate(2026, 2, 16, 17, 0),
+            endDate: createLocalDate(2026, 2, 16, 18, 30),
             Timestamp: { fromDate: (value) => value },
             deleteField: () => {
                 throw new Error('deleteField should not be used for recurring series updates');
