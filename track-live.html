@@ -941,6 +941,30 @@
             }
         }
 
+        function broadcastReversedStatEvent({ playerId, statKey, value, isOpponent, description }) {
+            const player = !isOpponent ? players.find((entry) => entry.id === playerId) : null;
+            const opponent = isOpponent ? opponentPlayers.find((entry) => entry.id === playerId) : null;
+
+            broadcastLiveEvent(currentTeamId, currentGameId, {
+                type: 'stat',
+                period: gameState.currentPeriod,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                playerId,
+                playerName: player?.name || opponent?.name || null,
+                playerNumber: player?.number || '',
+                statKey,
+                value,
+                isOpponent: !!isOpponent,
+                opponentPlayerName: opponent?.name || null,
+                opponentPlayerNumber: opponent?.number || '',
+                opponentPlayerPhoto: opponent?.photoUrl || '',
+                description,
+                createdBy: currentUser?.uid || null
+            }).catch(console.warn);
+        }
+
         window.setPlayerFieldStatus = function (playerId, status) {
             const now = gameState.isRunning ? Date.now() : null;
             setPlayerFieldStatus(gameState.playerFieldStatus, playerId, status, now);
@@ -1366,6 +1390,13 @@
                 description: `Corrected: ${statKey.toUpperCase()} adjusted`,
                 createdBy: currentUser?.uid || null
             }).catch(console.warn);
+            broadcastReversedStatEvent({
+                playerId,
+                statKey,
+                value: -value,
+                isOpponent,
+                description: `Corrected stat: ${statKey.toUpperCase()} adjusted`
+            });
         };
 
         // Add opponent player
@@ -1811,6 +1842,13 @@
                     description: `Undo: ${entry.text}`,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
+                broadcastReversedStatEvent({
+                    playerId,
+                    statKey,
+                    value: -parsedValue,
+                    isOpponent,
+                    description: `Undo stat: ${entry.text}`
+                });
             }
 
             gameState.gameLog.splice(index, 1);
