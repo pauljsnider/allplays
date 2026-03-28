@@ -11,7 +11,8 @@ describe('track-live live event publishing', () => {
 
     expect(source).toContain("type: 'undo'");
     expect(source).toContain("type: 'stat'");
-    expect(source).toContain('value: -parsedValue');
+    expect(source).toContain('let appliedDelta = 0;');
+    expect(source).toContain('value: -appliedDelta');
     expect(source).toContain('value: -value');
     expect(source).toContain('description: `Undo stat: ${entry.text}`');
     expect(source).toContain('description: `Corrected stat: ${statKey.toUpperCase()} adjusted`');
