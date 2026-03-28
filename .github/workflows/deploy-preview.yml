@@ -78,16 +78,15 @@ jobs:
             if printf '%s\n' "$open_channels" | grep -qx "$channel"; then
               continue
             fi
-            delete_output="$(
-              npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force 2>&1
-            )" || {
-              if printf '%s' "$delete_output" | grep -q 'HTTP Error: 404'; then
-                echo "Skipping missing Firebase preview channel: $channel"
+            delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
+            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
+              if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
+                echo "Skipping already-missing Firebase preview channel: $channel"
                 continue
               fi
-              printf '%s\n' "$delete_output" >&2
+              cat "$delete_log" >&2
               exit 1
-            }
+            fi
           done < "$prune_file"
 
       - name: Deploy Firebase Hosting preview

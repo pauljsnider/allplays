@@ -71,9 +71,31 @@ describe('edit schedule cancel-game handler', () => {
             postChatMessage: deps.postChatMessage
         }));
         expect(deps.buildScheduleNotificationMetadata).toHaveBeenCalledTimes(1);
+        expect(deps.buildScheduleNotificationMetadata).toHaveBeenCalledWith({
+            settings: { enabled: true, reminderHours: 24 },
+            action: 'cancelled',
+            sent: false,
+            userId: 'user-1'
+        });
         expect(deps.updateGame).toHaveBeenCalledTimes(1);
         expect(deps.loadSchedule).toHaveBeenCalledTimes(1);
         expect(deps.alert).toHaveBeenCalledWith('Game cancelled, but team chat notification failed: Error: chat write failed');
+    });
+
+    it('records notification metadata as sent when cancellation and chat posting both succeed', async () => {
+        const { deps, handler } = buildCancelGameHandler();
+
+        await handler({ target: { dataset: { gameId: 'game123' } } });
+
+        expect(deps.buildScheduleNotificationMetadata).toHaveBeenCalledWith({
+            settings: { enabled: true, reminderHours: 24 },
+            action: 'cancelled',
+            sent: true,
+            userId: 'user-1'
+        });
+        expect(deps.updateGame).toHaveBeenCalledTimes(1);
+        expect(deps.loadSchedule).toHaveBeenCalledTimes(1);
+        expect(deps.alert).not.toHaveBeenCalled();
     });
 
     it('still reports cancellation failure when the cancellation write fails', async () => {
