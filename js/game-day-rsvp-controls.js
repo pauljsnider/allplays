@@ -72,9 +72,10 @@ export function createGameDayRsvpController({
                 response
             });
             const reloadSucceeded = await loadRsvps();
-            if (!reloadSucceeded) {
+            if (reloadSucceeded === false) {
                 throw new Error('RSVP reload failed');
             }
+            renderRsvpPanel();
             const nextStatusEl = getStatusElement(documentRef);
             if (nextStatusEl) nextStatusEl.textContent = 'Saved';
             setTimeoutFn(() => {
