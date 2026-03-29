@@ -1162,9 +1162,11 @@
                 state.rsvpBreakdown = breakdown?.grouped || breakdown || null;
                 markAiChatContextDirty();
                 gameDayRsvpController.renderRsvpPanel();
+                return true;
             } catch (err) {
                 console.error('loadRsvps error', err);
                 document.getElementById('rsvp-panel').innerHTML = '<span class="text-xs text-red-400">Failed to load RSVPs</span>';
+                return false;
             }
         }
 
