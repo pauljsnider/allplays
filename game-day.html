@@ -493,6 +493,7 @@
         import { checkAuth } from './js/auth.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js';
+        import { getPeriodsForFormation, normalizeActivePeriod } from './js/game-day-periods.js?v=1';
         import {
             buildLineupDraftPayload,
             buildLineupPublishPayload,
@@ -1600,10 +1601,7 @@ Assistant:`;
 
         function getPeriods(formationId) {
             const f = FORMATIONS[formationId];
-            if (!f) return ['H1', 'H2'];
-            const n = f.numPeriods || 2;
-            if (n === 4) return ['Q1', 'Q2', 'Q3', 'Q4'];
-            return ['H1', 'H2'];
+            return getPeriodsForFormation(f);
         }
 
         function renderPeriodTabs() {
@@ -2013,6 +2011,7 @@ Respond ONLY with valid JSON.`;
 
         function renderGDPeriodTabs() {
             const periods = state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
+            state.activePeriodGD = normalizeActivePeriod(periods, state.activePeriodGD);
             document.getElementById('gd-h1-btn').textContent = periods[0];
             document.getElementById('gd-h2-btn').textContent = periods[1] || 'H2';
         }
