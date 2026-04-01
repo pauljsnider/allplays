@@ -1224,8 +1224,9 @@
         function getFilteredScheduleEvents() {
             const now = new Date();
             const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
             const events = (allScheduleEvents || []).filter((event) => {
-                if (!showPractices && event.isPractice) return false;
+                if (!showPractices && event.isPractice && !forcePracticeVisibility) return false;
                 return true;
             });
 
