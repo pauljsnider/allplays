@@ -16,7 +16,7 @@ import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=1';
+import { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, prepareFinishPlanForSave, executeFinishNavigationPlan } from './live-tracker-finish.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1461,24 +1461,19 @@ async function saveAndComplete() {
     currentUserUid: currentUser?.uid,
     buildEmailBody: (finalHome, finalAway, recapSummary, logEntries) => generateEmailBody(finalHome, finalAway, recapSummary, logEntries)
   };
-  let finishPlan = buildFinishCompletionPlan(finishPlanArgs);
-  let addedReconciliationLogEntry = null;
+  const preparedFinish = prepareFinishPlanForSave({
+    finishPlanArgs,
+    period: state.period,
+    clock: formatClock(state.clock)
+  });
+  let finishPlan = preparedFinish.finishPlan;
+  const addedReconciliationLogEntry = preparedFinish.addedReconciliationLogEntry;
 
-  if (finishPlan.scoreReconciliation.mismatch) {
-    addedReconciliationLogEntry = {
-      text: finishPlan.reconciliationNote,
-      ts: Date.now(),
-      period: state.period,
-      clock: formatClock(state.clock)
-    };
-    state.log.unshift(addedReconciliationLogEntry);
+  if (addedReconciliationLogEntry) {
+    state.log = preparedFinish.updatedLog;
     renderLog();
     els.homeFinal.value = String(finishPlan.finalHome);
     els.awayFinal.value = String(finishPlan.finalAway);
-    finishPlan = buildFinishCompletionPlan({
-      ...finishPlanArgs,
-      log: state.log
-    });
   }
 
   try {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildFinishCompletionPlan } from '../../js/live-tracker-finish.js';
+import { readFileSync } from 'node:fs';
+import { buildFinishCompletionPlan, prepareFinishPlanForSave } from '../../js/live-tracker-finish.js';
 
 describe('live tracker finish completion plan', () => {
   it('reconciles the saved game outcome and persisted stats from the score log', () => {
@@ -207,5 +208,51 @@ describe('live tracker finish completion plan', () => {
         }
       ]
     });
+  });
+
+  it('keeps the coach-entered final score when resumed data marks the score log incomplete', () => {
+    const originalLog = [
+      { text: 'Home bucket', clock: '05:10', period: 'Q1', ts: 11, undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false, playerId: 'p1' } }
+    ];
+
+    const prepared = prepareFinishPlanForSave({
+      finishPlanArgs: {
+        requestedHome: 51,
+        requestedAway: 48,
+        liveHome: 51,
+        liveAway: 48,
+        scoreLogIsComplete: false,
+        log: originalLog,
+        summary: 'Closed it out.',
+        sendEmail: false,
+        teamId: 'team-1',
+        gameId: 'game-9',
+        teamName: 'Tigers',
+        opponentName: 'Bears',
+        recipientEmail: 'coach@example.com',
+        columns: ['PTS'],
+        roster: [],
+        statsByPlayerId: {},
+        opponentEntries: [],
+        buildEmailBody: () => 'unused body'
+      },
+      period: 'Q4',
+      clock: '00:00',
+      now: () => 99
+    });
+
+    expect(prepared.addedReconciliationLogEntry).toBeNull();
+    expect(prepared.updatedLog).toEqual(originalLog);
+    expect(prepared.finishPlan.reconciliationNote).toBe('');
+    expect(prepared.finishPlan.gameUpdate).toMatchObject({
+      homeScore: 51,
+      awayScore: 48,
+      status: 'completed'
+    });
+  });
+
+  it('wires save preparation through the shared finish helper in live tracker', () => {
+    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    expect(source).toContain('prepareFinishPlanForSave');
   });
 });
