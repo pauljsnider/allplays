@@ -6,10 +6,10 @@ function readRepoFile(relativePath) {
 }
 
 describe('parent dashboard redeem code wiring', () => {
-    it('validates parent invite codes before attempting manual redemption', () => {
+    it('redeems parent invite codes directly through the duplicate-aware helper', () => {
         const html = readRepoFile('parent-dashboard.html');
 
-        expect(html).toContain('validateAccessCode');
-        expect(html).toMatch(/document\.getElementById\('redeem-code-btn'\)\.addEventListener\('click', async \(\) => \{[\s\S]*const validation = await validateAccessCode\(code\);[\s\S]*if \(!validation\.valid\) \{[\s\S]*throw new Error\(validation\.message \|\| 'Invalid or expired code'\);[\s\S]*\}[\s\S]*await redeemParentInvite\(user\.uid, code\);/);
+        expect(html).toMatch(/document\.getElementById\('redeem-code-btn'\)\.addEventListener\('click', async \(\) => \{[\s\S]*await redeemParentInvite\(user\.uid, code\);/);
+        expect(html).not.toMatch(/document\.getElementById\('redeem-code-btn'\)\.addEventListener\('click', async \(\) => \{[\s\S]*validateAccessCode\(code\)/);
     });
 });

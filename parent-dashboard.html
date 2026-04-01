@@ -243,7 +243,6 @@
     <script type="module">
         import {
             getParentDashboardData,
-            validateAccessCode,
             redeemParentInvite,
             getTeam,
             getTeams,
@@ -900,10 +899,6 @@
 
                     try {
                         console.log('[parent-dashboard] redeem click', { code });
-                        const validation = await validateAccessCode(code);
-                        if (!validation.valid) {
-                            throw new Error(validation.message || 'Invalid or expired code');
-                        }
                         await redeemParentInvite(user.uid, code);
                         console.log('[parent-dashboard] redeem completed successfully');
                         alert('Player added successfully!');
