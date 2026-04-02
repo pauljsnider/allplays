@@ -2745,54 +2745,101 @@ export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const fetchBatchSize = Math.max(limitCount * 3, 20);
 
     const gamesRef = collectionGroup(db, 'games');
-    const q = query(
-        gamesRef,
+    const queryConstraints = [
         where('type', '==', 'game'),
         where('date', '>=', Timestamp.fromDate(startOfToday)),
         where('date', '<=', Timestamp.fromDate(oneWeekFromNow)),
-        orderBy('date', 'asc'),
-        limitQuery(limitCount)
-    );
-
-    let snapshot;
+        orderBy('date', 'asc')
+    ];
     const games = [];
+    let snapshot;
 
     try {
-        snapshot = await getDocs(q);
+        let lastDoc = null;
+        let exhausted = false;
+
+        while (games.length < limitCount && !exhausted) {
+            const pageConstraints = [...queryConstraints, limitQuery(fetchBatchSize)];
+            if (lastDoc) {
+                pageConstraints.push(startAfterQuery(lastDoc));
+            }
+
+            snapshot = await getDocs(query(gamesRef, ...pageConstraints));
+            if (snapshot.empty) {
+                break;
+            }
+
+            lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+            for (const docSnap of snapshot.docs) {
+                const gameData = { id: docSnap.id, ...docSnap.data() };
+                if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+                    continue;
+                }
+                if (!gameData.type) {
+                    gameData.type = 'game';
+                }
+                const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
+                if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
+                    continue;
+                }
+                // Get team info (parent document)
+                const teamRef = docSnap.ref.parent.parent;
+                const teamSnap = await getDoc(teamRef);
+                if (teamSnap.exists()) {
+                    gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+                    gameData.teamId = teamSnap.id;
+                    if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+                games.push(gameData);
+                if (games.length >= limitCount) {
+                    break;
+                }
+            }
+
+            exhausted = snapshot.docs.length < fetchBatchSize;
+        }
     } catch (error) {
         // Fallback when the collection group date index isn't ready yet.
         // Pull a limited sample and filter client-side.
         const fallbackQuery = query(gamesRef, limitQuery(200));
         snapshot = await getDocs(fallbackQuery);
-    }
-
-    for (const docSnap of snapshot.docs) {
-        const gameData = { id: docSnap.id, ...docSnap.data() };
-        if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.liveStatus === 'completed') {
-            continue;
-        }
-        if (!gameData.type) {
-            gameData.type = 'game';
-        }
-        const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
-        if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
-            continue;
-        }
-        // Get team info (parent document)
-        const teamRef = docSnap.ref.parent.parent;
-        const teamSnap = await getDoc(teamRef);
-        if (teamSnap.exists()) {
-            gameData.team = { id: teamSnap.id, ...teamSnap.data() };
-            gameData.teamId = teamSnap.id;
-            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+        for (const docSnap of snapshot.docs) {
+            const gameData = { id: docSnap.id, ...docSnap.data() };
+            if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
                 continue;
             }
-        } else {
-            continue;
+            if (!gameData.type) {
+                gameData.type = 'game';
+            }
+            const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
+            if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
+                continue;
+            }
+            // Get team info (parent document)
+            const teamRef = docSnap.ref.parent.parent;
+            const teamSnap = await getDoc(teamRef);
+            if (teamSnap.exists()) {
+                gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+                gameData.teamId = teamSnap.id;
+                if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            games.push(gameData);
+            if (games.length >= limitCount) {
+                break;
+            }
         }
-        games.push(gameData);
     }
 
     games.sort((a, b) => {
@@ -2801,7 +2848,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         return aDate - bDate;
     });
 
-    return games;
+    return games.slice(0, limitCount);
 }
 
 // ============================================
