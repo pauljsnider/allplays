@@ -2770,7 +2770,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
     for (const docSnap of snapshot.docs) {
         const gameData = { id: docSnap.id, ...docSnap.data() };
-        if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.liveStatus === 'completed') {
+        if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
             continue;
         }
         if (!gameData.type) {

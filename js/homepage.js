@@ -28,6 +28,10 @@ function buildLiveGameHref(game, replay = false) {
     return `live-game.html?${params.toString()}`;
 }
 
+function isVisibleUpcomingHomepageGame(game) {
+    return (game?.status || '').toLowerCase() !== 'cancelled';
+}
+
 function renderTeamAvatar(game) {
     const teamName = escapeHtml(game.team?.name || 'Team');
     const teamPhotoUrl = game.team?.photoUrl ? escapeHtml(game.team.photoUrl) : '';
@@ -82,6 +86,8 @@ export async function loadLiveGames({
         } catch (error) {
             logger.warn('Could not load upcoming games:', error?.message || error);
         }
+
+        upcomingGames = upcomingGames.filter(isVisibleUpcomingHomepageGame);
 
         const combined = [
             ...liveGames.map((game) => ({ ...game, isLive: true })),
