@@ -167,4 +167,25 @@ describe('computeNativeStandings', () => {
 
     expect(table.slice(0, 2).map((row) => row.team)).toEqual(['Alpha', 'Comets']);
   });
+
+  it('restarts with the two-team stack after a multi-team split leaves two teams tied', () => {
+    const games = [
+      { homeTeam: 'Bravo', awayTeam: 'Comets', homeScore: 3, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Dragons', awayTeam: 'Bravo', homeScore: 3, awayScore: 1, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Eagles', homeScore: 1, awayScore: 2, status: 'completed' },
+      { homeTeam: 'Eagles', awayTeam: 'Bravo', homeScore: 1, awayScore: 3, status: 'completed' },
+      { homeTeam: 'Comets', awayTeam: 'Dragons', homeScore: 1, awayScore: 3, status: 'completed' },
+      { homeTeam: 'Dragons', awayTeam: 'Eagles', homeScore: 0, awayScore: 2, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 },
+      twoTeamTiebreakers: ['head_to_head', 'point_diff', 'name'],
+      multiTeamTiebreakers: ['group_head_to_head', 'point_diff', 'name']
+    });
+
+    expect(table.map((row) => row.team)).toEqual(['Eagles', 'Dragons', 'Bravo', 'Comets']);
+    expect(table.find((row) => row.team === 'Dragons').pd).toBe(table.find((row) => row.team === 'Bravo').pd);
+  });
 });

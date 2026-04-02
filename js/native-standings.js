@@ -270,7 +270,10 @@ function resolveTieGroup(group, tiebreakers, allGames, config) {
         return resolveTieGroup(group, rest, allGames, config);
     }
 
-    return partitions.flatMap((partition) => resolveTieGroup(partition, rest, allGames, config));
+    return partitions.flatMap((partition) => {
+        const nextTiebreakers = getApplicableTiebreakers(config, partition.length);
+        return resolveTieGroup(partition, nextTiebreakers, allGames, config);
+    });
 }
 
 function sortStandingsTable(table, allGames, config) {
