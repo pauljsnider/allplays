@@ -1345,6 +1345,14 @@ export async function addConfig(teamId, configData) {
 }
 
 export async function deleteConfig(teamId, configId) {
+    const referencingGames = await getDocs(query(
+        collection(db, `teams/${teamId}/games`),
+        where("statTrackerConfigId", "==", configId),
+        limit(1)
+    ));
+    if (!referencingGames.empty) {
+        throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.');
+    }
     await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));
 }
 
