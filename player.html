@@ -224,11 +224,13 @@
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=10";
         import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
+        import { hasFullTeamAccess } from './js/team-access.js';
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
         let currentPrivateProfile = null; // Sensitive fields live in a private doc
         let currentTeamId = null;
+        let currentTeam = null;
 
         checkAuth((user) => {
             currentUser = user;
@@ -365,6 +367,7 @@
                     document.querySelector('main').innerHTML = '<div class="text-center py-12 text-red-500">Player not found</div>';
                     return;
                 }
+                currentTeam = team;
                 currentPlayer = player; // Store global
 
                 // Render team navigation banner if user has access
@@ -1005,8 +1008,8 @@
                 currentUser.parentOf.some(p => p.teamId === currentTeamId && p.playerId === currentPlayer.id);
 
             const isParent = isParentViaPlayer || isParentViaProfile;
-            const isCoachForTeam = Array.isArray(currentUser.coachOf) && currentUser.coachOf.includes(currentTeamId);
-            const canEdit = currentUser.isAdmin || isParent || isCoachForTeam;
+            const hasFullAccess = hasFullTeamAccess(currentUser, currentTeam);
+            const canEdit = hasFullAccess || isParent;
 
             if (canEdit) {
                 const btnContainer = document.getElementById('edit-btn-container');
