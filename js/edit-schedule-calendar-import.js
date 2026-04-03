@@ -50,8 +50,9 @@ export function mergeCalendarImportEvents({
         });
         if (hasConflict) return;
 
-        const isPractice = isPracticeEvent(event.summary);
-        const cleanSummary = event.summary?.replace(/\[(?:CANCELED|CANCELLED)\]\s*/gi, '') || '';
+        const summary = typeof event?.summary === 'string' ? event.summary.trim() : '';
+        const isPractice = typeof event?.isPractice === 'boolean' ? event.isPractice : isPracticeEvent(summary);
+        const cleanSummary = summary.replace(/\[(?:CANCELED|CANCELLED)\]\s*/gi, '');
 
         importedEvents.push({
             source: 'calendar',
