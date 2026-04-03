@@ -508,8 +508,10 @@ async function installModuleMocks(page) {
     });
 }
 
-async function seedScenario(page, scenario) {
-    await page.goto('about:blank');
+async function seedScenario(page, baseURL, scenario) {
+    await page.goto(buildUrl(baseURL, '/track-statsheet.html'), {
+        waitUntil: 'domcontentloaded'
+    });
     await page.evaluate(({ storeKey, value }) => {
         localStorage.setItem(storeKey, JSON.stringify(value));
     }, { storeKey: STORE_KEY, value: scenario });
@@ -534,7 +536,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('blocks apply until every included home row is mapped, then saves report data', async ({ page, baseURL }) => {
-    await seedScenario(page, createScenario());
+    await seedScenario(page, baseURL, createScenario());
     await analyzeStatsheet(page, baseURL);
 
     await page.locator('#apply-btn').click();
@@ -573,7 +575,7 @@ test('blocks apply until every included home row is mapped, then saves report da
 });
 
 test('respects overwrite confirmation and renders rewritten stats on the game report', async ({ page, baseURL }) => {
-    await seedScenario(page, createScenario({
+    await seedScenario(page, baseURL, createScenario({
         aggregatedStats: {
             legacyPlayer: {
                 playerName: 'Old Player',
