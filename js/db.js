@@ -136,6 +136,18 @@ async function getSharedGamesForTeam(teamId) {
     return Array.from(sharedGamesByPath.values());
 }
 
+async function hasSharedGameUsingConfig(teamId, configId) {
+    const sharedGamesRef = collectionGroup(db, 'sharedGames');
+    const queries = [
+        query(sharedGamesRef, where('homeTeamId', '==', teamId), where('statTrackerConfigId', '==', configId), limit(1)),
+        query(sharedGamesRef, where('awayTeamId', '==', teamId), where('statTrackerConfigId', '==', configId), limit(1)),
+        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), where('statTrackerConfigId', '==', configId), limit(1))
+    ];
+
+    const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
+    return snapshots.some((result) => result.status === 'fulfilled' && !result.value.empty);
+}
+
 export async function uploadTeamPhoto(file) {
     console.log('Starting photo upload...', {
         fileName: file.name,
@@ -1345,6 +1357,14 @@ export async function addConfig(teamId, configData) {
 }
 
 export async function deleteConfig(teamId, configId) {
+    const referencingGames = await getDocs(query(
+        collection(db, `teams/${teamId}/games`),
+        where("statTrackerConfigId", "==", configId),
+        limit(1)
+    ));
+    if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, configId)) {
+        throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.');
+    }
     await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));
 }
 
