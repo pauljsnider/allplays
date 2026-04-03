@@ -41,10 +41,17 @@ export async function getRsvpBreakdownByPlayer() { return {}; }
 `;
 
 const UTILS_STUB = `
+function futureDate(daysFromNow, hour, minute) {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() + daysFromNow);
+    date.setUTCHours(hour, minute, 0, 0);
+    return date;
+}
+
 const calendarEvents = [
     {
         uid: 'cancelled-game-1',
-        dtstart: new Date('2026-03-05T18:00:00.000Z'),
+        dtstart: futureDate(7, 18, 0),
         summary: 'Wildcats vs Cancelled Lions',
         location: 'Field 1',
         status: 'CANCELLED',
@@ -52,7 +59,7 @@ const calendarEvents = [
     },
     {
         uid: 'cancelled-practice-1',
-        dtstart: new Date('2026-03-06T17:30:00.000Z'),
+        dtstart: futureDate(8, 17, 30),
         summary: '[CANCELED] Team Practice',
         location: 'Main Gym',
         isPractice: true
