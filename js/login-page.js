@@ -100,6 +100,7 @@ export function createLoginAuthStateManager() {
 
     function captureAuthenticatedUser(user) {
         if (!user) {
+            pendingRedirectUser = null;
             return false;
         }
 

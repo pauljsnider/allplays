@@ -82,4 +82,16 @@ describe('login page auth state manager', () => {
         expect(authState.captureAuthenticatedUser({ uid: 'user-2' })).toBe(true);
         expect(authState.consumePendingRedirectUser()).toBe(null);
     });
+
+    it('clears a buffered user when auth later becomes unauthenticated during processing', () => {
+        const authState = createLoginAuthStateManager();
+
+        authState.beginProcessing();
+        expect(authState.captureAuthenticatedUser({ uid: 'user-3' })).toBe(false);
+        expect(authState.captureAuthenticatedUser(null)).toBe(false);
+
+        authState.finishProcessing();
+
+        expect(authState.consumePendingRedirectUser()).toBe(null);
+    });
 });
