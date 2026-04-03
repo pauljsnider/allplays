@@ -92,8 +92,8 @@ export async function fetchAndParseCalendar() {
     return calendarEvents;
 }
 export function extractOpponent(summary, teamName = '') {
-    const cleaned = String(summary || '').replace(/^\\s*\\[(?:CANCELED|CANCELLED)\\]\\s*/i, '');
-    return cleaned.replace(new RegExp('^' + teamName + '\\\\s+vs\\\\.?\\\\s+', 'i'), '');
+    const cleaned = String(summary || '').replace(/^\s*\[(?:CANCELED|CANCELLED)\]\s*/i, '');
+    return cleaned.replace(new RegExp('^' + teamName + '\\s+vs\\.?\\s+', 'i'), '');
 }
 export function isPracticeEvent(summary) {
     return /practice|training|skills club/i.test(summary || '');
@@ -101,7 +101,7 @@ export function isPracticeEvent(summary) {
 export function getCalendarEventStatus(event) {
     const status = String(event?.status || '').trim().toUpperCase();
     if (status === 'CANCELLED' || status === 'CANCELED') return 'cancelled';
-    return /\\[(?:CANCELED|CANCELLED)\\]/i.test(String(event?.summary || '')) ? 'cancelled' : 'scheduled';
+    return /\[(?:CANCELED|CANCELLED)\]/i.test(String(event?.summary || '')) ? 'cancelled' : 'scheduled';
 }
 export function getCalendarEventTrackingId(event) {
     return event?.id || event?.uid || '';
