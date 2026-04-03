@@ -22,7 +22,7 @@ describe('edit config delete guard', () => {
         expect(block).toContain('collection(db, `teams/${teamId}/games`)');
         expect(block).toContain('where("statTrackerConfigId", "==", configId)');
         expect(block).toContain('limit(1)');
-        expect(block).toContain('if (!referencingGames.empty)');
+        expect(block).toContain('if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, configId)) {');
         expect(block).toContain("throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.')");
         expect(block).toContain('await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));');
     });
