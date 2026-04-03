@@ -7,6 +7,7 @@ export function createParentDashboardRsvpController({
     submitRsvp,
     submitRsvpForPlayer,
     renderScheduleFromControls,
+    afterRender = () => {},
     alertFn = (message) => alert(message),
     consoleRef = console
 }) {
@@ -39,6 +40,7 @@ export function createParentDashboardRsvpController({
             });
 
             renderScheduleFromControls();
+            afterRender();
             return summary;
         } catch (err) {
             consoleRef.error('RSVP error:', err);
