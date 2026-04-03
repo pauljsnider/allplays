@@ -100,13 +100,25 @@
         import { getUserProfile } from './js/db.js?v=15';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=1';
-        import { createForgotPasswordHandler, createLoginRedirectCoordinator, createLoginAuthStateManager } from './js/login-page.js?v=2';
+        import * as loginPageModule from './js/login-page.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
         let isLogin = true;
 
-        const redirectCoordinator = createLoginRedirectCoordinator({
+        const createLoginAuthStateManager = loginPageModule.createLoginAuthStateManager || function createFallbackLoginAuthStateManager() {
+            return {
+                beginProcessing() {},
+                finishProcessing() {},
+                captureAuthenticatedUser(user) {
+                    return Boolean(user);
+                },
+                consumePendingRedirectUser() {
+                    return null;
+                }
+            };
+        };
+        const redirectCoordinator = loginPageModule.createLoginRedirectCoordinator({
             getRedirectUrl,
             getPostAuthRedirectUrl
         });
@@ -313,7 +325,7 @@
             }
         });
 
-        document.getElementById('forgot-password-btn').addEventListener('click', createForgotPasswordHandler({
+        document.getElementById('forgot-password-btn').addEventListener('click', loginPageModule.createForgotPasswordHandler({
             emailInput: document.getElementById('email'),
             errorDiv: document.getElementById('error-message'),
             resetPassword
