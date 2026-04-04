@@ -6,6 +6,10 @@ function buildUrl(baseURL, path) {
     return url.toString();
 }
 
+function encodeModuleValue(value) {
+    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
+}
+
 async function mockInviteLoginModules(page, options = {}) {
     const {
         profile = {},
@@ -18,12 +22,16 @@ async function mockInviteLoginModules(page, options = {}) {
         googleRedirectResult = null,
         defaultRedirect = 'dashboard.html'
     } = options;
+    const encodedLoginResult = encodeModuleValue(loginResult);
+    const encodedGoogleRedirectResult = encodeModuleValue(googleRedirectResult);
+    const encodedDefaultRedirect = encodeModuleValue(defaultRedirect);
+    const encodedProfile = encodeModuleValue(profile);
 
     await page.route(/\/js\/auth\.js\?v=\d+$/, async (route) => {
         const moduleSource = `
-            const loginResult = ${JSON.stringify(loginResult)};
-            const googleRedirectResult = ${JSON.stringify(googleRedirectResult)};
-            const defaultRedirect = ${JSON.stringify(defaultRedirect)};
+            const loginResult = JSON.parse(atob('${encodedLoginResult}'));
+            const googleRedirectResult = JSON.parse(atob('${encodedGoogleRedirectResult}'));
+            const defaultRedirect = JSON.parse(atob('${encodedDefaultRedirect}'));
 
             export async function login(email, password) {
                 window.__authMock = { email, password };
@@ -68,7 +76,7 @@ async function mockInviteLoginModules(page, options = {}) {
             contentType: 'application/javascript',
             body: `
                 export async function getUserProfile() {
-                    return ${JSON.stringify(profile)};
+                    return JSON.parse(atob('${encodedProfile}'));
                 }
             `
         });
