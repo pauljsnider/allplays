@@ -47,7 +47,8 @@ export function mergeCalendarImportEvents({
 
         const hasConflict = (dbEvents || []).some((dbEvent) => {
             const dbDate = toDate(dbEvent?.date);
-            return !Number.isNaN(dbDate.getTime()) && Math.abs(dbDate - eventDate) < 60000;
+            if (!(dbDate instanceof Date) || Number.isNaN(dbDate.getTime())) return false;
+            return Math.abs(dbDate - eventDate) < 60000;
         });
         if (hasConflict) return;
 
