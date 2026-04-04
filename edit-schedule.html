@@ -1670,7 +1670,10 @@
             if (configId) {
                 const config = allConfigs.find(c => c.id === configId);
                 if (config) {
-                    return (config.baseType || '').toLowerCase() === 'basketball';
+                    const baseType = (config.baseType || '').toLowerCase();
+                    if (baseType) {
+                        return baseType === 'basketball';
+                    }
                 }
             }
             // If no config, infer from team sport
