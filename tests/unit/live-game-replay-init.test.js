@@ -252,8 +252,8 @@ function buildModuleSource() {
             'const { getApp } = deps.firebaseApp;'
         )
         .replace(
-            /import\s+\{\s*resolveOpponentDisplayName,\s*normalizeLiveStatColumns,\s*resolveLiveStatColumns,\s*renderViewerLineupSections,\s*renderOpponentStatsCards,\s*applyResetEventState,\s*applyViewerEventToState,\s*shouldResetViewerFromGameDoc,\s*collectVisibleLiveEventsSequentially\s*\}\s+from\s+'\.\/live-game-state\.js\?v=\d+';/,
-            'const { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } = deps.liveGameState;'
+            /import\s+\{([\s\S]*?)\}\s+from\s+'\.\/live-game-state\.js\?v=\d+';/,
+            (_, imports) => `const { ${imports.replace(/\s+/g, ' ').trim()} } = deps.liveGameState;`
         )
         .replace(
             "import { getDefaultLivePeriod } from './live-sport-config.js?v=1';",
