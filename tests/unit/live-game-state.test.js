@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, renderOpponentStatsCards, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -58,6 +58,55 @@ describe('live game state helpers', () => {
       ],
       team: { sport: 'Soccer' }
     })).toBe('cfg-only');
+  });
+
+  it('renders persisted opponent identity and injects FLS when config omits fouls', () => {
+    const html = renderOpponentStatsCards({
+      opponentStats: {
+        opp1: {
+          name: 'Jordan Lee',
+          number: '21',
+          photoUrl: 'https://img.test/opp1.png',
+          pts: 12,
+          ast: 3,
+          fouls: 4
+        }
+      },
+      statColumns: ['PTS', 'AST']
+    });
+
+    expect(html).toContain('Jordan Lee');
+    expect(html).toContain('#21');
+    expect(html).toContain('https://img.test/opp1.png');
+    expect(html).toContain('12 PTS');
+    expect(html).toContain('3 AST');
+    expect(html).toContain('4 FLS');
+  });
+
+  it('maps foul aliases to persisted opponent fouls without zeroing the value', () => {
+    const foulsHtml = renderOpponentStatsCards({
+      opponentStats: {
+        opp1: {
+          name: 'Jordan Lee',
+          fouls: 5
+        }
+      },
+      statColumns: ['PTS', 'FOULS']
+    });
+
+    const flsHtml = renderOpponentStatsCards({
+      opponentStats: {
+        opp1: {
+          name: 'Jordan Lee',
+          fouls: 5
+        }
+      },
+      statColumns: ['PTS', 'FLS']
+    });
+
+    expect(foulsHtml).toContain('5 FOULS');
+    expect(flsHtml).toContain('5 FLS');
+    expect(flsHtml).not.toContain('0 FLS');
   });
 
   it('resets live viewer state from reset event payload', () => {
