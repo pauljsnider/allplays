@@ -23,6 +23,7 @@ export function validateCalendarImportUrl(url) {
 function toDate(value) {
     if (value instanceof Date) return value;
     if (typeof value?.toDate === 'function') return value.toDate();
+    if (!value) return null;
     return new Date(value);
 }
 
@@ -57,6 +58,7 @@ export function mergeCalendarImportEvents({
             source: 'calendar',
             eventType: isPractice ? 'practice' : 'game',
             date: eventDate,
+            end: toDate(event?.dtend),
             opponent: extractOpponent(cleanSummary, currentTeamName),
             location: event.location || 'TBD',
             isPractice,
