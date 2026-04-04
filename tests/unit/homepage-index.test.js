@@ -119,9 +119,16 @@ describe('homepage index workflow', () => {
         const duplicatedLiveGame = createGame({ liveViewerCount: 5 });
         const replayGame = createGame({
             id: 'game-2',
+            teamId: 'team-9',
             opponent: 'Bears',
             homeScore: 77,
-            awayScore: 72
+            awayScore: 72,
+            date: '2026-03-29T19:30:00.000Z',
+            team: {
+                id: 'team-9',
+                name: 'Panthers',
+                photoUrl: ''
+            }
         });
 
         const { elements, renderHeader } = await runHomepage({
@@ -144,8 +151,12 @@ describe('homepage index workflow', () => {
 
         const replayMarkup = elements.get('past-games-list').innerHTML;
         expect(replayMarkup).not.toContain('Loading replays...');
+        expect(replayMarkup).toContain('Panthers');
+        expect(replayMarkup).toContain('vs Bears');
+        expect(replayMarkup).toContain('77 - 72');
+        expect(replayMarkup).toContain('DATE:2026-03-29T19:30:00.000Z');
         expect(replayMarkup).toContain('Watch Replay');
-        expect(replayMarkup).toContain('gameId=game-2&replay=true');
+        expect(replayMarkup).toContain('href="live-game.html?teamId=team-9&gameId=game-2&replay=true"');
     });
 
     it('keeps upcoming cards visible when live games fail and sets the guest CTA', async () => {
@@ -167,7 +178,18 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('TIME:2026-03-28T18:00:00.000Z');
     });
 
-    it('replaces loading placeholders with exact empty and error fallback copy', async () => {
+    it('replaces replay loading placeholder with exact empty-state copy', async () => {
+        const { elements } = await runHomepage({
+            liveGames: [],
+            upcomingGames: [],
+            replayGames: []
+        });
+
+        expect(elements.get('past-games-list').innerHTML).not.toContain('Loading replays...');
+        expect(elements.get('past-games-list').textContent).toBe('No recent replays available');
+    });
+
+    it('replaces loading placeholders with exact error fallback copy when replay loading fails', async () => {
         const { elements } = await runHomepage({
             liveGames: [],
             upcomingGames: [],

@@ -135,7 +135,8 @@ export async function loadPastGames({
     }
 
     try {
-        const pastGames = await getRecentLiveTrackedGames(6);
+        const pastGamesResult = await getRecentLiveTrackedGames(6);
+        const pastGames = Array.isArray(pastGamesResult) ? pastGamesResult : [];
         if (pastGames.length === 0) {
             container.innerHTML = '<div class="text-center py-8 text-gray-500 col-span-full">No recent replays available</div>';
             return;
@@ -151,7 +152,7 @@ export async function loadPastGames({
                 <div class="text-sm text-gray-500">vs ${escapeHtml(game.opponent || 'Opponent')}</div>
               </div>
             </div>
-            <div class="text-2xl font-bold text-center py-2 text-gray-900">${escapeHtml(game.homeScore || 0)} - ${escapeHtml(game.awayScore || 0)}</div>
+            <div class="text-2xl font-bold text-center py-2 text-gray-900">${escapeHtml(game.homeScore ?? 0)} - ${escapeHtml(game.awayScore ?? 0)}</div>
             <div class="text-xs text-gray-400 text-center mb-2">${escapeHtml(formatDate(game.date))}</div>
             <div class="text-center text-teal-600 text-sm font-semibold">Watch Replay →</div>
           </a>
