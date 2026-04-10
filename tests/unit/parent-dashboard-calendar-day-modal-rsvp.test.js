@@ -109,12 +109,15 @@ const Blob = deps.Blob;
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/utils\.js\?v=10';/, 'const { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } = deps.utils;')
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-incentives\.js\?v=3';/, 'const { getIncentiveRules, saveIncentiveRule: saveIncentiveRuleFn, toggleIncentiveRule: toggleIncentiveRuleFn, retireIncentiveRule: retireIncentiveRuleFn, markGamePaid: markGamePaidFn, unmarkGamePaid: unmarkGamePaidFn, getPaidGames, calculateEarnings, formatCents, getApplicableRulesForGame, getStatOptionsForTeam, renderIncentivesPanel, renderRuleBuilder, getCapSetting, saveCapSetting: saveCapSettingFn } = deps.parentIncentives;')
         .replace("import { requireAuth, checkAuth } from './js/auth.js?v=10';", 'const { requireAuth, checkAuth } = deps.auth;')
-        .replace("import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';", 'const { resolvePracticePacketSessionIdForEvent: resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent: resolvePracticePacketContextForEventBase } = deps.parentDashboardPackets;')
+        .replace(
+            /import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-dashboard-packets\.js\?v=3';/,
+            'const { resolvePracticePacketSessionIdForEvent: resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent: resolvePracticePacketContextForEventBase, getScopedPracticePacketRow: getScopedPracticePacketRowBase, buildPracticePacketCompletionPayload: buildPracticePacketCompletionPayloadBase } = deps.parentDashboardPackets;'
+        )
         .replace("import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';", 'const { filterVisiblePracticeSessions } = deps.parentDashboardPracticeSessions;')
         .replace("import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';", 'const { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } = deps.parentDashboardRsvp;')
         .replace("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';", 'const { createParentDashboardRsvpController } = deps.parentDashboardRsvpControls;')
-        .replace("import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';", 'const { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } = deps.rideshareHelpers;')
-        .replace("import { resolveSelectedRideChildId, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';", 'const { resolveSelectedRideChildId, createRideRequestHandlers } = deps.parentDashboardRideshareControls;')
+        .replace("import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';", 'const { getEventRideshareSummary, getOfferSeatInfo } = deps.rideshareHelpers;')
+        .replace("import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';", 'const { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } = deps.parentDashboardRideshareControls;')
         .replace("import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';", 'const { applyRsvpHydration } = deps.rsvpHydration;')
         .replace(/\binit\(\);\s*$/, `
 window.__parentDashboardTestHooks = {
@@ -259,7 +262,9 @@ function createDeps(submitRecorder) {
         },
         parentDashboardPackets: {
             resolvePracticePacketSessionIdForEvent() { return null; },
-            resolvePracticePacketContextForEvent() { return { sessionId: null, homePacket: null }; }
+            resolvePracticePacketContextForEvent() { return { sessionId: null, homePacket: null }; },
+            getScopedPracticePacketRow() { return null; },
+            buildPracticePacketCompletionPayload() { return {}; }
         },
         parentDashboardPracticeSessions: {
             filterVisiblePracticeSessions(sessions) { return sessions || []; }
@@ -268,12 +273,11 @@ function createDeps(submitRecorder) {
         parentDashboardRsvpControls,
         rideshareHelpers: {
             getEventRideshareSummary() { return { seatsLeft: 0, requests: 0, isFull: false }; },
-            getOfferSeatInfo() { return { seatCountConfirmed: 0, seatCapacity: 0, seatsLeft: 0 }; },
-            canRequestRide() { return false; },
-            findRequestForChild() { return null; }
+            getOfferSeatInfo() { return { seatCountConfirmed: 0, seatCapacity: 0, seatsLeft: 0 }; }
         },
         parentDashboardRideshareControls: {
             resolveSelectedRideChildId({ defaultChildId }) { return defaultChildId || ''; },
+            getRideOfferUiState() { return { disabled: false, reason: '' }; },
             createRideRequestHandlers() {
                 return {
                     requestRideSpotForChild: async () => {},
