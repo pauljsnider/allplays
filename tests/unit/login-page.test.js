@@ -37,6 +37,27 @@ function createCoordinator({
 }
 
 describe('login page redirect coordination', () => {
+    it('treats invite type values case-insensitively when code is present', () => {
+        const { coordinator } = createCoordinator({
+            search: '?code=ab12cd34&type= Admin ',
+            defaultRedirect: 'dashboard.html'
+        });
+
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.getPostAuthRedirect({ isAdmin: true }, coordinator.shouldRedeemInviteFromLogin))
+            .toBe('accept-invite.html?code=AB12CD34');
+    });
+
+    it('does not redeem invite redirects when the invite code is missing', () => {
+        const { coordinator } = createCoordinator({
+            search: '?type=parent',
+            defaultRedirect: 'parent-dashboard.html'
+        });
+
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
+        expect(coordinator.getAutoRedirectUrl({ parentOf: [{ teamId: 'team-1' }] })).toBe('parent-dashboard.html');
+    });
+
     it('redeems the invite after Google redirect when the stored mode is login', () => {
         const { coordinator, windowObject } = createCoordinator({ postGoogleAuthMode: 'login' });
 
