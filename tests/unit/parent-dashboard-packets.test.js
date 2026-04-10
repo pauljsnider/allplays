@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePracticePacketSessionIdForEvent, resolvePracticePacketContextForEvent } from '../../js/parent-dashboard-packets.js';
+import {
+  resolvePracticePacketSessionIdForEvent,
+  resolvePracticePacketContextForEvent,
+  getScopedPracticePacketRow,
+  buildPracticePacketCompletionPayload
+} from '../../js/parent-dashboard-packets.js';
 
 describe('parent dashboard packet session resolver', () => {
   it('returns event practiceSessionId when present', () => {
@@ -91,5 +96,67 @@ describe('parent dashboard packet session resolver', () => {
     );
     expect(result.sessionId).toBeNull();
     expect(result.homePacket).toBeNull();
+  });
+});
+
+describe('parent dashboard packet row scoping', () => {
+  const baseRow = {
+    sessionId: 'session-1',
+    children: [
+      { id: 'p1', name: 'Ava' },
+      { id: 'p2', name: 'Ben' }
+    ],
+    childNames: ['Ava', 'Ben'],
+    completions: []
+  };
+
+  it('keeps both children visible with all players selected', () => {
+    const result = getScopedPracticePacketRow(baseRow, '');
+
+    expect(result.visibleChildren.map((child) => child.name)).toEqual(['Ava', 'Ben']);
+    expect(result.visibleChildNames).toEqual(['Ava', 'Ben']);
+    expect(result.completedCount).toBe(0);
+    expect(result.visibleChildren).toHaveLength(2);
+  });
+
+  it('scopes names buttons and denominator to the selected child', () => {
+    const result = getScopedPracticePacketRow(baseRow, 'p1');
+
+    expect(result.visibleChildren.map((child) => child.name)).toEqual(['Ava']);
+    expect(result.visibleChildNames).toEqual(['Ava']);
+    expect(result.completedCount).toBe(0);
+    expect(result.visibleChildren).toHaveLength(1);
+  });
+
+  it('marks only the completed child when one child finishes the packet', () => {
+    const result = getScopedPracticePacketRow({
+      ...baseRow,
+      completions: [
+        { childId: 'p1', status: 'completed' }
+      ]
+    }, '');
+
+    expect(result.completedCount).toBe(1);
+    expect(result.completionChildIds.has('p1')).toBe(true);
+    expect(result.completionChildIds.has('p2')).toBe(false);
+  });
+});
+
+describe('parent dashboard packet completion payloads', () => {
+  it('builds a child-specific completion write payload', () => {
+    expect(buildPracticePacketCompletionPayload({
+      currentUserId: 'parent-1',
+      currentUser: {
+        displayName: 'Pat Parent',
+        email: 'pat@example.com'
+      },
+      childId: 'p1',
+      childName: 'Ava'
+    })).toEqual({
+      parentUserId: 'parent-1',
+      parentName: 'Pat Parent',
+      childId: 'p1',
+      childName: 'Ava'
+    });
   });
 });

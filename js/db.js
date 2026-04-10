@@ -42,6 +42,7 @@ import {
 } from './parent-membership-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
+import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
@@ -3883,90 +3884,5 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-
-    const byPlayer = new Map();
-    players.forEach((player) => {
-        byPlayer.set(player.id, {
-            playerId: player.id,
-            playerName: player.name || `#${player.number || ''}`.trim() || 'Unknown Player',
-            playerNumber: player.number || '',
-            response: 'not_responded',
-            respondedAt: null,
-            note: null,
-            responderUserId: null
-        });
-    });
-
-    const toMillis = (value) => {
-        if (!value) return 0;
-        if (typeof value?.toMillis === 'function') return value.toMillis();
-        if (value instanceof Date) return value.getTime();
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
-    };
-
-    rsvps.forEach((rsvp) => {
-        const ids = resolveRsvpPlayerIds(rsvp, fallbackByUser);
-        if (!ids.length) return;
-        ids.forEach((playerId) => {
-            let existing = byPlayer.get(playerId);
-            if (!existing) {
-                existing = {
-                    playerId,
-                    playerName: 'Former Player',
-                    playerNumber: '',
-                    response: 'not_responded',
-                    respondedAt: null,
-                    note: null,
-                    responderUserId: null
-                };
-            }
-            const existingMillis = toMillis(existing.respondedAt);
-            const nextMillis = toMillis(rsvp.respondedAt);
-            if (nextMillis < existingMillis) return;
-            existing.response = normalizeRsvpResponse(rsvp.response);
-            existing.respondedAt = rsvp.respondedAt || null;
-            existing.note = rsvp.note || null;
-            existing.responderUserId = rsvp.userId || null;
-            byPlayer.set(playerId, existing);
-        });
-    });
-
-    const grouped = {
-        going: [],
-        maybe: [],
-        not_going: [],
-        not_responded: []
-    };
-
-    Array.from(byPlayer.values())
-        .sort((a, b) => {
-            const an = (a.playerNumber ?? '').toString();
-            const bn = (b.playerNumber ?? '').toString();
-            const ai = Number.parseInt(an, 10);
-            const bi = Number.parseInt(bn, 10);
-            const aNum = Number.isFinite(ai);
-            const bNum = Number.isFinite(bi);
-            if (aNum && bNum && ai !== bi) return ai - bi;
-            if (aNum && !bNum) return -1;
-            if (!aNum && bNum) return 1;
-            return (a.playerName || '').localeCompare(b.playerName || '');
-        })
-        .forEach((row) => {
-            const key = row.response === 'going' || row.response === 'maybe' || row.response === 'not_going'
-                ? row.response
-                : 'not_responded';
-            grouped[key].push(row);
-        });
-
-    return {
-        grouped,
-        counts: {
-            going: grouped.going.length,
-            maybe: grouped.maybe.length,
-            notGoing: grouped.not_going.length,
-            notResponded: grouped.not_responded.length,
-            total: players.length
-        }
-    };
+    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
 }
