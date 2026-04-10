@@ -252,8 +252,8 @@ function buildModuleSource() {
             'const { getApp } = deps.firebaseApp;'
         )
         .replace(
-            "import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';",
-            'const { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } = deps.liveGameState;'
+            /import\s+\{([\s\S]*?)\}\s+from\s+'\.\/live-game-state\.js\?v=\d+';/,
+            (_, imports) => `const { ${imports.replace(/\s+/g, ' ').trim()} } = deps.liveGameState;`
         )
         .replace(
             "import { getDefaultLivePeriod } from './live-sport-config.js?v=1';",
@@ -440,6 +440,7 @@ async function bootReplayPage({ replayEvents }) {
                 onCourtHtml: '',
                 benchHtml: ''
             }),
+            renderOpponentStatsCards: () => '',
             applyResetEventState() {},
             shouldResetViewerFromGameDoc: () => false,
             collectVisibleLiveEventsSequentially: (events) => events
