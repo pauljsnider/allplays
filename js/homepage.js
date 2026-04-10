@@ -28,6 +28,10 @@ function buildLiveGameHref(game, replay = false) {
     return `live-game.html?${params.toString()}`;
 }
 
+function isVisibleUpcomingHomepageGame(game) {
+    return (game?.status || '').toLowerCase() !== 'cancelled';
+}
+
 function renderTeamAvatar(game) {
     const teamName = escapeHtml(game.team?.name || 'Team');
     const teamPhotoUrl = game.team?.photoUrl ? escapeHtml(game.team.photoUrl) : '';
@@ -40,14 +44,14 @@ function renderTeamAvatar(game) {
     return `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${teamInitial}</div>`;
 }
 
-export function applyHeroCta(user, heroCta) {
+export function applyHeroCta(user, heroCta, getRedirectUrl = () => 'dashboard.html') {
     if (!heroCta) {
         return;
     }
 
     if (user) {
         heroCta.textContent = 'Go to Dashboard';
-        heroCta.href = 'dashboard.html';
+        heroCta.href = getRedirectUrl(user);
         return;
     }
 
@@ -82,6 +86,8 @@ export async function loadLiveGames({
         } catch (error) {
             logger.warn('Could not load upcoming games:', error?.message || error);
         }
+
+        upcomingGames = upcomingGames.filter(isVisibleUpcomingHomepageGame);
 
         const combined = [
             ...liveGames.map((game) => ({ ...game, isLive: true })),
@@ -166,6 +172,7 @@ export async function loadPastGames({
 export async function initHomepage({
     document = globalThis.document,
     checkAuth,
+    getRedirectUrl = () => 'dashboard.html',
     renderHeader,
     getLiveGamesNow,
     getUpcomingLiveGames,
@@ -178,7 +185,7 @@ export async function initHomepage({
 
     checkAuth((user) => {
         renderHeader(document.getElementById('header-container'), user);
-        applyHeroCta(user, heroCta);
+        applyHeroCta(user, heroCta, getRedirectUrl);
     });
 
     await Promise.all([

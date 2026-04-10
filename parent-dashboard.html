@@ -288,12 +288,17 @@
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=3';
         import { requireAuth, checkAuth } from './js/auth.js?v=10';
-        import { resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase } from './js/parent-dashboard-packets.js?v=2';
+        import {
+            resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
+            resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase,
+            getScopedPracticePacketRow as getScopedPracticePacketRowBase,
+            buildPracticePacketCompletionPayload as buildPracticePacketCompletionPayloadBase
+        } from './js/parent-dashboard-packets.js?v=3';
         import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';
-        import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
-        import { resolveSelectedRideChildId, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
+        import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';
+        import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -604,9 +609,14 @@
                             );
                             const selectedChild = childChoices.find((child) => child.childId === selectedChildId);
                             const selectedChildName = selectedChild?.childName || defaultChildName;
-                            const myRequest = findRequestForChild(offer, currentUserId, selectedChildId);
-                            const canRequest = canRequestRide(offer, currentUserId, selectedChildId);
-                            const requestableChildName = myRequest?.childName || selectedChildName;
+                            const rideOfferUiState = getRideOfferUiState({
+                                offer,
+                                parentUserId: currentUserId,
+                                selectedChildId,
+                                selectedChildName,
+                                defaultChildName
+                            });
+                            const { myRequest, canRequest, statusText } = rideOfferUiState;
                             return `
                                 <div class="rounded-lg border border-gray-200 bg-white p-2">
                                     <div class="flex items-center justify-between gap-2">
@@ -632,7 +642,7 @@
                                             ` : ''}
                                         </div>
                                     </div>
-                                    ${myRequest ? `<div class="text-[11px] mt-1 font-semibold ${myRequest.status === 'confirmed' ? 'text-emerald-700' : myRequest.status === 'waitlisted' ? 'text-amber-700' : myRequest.status === 'declined' ? 'text-red-700' : 'text-gray-600'}">Your request for ${escapeHtml(requestableChildName)}: ${escapeHtml(myRequest.status || 'pending')}</div>` : ''}
+                                    ${myRequest ? `<div class="text-[11px] mt-1 font-semibold ${myRequest.status === 'confirmed' ? 'text-emerald-700' : myRequest.status === 'waitlisted' ? 'text-amber-700' : myRequest.status === 'declined' ? 'text-red-700' : 'text-gray-600'}">${escapeHtml(statusText)}</div>` : ''}
                                     ${canManageOffer && offer.requests?.length
                                         ? `<div class="mt-2 pt-2 border-t border-gray-100 space-y-1">
                                             ${offer.requests.map((request) => `
@@ -802,6 +812,10 @@
 
         function resolvePracticePacketContextForEvent(event) {
             return resolvePracticePacketContextForEventBase(event, allPracticePacketSessions);
+        }
+
+        function getScopedPracticePacketRow(row, selectedPlayerId = '') {
+            return getScopedPracticePacketRowBase(row, selectedPlayerId);
         }
 
         async function init() {
@@ -1534,20 +1548,22 @@
             card.classList.remove('hidden');
             practicePacketSessionMap.clear();
             list.innerHTML = rows.map((row) => {
+                const scopedRow = getScopedPracticePacketRow(row, selectedPlayerId);
                 const dateStr = row.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
                 const timeStr = row.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
                 const blocks = Array.isArray(row.homePacket?.blocks) ? row.homePacket.blocks : [];
                 const homePacketReady = blocks.length > 0;
                 const totalMinutes = row.homePacket?.totalMinutes || blocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
                 const preview = blocks.slice(0, 3).map(b => b?.drillTitle || b?.title).filter(Boolean);
-                const names = [...row.childNames];
+                const names = [...scopedRow.visibleChildNames];
                 const att = row.attendance;
                 const attendanceReady = !!(att && Array.isArray(att.players) && att.players.length > 0);
                 const attSummary = attendanceReady
                     ? `${att.players.filter(p => p.status === 'present' || p.status === 'late').length}/${att.players.length} present`
                     : null;
-                const completionChildIds = new Set((row.completions || []).filter(c => c.status === 'completed').map(c => c.childId));
-                const completedCount = (row.children || []).filter(c => completionChildIds.has(c.id)).length;
+                const completionChildIds = scopedRow.completionChildIds;
+                const completedCount = scopedRow.completedCount;
+                const visibleChildren = scopedRow.visibleChildren;
                 practicePacketSessionMap.set(row.sessionId, row);
                 return `
                     <div class="p-5">
@@ -1568,12 +1584,12 @@
                         <div class="mt-2 text-xs ${attendanceReady ? 'text-amber-800 bg-amber-50 border-amber-100' : 'text-gray-600 bg-gray-50 border-gray-200'} border rounded px-2 py-1 inline-block">
                             ${attendanceReady ? `Attendance: ${attSummary}` : 'Attendance: Not recorded yet'}
                         </div>
-                        ${homePacketReady ? `<div class="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded px-2 py-1 inline-block">Packet Completed: ${completedCount}/${(row.children || []).length}</div>` : ''}
+                        ${homePacketReady ? `<div class="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded px-2 py-1 inline-block">Packet Completed: ${completedCount}/${visibleChildren.length}</div>` : ''}
                         ${preview.length ? `<p class="mt-2 text-xs text-gray-700">${escapeHtml(preview.join(' • '))}</p>` : ''}
                         ${names.length ? `<p class="mt-2 text-[11px] text-gray-500">Applies to: ${escapeHtml(names.join(', '))}</p>` : ''}
-                        ${homePacketReady && (row.children || []).length ? `
+                        ${homePacketReady && visibleChildren.length ? `
                             <div class="mt-2 flex flex-wrap gap-2">
-                                ${(row.children || []).map(child => {
+                                ${visibleChildren.map(child => {
                                     const done = completionChildIds.has(child.id);
                                     return `<button onclick="markPracticePacketComplete('${row.sessionId}', '${child.id}')" class="text-[11px] px-2 py-1 rounded border ${done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}">${done ? 'Completed' : 'Mark Complete'}: ${escapeHtml(child.name || 'Child')}</button>`;
                                 }).join('')}
@@ -1590,19 +1606,17 @@
             const child = (row.children || []).find(c => c.id === childId) || null;
             try {
                 await ensureParentTeamAccess(currentUserId, [row.teamId]);
-                await upsertPracticePacketCompletion(row.teamId, sessionId, {
-                    parentUserId: currentUserId,
-                    parentName: currentUser?.displayName || currentUser?.email || 'Parent',
+                const completionPayload = buildPracticePacketCompletionPayloadBase({
+                    currentUserId,
+                    currentUser,
                     childId,
                     childName: child?.name || null
                 });
+                await upsertPracticePacketCompletion(row.teamId, sessionId, completionPayload);
                 const existing = Array.isArray(row.completions) ? row.completions : [];
                 const next = existing.filter(c => !(c.childId === childId && c.parentUserId === currentUserId));
                 next.push({
-                    parentUserId: currentUserId,
-                    parentName: currentUser?.displayName || currentUser?.email || 'Parent',
-                    childId,
-                    childName: child?.name || null,
+                    ...completionPayload,
                     status: 'completed'
                 });
                 row.completions = next;
@@ -1642,8 +1656,10 @@
             if (!content) return;
             const blocks = row.homePacket.blocks;
             const total = row.homePacket.totalMinutes || blocks.reduce((sum, b) => sum + (parseInt(b?.duration, 10) || 0), 0);
-            const completionChildIds = new Set((row.completions || []).filter(c => c.status === 'completed').map(c => c.childId));
-            const completionControls = (row.children || []).map(child => {
+            const selectedPlayerId = document.getElementById('player-filter')?.value || '';
+            const scopedRow = getScopedPracticePacketRow(row, selectedPlayerId);
+            const completionChildIds = scopedRow.completionChildIds;
+            const completionControls = scopedRow.visibleChildren.map(child => {
                 const done = completionChildIds.has(child.id);
                 return `<button onclick="markPracticePacketComplete('${row.sessionId}', '${child.id}')" class="text-[11px] px-2 py-1 rounded border ${done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}">${done ? 'Completed' : 'Mark Complete'}: ${escapeHtml(child.name || 'Child')}</button>`;
             }).join('');

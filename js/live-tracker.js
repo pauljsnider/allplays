@@ -7,16 +7,17 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=10'
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=2';
+import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=2';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
-import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
+import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=1';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=1';
+import { runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1423,101 +1424,33 @@ function generateEmailRecap() {
 }
 
 async function saveAndComplete() {
-  if (!acquireSingleFlightLock(finishSubmissionLock)) return;
-  if (els.finishSave) {
-    els.finishSave.disabled = true;
-  }
-
-  const rawFinalHome = parseInt(els.homeFinal.value, 10);
-  const rawFinalAway = parseInt(els.awayFinal.value, 10);
-  const requestedHome = Number.isNaN(rawFinalHome) ? state.home : rawFinalHome;
-  const requestedAway = Number.isNaN(rawFinalAway) ? state.away : rawFinalAway;
-  const summary = els.notesFinal.value.trim();
-  const sendEmail = els.finishSendEmail?.checked;
-  const recipientEmail = resolveSummaryRecipient({
-    teamNotificationEmail: currentTeam?.notificationEmail,
-    userEmail: currentUser?.email
-  });
-  const finishPlanArgs = {
-    requestedHome,
-    requestedAway,
-    liveHome: state.home,
-    liveAway: state.away,
-    scoreLogIsComplete: state.scoreLogIsComplete,
-    log: state.log,
-    currentPeriod: state.period,
-    currentClock: formatClock(state.clock),
-    summary,
-    sendEmail,
-    teamId: currentTeamId,
-    gameId: currentGameId,
-    teamName: currentTeam?.name || '',
-    opponentName: currentGame?.opponent || 'Unknown Opponent',
-    recipientEmail,
-    columns: currentConfig?.columns || [],
+  await runSaveAndCompleteWorkflow({
+    finishSubmissionLock,
+    finishButton: els.finishSave,
+    homeFinalInput: els.homeFinal,
+    awayFinalInput: els.awayFinal,
+    notesFinalInput: els.notesFinal,
+    finishSendEmailInput: els.finishSendEmail,
+    state,
+    currentTeam,
+    currentGame,
+    currentUser,
+    currentConfig,
+    currentTeamId,
+    currentGameId,
     roster,
-    statsByPlayerId: state.stats,
-    opponentEntries: state.opp,
-    currentUserUid: currentUser?.uid,
-    buildEmailBody: (finalHome, finalAway, recapSummary, logEntries) => generateEmailBody(finalHome, finalAway, recapSummary, logEntries)
-  };
-  let finishPlan = buildFinishCompletionPlan(finishPlanArgs);
-  let addedReconciliationLogEntry = null;
-
-  if (finishPlan.scoreReconciliation.mismatch) {
-    addedReconciliationLogEntry = {
-      text: finishPlan.reconciliationNote,
-      ts: Date.now(),
-      period: state.period,
-      clock: formatClock(state.clock)
-    };
-    state.log.unshift(addedReconciliationLogEntry);
-    renderLog();
-    els.homeFinal.value = String(finishPlan.finalHome);
-    els.awayFinal.value = String(finishPlan.finalAway);
-    finishPlan = buildFinishCompletionPlan({
-      ...finishPlanArgs,
-      log: state.log
-    });
-  }
-
-  try {
-    const batch = writeBatch(db);
-
-    // 1. Write all game log events
-    finishPlan.eventWrites.forEach(({ data }) => {
-      const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-      batch.set(eventRef, data);
-    });
-
-    // 2. Write aggregated stats for each player
-    finishPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
-      const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-      batch.set(statsRef, data);
-    });
-
-    // 4. Update game doc
-    const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
-    batch.update(gameRef, finishPlan.gameUpdate);
-
-    await batch.commit();
-    await endLiveBroadcast();
-    isFinishing = true;
-
-    executeFinishNavigationPlan(finishPlan.navigation);
-  } catch (error) {
-    if (addedReconciliationLogEntry && state.log[0] === addedReconciliationLogEntry) {
-      state.log.shift();
-      renderLog();
+    db,
+    createBatch: writeBatch,
+    createCollectionRef: collection,
+    createDocRef: doc,
+    renderLog,
+    endLiveBroadcast,
+    generateEmailBody,
+    formatClock,
+    onFinishStateChange: (value) => {
+      isFinishing = value;
     }
-    releaseSingleFlightLock(finishSubmissionLock);
-    isFinishing = false;
-    if (els.finishSave) {
-      els.finishSave.disabled = false;
-    }
-    console.error('Error finishing game:', error);
-    alert('Error finishing game: ' + error.message);
-  }
+  });
 }
 
 function copyEmailToClipboard() {
@@ -1581,6 +1514,11 @@ async function startStop() {
           opponentTeamName: currentGame.opponentTeamName,
           opponentTeamPhoto: currentGame.opponentTeamPhoto
         });
+        currentGame.liveStatus = 'scheduled';
+        currentGame.liveHasData = false;
+        currentGame.homeScore = 0;
+        currentGame.awayScore = 0;
+        currentGame.opponentStats = {};
         await broadcastResetEvent('Tracker reset before restart. Live viewer state cleared.');
       }
     }

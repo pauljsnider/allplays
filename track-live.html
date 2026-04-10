@@ -941,6 +941,30 @@
             }
         }
 
+        function broadcastReversedStatEvent({ playerId, statKey, value, isOpponent, description }) {
+            const player = !isOpponent ? players.find((entry) => entry.id === playerId) : null;
+            const opponent = isOpponent ? opponentPlayers.find((entry) => entry.id === playerId) : null;
+
+            broadcastLiveEvent(currentTeamId, currentGameId, {
+                type: 'stat',
+                period: gameState.currentPeriod,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                playerId,
+                playerName: player?.name || opponent?.name || null,
+                playerNumber: player?.number || '',
+                statKey,
+                value,
+                isOpponent: !!isOpponent,
+                opponentPlayerName: opponent?.name || null,
+                opponentPlayerNumber: opponent?.number || '',
+                opponentPlayerPhoto: opponent?.photoUrl || '',
+                description,
+                createdBy: currentUser?.uid || null
+            }).catch(console.warn);
+        }
+
         window.setPlayerFieldStatus = function (playerId, status) {
             const now = gameState.isRunning ? Date.now() : null;
             setPlayerFieldStatus(gameState.playerFieldStatus, playerId, status, now);
@@ -1366,6 +1390,13 @@
                 description: `Corrected: ${statKey.toUpperCase()} adjusted`,
                 createdBy: currentUser?.uid || null
             }).catch(console.warn);
+            broadcastReversedStatEvent({
+                playerId,
+                statKey,
+                value: -value,
+                isOpponent,
+                description: `Corrected stat: ${statKey.toUpperCase()} adjusted`
+            });
         };
 
         // Add opponent player
@@ -1614,16 +1645,25 @@
                             }),
                             opponentStats: gameState.opponentStats
                         });
+                        if (currentGame) {
+                            currentGame.liveHasData = false;
+                            currentGame.liveStatus = 'scheduled';
+                            currentGame.homeScore = 0;
+                            currentGame.awayScore = 0;
+                            currentGame.opponentStats = gameState.opponentStats;
+                        }
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     },
                     cleanupPersistedState: async () => {
-                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
+                        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
                             getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
                         ]);
                         const cleanupResults = await Promise.allSettled([
                             ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
-                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref)),
+                            ...liveEventsSnapshot.docs.map(liveDoc => deleteDoc(liveDoc.ref))
                         ]);
                         const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
                         if (failedDeletes.length) {
@@ -1774,15 +1814,17 @@
                 const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
                 const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
                 const parsedValue = Number(value) || 0;
+                let appliedDelta = 0;
 
                 if (isOpponent) {
                     const currentVal = Number(gameState.opponentStats[playerId]?.[statKey] || statEl?.textContent || 0);
                     const newVal = Math.max(0, currentVal - parsedValue);
+                    appliedDelta = currentVal - newVal;
                     if (!gameState.opponentStats[playerId]) gameState.opponentStats[playerId] = {};
                     gameState.opponentStats[playerId][statKey] = newVal;
                     if (statEl) statEl.textContent = `${newVal}`;
                     if (isPoints) {
-                        awayScore = Math.max(0, awayScore - parsedValue);
+                        awayScore = Math.max(0, awayScore - appliedDelta);
                         updateScoreDisplay();
                         scheduleScoreSync();
                     }
@@ -1791,10 +1833,11 @@
                     if (!gameState.playerStats[playerId]) gameState.playerStats[playerId] = {};
                     const currentVal = Number(gameState.playerStats[playerId][statKey] || statEl?.textContent || 0);
                     const newVal = Math.max(0, currentVal - parsedValue);
+                    appliedDelta = currentVal - newVal;
                     gameState.playerStats[playerId][statKey] = newVal;
                     if (statEl) statEl.textContent = `${newVal}`;
                     if (isPoints) {
-                        homeScore = Math.max(0, homeScore - parsedValue);
+                        homeScore = Math.max(0, homeScore - appliedDelta);
                         updateScoreDisplay();
                         scheduleScoreSync();
                     }
@@ -1811,6 +1854,13 @@
                     description: `Undo: ${entry.text}`,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
+                broadcastReversedStatEvent({
+                    playerId,
+                    statKey,
+                    value: -appliedDelta,
+                    isOpponent,
+                    description: `Undo stat: ${entry.text}`
+                });
             }
 
             gameState.gameLog.splice(index, 1);
