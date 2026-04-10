@@ -1,0 +1,51 @@
+name: preview-smoke
+
+on:
+  pull_request:
+
+concurrency:
+  group: preview-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview-smoke:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright test runner
+        run: npm install --no-save @playwright/test@1.54.2
+
+      - name: Start local static server
+        run: python3 -m http.server 4173 >/tmp/allplays-preview-smoke.log 2>&1 &
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run static-hosting smoke
+        run: npx playwright test --config=playwright.smoke.config.js --reporter=line
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:4173
+          SMOKE_SUITE: preview
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-smoke-http-log
+          path: /tmp/allplays-preview-smoke.log

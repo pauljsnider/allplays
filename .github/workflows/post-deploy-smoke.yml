@@ -1,0 +1,49 @@
+name: post-deploy-smoke
+
+on:
+  workflow_run:
+    workflows:
+      - deploy-prod
+    types:
+      - completed
+
+concurrency:
+  group: post-deploy-smoke-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  post-deploy-smoke:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright test runner
+        run: npm install --no-save @playwright/test@1.54.2
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run production smoke
+        run: npx playwright test --config=playwright.smoke.config.js --reporter=line
+        env:
+          SMOKE_BASE_URL: https://allplays.ai
+          SMOKE_SUITE: production
+          SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
+          SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
+          SMOKE_PLAYER_ID: ${{ vars.SMOKE_PLAYER_ID }}
+          SMOKE_AUTH_EMAIL: ${{ secrets.SMOKE_AUTH_EMAIL }}
+          SMOKE_AUTH_PASSWORD: ${{ secrets.SMOKE_AUTH_PASSWORD }}

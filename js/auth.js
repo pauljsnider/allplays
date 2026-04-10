@@ -14,8 +14,46 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail } from './db.js?v=14';
+} from './firebase.js?v=10';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests } from './db.js?v=16';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
+import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
+
+async function cleanupFailedNewUser(user, context) {
+    if (!user) {
+        try {
+            await signOut(auth);
+        } catch (signOutError) {
+            console.error(`Error signing out after ${context}:`, signOutError);
+        }
+        return;
+    }
+
+    try {
+        await user.delete();
+    } catch (deleteError) {
+        console.error(`Error deleting user after ${context}:`, deleteError);
+    }
+
+    try {
+        await signOut(auth);
+    } catch (signOutError) {
+        console.error(`Error signing out after ${context}:`, signOutError);
+    }
+}
+
+async function linkParentInviteOrRollback(user, parentInviteCode) {
+    try {
+        await redeemParentInvite(user.uid, parentInviteCode);
+    } catch (inviteLinkError) {
+        console.error('Error linking parent:', inviteLinkError);
+        clearPendingActivationCode();
+        await cleanupFailedNewUser(user, 'parent invite link failure');
+        // Fail closed only for invite-linking errors.
+        throw inviteLinkError;
+    }
+}
 
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -34,69 +72,24 @@ export async function login(email, password) {
 }
 
 export async function signup(email, password, activationCode) {
-    // Validate activation code first
-    if (!activationCode) {
-        throw new Error('Activation code is required');
-    }
-
-    const validation = await validateAccessCode(activationCode);
-    if (!validation.valid) {
-        throw new Error(validation.message || 'Invalid activation code');
-    }
-
-    // Create user account
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const userId = userCredential.user.uid;
-
-    if (validation.type === 'parent_invite') {
-        // Parent Invite Flow
-        try {
-            await redeemParentInvite(userId, validation.data.code);
-            // Also create basic profile
-            await updateUserProfile(userId, {
-                email: email,
-                createdAt: new Date(),
-                emailVerificationRequired: true
-            });
-        } catch (e) {
-            console.error('Error linking parent:', e);
-            // Don't fail the whole signup, but log it
+    return executeEmailPasswordSignup({
+        email,
+        password,
+        activationCode,
+        auth,
+        dependencies: {
+            validateAccessCode,
+            createUserWithEmailAndPassword,
+            redeemParentInvite,
+            redeemAdminInviteAcceptance,
+            updateUserProfile,
+            markAccessCodeAsUsed,
+            getTeam,
+            getUserProfile,
+            sendEmailVerification,
+            signOut
         }
-    } else {
-        // Standard Flow (Coach/Admin)
-        // Create user profile in Firestore with emailVerificationRequired flag
-        try {
-            await updateUserProfile(userId, {
-                email: email,
-                createdAt: new Date(),
-                emailVerificationRequired: true  // Flag for new email/password signups
-            });
-        } catch (e) {
-            console.error('Error creating user profile:', e);
-        }
-
-        // Mark the code as used
-        try {
-            await markAccessCodeAsUsed(validation.codeId, userId);
-        } catch (error) {
-            console.error('Error marking code as used:', error);
-        }
-    }
-
-    // Send verification email - use auth.currentUser exactly like resend does
-    try {
-        const user = auth.currentUser;
-        if (user) {
-            await user.reload();
-            console.log('SIGNUP: Sending verification email to:', user.email);
-            await sendEmailVerification(user);
-            console.log('SIGNUP: Verification email sent successfully');
-        }
-    } catch (e) {
-        console.error('SIGNUP ERROR:', e.code, e.message);
-    }
-
-    return userCredential;
+    });
 }
 
 export async function loginWithGoogle(activationCode = null) {
@@ -139,6 +132,14 @@ export async function loginWithGoogle(activationCode = null) {
     }
 }
 
+function clearPendingActivationCode() {
+    try {
+        window.sessionStorage.removeItem('pendingActivationCode');
+    } catch (storageError) {
+        console.error('Error clearing pending activation code:', storageError);
+    }
+}
+
 // Shared function to process Google auth result (used by both popup and redirect flows)
 async function processGoogleAuthResult(result, activationCode = null) {
     console.log('[Google Auth] Processing result for user:', result.user.email);
@@ -155,34 +156,26 @@ async function processGoogleAuthResult(result, activationCode = null) {
         // New user - require activation code
         if (!code) {
             console.log('[Google Auth] No activation code - deleting unauthorized user');
-            try {
-                await result.user.delete();
-                await signOut(auth);
-            } catch (deleteError) {
-                console.error('Error deleting unauthorized Google user:', deleteError);
-                await signOut(auth);
-            }
+            clearPendingActivationCode();
+            await cleanupFailedNewUser(result.user, 'missing activation code');
             throw new Error('Activation code is required for new accounts');
         }
 
         // Validate activation code
         const validation = await validateAccessCode(code);
         if (!validation.valid) {
-            try {
-                await result.user.delete();
-                await signOut(auth);
-            } catch (deleteError) {
-                console.error('Error deleting user with invalid code:', deleteError);
-                await signOut(auth);
-            }
+            clearPendingActivationCode();
+            await cleanupFailedNewUser(result.user, 'invalid activation code');
             throw new Error(validation.message || 'Invalid activation code');
         }
 
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
+            await linkParentInviteOrRollback(result.user, validation.data.code);
+
+            // Best-effort profile write after invite redemption.
             try {
-                await redeemParentInvite(userId, validation.data.code);
                 await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
@@ -190,7 +183,34 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     createdAt: new Date()
                 });
             } catch (e) {
-                console.error('Error linking parent:', e);
+                console.error('Error creating user profile after parent invite redeem:', e);
+            }
+        } else if (validation.type === 'admin_invite') {
+            try {
+                await redeemAdminInviteAcceptance({
+                    userId,
+                    userEmail: result.user.email,
+                    teamId: validation.data.teamId,
+                    codeId: validation.codeId,
+                    getTeam,
+                    getUserProfile
+                });
+            } catch (e) {
+                console.error('Error linking admin invite:', e);
+                clearPendingActivationCode();
+                await cleanupFailedNewUser(result.user, 'admin invite link failure');
+                throw e;
+            }
+
+            try {
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error creating user profile after admin invite redeem:', e);
             }
         } else {
             try {
@@ -212,7 +232,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         }
 
         // Clear the activation code from sessionStorage
-        window.sessionStorage.removeItem('pendingActivationCode');
+        clearPendingActivationCode();
         console.log('[Google Auth] New user setup complete');
     } else {
         console.log('[Google Auth] Existing user - no setup needed');
@@ -275,8 +295,30 @@ export function checkAuth(callback, options = {}) {
     return onAuthStateChanged(auth, async (user) => {
         if (user) {
             try {
-                const profile = await getUserProfile(user.uid);
+                let profile = await getUserProfile(user.uid) || {};
+
+                try {
+                    const approvedRequests = await listMyParentMembershipRequests(user.uid);
+                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
+                    if (parentRequestSync.changed) {
+                        await updateUserProfile(user.uid, parentRequestSync.userUpdate);
+                        profile = {
+                            ...profile,
+                            ...parentRequestSync.userUpdate
+                        };
+                        console.log('[auth] Synced approved parent membership requests to user profile');
+                    }
+                } catch (err) {
+                    console.warn('[auth] Failed to sync approved parent membership requests:', err);
+                }
+
                 if (profile) {
+                    if (profile.email) {
+                        user.profileEmail = profile.email;
+                        if (!user.email) {
+                            user.email = profile.email;
+                        }
+                    }
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;
 

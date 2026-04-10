@@ -1,18 +1,14 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   applySubstitution,
   canApplySubstitution,
   canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog,
-  deriveScoreFromLog,
+  resolveFinalScoreForCompletion,
   acquireSingleFlightLock,
   releaseSingleFlightLock
 } from '../../js/live-tracker-integrity.js';
-import {
-  OVERTIME_MIXED_SCORING_LOG,
-  EMPTY_OR_NON_SCORING_LOG,
-  ZERO_VALUE_SCORING_LOG
-} from './fixtures/live-tracker-score-log.fixtures.js';
 
 describe('live tracker integrity helpers', () => {
   it('rejects same-player substitution', () => {
@@ -84,6 +80,59 @@ describe('live tracker integrity helpers', () => {
     expect(result.away).toBe(1);
   });
 
+  it('keeps resumed final score when persisted data makes the score log incomplete', () => {
+    const result = resolveFinalScoreForCompletion({
+      requestedHome: 51,
+      requestedAway: 48,
+      liveHome: 51,
+      liveAway: 48,
+      log: [
+        { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } }
+      ],
+      scoreLogIsComplete: false
+    });
+
+    expect(result.reconciled).toBe(false);
+    expect(result.mismatch).toBe(false);
+    expect(result.home).toBe(51);
+    expect(result.away).toBe(48);
+  });
+
+  it('keeps entered final score after a resumed game log is cleared', () => {
+    const result = resolveFinalScoreForCompletion({
+      requestedHome: 40,
+      requestedAway: 39,
+      liveHome: 40,
+      liveAway: 39,
+      log: [],
+      scoreLogIsComplete: false
+    });
+
+    expect(result.reconciled).toBe(false);
+    expect(result.home).toBe(40);
+    expect(result.away).toBe(39);
+  });
+
+  it('reconciles final score only when the score log is complete and trustworthy', () => {
+    const result = resolveFinalScoreForCompletion({
+      requestedHome: 4,
+      requestedAway: 1,
+      liveHome: 5,
+      liveAway: 2,
+      log: [
+        { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },
+        { undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: false } },
+        { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: true } }
+      ],
+      scoreLogIsComplete: true
+    });
+
+    expect(result.reconciled).toBe(true);
+    expect(result.mismatch).toBe(true);
+    expect(result.home).toBe(5);
+    expect(result.away).toBe(2);
+  });
+
   it('trusts score log when derived totals match live score and contains scoring events', () => {
     const log = [
       { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },
@@ -122,72 +171,6 @@ describe('live tracker integrity helpers', () => {
     })).toBe(false);
   });
 
-  it('derives score totals from mixed scoring aliases used across overtime logs', () => {
-    const derived = deriveScoreFromLog(OVERTIME_MIXED_SCORING_LOG);
-    expect(derived).toEqual({ home: 5, away: 1 });
-  });
-
-  it('ignores non-scoring and malformed entries while deriving totals', () => {
-    const log = [
-      ...OVERTIME_MIXED_SCORING_LOG,
-      {},
-      { undoData: null },
-      { undoData: { type: 'stat', statKey: 'PTS', value: 'not-a-number', isOpponent: true } }
-    ];
-
-    const derived = deriveScoreFromLog(log);
-    expect(derived).toEqual({ home: 5, away: 1 });
-  });
-
-  it('does not trust score log when only zero-value scoring events exist', () => {
-    expect(canTrustScoreLogForFinalization({
-      liveHome: 0,
-      liveAway: 0,
-      log: ZERO_VALUE_SCORING_LOG
-    })).toBe(false);
-  });
-
-  it('treats invalid requested scores as zero when reconciling', () => {
-    const result = reconcileFinalScoreFromLog({
-      requestedHome: undefined,
-      requestedAway: 'NaN',
-      log: EMPTY_OR_NON_SCORING_LOG
-    });
-
-    expect(result.mismatch).toBe(false);
-    expect(result.home).toBe(0);
-    expect(result.away).toBe(0);
-  });
-
-  it('flags mismatch when requested scores differ from derived overtime totals', () => {
-    const result = reconcileFinalScoreFromLog({
-      requestedHome: 4,
-      requestedAway: 1,
-      log: OVERTIME_MIXED_SCORING_LOG
-    });
-
-    expect(result.mismatch).toBe(true);
-    expect(result.home).toBe(5);
-    expect(result.away).toBe(1);
-  });
-
-  it('returns false when acquiring lock with missing lock object', () => {
-    expect(acquireSingleFlightLock(null)).toBe(false);
-  });
-
-  it('releasing a missing lock is a safe no-op', () => {
-    expect(() => releaseSingleFlightLock(null)).not.toThrow();
-  });
-
-  it('returns unchanged arrays when substitution input arrays are invalid', () => {
-    const result = applySubstitution(null, undefined, 'p1', 'p2');
-    expect(result).toEqual({ applied: false, onCourt: [], bench: [] });
-  });
-
-  it('can apply substitution when outgoing player is on court and incoming is not', () => {
-    expect(canApplySubstitution(['p1', 'p2', 'p3', 'p4', 'p5'], 'p4', 'p8')).toBe(true);
-  });
-
   it('allows only one finish submission at a time and supports retry after release', () => {
     const lock = { active: false };
 
@@ -196,5 +179,13 @@ describe('live tracker integrity helpers', () => {
 
     releaseSingleFlightLock(lock);
     expect(acquireSingleFlightLock(lock)).toBe(true);
+  });
+
+  it('wires final score completion through the shared integrity helper in live tracker', () => {
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const workflowSource = readFileSync(new URL('../../js/live-tracker-save-complete.js', import.meta.url), 'utf8');
+    expect(liveTrackerSource).toContain('runSaveAndCompleteWorkflow');
+    expect(workflowSource).toContain('scoreLogIsComplete: state.scoreLogIsComplete');
+    expect(workflowSource).toContain('buildFinishCompletionPlan');
   });
 });

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Create Team Foundation and Staff Access - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+
+      .wf-shell {
+        width: min(1160px, 100%);
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      .wf-back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #4338ca;
+      }
+
+      .wf-hero {
+        margin-top: 0.75rem;
+        background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%);
+        border-radius: 1.1rem;
+        padding: 1.25rem 1.25rem 1.15rem;
+        color: #ecfeff;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+      }
+
+      .wf-kicker {
+        font-size: 0.73rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.84;
+      }
+
+      .wf-title {
+        margin-top: 0.4rem;
+        font-size: clamp(1.75rem, 2.8vw, 2.35rem);
+        line-height: 1.15;
+        font-weight: 800;
+      }
+
+      .wf-summary {
+        margin-top: 0.75rem;
+        max-width: 60ch;
+        color: rgba(236, 254, 255, 0.95);
+        line-height: 1.58;
+      }
+
+      .wf-meta-row {
+        margin-top: 0.95rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        align-items: center;
+      }
+
+      .wf-meta-pill {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.78rem;
+        font-weight: 700;
+        border-radius: 999px;
+        border: 1px solid rgba(236, 254, 255, 0.36);
+        background: rgba(236, 254, 255, 0.12);
+        color: #ecfeff;
+        padding: 0.24rem 0.62rem;
+      }
+
+      .wf-layout {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .wf-panel {
+        background: var(--wf-panel);
+        border: 1px solid var(--wf-border);
+        border-radius: 1rem;
+        box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08);
+      }
+
+      .wf-panel-section {
+        padding: 1rem;
+        border-bottom: 1px solid var(--wf-border);
+      }
+
+      .wf-panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .wf-panel-title {
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #334155;
+        margin-bottom: 0.6rem;
+      }
+
+      .wf-role-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid #c7d2fe;
+        background: #eef2ff;
+        color: #3730a3;
+        padding: 0.22rem 0.66rem;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+
+      .wf-roles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .wf-toc {
+        display: grid;
+        gap: 0.33rem;
+      }
+
+      .wf-toc a {
+        display: block;
+        padding: 0.43rem 0.52rem;
+        border-radius: 0.55rem;
+        color: #334155;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        transition: background 120ms ease, color 120ms ease;
+      }
+
+      .wf-toc a:hover {
+        background: #eef2ff;
+        color: #3730a3;
+      }
+
+      .wf-toc a.is-active {
+        background: #e0e7ff;
+        color: #312e81;
+        font-weight: 700;
+      }
+
+      .wf-content {
+        padding: 1.2rem 1.15rem;
+      }
+
+      .help-workflow-body {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .help-workflow-body h2 {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #1f2937;
+        margin-top: 1.25rem;
+        padding-top: 1.05rem;
+        border-top: 1px solid #dbe7f0;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body h2:first-of-type {
+        margin-top: 0.15rem;
+        padding-top: 0;
+        border-top: 0;
+      }
+
+      .help-workflow-body h3 {
+        font-size: 1.08rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-top: 0.88rem;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body p,
+      .help-workflow-body li {
+        color: var(--wf-muted);
+        line-height: 1.67;
+      }
+
+      .help-workflow-body ol,
+      .help-workflow-body ul {
+        margin-left: 1.2rem;
+      }
+
+      .help-workflow-body code {
+        background: #eef2ff;
+        color: #3730a3;
+        border: 1px solid #c7d2fe;
+        padding: 0.1rem 0.35rem;
+        border-radius: 0.3rem;
+        font-size: 0.86em;
+      }
+
+      .wf-mobile-toc {
+        margin-top: 0.95rem;
+      }
+
+      @media (min-width: 1024px) {
+        .wf-layout {
+          grid-template-columns: 270px minmax(0, 1fr);
+          align-items: start;
+        }
+
+        .wf-sidebar {
+          position: sticky;
+          top: 1rem;
+        }
+      }
+
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) {
+          display: none;
+        }
+      }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Create Team Foundation and Staff Access</h1>
+          <p class="wf-summary">Set up your team foundation first, then grant staff access.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles"><span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span></div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body"><h2 id="overview">Overview</h2>
+<p>Set up your team foundation first, then grant staff access.</p>
+<p>This workflow helps you create or update a team, set core team details, and manage coach/admin invites.</p>
+<h2 id="in-this-article">In This Article</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>When to create a new team vs update an existing team</li>
+<li>How to complete team foundation settings in one pass</li>
+<li>How to invite staff and handle invite delivery issues</li>
+<li>How to verify what families and players will see</li>
+<li>How to recover from common setup and access problems</li>
+</ul>
+<h2 id="who-is-this-for">Who Is This For</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Coach: Set up team identity and invite assistant coaches/admins</li>
+<li>Admin: Standardize team setup, visibility, and staff access across teams</li>
+</ul>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>You are signed in</li>
+<li>You have full team management permissions</li>
+<li>You already chose the team name and sport</li>
+<li>You have staff emails ready if you plan to invite coaches/admins</li>
+</ul>
+<h2 id="choose-your-path">Choose Your Path</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Create a new team: Open <strong>My Teams</strong> (<code>dashboard.html</code>) and select <strong>Create New Team</strong></li>
+<li>Update an existing team: Open <strong>My Teams</strong>, select the team, then choose <strong>Edit</strong></li>
+<li>Manage staff access only: Open <strong>Edit Team</strong> and go to <strong>Admin Access</strong></li>
+</ul>
+<h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open the team editor.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>New team: <code>dashboard.html</code> -&gt; <strong>Create New Team</strong></li>
+<li>Existing team: <code>dashboard.html</code> -&gt; team card -&gt; <strong>Edit</strong></li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Confirm edit access.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>If you can see the full form and <strong>Save Team</strong>, continue.</li>
+<li>If you are blocked or redirected, ask the team owner to add you as an admin.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Complete team identity.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Enter <strong>Team Name</strong></li>
+<li>Select <strong>Sport</strong></li>
+<li>Add <strong>Description</strong> (recommended)</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Add communication and location details.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Enter <strong>ZIP Code</strong></li>
+<li>Enter <strong>Notification Email</strong></li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Add links families will use.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Add <strong>League Link</strong> for standings</li>
+<li>Add <strong>Live Stream</strong> (YouTube or Twitch URL)</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Set visibility.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Enable <strong>Public Team</strong> to make the team discoverable in Browse Teams</li>
+<li>Disable it for invite/direct-link access only</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Invite coach/admin staff.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>In <strong>Admin Access</strong>, select <strong>+ Add Admin</strong></li>
+<li>Enter email, then select <strong>Send Invite</strong></li>
+<li>Use <strong>Remove</strong> to remove an added person before saving</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Handle invite outcomes.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>If the email sends, no extra action is required.</li>
+<li>If email delivery fails, share the provided code or signup link.</li>
+<li>For a new team, queued invites are finalized when you select <strong>Save Team</strong>.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Save and return.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Select <strong>Save Team</strong></li>
+<li>Confirm you return to <strong>My Teams</strong> and can open the team</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Verify the team page.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Confirm name, sport, and description</li>
+<li>Confirm league and stream links are visible and open correctly</li>
+<li>Confirm behavior matches the <strong>Public Team</strong> setting</li>
+</ul>
+<h2 id="common-questions">Common Questions</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>How do I create a team from scratch?</li>
+</ul>
+<p>Open <strong>My Teams</strong> and select <strong>Create New Team</strong>.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Why can I view a team but not edit it?</li>
+</ul>
+<p>You likely have limited access. Ask an owner/admin to grant admin rights.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>When are admin invites sent for a brand-new team?</li>
+</ul>
+<p>Invites are processed when you save the newly created team.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Can I make a team private later?</li>
+</ul>
+<p>Yes. Open <strong>Edit Team</strong>, update <strong>Public Team</strong>, then save.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Where do I verify what families will see?</li>
+</ul>
+<p>Open the team page and check identity, league, and stream links.</p>
+<h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Save fails:</li>
+</ul>
+<p>Check required fields, especially <strong>Team Name</strong> and <strong>Sport</strong>, then try again.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Stream link does not work:</li>
+</ul>
+<p>Paste a full YouTube/Twitch URL and save again.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Team does not appear in Browse Teams:</li>
+</ul>
+<p>Enable <strong>Public Team</strong> in <strong>Edit Team</strong>, save, then refresh.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Staff member did not receive invite email:</li>
+</ul>
+<p>Resend from <strong>Admin Access</strong> or share the code/signup link manually.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>You cannot edit even though you are staff:</li>
+</ul>
+<p>Ask the owner to remove and re-add your admin email, then sign in again.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Need a backup invite path:</li>
+</ul>
+<p>Use <code>profile.html</code> to generate and copy a signup code/link, then share it directly.</p>
+<h2 id="related-workflows">Related Workflows</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><code>choose-home-dashboard</code>: Start from the correct landing page before team operations</li>
+<li><code>roster</code>: Add players after team foundation is complete</li>
+<li><code>schedule</code>: Add events and game timing after team setup</li>
+<li><code>admin-ops</code>: Handle broader organization-level admin tasks</li>
+</ul>
+<h2 id="need-more-help">Need More Help</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Re-open <strong>My Teams</strong> and repeat this workflow step by step.</li>
+<li>If access still fails, contact your team owner/admin with your account email and team name.</li>
+<li>If invite delivery keeps failing, share the signup code/link manually and confirm the recipient used the same email.</li>
+</ul></div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=10';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+
+        if (mobileToc && window.innerWidth < 1024) {
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+        }
+
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = () => {
+          let active = headings[0];
+          for (const h of headings) {
+            if (h.getBoundingClientRect().top <= 140) active = h;
+          }
+          links.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+
+        window.addEventListener('scroll', setActive, { passive: true });
+        setActive();
+      })();
+    </script>
+</body>
+</html>

@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Player Details - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -68,6 +69,19 @@
         <!-- Season Overview -->
         <div id="season-overview" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <!-- Will be populated with season stats -->
+        </div>
+
+        <!-- Selected Game Insights -->
+        <div id="player-game-insights-section" class="mb-8 hidden">
+            <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+                <div class="p-6 md:p-8">
+                    <div class="flex items-center gap-3 mb-5">
+                        <div class="h-1 w-12 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Post-game insights</h2>
+                    </div>
+                    <div id="player-game-insights-body" class="space-y-3"></div>
+                </div>
+            </div>
         </div>
 
         <!-- Advanced Stats Section (Premium Feature Preview) -->
@@ -202,17 +216,24 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
+        import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
+        import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=9';
-        import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=9";
-        import { db } from './js/firebase.js?v=9';
+        import { checkAuth } from './js/auth.js?v=10';
+        import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=10";
+        import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         let currentUser = null;
         let currentPlayer = null; // Store for modal access
         let currentPrivateProfile = null; // Sensitive fields live in a private doc
         let currentTeamId = null;
+        let privateProfileLoadFailed = false;
+        let privateFieldsDirty = {
+            emergencyContact: false,
+            medicalInfo: false
+        };
 
         checkAuth((user) => {
             currentUser = user;
@@ -252,6 +273,82 @@
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
         }
 
+        function insightToneClasses(tone) {
+            if (tone === 'positive') {
+                return 'border-green-200 bg-green-50';
+            }
+            if (tone === 'warning') {
+                return 'border-amber-200 bg-amber-50';
+            }
+            return 'border-gray-200 bg-gray-50';
+        }
+
+        function renderPlayerGameInsights(game, insights) {
+            const section = document.getElementById('player-game-insights-section');
+            const body = document.getElementById('player-game-insights-body');
+            if (!section || !body) return;
+
+            if (!game) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            section.classList.remove('hidden');
+            if (!insights.length) {
+                body.innerHTML = `
+                    <div class="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                        No player-specific insights are available for this game yet.
+                    </div>
+                `;
+                return;
+            }
+
+            body.innerHTML = `
+                <div class="text-sm text-gray-500 font-medium mb-2">
+                    Selected game: ${escapeHtml(game.opponent || 'Opponent')}
+                </div>
+                ${insights.map((item) => `
+                    <div class="rounded-xl border px-4 py-4 ${insightToneClasses(item.tone)}">
+                        <div class="text-sm font-bold text-gray-900">${escapeHtml(item.title || 'Insight')}</div>
+                        <p class="mt-1 text-sm text-gray-700 leading-relaxed">${escapeHtml(item.body || '')}</p>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function renderConfiguredPlayerTopStats(topStats = []) {
+            if (!topStats.length) return '';
+
+            return `
+                <div class="bg-white rounded-xl p-6 shadow-md border border-primary-100">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-900">Configured Top Stats</h3>
+                            <p class="text-sm text-gray-500">Season rank based on your team stat settings.</p>
+                        </div>
+                        <span class="text-xs font-semibold uppercase tracking-wide text-primary-700 bg-primary-50 px-3 py-1 rounded-full">Auto ranked</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        ${topStats.map((stat) => `
+                            <div class="rounded-xl border border-gray-200 bg-gradient-to-br from-white to-primary-50 p-4">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">${escapeHtml(stat.label)}</div>
+                                <div class="mt-2 flex items-end justify-between gap-3">
+                                    <div>
+                                        <div class="text-3xl font-bold text-primary-700">#${stat.rank}</div>
+                                        <div class="text-xs text-gray-500 mt-1">of ${stat.totalPlayers} player${stat.totalPlayers === 1 ? '' : 's'}</div>
+                                    </div>
+                                    <div class="text-right">
+                                        <div class="text-2xl font-bold text-gray-900">${escapeHtml(stat.formattedValue)}</div>
+                                        <div class="text-xs text-gray-500 mt-1">season value</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
         async function loadPlayerDetails() {
             const { teamId, gameId, playerId } = getUrlParams();
             if (!teamId || !playerId) {
@@ -261,10 +358,11 @@
 
             try {
                 currentTeamId = teamId; // Store global
-                const [team, players, games] = await Promise.all([
+                const [team, players, games, configs] = await Promise.all([
                     getTeam(teamId),
-                    getPlayers(teamId),
-                    getGames(teamId)
+                    getPlayers(teamId, { includeInactive: true }),
+                    getGames(teamId),
+                    getConfigs(teamId)
                 ]);
 
                 const player = players.find(p => p.id === playerId);
@@ -320,16 +418,34 @@
                 const perGameStats = [];
                 let gamesPlayed = 0;
                 const seasonTotals = {};
+                const seasonStatsByPlayerId = {};
                 const allEvents = [];
                 let totalTimeMs = 0;
                 let gamesWithTime = 0;
 
                 for (const game of games) {
                     const gameIdIter = game.id;
-                    const statsDoc = await getDoc(doc(db, `teams/${teamId}/games/${gameIdIter}/aggregatedStats`, playerId));
-                    if (statsDoc.exists()) {
-                        const stats = statsDoc.data().stats || {};
-                        const timeMs = typeof statsDoc.data().timeMs === 'number' ? statsDoc.data().timeMs : 0;
+                    const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameIdIter}/aggregatedStats`));
+                    let selectedPlayerStats = null;
+                    statsSnapshot.forEach((docSnap) => {
+                        const statData = docSnap.data() || {};
+                        const playerStats = statData.stats || {};
+                        if (!seasonStatsByPlayerId[docSnap.id]) {
+                            seasonStatsByPlayerId[docSnap.id] = {};
+                        }
+                        Object.entries(playerStats).forEach(([stat, value]) => {
+                            seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
+                        });
+                        if (docSnap.id === playerId) {
+                            selectedPlayerStats = {
+                                stats: playerStats,
+                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
+                            };
+                        }
+                    });
+
+                    if (selectedPlayerStats) {
+                        const { stats, timeMs } = selectedPlayerStats;
                         gamesPlayed++;
                         Object.entries(stats).forEach(([stat, value]) => {
                             seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
@@ -369,6 +485,7 @@
                 const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
                     ? gameId
                     : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
+                const selectedGame = games.find((entry) => entry.id === selectedGameId) || null;
                 // Set back-link href to team page (fallback navigation when banner not shown)
                 document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
 
@@ -441,6 +558,41 @@
                         ${card.sub ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(card.sub)}</div>` : ''}
                     </div>
                 `).join('');
+
+                if (gameId && selectedGame) {
+                    const selectedStats = perGameStats.find((entry) => entry.gameId === selectedGameId) || null;
+                    const teamStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${selectedGameId}/aggregatedStats`));
+                    const gameTeamStats = {};
+                    teamStatsSnapshot.forEach((docSnap) => {
+                        gameTeamStats[docSnap.id] = docSnap.data().stats || {};
+                    });
+                    const selectedEvents = allEvents
+                        .filter((event) => event.gameId === selectedGameId)
+                        .map((event) => ({
+                            ...event,
+                            clock: event.clock || event.gameTime || ''
+                        }));
+                    renderPlayerGameInsights(selectedGame, generatePlayerGameInsights({
+                        player,
+                        game: selectedGame,
+                        playerStats: selectedStats?.stats || {},
+                        playerTimeMs: selectedStats?.timeMs || 0,
+                        gameTeamStats,
+                        events: selectedEvents
+                    }));
+                } else {
+                    renderPlayerGameInsights(null, []);
+                }
+
+                const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
+                const leaderboardSnapshot = analyticsConfig
+                    ? buildPlayerLeaderboardSnapshot({
+                        config: analyticsConfig,
+                        players,
+                        seasonStatsByPlayerId
+                    })
+                    : null;
+                const playerTopStats = summarizePlayerTopStats(leaderboardSnapshot, playerId);
 
                 // Render Advanced Stats Visualizations
                 const advancedStatsDiv = document.getElementById('advanced-stats');
@@ -658,6 +810,13 @@
                     `;
                 }
 
+                if (playerTopStats.length > 0) {
+                    advancedStatsDiv.innerHTML = `
+                        ${renderConfiguredPlayerTopStats(playerTopStats)}
+                        ${advancedStatsDiv.innerHTML}
+                    `;
+                }
+
                 // Render per-game stats
                 const gameStatsDiv = document.getElementById('game-stats');
                 if (perGameStats.length > 0) {
@@ -866,6 +1025,11 @@
         async function openEditModal() {
              if (!currentPlayer) return;
              document.getElementById('edit-player-modal').classList.remove('hidden');
+             privateProfileLoadFailed = false;
+             privateFieldsDirty = {
+                 emergencyContact: false,
+                 medicalInfo: false
+             };
 
              // Load sensitive fields from the private profile doc.
              // If denied or missing, treat as empty.
@@ -874,6 +1038,7 @@
              } catch (e) {
                  console.warn('Failed to load private player profile:', e);
                  currentPrivateProfile = null;
+                 privateProfileLoadFailed = true;
              }
 
              document.getElementById('edit-ec-name').value = currentPrivateProfile?.emergencyContact?.name || '';
@@ -888,8 +1053,50 @@
              }
         }
 
+        function buildPlayerProfileUpdatePayload({
+            emergencyContactName,
+            emergencyContactPhone,
+            medicalInfo,
+            photoUrl,
+            privateProfileLoadFailed,
+            privateFieldsDirty
+        }) {
+            const data = {};
+            const shouldIncludeEmergencyContact = !privateProfileLoadFailed || privateFieldsDirty.emergencyContact;
+            const shouldIncludeMedicalInfo = !privateProfileLoadFailed || privateFieldsDirty.medicalInfo;
+
+            if (shouldIncludeEmergencyContact) {
+                data.emergencyContact = {
+                    name: emergencyContactName,
+                    phone: emergencyContactPhone
+                };
+            }
+
+            if (shouldIncludeMedicalInfo) {
+                data.medicalInfo = medicalInfo;
+            }
+
+            if (typeof photoUrl !== 'undefined') {
+                data.photoUrl = photoUrl;
+            }
+
+            return data;
+        }
+
         document.getElementById('close-edit-modal').addEventListener('click', () => {
             document.getElementById('edit-player-modal').classList.add('hidden');
+        });
+
+        document.getElementById('edit-ec-name').addEventListener('input', () => {
+            privateFieldsDirty.emergencyContact = true;
+        });
+
+        document.getElementById('edit-ec-phone').addEventListener('input', () => {
+            privateFieldsDirty.emergencyContact = true;
+        });
+
+        document.getElementById('edit-medical-info').addEventListener('input', () => {
+            privateFieldsDirty.medicalInfo = true;
         });
 
         document.getElementById('edit-photo-input').addEventListener('change', (e) => {
@@ -910,19 +1117,20 @@
             btn.textContent = 'Saving...';
 
             try {
-                const data = {
-                    emergencyContact: {
-                        name: document.getElementById('edit-ec-name').value,
-                        phone: document.getElementById('edit-ec-phone').value
-                    },
-                    medicalInfo: document.getElementById('edit-medical-info').value
-                };
-
                 const photoFile = document.getElementById('edit-photo-input').files[0];
+                let photoUrl;
                 if (photoFile) {
-                    const url = await uploadPlayerPhoto(photoFile);
-                    data.photoUrl = url;
+                    photoUrl = await uploadPlayerPhoto(photoFile);
                 }
+
+                const data = buildPlayerProfileUpdatePayload({
+                    emergencyContactName: document.getElementById('edit-ec-name').value,
+                    emergencyContactPhone: document.getElementById('edit-ec-phone').value,
+                    medicalInfo: document.getElementById('edit-medical-info').value,
+                    photoUrl,
+                    privateProfileLoadFailed,
+                    privateFieldsDirty
+                });
 
                 await updatePlayerProfile(currentTeamId, currentPlayer.id, data);
                 

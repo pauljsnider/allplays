@@ -12,13 +12,26 @@ import {
   getLiveChatHistory,
   getLiveReactions,
   getConfigs,
-  subscribeGame
-} from './db.js?v=14';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=9';
+  subscribeGame,
+  updateGame
+} from './db.js?v=15';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
+import { computePanelVisibility } from './live-stream-utils.js?v=1';
+import { checkAuth } from './auth.js?v=11';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
+import {
+  buildReplaySessionState,
+  collectReplayEventWindow,
+  collectReplayStreamWindow,
+  getReplayElapsedMs,
+  getReplayStartTimeAfterSpeedChange,
+  getReplayTimestampMs
+} from './live-game-replay.js?v=3';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
+import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
   teamId: null,
@@ -40,8 +53,10 @@ const state = {
   statColumns: [],
   homeScore: 0,
   awayScore: 0,
-  period: 'Q1',
+  period: getDefaultLivePeriod(),
   gameClockMs: 0,
+  sport: null,
+  periods: null,
 
   chatMessages: [],
   unreadChatCount: 0,
@@ -69,7 +84,12 @@ const state = {
 
   lastStatChange: null,
   scoringRun: { team: null, points: 0 },
-  lastRunAnnounced: 0
+  lastRunAnnounced: 0,
+  hasVideoStream: false,
+  lastResetAt: 0,
+  videoPlayback: null,
+  clipStartMs: null,
+  clipEndMs: null
 };
 
 const els = {
@@ -127,9 +147,21 @@ const els = {
   gameStartTime: q('#game-start-time'),
 
   mobileTabs: document.querySelectorAll('#mobile-tabs [data-tab]'),
+  videoPanel: q('#video-panel'),
   playsPanel: q('#plays-panel'),
   statsPanel: q('#stats-panel'),
-  chatPanelMobile: q('#chat-panel')
+  chatPanelMobile: q('#chat-panel'),
+  recordedReplayVideo: q('#recorded-replay-video'),
+  recordedReplayTools: q('#recorded-replay-tools'),
+  recordedReplayMeta: q('#recorded-replay-meta'),
+  highlightStartInput: q('#highlight-start-input'),
+  highlightEndInput: q('#highlight-end-input'),
+  highlightTitleInput: q('#highlight-title-input'),
+  highlightSetStart: q('#highlight-set-start'),
+  highlightSetEnd: q('#highlight-set-end'),
+  highlightShareBtn: q('#highlight-share-btn'),
+  highlightSaveBtn: q('#highlight-save-btn'),
+  savedHighlightsList: q('#saved-highlights-list')
 };
 
 const mentionState = { active: false, atPos: null };
@@ -162,7 +194,7 @@ function showToast(message) {
 
 function buildShareText(mode, url) {
   const teamName = state.team?.name || 'Team';
-  const opponent = state.game?.opponent || 'Opponent';
+  const opponent = resolveOpponentDisplayName(state.game);
   const dateLabel = formatShortDate(state.game?.date);
   const timeLabel = formatTime(state.game?.date);
   if (mode === 'report') {
@@ -196,13 +228,19 @@ function initTabs() {
 
 function updateTabs() {
   const isMobile = window.matchMedia('(max-width: 767px)').matches;
+  const visibility = computePanelVisibility({
+    isMobile,
+    activeTab: state.activeTab,
+    hasVideoStream: state.hasVideoStream
+  });
+  state.activeTab = visibility.activeTab;
 
-  if (!isMobile) {
-    els.playsPanel?.classList.remove('hidden');
-    els.statsPanel?.classList.remove('hidden');
-    els.chatPanel?.classList.remove('hidden');
-    return;
-  }
+  els.videoPanel?.classList.toggle('hidden', visibility.videoHidden);
+  els.playsPanel?.classList.toggle('hidden', visibility.playsHidden);
+  els.statsPanel?.classList.toggle('hidden', visibility.statsHidden);
+  els.chatPanel?.classList.toggle('hidden', visibility.chatHidden);
+
+  if (!isMobile) return;
 
   els.mobileTabs.forEach(tab => {
     const active = tab.dataset.tab === state.activeTab;
@@ -211,25 +249,370 @@ function updateTabs() {
     tab.classList.toggle('text-sand/50', !active);
     tab.classList.toggle('border-transparent', !active);
   });
+}
 
-  if (state.activeTab === 'plays') {
-    els.playsPanel?.classList.remove('hidden');
-    els.statsPanel?.classList.add('hidden');
-    els.chatPanel?.classList.add('hidden');
-  } else if (state.activeTab === 'stats') {
-    els.playsPanel?.classList.add('hidden');
-    els.statsPanel?.classList.remove('hidden');
-    els.chatPanel?.classList.add('hidden');
+function resolveVideoPlayback() {
+  return resolveReplayVideoOptions({
+    team: state.team,
+    game: state.game,
+    isReplay: state.isReplay,
+    clipStartMs: state.clipStartMs,
+    clipEndMs: state.clipEndMs
+  });
+}
+
+function refreshVideoPanel({ force = false } = {}) {
+  const nextPlayback = resolveVideoPlayback();
+  if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
+    return false;
+  }
+  setupVideoPanel(nextPlayback);
+  return true;
+}
+
+function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
+  const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
+  const extLink = document.getElementById('stream-external-link');
+  const iframe = document.getElementById('youtube-stream-iframe');
+  const recordedVideo = els.recordedReplayVideo;
+  const previousPlayback = state.videoPlayback;
+  const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  state.videoPlayback = nextPlayback;
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
+
+  if (state.videoPlayback?.mode === 'recorded') {
+    if (iframe) {
+      if (iframe.getAttribute('src')) iframe.src = '';
+      iframe.classList.add('hidden');
+    }
+    if (recordedVideo) {
+      if (shouldReloadPlayback) {
+        recordedVideo.src = state.videoPlayback.sourceUrl || '';
+      }
+      recordedVideo.poster = state.videoPlayback.posterUrl || '';
+      recordedVideo.classList.remove('hidden');
+    }
+    renderRecordedReplayTools();
+    if (videoTab) videoTab.classList.remove('hidden');
+    if (extLink && state.videoPlayback.publicUrl) {
+      extLink.href = state.videoPlayback.publicUrl;
+      extLink.textContent = state.videoPlayback.publicLabel || 'Open replay video ↗';
+      extLink.classList.remove('hidden');
+    } else if (extLink) {
+      extLink.classList.add('hidden');
+      extLink.removeAttribute('href');
+    }
+  } else if (state.videoPlayback?.mode === 'embed') {
+    if (recordedVideo) {
+      recordedVideo.pause();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
+      recordedVideo.classList.add('hidden');
+    }
+    els.recordedReplayTools?.classList.add('hidden');
+    if (iframe) {
+      if (shouldReloadPlayback) {
+        iframe.src = state.videoPlayback.sourceUrl || '';
+      }
+      iframe.classList.remove('hidden');
+    }
+    if (videoTab) videoTab.classList.remove('hidden');
+    if (extLink && state.videoPlayback.publicUrl) {
+      extLink.href = state.videoPlayback.publicUrl;
+      extLink.textContent = state.videoPlayback.publicLabel || '';
+      extLink.classList.remove('hidden');
+    }
   } else {
-    els.playsPanel?.classList.add('hidden');
-    els.statsPanel?.classList.add('hidden');
-    els.chatPanel?.classList.remove('hidden');
+    if (recordedVideo) {
+      recordedVideo.pause();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
+      recordedVideo.classList.add('hidden');
+    }
+    if (iframe) {
+      if (iframe.getAttribute('src')) iframe.src = '';
+      iframe.classList.add('hidden');
+    }
+    els.recordedReplayTools?.classList.add('hidden');
+    els.videoPanel?.classList.add('hidden');
+    if (videoTab) videoTab.classList.add('hidden');
+    if (extLink) {
+      extLink.classList.add('hidden');
+      extLink.removeAttribute('href');
+    }
+    if (state.activeTab === 'video') state.activeTab = 'plays';
+  }
+
+  updateTabs();
+}
+
+function formatVideoTimestamp(ms) {
+  const totalSeconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getCurrentReplayVideoDurationMs() {
+  const video = els.recordedReplayVideo;
+  if (video && Number.isFinite(video.duration) && video.duration > 0) {
+    return Math.round(video.duration * 1000);
+  }
+  return state.videoPlayback?.durationMs ?? null;
+}
+
+function getHighlightDraftFromInputs() {
+  return createHighlightClipDraft({
+    startMs: Number(els.highlightStartInput?.value || 0) * 1000,
+    endMs: Number(els.highlightEndInput?.value || 0) * 1000,
+    durationMs: getCurrentReplayVideoDurationMs(),
+    title: els.highlightTitleInput?.value || ''
+  });
+}
+
+function syncHighlightUrl(startMs, endMs) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('teamId', state.teamId);
+  url.searchParams.set('gameId', state.gameId);
+  url.searchParams.set('replay', state.isReplay ? 'true' : 'false');
+  if (Number.isFinite(startMs)) {
+    url.searchParams.set('clipStart', `${Math.max(0, Math.round(startMs))}`);
+  } else {
+    url.searchParams.delete('clipStart');
+  }
+  if (Number.isFinite(endMs)) {
+    url.searchParams.set('clipEnd', `${Math.max(0, Math.round(endMs))}`);
+  } else {
+    url.searchParams.delete('clipEnd');
+  }
+  window.history.replaceState({}, '', url.toString());
+}
+
+function applyHighlightSelection(clip, { updateHistory = true, autoplay = false } = {}) {
+  if (!clip) return;
+  state.clipStartMs = clip.startMs;
+  state.clipEndMs = clip.endMs;
+  state.videoPlayback = {
+    ...(state.videoPlayback || {}),
+    clipStartMs: clip.startMs,
+    clipEndMs: clip.endMs
+  };
+  if (els.highlightStartInput) els.highlightStartInput.value = `${Math.round(clip.startMs / 1000)}`;
+  if (els.highlightEndInput) els.highlightEndInput.value = `${Math.round(clip.endMs / 1000)}`;
+  if (updateHistory) {
+    syncHighlightUrl(clip.startMs, clip.endMs);
+  }
+  const video = els.recordedReplayVideo;
+  if (video) {
+    const nextTime = clip.startMs / 1000;
+    if (Math.abs(video.currentTime - nextTime) > 0.5) {
+      video.currentTime = nextTime;
+    }
+    if (autoplay) {
+      video.play().catch(() => {});
+    }
+  }
+}
+
+function renderSavedHighlights() {
+  if (!els.savedHighlightsList) return;
+  const clips = state.videoPlayback?.savedHighlights || [];
+  if (!clips.length) {
+    els.savedHighlightsList.innerHTML = '<div class="rounded-lg border border-dashed border-teal/20 px-3 py-3 text-sm text-sand/50">No saved highlights yet.</div>';
+    return;
+  }
+
+  els.savedHighlightsList.innerHTML = clips.map((clip, index) => `
+    <button
+      type="button"
+      data-highlight-index="${index}"
+      class="flex w-full items-center justify-between rounded-lg border border-teal/20 bg-ink/50 px-3 py-2 text-left hover:bg-ink/80"
+    >
+      <span>
+        <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
+        <span class="block text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</span>
+      </span>
+      <span class="text-xs text-teal">Load</span>
+    </button>
+  `).join('');
+}
+
+function renderRecordedReplayTools() {
+  if (state.videoPlayback?.mode !== 'recorded') {
+    els.recordedReplayTools?.classList.add('hidden');
+    return;
+  }
+
+  const durationMs = getCurrentReplayVideoDurationMs();
+  const defaultClipEndMs = Number.isFinite(durationMs)
+    ? Math.min(durationMs, MAX_HIGHLIGHT_CLIP_MS)
+    : MAX_HIGHLIGHT_CLIP_MS;
+
+  if (els.recordedReplayMeta) {
+    const pieces = ['Create a highlight clip up to 60 seconds.'];
+    if (state.videoPlayback.title) {
+      pieces.unshift(state.videoPlayback.title);
+    }
+    if (Number.isFinite(durationMs)) {
+      pieces.push(`Replay length ${formatVideoTimestamp(durationMs)}.`);
+    }
+    els.recordedReplayMeta.textContent = pieces.join(' ');
+  }
+
+  if (els.highlightStartInput && document.activeElement !== els.highlightStartInput) {
+    els.highlightStartInput.value = `${Math.round((state.videoPlayback.clipStartMs ?? 0) / 1000)}`;
+  }
+  if (els.highlightEndInput && document.activeElement !== els.highlightEndInput) {
+    els.highlightEndInput.value = `${Math.round((state.videoPlayback.clipEndMs ?? defaultClipEndMs) / 1000)}`;
+  }
+  if (els.recordedReplayTools) {
+    els.recordedReplayTools.classList.remove('hidden');
+  }
+
+  renderSavedHighlights();
+}
+
+async function shareHighlightClip(clip) {
+  const url = buildHighlightShareUrl({
+    origin: window.location.origin,
+    teamId: state.teamId,
+    gameId: state.gameId,
+    startMs: clip.startMs,
+    endMs: clip.endMs
+  });
+  const result = await shareOrCopy({
+    title: clip.title || 'Game highlight',
+    text: clip.title || 'Watch this highlight',
+    url,
+    clipboardText: `${clip.title || 'Game highlight'}\n${url}`
+  });
+  if (result.status === 'shared') showToast('Clip share sheet opened!');
+  if (result.status === 'copied') showToast('Clip link copied!');
+  if (result.status === 'failed') showToast('Failed to share clip.');
+  return url;
+}
+
+async function saveHighlightClip() {
+  const draft = getHighlightDraftFromInputs();
+  if (!draft) {
+    showToast('Pick a valid highlight range.');
+    return;
+  }
+
+  applyHighlightSelection(draft);
+  if (!state.user) {
+    await shareHighlightClip(draft);
+    showToast('Sign in to save highlights. Clip link copied instead.');
+    return;
+  }
+
+  const nextHighlights = [
+    ...(state.videoPlayback?.savedHighlights || []).filter(clip => clip.startMs !== draft.startMs || clip.endMs !== draft.endMs || clip.title !== draft.title),
+    draft
+  ]
+    .sort((a, b) => a.startMs - b.startMs)
+    .slice(-12);
+
+  try {
+    await updateGame(state.teamId, state.gameId, {
+      highlightClips: nextHighlights
+    });
+    state.game = {
+      ...state.game,
+      highlightClips: nextHighlights
+    };
+    state.videoPlayback = {
+      ...state.videoPlayback,
+      savedHighlights: nextHighlights
+    };
+    renderRecordedReplayTools();
+    showToast('Highlight saved.');
+  } catch (error) {
+    console.warn('Failed to save highlight clip:', error);
+    await shareHighlightClip(draft);
+    showToast('Save unavailable for this account. Clip link copied.');
+  }
+}
+
+function initRecordedReplayControls() {
+  if (els.recordedReplayVideo && !els.recordedReplayVideo.dataset.bound) {
+    els.recordedReplayVideo.dataset.bound = 'true';
+    els.recordedReplayVideo.addEventListener('loadedmetadata', () => {
+      renderRecordedReplayTools();
+      if (Number.isFinite(state.videoPlayback?.clipStartMs)) {
+        applyHighlightSelection({
+          title: els.highlightTitleInput?.value || '',
+          startMs: state.videoPlayback.clipStartMs,
+          endMs: state.videoPlayback.clipEndMs ?? Math.min(getCurrentReplayVideoDurationMs() || MAX_HIGHLIGHT_CLIP_MS, MAX_HIGHLIGHT_CLIP_MS)
+        }, { updateHistory: false });
+      }
+    });
+    els.recordedReplayVideo.addEventListener('timeupdate', () => {
+      if (!Number.isFinite(state.videoPlayback?.clipEndMs)) return;
+      const clipEndSeconds = state.videoPlayback.clipEndMs / 1000;
+      if (els.recordedReplayVideo.currentTime >= clipEndSeconds) {
+        els.recordedReplayVideo.pause();
+        els.recordedReplayVideo.currentTime = clipEndSeconds;
+      }
+    });
+  }
+
+  if (els.highlightSetStart && !els.highlightSetStart.dataset.bound) {
+    els.highlightSetStart.dataset.bound = 'true';
+    els.highlightSetStart.addEventListener('click', () => {
+      const currentSeconds = Math.floor(els.recordedReplayVideo?.currentTime || 0);
+      if (els.highlightStartInput) els.highlightStartInput.value = `${currentSeconds}`;
+    });
+  }
+  if (els.highlightSetEnd && !els.highlightSetEnd.dataset.bound) {
+    els.highlightSetEnd.dataset.bound = 'true';
+    els.highlightSetEnd.addEventListener('click', () => {
+      const currentSeconds = Math.ceil(els.recordedReplayVideo?.currentTime || 0);
+      if (els.highlightEndInput) els.highlightEndInput.value = `${currentSeconds}`;
+    });
+  }
+  if (els.highlightShareBtn && !els.highlightShareBtn.dataset.bound) {
+    els.highlightShareBtn.dataset.bound = 'true';
+    els.highlightShareBtn.addEventListener('click', async () => {
+      const draft = getHighlightDraftFromInputs();
+      if (!draft) {
+        showToast('Pick a valid highlight range.');
+        return;
+      }
+      applyHighlightSelection(draft);
+      await shareHighlightClip(draft);
+    });
+  }
+  if (els.highlightSaveBtn && !els.highlightSaveBtn.dataset.bound) {
+    els.highlightSaveBtn.dataset.bound = 'true';
+    els.highlightSaveBtn.addEventListener('click', saveHighlightClip);
+  }
+  if (els.savedHighlightsList && !els.savedHighlightsList.dataset.bound) {
+    els.savedHighlightsList.dataset.bound = 'true';
+    els.savedHighlightsList.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-highlight-index]');
+      if (!button) return;
+      const clip = state.videoPlayback?.savedHighlights?.[Number(button.dataset.highlightIndex)];
+      if (!clip) return;
+      if (els.highlightTitleInput) {
+        els.highlightTitleInput.value = clip.title || '';
+      }
+      applyHighlightSelection(clip, { autoplay: false });
+    });
   }
 }
 
 function renderGameInfo() {
   els.homeTeamName.textContent = state.team?.name || 'Home Team';
-  els.awayTeamName.textContent = state.game?.opponent || 'Away Team';
+  els.awayTeamName.textContent = resolveOpponentDisplayName(state.game);
   if (els.homeTeamPhoto) {
     if (state.team?.photoUrl) {
       els.homeTeamPhoto.src = state.team.photoUrl;
@@ -318,85 +701,25 @@ function renderPlayByPlay(event, isNew = false) {
 
 function renderStats() {
   if (!els.opponentStats) return;
-  const oppEntries = Object.entries(state.opponentStats || {});
-  const columns = (state.statColumns && state.statColumns.length)
-    ? state.statColumns
-    : ['PTS', 'REB', 'AST', 'FLS'];
-  els.opponentStats.innerHTML = oppEntries.map(([id, player]) => {
-    const highlight = state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id;
-    const nameClass = highlight ? 'text-coral' : 'text-sand';
-    const statClass = highlight ? 'text-coral' : 'text-sand';
-    const statItems = columns.map(col => {
-      const key = statKeyMap[col] || col.toLowerCase();
-      const val = player[key] || 0;
-      return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
-    }).join('');
-    const initial = escapeHtml((player.name || 'O')[0]);
-    const avatar = player.photoUrl
-      ? `<img src="${escapeHtml(player.photoUrl)}" class="w-6 h-6 rounded-full object-cover" alt="">`
-      : `<div class="w-6 h-6 rounded-full bg-coral/20 text-coral text-[10px] flex items-center justify-center">${initial}</div>`;
-    return `
-      <div class="bg-slate/50 rounded-lg px-3 py-2">
-        <div class="flex items-center gap-2 min-w-0">
-          ${avatar}
-          <span class="text-coral font-mono text-xs">#${escapeHtml(player.number || '')}</span>
-          <span class="${nameClass} text-xs truncate">${escapeHtml(player.name || 'Opponent')}</span>
-        </div>
-        <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
-          ${statItems}
-        </div>
-      </div>
-    `;
-  }).join('') || '<div class="text-sand/40 text-xs">No opponent stats yet</div>';
+  els.opponentStats.innerHTML = renderOpponentStatsCards({
+    opponentStats: state.opponentStats,
+    statColumns: state.statColumns,
+    lastStatChange: state.lastStatChange
+  });
 }
 
 function renderLineup() {
   if (!els.lineupOnCourt || !els.lineupBench) return;
-  const rosterIds = state.players.map(p => p.id);
-  const onCourtSet = new Set((state.onCourt || []).filter(id => rosterIds.includes(id)));
-  const onCourtIds = rosterIds.filter(id => onCourtSet.has(id));
-  const benchIds = rosterIds.filter(id => !onCourtSet.has(id));
-  const renderList = (ids, emptyLabel) => {
-    if (!ids || !ids.length) {
-      return `<div class="text-sand/40 text-xs">${emptyLabel}</div>`;
-    }
-    return ids.map(id => {
-      const player = state.players.find(p => p.id === id);
-      const stats = state.stats[id] || {};
-      const highlight = state.lastStatChange?.playerId === id && !state.lastStatChange?.isOpponent;
-      const nameClass = highlight ? 'text-teal' : 'text-sand';
-      const statClass = highlight ? 'text-teal' : 'text-sand';
-      const columns = (state.statColumns && state.statColumns.length)
-        ? state.statColumns
-        : ['PTS', 'REB', 'AST', 'FLS'];
-      const statItems = columns.map(col => {
-        const key = statKeyMap[col] || col.toLowerCase();
-        const val = stats[key] || 0;
-        return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
-      }).join('');
-      return `
-        <div class="bg-slate/50 rounded-lg px-3 py-2">
-          <div class="flex items-center gap-2 min-w-0">
-            ${player?.photoUrl ? `
-              <img src="${player.photoUrl}" class="w-6 h-6 rounded-full object-cover" alt="${escapeHtml(player?.name || 'Player')}">
-            ` : `
-              <div class="w-6 h-6 rounded-full bg-teal/20 text-teal text-[10px] flex items-center justify-center">
-                ${escapeHtml((player?.name || 'P')[0])}
-              </div>
-            `}
-            <span class="text-teal font-mono text-xs">#${escapeHtml(player?.num || '')}</span>
-            <span class="${nameClass} text-xs truncate">${escapeHtml(player?.name || 'Player')}</span>
-          </div>
-          <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
-            ${statItems}
-          </div>
-        </div>
-      `;
-    }).join('');
-  };
-
-  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'Lineup not set');
-  els.lineupBench.innerHTML = renderList(benchIds, 'Bench not set');
+  const rendered = renderViewerLineupSections({
+    players: state.players,
+    stats: state.stats,
+    statColumns: state.statColumns,
+    onCourt: state.onCourt,
+    bench: state.bench,
+    lastStatChange: state.lastStatChange
+  });
+  els.lineupOnCourt.innerHTML = rendered.onCourtHtml;
+  els.lineupBench.innerHTML = rendered.benchHtml;
 }
 
 function renderChat() {
@@ -713,64 +1036,69 @@ function updateMomentum(event) {
   }
 }
 
+function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting for plays...') {
+  const liveLineup = gameDoc?.liveLineup || {};
+  const next = applyResetEventState(state, {
+    period: gameDoc?.period || getDefaultLivePeriod({ game: gameDoc, team: state.team }),
+    homeScore: gameDoc?.homeScore || 0,
+    awayScore: gameDoc?.awayScore || 0,
+    gameClockMs: Number.isFinite(gameDoc?.liveClockMs) ? gameDoc.liveClockMs : 0,
+    sport: gameDoc?.sport || state.sport,
+    onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
+    bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
+  });
+  Object.assign(state, next);
+  if (els.playsFeed) {
+    els.playsFeed.innerHTML = `<div data-placeholder="plays" class="text-center text-sand/40 py-8">${placeholder}</div>`;
+  }
+  renderScoreboard();
+  renderStats();
+  renderLineup();
+}
+
 function processNewEvents(events) {
-  const newEvents = events.filter(ev => !state.eventIds.has(ev.id));
+  const newEvents = collectVisibleLiveEventsSequentially(events, {
+    seenIds: state.eventIds,
+    resetBoundaryMs: state.lastResetAt
+  });
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
-    if (Array.isArray(event.onCourt)) state.onCourt = event.onCourt;
-    if (Array.isArray(event.bench)) state.bench = event.bench;
-    if (Array.isArray(event.onCourt) || Array.isArray(event.bench)) {
-      renderLineup();
-    }
-    if (event.type === 'lineup') {
-      return;
-    }
-
-    // Tracker emits heartbeat events to keep late-joining viewers on an accurate clock.
-    // Apply score/period/clock updates but don't add feed noise.
-    if (event.type === 'clock_sync') {
-      if (event.homeScore !== undefined) state.homeScore = event.homeScore;
-      if (event.awayScore !== undefined) state.awayScore = event.awayScore;
-      if (event.period) state.period = event.period;
-      if (event.gameClockMs !== undefined) state.gameClockMs = event.gameClockMs;
-      renderScoreboard();
-      return;
-    }
-    state.events.push(event);
-
-    if (event.homeScore !== undefined) state.homeScore = event.homeScore;
-    if (event.awayScore !== undefined) state.awayScore = event.awayScore;
-    if (event.period) state.period = event.period;
-    if (event.gameClockMs !== undefined) state.gameClockMs = event.gameClockMs;
-
-    if (event.type === 'stat' && event.playerId && event.statKey) {
-      if (event.isOpponent) {
-        const existing = state.opponentStats[event.playerId] || {};
-        state.opponentStats[event.playerId] = {
-          ...existing,
-          name: event.opponentPlayerName || existing.name || '',
-          number: event.opponentPlayerNumber || existing.number || '',
-          photoUrl: event.opponentPlayerPhoto || existing.photoUrl || ''
-        };
-        state.opponentStats[event.playerId][event.statKey] =
-          (state.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
-      } else {
-        state.stats[event.playerId] = state.stats[event.playerId] || {};
-        state.stats[event.playerId][event.statKey] =
-          (state.stats[event.playerId][event.statKey] || 0) + (event.value || 0);
+    if (event.type === 'reset') {
+      const resetAt = getTimestampMs(event.createdAt) || Date.now();
+      if (resetAt > (state.lastResetAt || 0)) {
+        state.lastResetAt = resetAt;
       }
-      state.lastStatChange = { playerId: event.playerId, statKey: event.statKey, isOpponent: !!event.isOpponent };
+      const next = applyResetEventState(state, event);
+      Object.assign(state, next);
+      state.eventIds.add(event.id);
+      if (els.playsFeed) {
+        els.playsFeed.innerHTML = '<div data-placeholder="plays" class="text-center text-sand/40 py-8">Game reset. Waiting for plays...</div>';
+      }
+      renderScoreboard();
+      renderStats();
+      renderLineup();
+      return;
+    }
+    const transition = applyViewerEventToState(state, event);
+    Object.assign(state, transition.state);
+
+    if (transition.shouldRenderLineup) {
       renderLineup();
     }
+    if (transition.shouldRenderScoreboard) {
+      renderScoreboard(transition.animateScoreboard);
+    }
+    if (transition.shouldRenderPlayByPlay) {
+      renderPlayByPlay(event, true);
+    }
+    if (transition.shouldRenderStats) {
+      renderStats();
+    }
 
-    renderScoreboard(event.type === 'stat' && event.statKey === 'pts');
-    renderPlayByPlay(event, true);
-    renderStats();
-
-    if (event.type === 'stat' && event.statKey === 'pts') {
+    if (transition.shouldCelebrateScore) {
       showScoreCelebration(event);
       updateMomentum(event);
-    } else {
+    } else if (transition.shouldCelebrateEvent) {
       showEventCelebration(event);
     }
   });
@@ -826,6 +1154,14 @@ function startLiveEvents() {
       const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
       if (placeholder) placeholder.textContent = 'Connected. Waiting for plays...';
     }
+    if (!state.liveEventsFirstLoad && events.length === 0) {
+      const hadLiveState = state.events.length > 0 ||
+        Object.keys(state.stats || {}).length > 0 ||
+        Object.keys(state.opponentStats || {}).length > 0;
+      if (hadLiveState) {
+        resetViewerStateFromGameDoc(state.game, 'Game reset. Waiting for plays...');
+      }
+    }
     state.liveEventsFirstLoad = false;
     processNewEvents(events);
   }, (error) => {
@@ -874,6 +1210,7 @@ async function startReplay() {
   state.unsubscribers = [];
   state.engagementsActive = false;
   state.liveEventsActive = false;
+  updateChatAvailability();
 
   // Show REPLAY badge instead of LIVE
   if (els.liveBadge) {
@@ -899,46 +1236,49 @@ async function startReplay() {
     return;
   }
 
-  if (!replayEvents || replayEvents.length === 0) {
-    if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-center text-sand/60 py-8">No play-by-play data available for this game.</div>';
-    els.replayControls?.classList.remove('hidden');
-    els.reactionsBar?.classList.add('hidden');
-    els.endedOverlay?.classList.add('hidden');
-    if (els.replayGameLink) {
-      els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
-    }
-    // Show final score from game doc even if no replay events
+  const replaySession = buildReplaySessionState({
+    teamId: state.teamId,
+    gameId: state.gameId,
+    game: state.game,
+    defaultPeriod: getDefaultLivePeriod({ game: state.game, team: state.team }),
+    replayEvents,
+    replayChat,
+    replayReactions
+  });
+
+  state.replayEvents = replaySession.replayEvents;
+  state.replayChat = replaySession.replayChat;
+  state.replayReactions = replaySession.replayReactions;
+  state.homeScore = replaySession.scoreboard.homeScore;
+  state.awayScore = replaySession.scoreboard.awayScore;
+  state.period = replaySession.scoreboard.period;
+  state.gameClockMs = replaySession.scoreboard.gameClockMs;
+  state.replayIndex = 0;
+  state.replayChatIndex = 0;
+  state.replayReactionIndex = 0;
+  state.replayStartAt = replaySession.replayStartAt;
+
+  els.replayControls?.classList.toggle('hidden', !replaySession.showReplayControls);
+  els.reactionsBar?.classList.toggle('hidden', replaySession.hideReactionsBar);
+  els.endedOverlay?.classList.toggle('hidden', replaySession.hideEndedOverlay);
+  if (els.replayGameLink) {
+    els.replayGameLink.href = replaySession.replayGameHref;
+  }
+  updateChatAvailability();
+
+  if (!replaySession.hasReplayEvents) {
+    if (els.playsFeed) els.playsFeed.innerHTML = `<div class="text-center text-sand/60 py-8">${replaySession.emptyStateMessage}</div>`;
+    if (els.chatMessages) els.chatMessages.innerHTML = '';
+    if (els.replayDuration) els.replayDuration.textContent = formatClock(0);
+    if (els.replayCurrent) els.replayCurrent.textContent = formatClock(0);
     renderScoreboard();
     return;
   }
-
-  state.replayEvents = replayEvents;
-  state.replayChat = replayChat || [];
-  state.replayReactions = replayReactions || [];
-
-  state.replayEvents.sort((a, b) => (a.gameClockMs || 0) - (b.gameClockMs || 0));
-  state.replayChat.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
 
   state.events = [];
   state.eventIds = new Set();
   state.stats = {};
   state.opponentStats = {};
-  state.homeScore = 0;
-  state.awayScore = 0;
-  state.period = 'Q1';
-  state.gameClockMs = 0;
-  state.replayIndex = 0;
-  state.replayChatIndex = 0;
-  state.replayReactionIndex = 0;
-  state.replayStartAt = getReplayStartAt();
-
-  els.replayControls?.classList.remove('hidden');
-  els.reactionsBar?.classList.add('hidden');
-  els.endedOverlay?.classList.add('hidden');
-  els.chatInput?.setAttribute('disabled', 'disabled');
-  if (els.replayGameLink) {
-    els.replayGameLink.href = `game.html#teamId=${state.teamId}&gameId=${state.gameId}`;
-  }
 
   renderScoreboard();
   if (els.playsFeed) els.playsFeed.innerHTML = '';
@@ -958,16 +1298,16 @@ function playReplay() {
 
 function replayTick() {
   if (!state.replayPlaying) return;
-  const elapsed = (Date.now() - state.replayStartTime) * state.replaySpeed;
-
-  while (
-    state.replayIndex < state.replayEvents.length &&
-    (state.replayEvents[state.replayIndex].gameClockMs || 0) <= elapsed
-  ) {
-    const event = state.replayEvents[state.replayIndex];
-    processNewEvents([event]);
-    state.replayIndex += 1;
+  const elapsed = getReplayElapsedMs(Date.now(), state.replayStartTime, state.replaySpeed);
+  const replayWindow = collectReplayEventWindow({
+    replayEvents: state.replayEvents,
+    replayIndex: state.replayIndex,
+    elapsedMs: elapsed
+  });
+  if (replayWindow.events.length) {
+    processNewEvents(replayWindow.events);
   }
+  state.replayIndex = replayWindow.nextReplayIndex;
 
   state.gameClockMs = elapsed;
   renderScoreboard();
@@ -986,47 +1326,24 @@ function replayTick() {
   }
 }
 
-function getReplayStartAt() {
-  const timestamps = [];
-  state.replayEvents.forEach(ev => {
-    const ts = getTimestampMs(ev.createdAt);
-    if (ts) timestamps.push(ts);
-  });
-  state.replayChat.forEach(msg => {
-    const ts = getTimestampMs(msg.createdAt);
-    if (ts) timestamps.push(ts);
-  });
-  state.replayReactions.forEach(rx => {
-    const ts = getTimestampMs(rx.createdAt);
-    if (ts) timestamps.push(ts);
-  });
-  return timestamps.length ? Math.min(...timestamps) : Date.now();
-}
-
 function advanceReplayStreams(elapsed) {
-  const replayTime = state.replayStartAt + elapsed;
+  const replayWindow = collectReplayStreamWindow({
+    replayChat: state.replayChat,
+    replayReactions: state.replayReactions,
+    replayChatIndex: state.replayChatIndex,
+    replayReactionIndex: state.replayReactionIndex,
+    replayStartAt: state.replayStartAt
+  }, elapsed);
 
-  while (state.replayChatIndex < state.replayChat.length) {
-    const msg = state.replayChat[state.replayChatIndex];
-    const ts = getTimestampMs(msg.createdAt);
-    if (!ts || ts <= replayTime) {
-      state.chatMessages.push(msg);
-      state.replayChatIndex += 1;
-    } else {
-      break;
-    }
+  if (replayWindow.chatMessages.length) {
+    state.chatMessages.push(...replayWindow.chatMessages);
   }
+  state.replayChatIndex = replayWindow.nextReplayChatIndex;
 
-  while (state.replayReactionIndex < state.replayReactions.length) {
-    const reaction = state.replayReactions[state.replayReactionIndex];
-    const ts = getTimestampMs(reaction.createdAt);
-    if (!ts || ts <= replayTime) {
-      showFloatingReaction(reaction);
-      state.replayReactionIndex += 1;
-    } else {
-      break;
-    }
-  }
+  replayWindow.reactions.forEach((reaction) => {
+    showFloatingReaction(reaction);
+  });
+  state.replayReactionIndex = replayWindow.nextReplayReactionIndex;
 
   if (state.chatMessages.length) {
     renderChat();
@@ -1046,7 +1363,7 @@ function seekReplay(targetMs) {
   state.opponentStats = {};
   state.homeScore = 0;
   state.awayScore = 0;
-  state.period = 'Q1';
+  state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
   state.gameClockMs = targetMs;
   state.replayIndex = 0;
   state.replayChatIndex = 0;
@@ -1058,14 +1375,15 @@ function seekReplay(targetMs) {
     els.chatMessages.innerHTML = '';
   }
 
-  while (
-    state.replayIndex < state.replayEvents.length &&
-    (state.replayEvents[state.replayIndex].gameClockMs || 0) <= targetMs
-  ) {
-    const event = state.replayEvents[state.replayIndex];
-    processNewEvents([event]);
-    state.replayIndex += 1;
+  const replayWindow = collectReplayEventWindow({
+    replayEvents: state.replayEvents,
+    replayIndex: state.replayIndex,
+    elapsedMs: targetMs
+  });
+  if (replayWindow.events.length) {
+    processNewEvents(replayWindow.events);
   }
+  state.replayIndex = replayWindow.nextReplayIndex;
 
   advanceReplayStreams(targetMs);
   renderScoreboard();
@@ -1073,10 +1391,7 @@ function seekReplay(targetMs) {
 }
 
 function getTimestampMs(ts) {
-  if (!ts) return null;
-  if (typeof ts === 'number') return ts;
-  if (ts.toMillis) return ts.toMillis();
-  return null;
+  return getReplayTimestampMs(ts);
 }
 
 function initReplayControls() {
@@ -1093,6 +1408,24 @@ function initReplayControls() {
   document.querySelectorAll('[data-speed]').forEach(btn => {
     btn.addEventListener('click', () => {
       const speed = Number(btn.dataset.speed);
+      if (!Number.isFinite(speed) || speed <= 0) return;
+      if (state.replayPlaying) {
+        const nowMs = Date.now();
+        const currentElapsedMs = Number.isFinite(state.replayStartTime) && Number.isFinite(state.replaySpeed) && state.replaySpeed > 0
+          ? getReplayElapsedMs(nowMs, state.replayStartTime, state.replaySpeed)
+          : state.gameClockMs;
+        state.gameClockMs = currentElapsedMs;
+        if (els.replayCurrent) {
+          els.replayCurrent.textContent = formatClock(currentElapsedMs);
+        }
+        state.replayStartTime = getReplayStartTimeAfterSpeedChange(
+          nowMs,
+          state.replayStartTime,
+          state.replaySpeed,
+          speed,
+          currentElapsedMs
+        );
+      }
       state.replaySpeed = speed;
       document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('bg-teal', 'text-ink'));
       btn.classList.add('bg-teal', 'text-ink');
@@ -1257,6 +1590,16 @@ function formatFirestoreError(error) {
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
+  refreshVideoPanel();
+  renderGameInfo();
+  const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;
+  if (resetAt > state.lastResetAt) {
+    state.lastResetAt = resetAt;
+    resetViewerStateFromGameDoc(gameDoc, 'Game reset. Waiting for plays...');
+  }
+  if (shouldResetViewerFromGameDoc(gameDoc, state)) {
+    resetViewerStateFromGameDoc(gameDoc, 'Game reset. Waiting for plays...');
+  }
   if (gameDoc.liveLineup) {
     state.onCourt = Array.isArray(gameDoc.liveLineup.onCourt) ? gameDoc.liveLineup.onCourt : state.onCourt;
     state.bench = Array.isArray(gameDoc.liveLineup.bench) ? gameDoc.liveLineup.bench : state.bench;
@@ -1266,6 +1609,11 @@ function handleGameUpdate(gameDoc) {
     state.homeScore = gameDoc.homeScore || state.homeScore;
     state.awayScore = gameDoc.awayScore || state.awayScore;
     state.period = gameDoc.period || state.period;
+    if (Number.isFinite(gameDoc.liveClockMs)) {
+      state.gameClockMs = gameDoc.liveClockMs;
+    } else if (Number.isFinite(gameDoc.gameClockMs)) {
+      state.gameClockMs = gameDoc.gameClockMs;
+    }
     renderScoreboard();
   }
 
@@ -1312,6 +1660,8 @@ async function init() {
   state.teamId = params.teamId;
   state.gameId = params.gameId;
   state.isReplay = params.replay === 'true';
+  state.clipStartMs = Number.isFinite(Number(params.clipStart)) ? Number(params.clipStart) : null;
+  state.clipEndMs = Number.isFinite(Number(params.clipEnd)) ? Number(params.clipEnd) : null;
 
   if (!state.teamId || !state.gameId) {
     if (els.playsFeed) els.playsFeed.innerHTML = '<div class="text-sand/60 text-center py-6">Invalid game link.</div>';
@@ -1320,10 +1670,21 @@ async function init() {
 
   let team, game, players, configs;
   try {
+    const playersPromise = (state.isReplay
+      ? getPlayers(state.teamId, { includeInactive: true })
+      : getPlayers(state.teamId)
+    ).catch((error) => {
+      if (error?.code === 'permission-denied') {
+        console.warn('Failed to load public roster for live game viewer:', error);
+        return [];
+      }
+      throw error;
+    });
     [team, game, players, configs] = await Promise.all([
-      getTeam(state.teamId),
+      // Replay/live links should still load team metadata for inactive teams.
+      getTeam(state.teamId, { includeInactive: true }),
       getGame(state.teamId, state.gameId),
-      getPlayers(state.teamId),
+      playersPromise,
       getConfigs(state.teamId)
     ]);
   } catch (error) {
@@ -1340,18 +1701,14 @@ async function init() {
   state.team = team;
   state.game = game;
   state.players = players || [];
-  if (game?.statTrackerConfigId && Array.isArray(configs)) {
-    const config = configs.find(c => c.id === game.statTrackerConfigId);
-    if (config && Array.isArray(config.columns)) {
-      state.statColumns = config.columns.map(c => String(c).toUpperCase());
-    }
-  }
-  if (!state.statColumns.length) {
-    state.statColumns = ['PTS', 'REB', 'AST', 'STL', 'TO'];
-  }
-  if (!state.statColumns.includes('FLS') && !state.statColumns.includes('FOULS')) {
-    state.statColumns.push('FLS');
-  }
+  state.sport = game?.sport || team?.sport || null;
+  state.periods = null;
+  state.statColumns = resolveLiveStatColumns({
+    columns: state.statColumns,
+    configs,
+    game,
+    team
+  });
   state.opponentStats = game.opponentStats || {};
   if (game.liveLineup) {
     state.onCourt = Array.isArray(game.liveLineup.onCourt) ? game.liveLineup.onCourt : [];
@@ -1359,8 +1716,10 @@ async function init() {
   }
   state.homeScore = game.homeScore || 0;
   state.awayScore = game.awayScore || 0;
-  state.period = game.period || 'Q1';
+  state.period = game.period || getDefaultLivePeriod({ game, team });
+  state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
+  refreshVideoPanel({ force: true });
   renderGameInfo();
   renderScoreboard();
   renderLineup();
@@ -1368,6 +1727,7 @@ async function init() {
   initChat();
   initReactions();
   initReplayControls();
+  initRecordedReplayControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';

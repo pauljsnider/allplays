@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <title>PR Test Suite - Basketball Detection & Auth Flow</title>
     <style>
         body { font-family: monospace; padding: 20px; background: #f5f5f5; }
@@ -71,7 +72,10 @@
             if (configId) {
                 const config = allConfigs.find(c => c.id === configId);
                 if (config) {
-                    return (config.baseType || '').toLowerCase() === 'basketball';
+                    const baseType = (config.baseType || '').toLowerCase();
+                    if (baseType) {
+                        return baseType === 'basketball';
+                    }
                 }
             }
             // If no config, infer from team sport

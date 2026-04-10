@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Profile - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -120,6 +121,49 @@
                         Save Profile
                     </button>
                     <span id="profile-status" class="text-sm text-gray-500"></span>
+                </div>
+
+                <div class="mt-6 pt-6 border-t border-gray-200 space-y-4">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900">Push Notifications</h3>
+                        <p class="text-sm text-gray-600">Manage per-team alerts for live chat, score updates, and schedule changes.</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="notification-team-select" class="block text-sm font-medium text-gray-700">Team</label>
+                            <select id="notification-team-select" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                <option value="">Select a team</option>
+                            </select>
+                        </div>
+                        <div class="flex items-end">
+                            <button id="enable-push-btn" type="button" class="w-full md:w-auto px-4 py-2 bg-gray-900 text-white rounded-md text-sm font-semibold hover:bg-gray-800">
+                                Enable Push On This Device
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <label class="flex items-center gap-2 border border-gray-200 rounded-md p-3">
+                            <input id="notification-live-chat" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                            <span class="text-sm text-gray-700">Live Chat</span>
+                        </label>
+                        <label class="flex items-center gap-2 border border-gray-200 rounded-md p-3">
+                            <input id="notification-live-score" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                            <span class="text-sm text-gray-700">Live Score</span>
+                        </label>
+                        <label class="flex items-center gap-2 border border-gray-200 rounded-md p-3">
+                            <input id="notification-schedule" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                            <span class="text-sm text-gray-700">Schedule Changes</span>
+                        </label>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <button id="save-notification-prefs-btn" type="button" class="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700">
+                            Save Notification Preferences
+                        </button>
+                        <span id="notification-status" class="text-sm text-gray-500"></span>
+                    </div>
                 </div>
 
                 <!-- Set Password Section (for passwordless users) -->
@@ -373,14 +417,29 @@
 
     <script type="module">
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
-        import { checkAuth, setUserPassword, resendVerificationEmail } from './js/auth.js?v=9';
-        import { getUserProfile, updateUserProfile, generateAccessCode, createAccessCode, getUserAccessCodes, uploadUserPhoto } from './js/db.js?v=14';
+        import { checkAuth, setUserPassword, resendVerificationEmail } from './js/auth.js?v=10';
+        import {
+            getUserProfile,
+            updateUserProfile,
+            generateAccessCode,
+            createAccessCode,
+            getUserAccessCodes,
+            uploadUserPhoto,
+            getUserTeamsWithAccess,
+            getParentTeams,
+            getNotificationPreferencesForTeam,
+            saveNotificationPreferencesForTeam,
+            upsertNotificationDeviceToken
+        } from './js/db.js?v=15';
+        import { normalizeTeamNotificationPreferences } from './js/notification-preferences.js?v=1';
+        import { registerPushNotifications } from './js/push-notifications.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
         let currentUser = null;
         let currentPhotoUrl = null;
         let photoChanged = false;
+        let notificationTeams = [];
 
         async function loadProfile() {
             try {
@@ -404,6 +463,83 @@
                 document.getElementById('profile-status').textContent = 'Error loading profile';
                 document.getElementById('profile-status').className = 'text-sm text-red-600';
             }
+        }
+
+        function setNotificationStatus(message, tone = 'neutral') {
+            const status = document.getElementById('notification-status');
+            status.textContent = message || '';
+            if (tone === 'error') {
+                status.className = 'text-sm text-red-600';
+                return;
+            }
+            if (tone === 'success') {
+                status.className = 'text-sm text-green-600';
+                return;
+            }
+            status.className = 'text-sm text-gray-500';
+        }
+
+        function getSelectedNotificationTeamId() {
+            return document.getElementById('notification-team-select').value || '';
+        }
+
+        function readNotificationPreferencesFromForm() {
+            return {
+                liveChat: document.getElementById('notification-live-chat').checked,
+                liveScore: document.getElementById('notification-live-score').checked,
+                schedule: document.getElementById('notification-schedule').checked
+            };
+        }
+
+        function writeNotificationPreferencesToForm(preferences) {
+            const normalized = normalizeTeamNotificationPreferences(preferences);
+            document.getElementById('notification-live-chat').checked = normalized.liveChat;
+            document.getElementById('notification-live-score').checked = normalized.liveScore;
+            document.getElementById('notification-schedule').checked = normalized.schedule;
+        }
+
+        async function loadNotificationTeams() {
+            const status = document.getElementById('notification-status');
+            status.textContent = '';
+            const [memberTeams, parentTeams] = await Promise.all([
+                getUserTeamsWithAccess(currentUser.uid, currentUser.email || ''),
+                getParentTeams(currentUser.uid)
+            ]);
+
+            const map = new Map();
+            [...memberTeams, ...parentTeams].forEach((team) => {
+                if (team?.id) map.set(team.id, team);
+            });
+            notificationTeams = Array.from(map.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            const select = document.getElementById('notification-team-select');
+            const previous = select.value;
+            select.innerHTML = '<option value="">Select a team</option>';
+            notificationTeams.forEach((team) => {
+                const option = document.createElement('option');
+                option.value = team.id;
+                option.textContent = team.name || team.id;
+                select.appendChild(option);
+            });
+
+            if (previous && map.has(previous)) {
+                select.value = previous;
+            } else if (notificationTeams.length) {
+                select.value = notificationTeams[0].id;
+            }
+
+            await loadSelectedTeamNotificationPreferences();
+        }
+
+        async function loadSelectedTeamNotificationPreferences() {
+            const teamId = getSelectedNotificationTeamId();
+            if (!teamId) {
+                writeNotificationPreferencesToForm(null);
+                return;
+            }
+
+            const preferences = await getNotificationPreferencesForTeam(currentUser.uid, teamId);
+            writeNotificationPreferencesToForm(preferences);
         }
 
         function displayPhoto(url) {
@@ -579,6 +715,60 @@
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Save Profile';
+            }
+        });
+
+        document.getElementById('notification-team-select').addEventListener('change', async () => {
+            try {
+                await loadSelectedTeamNotificationPreferences();
+                setNotificationStatus('');
+            } catch (error) {
+                console.error('Error loading notification preferences:', error);
+                setNotificationStatus('Unable to load notification preferences.', 'error');
+            }
+        });
+
+        document.getElementById('save-notification-prefs-btn').addEventListener('click', async () => {
+            const button = document.getElementById('save-notification-prefs-btn');
+            const teamId = getSelectedNotificationTeamId();
+            if (!teamId) {
+                setNotificationStatus('Select a team first.', 'error');
+                return;
+            }
+
+            try {
+                button.disabled = true;
+                button.textContent = 'Saving...';
+                const saved = await saveNotificationPreferencesForTeam(currentUser.uid, teamId, readNotificationPreferencesFromForm());
+                writeNotificationPreferencesToForm(saved);
+                setNotificationStatus('Notification preferences saved.', 'success');
+            } catch (error) {
+                console.error('Error saving notification preferences:', error);
+                setNotificationStatus('Failed to save notification preferences.', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Save Notification Preferences';
+            }
+        });
+
+        document.getElementById('enable-push-btn').addEventListener('click', async () => {
+            const button = document.getElementById('enable-push-btn');
+            try {
+                button.disabled = true;
+                button.textContent = 'Enabling...';
+                const { token } = await registerPushNotifications();
+                await upsertNotificationDeviceToken(currentUser.uid, {
+                    token,
+                    platform: 'web',
+                    userAgent: navigator.userAgent || ''
+                });
+                setNotificationStatus('Push is enabled on this device.', 'success');
+            } catch (error) {
+                console.error('Failed to enable push notifications:', error);
+                setNotificationStatus(error?.message || 'Failed to enable push notifications.', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Enable Push On This Device';
             }
         });
 
@@ -798,6 +988,7 @@
             document.getElementById('email').value = user.email || '';
             showVerificationStatus(user);
             await loadProfile();
+            await loadNotificationTeams();
             await loadAccessCodes();
             await checkPasswordlessUser();
         });

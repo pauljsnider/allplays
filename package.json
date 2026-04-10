@@ -1,8 +1,14 @@
 {
   "name": "allplays",
+  "private": true,
+  "type": "commonjs",
   "version": "1.0.0",
   "description": "A static HTML + JavaScript sports team management and stat tracking application, powered by Firebase.",
   "scripts": {
+    "test": "vitest run tests/unit",
+    "test:unit": "vitest run tests/unit",
+    "test:unit:ci": "vitest run tests/unit --reporter=dot",
+    "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test tests/smoke/",
     "test:e2e:critical": "playwright test --grep @critical",
@@ -11,9 +17,7 @@
     "test:e2e:extended:shard2": "PLAYWRIGHT_SUITE=extended PLAYWRIGHT_SHARD=2/2 playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:report": "playwright show-report",
-    "test:e2e:ui": "playwright test --ui",
-    "test:unit": "vitest run",
-    "test:unit:coverage": "vitest run --coverage"
+    "test:e2e:ui": "playwright test --ui"
   },
   "repository": {
     "type": "git",
@@ -26,7 +30,6 @@
   ],
   "author": "AllPlays",
   "license": "MIT",
-  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/pauljsnider/allplays/issues"
   },

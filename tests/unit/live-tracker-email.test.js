@@ -1,8 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { resolveSummaryRecipient } from '../../js/live-tracker-email.js';
+import { resolveFinalScore, resolveSummaryRecipient } from '../../js/live-tracker-email.js';
 
 describe('live tracker summary email recipient', () => {
+  it('keeps an entered zero final score instead of falling back to the live score', () => {
+    expect(resolveFinalScore('0', 45)).toBe(0);
+  });
+
+  it('falls back to the live score when no final score was entered', () => {
+    expect(resolveFinalScore('', 45)).toBe(45);
+  });
+
   it('prefers team notification email over signed-in user email', () => {
     expect(resolveSummaryRecipient({
       teamNotificationEmail: 'team-notify@example.com',
@@ -25,8 +33,15 @@ describe('live tracker summary email recipient', () => {
   });
 
   it('wires recipient resolution into live tracker finish flow', () => {
-    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
-    expect(source).toContain('resolveSummaryRecipient');
-    expect(source).toContain('teamNotificationEmail: currentTeam?.notificationEmail');
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const workflowSource = readFileSync(new URL('../../js/live-tracker-save-complete.js', import.meta.url), 'utf8');
+    expect(liveTrackerSource).toContain('runSaveAndCompleteWorkflow');
+    expect(workflowSource).toContain('resolveSummaryRecipient');
+    expect(workflowSource).toContain('teamNotificationEmail: currentTeam?.notificationEmail');
+    expect(workflowSource).toContain('buildFinishCompletionPlan');
+    expect(workflowSource).toContain('executeFinishNavigationPlan');
+    expect(workflowSource).not.toContain('<<<<<<<');
+    expect(workflowSource).not.toContain('=======');
+    expect(workflowSource).not.toContain('>>>>>>>');
   });
 });

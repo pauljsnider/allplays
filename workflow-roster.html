@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Build and Maintain Team Roster - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+
+      .wf-shell {
+        width: min(1160px, 100%);
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      .wf-back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #4338ca;
+      }
+
+      .wf-hero {
+        margin-top: 0.75rem;
+        background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%);
+        border-radius: 1.1rem;
+        padding: 1.25rem 1.25rem 1.15rem;
+        color: #ecfeff;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+      }
+
+      .wf-kicker {
+        font-size: 0.73rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.84;
+      }
+
+      .wf-title {
+        margin-top: 0.4rem;
+        font-size: clamp(1.75rem, 2.8vw, 2.35rem);
+        line-height: 1.15;
+        font-weight: 800;
+      }
+
+      .wf-summary {
+        margin-top: 0.75rem;
+        max-width: 60ch;
+        color: rgba(236, 254, 255, 0.95);
+        line-height: 1.58;
+      }
+
+      .wf-meta-row {
+        margin-top: 0.95rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        align-items: center;
+      }
+
+      .wf-meta-pill {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.78rem;
+        font-weight: 700;
+        border-radius: 999px;
+        border: 1px solid rgba(236, 254, 255, 0.36);
+        background: rgba(236, 254, 255, 0.12);
+        color: #ecfeff;
+        padding: 0.24rem 0.62rem;
+      }
+
+      .wf-layout {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .wf-panel {
+        background: var(--wf-panel);
+        border: 1px solid var(--wf-border);
+        border-radius: 1rem;
+        box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08);
+      }
+
+      .wf-panel-section {
+        padding: 1rem;
+        border-bottom: 1px solid var(--wf-border);
+      }
+
+      .wf-panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .wf-panel-title {
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #334155;
+        margin-bottom: 0.6rem;
+      }
+
+      .wf-role-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid #c7d2fe;
+        background: #eef2ff;
+        color: #3730a3;
+        padding: 0.22rem 0.66rem;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+
+      .wf-roles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .wf-toc {
+        display: grid;
+        gap: 0.33rem;
+      }
+
+      .wf-toc a {
+        display: block;
+        padding: 0.43rem 0.52rem;
+        border-radius: 0.55rem;
+        color: #334155;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        transition: background 120ms ease, color 120ms ease;
+      }
+
+      .wf-toc a:hover {
+        background: #eef2ff;
+        color: #3730a3;
+      }
+
+      .wf-toc a.is-active {
+        background: #e0e7ff;
+        color: #312e81;
+        font-weight: 700;
+      }
+
+      .wf-content {
+        padding: 1.2rem 1.15rem;
+      }
+
+      .help-workflow-body {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .help-workflow-body h2 {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #1f2937;
+        margin-top: 1.25rem;
+        padding-top: 1.05rem;
+        border-top: 1px solid #dbe7f0;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body h2:first-of-type {
+        margin-top: 0.15rem;
+        padding-top: 0;
+        border-top: 0;
+      }
+
+      .help-workflow-body h3 {
+        font-size: 1.08rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-top: 0.88rem;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body p,
+      .help-workflow-body li {
+        color: var(--wf-muted);
+        line-height: 1.67;
+      }
+
+      .help-workflow-body ol,
+      .help-workflow-body ul {
+        margin-left: 1.2rem;
+      }
+
+      .help-workflow-body code {
+        background: #eef2ff;
+        color: #3730a3;
+        border: 1px solid #c7d2fe;
+        padding: 0.1rem 0.35rem;
+        border-radius: 0.3rem;
+        font-size: 0.86em;
+      }
+
+      .wf-mobile-toc {
+        margin-top: 0.95rem;
+      }
+
+      @media (min-width: 1024px) {
+        .wf-layout {
+          grid-template-columns: 270px minmax(0, 1fr);
+          align-items: start;
+        }
+
+        .wf-sidebar {
+          position: sticky;
+          top: 1rem;
+        }
+      }
+
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) {
+          display: none;
+        }
+      }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Build and Maintain Team Roster</h1>
+          <p class="wf-summary">Use this workflow to keep your team roster accurate and parent access connected.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles"><span class="wf-role-chip">Parent</span> <span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span></div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body"><h2 id="overview">Overview</h2>
+<p>Use this workflow to keep your team roster accurate and parent access connected.</p>
+<p>You can:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Add players and jersey numbers.</li>
+<li>Update player details.</li>
+<li>Deactivate players without losing history, then reactivate them later.</li>
+<li>Link parents to active players and send invites.</li>
+</ul>
+<h2 id="in-this-article">In This Article</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Who should run this workflow.</li>
+<li>What to prepare before you start.</li>
+<li>How to choose the right roster action.</li>
+<li>Step-by-step roster and parent invite actions.</li>
+<li>How to recover from common invite or roster issues.</li>
+</ul>
+<h2 id="who-is-this-for">Who Is This For</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Coach: Day-to-day roster updates and parent invites for active players.</li>
+<li>Admin: Full roster cleanup, including reactivation and parent-link fixes.</li>
+</ul>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>A team already exists.</li>
+<li>You have full-access permissions for that team.</li>
+<li>Player names and jersey details are ready.</li>
+<li>Parent emails are ready if you plan to send email invites.</li>
+</ul>
+<h2 id="choose-your-path">Choose Your Path</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Add one player: Use <strong>Add Player</strong>.</li>
+<li>Add many players: Use <strong>Bulk AI Update</strong> with roster text or an image, then review and apply.</li>
+<li>Correct player details: Use <strong>Edit</strong> on that player row.</li>
+<li>Remove a player from active roster: Use <strong>Deactivate</strong>.</li>
+<li>Bring a player back: Use <strong>Reactivate</strong>.</li>
+<li>Link a parent: Use <strong>Invite Parent</strong> on an active player.</li>
+<li>Invite Parent is disabled: Reactivate the player first, then send the invite.</li>
+</ul>
+<h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open roster management and confirm you are on the correct team.</li>
+<li>Add or update players.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Single add: In <strong>Add Player</strong>, enter name and optional number/photo, then submit.</li>
+<li>Bulk update: In <strong>Bulk AI Update</strong>, upload an image and/or paste roster text. Select <strong>Process with AI</strong>, review changes, then select <strong>Apply Changes</strong>.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Edit a player when details change.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Select <strong>Edit</strong> in the player row, update name/number/photo, then save.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Manage active status.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Select <strong>Deactivate</strong> to remove a player from active roster while keeping stats and history.</li>
+<li>Select <strong>Reactivate</strong> when the player returns.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Link parents and send invites.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Select <strong>Invite Parent</strong> for an active player.</li>
+<li>Choose relation, enter parent email, then send.</li>
+<li>No email available: Leave email blank to generate a shareable code/link.</li>
+<li>Existing account detected: Share the shown code/link so the parent can connect.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Verify your updates.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Check the team roster list.</li>
+<li>Open the player page to confirm name, number, and photo.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Parent completes the invite.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Parent opens the invite link or enters the 8-character code.</li>
+<li>If they open it on another device, they confirm the invited email and complete join.</li>
+</ul>
+<h2 id="common-questions">Common Questions</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Should I delete or deactivate a player?</li>
+<li>Use <strong>Deactivate</strong>. It keeps historical stats and reports.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Can I invite a parent without email?</li>
+<li>Yes. Generate a manual code and share the signup link/code.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>What if the parent already has an ALL PLAYS account?</li>
+<li>Share the generated code/link from the invite modal so they can connect right away.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Where do I confirm changes?</li>
+<li>Check the team roster list, then open the player page.</li>
+</ul>
+<h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Invite button is disabled.</li>
+<li>Reactivate the player, then send the invite again.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Parent did not receive the email.</li>
+<li>Use the fallback code or copy the signup link from the invite modal.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Parent opened the invite on a different device.</li>
+<li>Have them enter the invited email on the confirmation step, then continue.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Code is invalid or expired.</li>
+<li>Generate a new parent invite and share the new code.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Wrong parent linked to player.</li>
+<li>Remove the parent connection from that player, then resend invite from the correct player row.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li>Duplicate player was added.</li>
+<li>Keep the correct profile active and deactivate the duplicate.</li>
+</ul>
+<h2 id="related-workflows">Related Workflows</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><code>team-setup</code></li>
+<li><code>schedule</code></li>
+<li><code>track-game</code></li>
+<li><code>postgame</code></li>
+</ul>
+<h2 id="need-more-help">Need More Help</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Start again from <strong>Choose Your Path</strong> for the exact change you need.</li>
+<li>If an invite keeps failing, generate a fresh code and share it manually.</li>
+<li>When contacting support or another admin, include team name, player name, parent email (if used), and the exact on-screen error.</li>
+</ul></div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=10';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+
+        if (mobileToc && window.innerWidth < 1024) {
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+        }
+
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = () => {
+          let active = headings[0];
+          for (const h of headings) {
+            if (h.getBoundingClientRect().top <= 140) active = h;
+          }
+          links.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+
+        window.addEventListener('scroll', setActive, { passive: true });
+        setActive();
+      })();
+    </script>
+</body>
+</html>

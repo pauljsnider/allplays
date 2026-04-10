@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Edit Team - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -93,6 +94,96 @@
                         class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
                         placeholder="https://teamsideline.com/sites/.../schedule/...">
                     <p class="text-xs text-gray-500 mt-1">Used to display external league standings (W/L/T) on the team page.</p>
+                </div>
+
+                <div class="rounded-lg border border-gray-200 p-4 space-y-3">
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            <input id="standingsEnabled" type="checkbox"
+                                class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded">
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="standingsEnabled" class="font-medium text-gray-700">Enable Native Standings</label>
+                            <p class="text-gray-500">Compute standings from completed in-app games.</p>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Standings Ranking Mode</label>
+                        <select id="standingsRankingMode"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <option value="points">Total points</option>
+                            <option value="win_pct">Win percentage</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Standings Points</label>
+                        <div class="mt-1 grid grid-cols-3 gap-3">
+                            <div>
+                                <label for="standingsPointWin" class="block text-xs text-gray-500">Win</label>
+                                <input type="number" id="standingsPointWin" value="3"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label for="standingsPointTie" class="block text-xs text-gray-500">Tie</label>
+                                <input type="number" id="standingsPointTie" value="1"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label for="standingsPointLoss" class="block text-xs text-gray-500">Loss</label>
+                                <input type="number" id="standingsPointLoss" value="0"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Max Goal Differential</label>
+                        <input type="number" id="standingsMaxGoalDiff" min="1"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="Leave blank for no cap">
+                        <p class="text-xs text-gray-500 mt-1">Caps the per-game goal differential used by differential tiebreakers.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Two-Team Tiebreakers (ordered, comma-separated)</label>
+                        <input type="text" id="standingsTwoTeamTiebreakers"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="head_to_head, goal_diff, goals_for, fewest_goals_allowed, wins, name">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Multi-Team Tiebreakers (ordered, comma-separated)</label>
+                        <input type="text" id="standingsMultiTeamTiebreakers"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="group_head_to_head, goal_diff, goals_for, fewest_goals_allowed, wins, name">
+                    </div>
+                    <div class="hidden">
+                        <label class="block text-sm font-medium text-gray-700">Legacy Tiebreakers</label>
+                        <input type="text" id="standingsTiebreakers"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="head_to_head, point_diff, points_for, fewest_points_against, name">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">
+                        Live Stream <span class="font-normal text-gray-400">(optional)</span>
+                    </label>
+                    <input type="text" id="streamUrl"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                        placeholder="youtube.com/live/... or twitch.tv/yourchannel">
+                    <div id="stream-detect" class="hidden mt-1 text-xs font-medium"></div>
+                    <details class="mt-2 group">
+                        <summary class="text-xs text-indigo-500 cursor-pointer hover:text-indigo-700 select-none">
+                            What can I paste? ▸
+                        </summary>
+                        <ul class="mt-2 text-xs text-gray-500 space-y-1 pl-1 border-l-2 border-indigo-100 ml-1">
+                            <li class="pl-2"><span class="text-purple-600 font-semibold">Twitch</span> — twitch.tv/yourchannel</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — youtube.com/live/VIDEO_ID</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — youtube.com/watch?v=VIDEO_ID</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — youtu.be/VIDEO_ID</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — Channel ID: UCa9ghvbup6VQmnDOdqwYpqQ</li>
+                            <li class="pl-2"><span class="text-red-500 font-semibold">YouTube</span> — paste the entire &lt;iframe&gt; embed code</li>
+                        </ul>
+                        <p class="mt-2 text-xs text-gray-400 pl-1">Shown to fans during live games. For a permanent YouTube channel stream, use your Channel ID from YouTube Studio → Settings → Channel → Advanced.</p>
+                    </details>
                 </div>
 
                 <div class="flex items-start">
@@ -188,27 +279,54 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin } from './js/db.js?v=14';
+        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
-        import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
+        import { checkAuth, sendInviteEmail } from './js/auth.js?v=11';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { hasFullTeamAccess } from './js/team-access.js';
+        import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
+        import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';
+        import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';
 
         renderFooter(document.getElementById('footer-container'));
 
+        const { teamId: initialTeamId } = getUrlParams();
         let currentUser = null;
-        let currentTeamId = null;
+        let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
         let adminEmails = [];
+        let pendingAdminInviteEmails = [];
+        let isInitPending = true;
 
-        checkAuth((user) => {
+        function parseStandingsNumber(value, fallback) {
+            const parsed = Number.parseInt(String(value ?? ''), 10);
+            return Number.isFinite(parsed) ? parsed : fallback;
+        }
+
+        function splitStandingsList(value) {
+            return String(value || '')
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean);
+        }
+
+        const saveBtn = document.getElementById('save-btn');
+        saveBtn.disabled = true;
+        saveBtn.textContent = initialTeamId ? 'Loading Team...' : 'Loading...';
+
+        checkAuth(async (user) => {
             if (!user) {
                 window.location.href = 'login.html';
                 return;
             }
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            init();
+            try {
+                await init();
+            } finally {
+                isInitPending = false;
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Team';
+            }
         });
 
         function renderAdminList() {
@@ -227,53 +345,84 @@
             list.querySelectorAll('.remove-admin-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
                     const email = btn.dataset.email;
-                    adminEmails = adminEmails.filter(e => e !== email);
+                    adminEmails = normalizeAdminEmailList(adminEmails.filter(e => e !== email));
+                    pendingAdminInviteEmails = normalizeAdminEmailList(pendingAdminInviteEmails.filter(e => e !== email));
                     renderAdminList();
                 });
             });
         }
 
         async function init() {
-            const { teamId } = getUrlParams();
-            if (teamId) {
-                currentTeamId = teamId;
-                document.getElementById('page-title').textContent = 'Edit Team';
-                const team = await getTeam(teamId);
-                if (team) {
-                    if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
-                        alert("You don't have permission to edit this team.");
-                        window.location.href = 'dashboard.html';
-                        return;
-                    }
-
-                    document.getElementById('name').value = team.name || '';
-                    document.getElementById('description').value = team.description || '';
-                    document.getElementById('sport').value = team.sport || '';
-                    document.getElementById('notificationEmail').value = team.notificationEmail || '';
-                    document.getElementById('leagueUrl').value = team.leagueUrl || '';
-                    document.getElementById('zip').value = team.zip || '';
-                    document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
-                    adminEmails = (team.adminEmails || []).map(e => e.toLowerCase());
-                    renderAdminList();
-
-                    if (team.photoUrl) {
-                        currentPhotoUrl = team.photoUrl;
-                        document.getElementById('photo-preview').innerHTML = `<img src="${team.photoUrl}" class="w-full h-full object-cover">`;
-                    }
-
-                    // Update management links
-                    document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${teamId}`;
-                    document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${teamId}`;
-
-                    // Fetch unread count and render banner
-                    let unreadCount = 0;
-                    try {
-                        unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
-                    } catch (e) {
-                        console.warn('Failed to get unread count:', e);
-                    }
-                    renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'edit', unreadCount });
+            if (initialTeamId) {
+                const team = await getTeam(initialTeamId);
+                if (!team) {
+                    alert('Team not found or no longer active.');
+                    currentTeamId = null;
+                    window.location.href = 'dashboard.html';
+                    return;
                 }
+                document.getElementById('page-title').textContent = 'Edit Team';
+                if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
+                    alert("You don't have permission to edit this team.");
+                    window.location.href = 'dashboard.html';
+                    return;
+                }
+
+                document.getElementById('name').value = team.name || '';
+                document.getElementById('description').value = team.description || '';
+                document.getElementById('sport').value = team.sport || '';
+                document.getElementById('notificationEmail').value = team.notificationEmail || '';
+                document.getElementById('leagueUrl').value = team.leagueUrl || '';
+                document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
+                document.getElementById('standingsRankingMode').value = team.standingsConfig?.rankingMode === 'win_pct' ? 'win_pct' : 'points';
+                document.getElementById('standingsPointWin').value = String(parseStandingsNumber(team.standingsConfig?.points?.win, 3));
+                document.getElementById('standingsPointTie').value = String(parseStandingsNumber(team.standingsConfig?.points?.tie, 1));
+                document.getElementById('standingsPointLoss').value = String(parseStandingsNumber(team.standingsConfig?.points?.loss, 0));
+                document.getElementById('standingsMaxGoalDiff').value = team.standingsConfig?.maxGoalDiff != null
+                    ? String(parseStandingsNumber(team.standingsConfig?.maxGoalDiff, ''))
+                    : '';
+                const legacyTiebreakers = Array.isArray(team.standingsConfig?.tiebreakers)
+                    ? team.standingsConfig.tiebreakers
+                    : [];
+                const twoTeamTiebreakers = Array.isArray(team.standingsConfig?.twoTeamTiebreakers)
+                    ? team.standingsConfig.twoTeamTiebreakers
+                    : legacyTiebreakers;
+                const multiTeamTiebreakers = Array.isArray(team.standingsConfig?.multiTeamTiebreakers)
+                    ? team.standingsConfig.multiTeamTiebreakers
+                    : legacyTiebreakers.map((value) => value === 'head_to_head' ? 'group_head_to_head' : value);
+                document.getElementById('standingsTiebreakers').value = legacyTiebreakers.join(', ');
+                document.getElementById('standingsTwoTeamTiebreakers').value = twoTeamTiebreakers.join(', ');
+                document.getElementById('standingsMultiTeamTiebreakers').value = multiTeamTiebreakers.join(', ');
+                document.getElementById('zip').value = team.zip || '';
+                document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
+                // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
+                const streamInput = document.getElementById('streamUrl');
+                if (team.twitchChannel) {
+                    streamInput.value = `twitch.tv/${team.twitchChannel}`;
+                } else if (team.streamEmbedUrl || team.youtubeEmbedUrl) {
+                    streamInput.value = team.streamEmbedUrl || team.youtubeEmbedUrl;
+                }
+                streamInput.dispatchEvent(new Event('input')); // trigger detection badge
+                adminEmails = normalizeAdminEmailList(team.adminEmails);
+                renderAdminList();
+
+                if (team.photoUrl) {
+                    currentPhotoUrl = team.photoUrl;
+                    document.getElementById('photo-preview').innerHTML = `<img src="${team.photoUrl}" class="w-full h-full object-cover">`;
+                }
+
+                // Update management links
+                document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${initialTeamId}`;
+                document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${initialTeamId}`;
+
+                // Fetch unread count and render banner
+                let unreadCount = 0;
+                try {
+                    unreadCount = await getUnreadChatCount(currentUser.uid, initialTeamId);
+                } catch (e) {
+                    console.warn('Failed to get unread count:', e);
+                }
+                renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
             }
         }
 
@@ -319,7 +468,7 @@
             const input = document.getElementById('admin-email-input');
             const btn = document.getElementById('save-admin-btn');
             const statusDiv = document.getElementById('admin-invite-status');
-            const email = (input.value || '').trim().toLowerCase();
+            const email = String(input.value || '').trim().toLowerCase();
 
             if (!email) {
                 showAdminStatus('Please enter an email.', 'error');
@@ -343,31 +492,43 @@
                 // If we have a team ID (editing existing team), send invite email
                 let showCode = false;
                 if (currentTeamId) {
-                    const result = await inviteAdmin(currentTeamId, email);
+                    const result = await inviteExistingTeamAdmin({
+                        teamId: currentTeamId,
+                        email,
+                        inviteAdmin,
+                        addTeamAdminEmail,
+                        sendInviteEmail
+                    });
+                    const code = typeof result?.code === 'string' ? result.code.trim() : '';
 
-                    if (result.existingUser) {
-                        // User exists - show code for them
-                        showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
-                        showAdminCode(result.code);
-                        showCode = true;
-                    } else {
+                    if (result.status === 'existing_user') {
+                        // User exists - show code for them when available
+                        if (code) {
+                            showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
+                            showAdminCode(code);
+                            showCode = true;
+                        } else {
+                            showAdminStatus('No invite code generated. Please try sending the invite again.', 'warning');
+                        }
+                    } else if (result.status === 'sent') {
                         // New user - send email
-                        try {
-                            await sendInviteEmail(email, result.code, 'admin', {
-                                teamName: result.teamName
-                            });
-                            showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
-                        } catch (emailError) {
-                            console.error('Failed to send admin invite email:', emailError);
-                            showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
-                            showAdminCode(result.code);
+                        showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
+                    } else if (result.status === 'fallback_code') {
+                        showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
+                        if (code) {
+                            showAdminCode(code);
                             showCode = true;
                         }
+                    } else {
+                        throw new Error('Unexpected admin invite result');
                     }
+                } else {
+                    pendingAdminInviteEmails.push(email);
+                    showAdminStatus(`Invite for ${email} will be sent when you save this new team.`, 'info');
                 }
 
                 // Add to local list and update UI
-                adminEmails.push(email);
+                adminEmails = normalizeAdminEmailList([...adminEmails, email]);
                 renderAdminList();
                 input.value = '';
 
@@ -433,9 +594,74 @@
             }
         });
 
+        // Parses any YouTube or Twitch URL and returns { platform, twitchChannel?, streamEmbedUrl? }
+        function parseStreamUrl(input) {
+            if (!input) return null;
+            const str = input.trim();
+
+            // Extract src from a pasted <iframe> embed code
+            const iframeSrc = str.match(/src="([^"]+)"/);
+            const url = iframeSrc ? iframeSrc[1] : str;
+
+            // ── TWITCH ──────────────────────────────────────────────────────────
+            // Matches: twitch.tv/channel  or  player.twitch.tv/?channel=name
+            const twitchMatch = url.match(/(?:(?:www\.)?twitch\.tv\/|player\.twitch\.tv\/\?.*channel=)([a-zA-Z0-9_]{1,25})/);
+            if (twitchMatch) {
+                return { platform: 'twitch', twitchChannel: twitchMatch[1].toLowerCase() };
+            }
+
+            // ── YOUTUBE ─────────────────────────────────────────────────────────
+            // Already a YouTube embed URL — normalize params
+            if (url.includes('youtube.com/embed/')) {
+                const normalized = normalizeYouTubeEmbedUrl(url);
+                return normalized ? { platform: 'youtube', streamEmbedUrl: normalized } : null;
+            }
+            // Raw channel ID (UC + 22 chars)
+            if (/^UC[a-zA-Z0-9_-]{22}$/.test(url)) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/live_stream?channel=${url}&autoplay=1&mute=1` };
+            }
+            // youtube.com/channel/UCxxxxxxxxxx
+            const channelMatch = url.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+            if (channelMatch) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/live_stream?channel=${channelMatch[1]}&autoplay=1&mute=1` };
+            }
+            // Path-based video ID: /live/ID, /embed/ID, youtu.be/ID
+            const pathMatch = url.match(/(?:youtube\.com\/(?:live|embed)\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            // Query-based video ID: ?v=ID or &v=ID
+            const queryMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+            const videoId = (pathMatch && pathMatch[1]) || (queryMatch && queryMatch[1]);
+            if (videoId) {
+                return { platform: 'youtube', streamEmbedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1` };
+            }
+
+            return null;
+        }
+
+        // Live detection badge as the user types / pastes
+        document.getElementById('streamUrl').addEventListener('input', function () {
+            const detect = document.getElementById('stream-detect');
+            const result = parseStreamUrl(this.value);
+            if (!this.value.trim()) {
+                detect.className = 'hidden mt-1 text-xs font-medium';
+            } else if (result?.platform === 'twitch') {
+                detect.textContent = `✅ Twitch channel detected: ${result.twitchChannel}`;
+                detect.className = 'mt-1 text-xs font-medium text-purple-600';
+            } else if (result?.platform === 'youtube') {
+                detect.textContent = '✅ YouTube stream detected';
+                detect.className = 'mt-1 text-xs font-medium text-red-600';
+            } else {
+                detect.textContent = '⚠️ Link not recognized — try a full URL (e.g. twitch.tv/channel)';
+                detect.className = 'mt-1 text-xs font-medium text-amber-600';
+            }
+        });
+
         document.getElementById('team-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = document.getElementById('save-btn');
+            if (isInitPending) {
+                alert('Team is still loading. Please wait a moment and try again.');
+                return;
+            }
             btn.disabled = true;
             btn.textContent = 'Saving...';
 
@@ -459,17 +685,49 @@
                 const zipRaw = document.getElementById('zip').value.trim();
                 const zipDigits = zipRaw ? zipRaw.replace(/[^0-9]/g, '') : '';
                 const zip = zipDigits.length >= 5 ? zipDigits.slice(0, 9) : '';
+                const standingsTiebreakers = splitStandingsList(document.getElementById('standingsTiebreakers').value);
+                const standingsTwoTeamTiebreakers = splitStandingsList(document.getElementById('standingsTwoTeamTiebreakers').value);
+                const standingsMultiTeamTiebreakers = splitStandingsList(document.getElementById('standingsMultiTeamTiebreakers').value);
+                const points = {
+                    win: parseStandingsNumber(document.getElementById('standingsPointWin').value, 3),
+                    tie: parseStandingsNumber(document.getElementById('standingsPointTie').value, 1),
+                    loss: parseStandingsNumber(document.getElementById('standingsPointLoss').value, 0)
+                };
+                const maxGoalDiffRaw = document.getElementById('standingsMaxGoalDiff').value.trim();
+                const maxGoalDiff = maxGoalDiffRaw === '' ? null : parseStandingsNumber(maxGoalDiffRaw, null);
+                const legacyFallbackTiebreakers = standingsTwoTeamTiebreakers.length > 0
+                    ? standingsTwoTeamTiebreakers
+                    : standingsTiebreakers;
 
+                const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
+                adminEmails = normalizedAdminEmails;
                 const teamData = {
                     name: document.getElementById('name').value,
                     description: document.getElementById('description').value,
                     sport: document.getElementById('sport').value,
                     notificationEmail: document.getElementById('notificationEmail').value,
                     leagueUrl: document.getElementById('leagueUrl').value.trim(),
+                    standingsConfig: {
+                        enabled: document.getElementById('standingsEnabled').checked,
+                        rankingMode: document.getElementById('standingsRankingMode').value === 'win_pct' ? 'win_pct' : 'points',
+                        points,
+                        maxGoalDiff: Number.isFinite(maxGoalDiff) && maxGoalDiff > 0 ? maxGoalDiff : null,
+                        tiebreakers: legacyFallbackTiebreakers,
+                        twoTeamTiebreakers: standingsTwoTeamTiebreakers.length > 0 ? standingsTwoTeamTiebreakers : legacyFallbackTiebreakers,
+                        multiTeamTiebreakers: standingsMultiTeamTiebreakers
+                    },
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
-                    adminEmails
+                    adminEmails: normalizedAdminEmails,
+                    ...((() => {
+                        const sr = parseStreamUrl(document.getElementById('streamUrl').value);
+                        return {
+                            twitchChannel: sr?.platform === 'twitch' ? sr.twitchChannel : null,
+                            streamEmbedUrl: sr?.platform === 'youtube' ? sr.streamEmbedUrl : null,
+                            youtubeEmbedUrl: null, // clear legacy field on every save
+                        };
+                    })())
                 };
 
                 if (!currentTeamId) {
@@ -518,6 +776,29 @@
                         }
                     } else {
                         console.log('No template for sport:', sport);
+                    }
+
+                    let pendingInviteSummary = {
+                        fallbackCodeCount: 0,
+                        failedCount: 0
+                    };
+                    pendingInviteSummary = await processPendingAdminInvites({
+                        teamId: newTeamId,
+                        pendingEmails: pendingAdminInviteEmails,
+                        inviteAdmin,
+                        sendInviteEmail
+                    });
+                    pendingAdminInviteEmails = [];
+
+                    const inviteFollowUp = buildAdminInviteFollowUp(pendingInviteSummary, window.location.origin);
+                    if (inviteFollowUp.shareableCount > 0) {
+                        window.prompt(
+                            'Team created. Copy these admin redemption links before continuing.',
+                            inviteFollowUp.shareableDetails
+                        );
+                    }
+                    if (inviteFollowUp.unresolvedCount > 0) {
+                        alert(`Team created. ${inviteFollowUp.unresolvedCount} admin invite(s) need manual follow-up. Open Edit Team to resend or share invite links.`);
                     }
                 }
 

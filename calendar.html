@@ -13,6 +13,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Calendar - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -133,9 +134,12 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, getMyRsvp } from './js/db.js?v=22';
-        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence } from './js/utils.js?v=8';
-        import { requireAuth, checkAuth } from './js/auth.js?v=9';
+        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries } from './js/db.js?v=23';
+        import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=12';
+        import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';
+        import { requireAuth, checkAuth } from './js/auth.js?v=10';
+        import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
+        import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -149,7 +153,8 @@
         let currentTeamFilter = '';
         let calendarMonth = new Date().getMonth();
         let calendarYear = new Date().getFullYear();
-        let playerIdsByTeam = new Map();
+        let activeDayDetail = null;
+        let linkedPlayersByTeam = new Map();
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
 
@@ -178,6 +183,44 @@
             return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
         }
 
+        function getLinkedPlayersForTeam(teamId) {
+            return Array.isArray(linkedPlayersByTeam.get(teamId)) ? linkedPlayersByTeam.get(teamId) : [];
+        }
+
+        function parseTeamGameKey(key) {
+            const delimiter = '::';
+            const delimiterIndex = key.indexOf(delimiter);
+            if (delimiterIndex === -1) return [key, ''];
+            return [
+                key.slice(0, delimiterIndex),
+                key.slice(delimiterIndex + delimiter.length)
+            ];
+        }
+
+        function renderCalendarChildScope(teamId) {
+            const linkedPlayers = getLinkedPlayersForTeam(teamId);
+            if (linkedPlayers.length === 0) return '';
+            if (linkedPlayers.length === 1) {
+                return `
+                    <div class="mb-2 text-xs text-gray-500">
+                        For ${escapeHtml(linkedPlayers[0].playerName || 'Player')}
+                    </div>
+                `;
+            }
+
+            return `
+                <label class="block mb-2">
+                    <span class="text-xs text-gray-500">Choose child</span>
+                    <select data-rsvp-child-selector="true" class="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-primary-500">
+                        <option value="">Select child</option>
+                        ${linkedPlayers.map((player) => `
+                            <option value="${escapeAttr(player.playerId)}">${escapeHtml(player.playerName || 'Player')}</option>
+                        `).join('')}
+                    </select>
+                </label>
+            `;
+        }
+
         function renderRsvpBlock(ev, compact = false) {
             if ((ev.type !== 'game' && ev.type !== 'practice') || ev.status === 'cancelled') return '';
             const summary = formatRsvpSummary(ev.rsvpSummary);
@@ -189,13 +232,16 @@
             if (compact) {
                 return `<span class="text-[10px] text-gray-500">${summary}</span>`;
             }
+            const linkedPlayers = getLinkedPlayersForTeam(ev.teamId);
+            const defaultChildId = linkedPlayers.length === 1 ? linkedPlayers[0].playerId : '';
             return `
-                <div class="mt-3 border-t border-gray-100 pt-3">
+                <div class="mt-3 border-t border-gray-100 pt-3" data-rsvp-container>
                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
+                    ${renderCalendarChildScope(ev.teamId)}
                     <div class="flex gap-2">
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
+                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
                     </div>
                     <div class="mt-1 text-xs text-gray-500">${summary}</div>
                 </div>
@@ -206,7 +252,8 @@
             const teamId = btn?.dataset?.teamId || '';
             const gameId = btn?.dataset?.gameId || '';
             if (!teamId || !gameId) return;
-            submitCalendarRsvp(teamId, gameId, response);
+            const selectedChildId = btn?.closest('[data-rsvp-container]')?.querySelector('[data-rsvp-child-selector="true"]')?.value || btn?.dataset?.rsvpChildId || '';
+            submitCalendarRsvp(teamId, gameId, response, { selectedChildId });
         }
 
         async function init() {
@@ -219,14 +266,7 @@
                 const profile = await getUserProfile(user.uid);
                 const email = user.email || profile?.email;
                 const parentOf = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
-                playerIdsByTeam = parentOf.reduce((acc, link) => {
-                    const teamId = link?.teamId;
-                    const playerId = link?.playerId;
-                    if (!teamId || !playerId) return acc;
-                    if (!acc.has(teamId)) acc.set(teamId, new Set());
-                    acc.get(teamId).add(playerId);
-                    return acc;
-                }, new Map());
+                linkedPlayersByTeam = buildLinkedPlayersByTeam(parentOf);
 
                 // Load all teams the user has access to (coach + parent)
                 const [coachTeams, parentTeams] = await Promise.all([
@@ -282,6 +322,10 @@
                                     awayScore: null,
                                     liveStatus: null,
                                     myRsvp: null,
+                                    childId: game.childId || game.playerId || null,
+                                    childIds: Array.isArray(game.childIds) && game.childIds.length > 0
+                                        ? game.childIds
+                                        : getLinkedPlayersForTeam(team.id).map((player) => player.playerId).filter(Boolean),
                                     source: 'db'
                                 });
                             }
@@ -307,6 +351,10 @@
                                 awayScore: game.awayScore,
                                 liveStatus: game.liveStatus,
                                 myRsvp: null,
+                                childId: game.childId || game.playerId || null,
+                                childIds: Array.isArray(game.childIds) && game.childIds.length > 0
+                                    ? game.childIds
+                                    : getLinkedPlayersForTeam(team.id).map((player) => player.playerId).filter(Boolean),
                                 source: 'db'
                             });
                         }
@@ -319,23 +367,15 @@
                         for (const calUrl of calendarUrls) {
                             try {
                                 const icsEvents = await fetchAndParseCalendar(calUrl);
-                                for (const ev of icsEvents) {
-                                    if (trackedUids.includes(ev.uid)) continue;
-                                    const evDate = ev.dtstart instanceof Date ? ev.dtstart : new Date(ev.dtstart);
-                                    if (Number.isNaN(evDate.getTime())) continue;
-                                    events.push({
-                                        id: ev.uid || `ics-${evDate.getTime()}`,
-                                        teamId: team.id,
-                                        teamName: team.name,
-                                        teamColor: teamColors[team.id],
-                                        type: ev.isPractice ? 'practice' : 'game',
-                                        title: ev.summary || 'Event',
-                                        date: evDate,
-                                        location: ev.location || 'TBD',
-                                        status: 'scheduled',
-                                        source: 'ics'
-                                    });
-                                }
+                                events.push(...mergeGlobalCalendarIcsEvents({
+                                    team,
+                                    teamColor: teamColors[team.id],
+                                    existingEvents: events,
+                                    icsEvents,
+                                    trackedUids,
+                                    isTrackedCalendarEvent,
+                                    buildGlobalCalendarIcsEvent
+                                }));
                             } catch (e) {
                                 console.warn('Failed to load ICS calendar:', e);
                             }
@@ -351,15 +391,33 @@
                 // Fetch current user's RSVP for DB schedule events (games + practices).
                 const dbEvents = allEvents.filter(ev => ev.source === 'db' && (ev.type === 'game' || ev.type === 'practice') && ev.status !== 'cancelled');
                 const uniqueGameKeys = [...new Set(dbEvents.map(ev => `${ev.teamId}::${ev.id}`))];
+                const unsummarizedByTeam = new Map();
+                uniqueGameKeys.forEach((key) => {
+                    const [teamId, gameId] = parseTeamGameKey(key);
+                    const shouldLoadSummary = allEvents.some((ev) => ev.teamId === teamId && ev.id === gameId && !ev.rsvpSummary);
+                    if (!shouldLoadSummary) return;
+                    if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
+                    unsummarizedByTeam.get(teamId).push(gameId);
+                });
+
+                const summaryMapsByTeam = new Map();
+                await Promise.all(Array.from(unsummarizedByTeam.entries()).map(async ([teamId, gameIds]) => {
+                    try {
+                        summaryMapsByTeam.set(teamId, await getRsvpSummaries(teamId, gameIds));
+                    } catch (_) {
+                        summaryMapsByTeam.set(teamId, new Map());
+                    }
+                }));
+
                 await Promise.all(uniqueGameKeys.map(async (key) => {
-                    const [teamId, gameId] = key.split('::');
+                    const [teamId, gameId] = parseTeamGameKey(key);
                     try {
                         const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
-                        if (myRsvp?.response) {
-                            allEvents.forEach(ev => {
-                                if (ev.teamId === teamId && ev.id === gameId) ev.myRsvp = myRsvp.response;
-                            });
-                        }
+                        const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
+                        applyRsvpHydration(allEvents, teamId, gameId, {
+                            myRsvp: myRsvp ? myRsvp.response : null,
+                            summary
+                        });
                     } catch (_) {}
                 }));
 
@@ -477,6 +535,7 @@
                     <div class="text-xs text-gray-500 w-28 flex-shrink-0 font-medium">${dateStr} ${timeStr}</div>
                     <span class="text-xs font-bold uppercase ${ev.type === 'practice' ? 'text-amber-700' : 'text-primary-700'} w-16 flex-shrink-0">${ev.type === 'practice' ? 'Prac' : 'Game'}</span>
                     <div class="text-sm font-medium text-gray-900 truncate flex-grow ${isCancelled ? 'line-through' : ''}">${escapeHtml(ev.title)}</div>
+                    ${isCancelled ? '<span class="text-[10px] font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded">CANCELLED</span>' : ''}
                     <div class="text-xs text-gray-500 truncate max-w-[150px] hidden sm:block">${escapeHtml(ev.teamName)}</div>
                     ${renderRsvpBlock(ev, true)}
                     ${ev.isHome === true ? '<span class="text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">H</span>' : ''}
@@ -558,6 +617,7 @@
         }
 
         function openDayDetail(year, month, day) {
+            activeDayDetail = { year, month, day };
             const dayStart = new Date(year, month, day);
             const dayEnd = new Date(year, month, day, 23, 59, 59);
             const dayEvents = allEvents.filter(ev => {
@@ -603,19 +663,28 @@
         }
 
         function closeDayModal() {
+            activeDayDetail = null;
             document.getElementById('day-modal').classList.add('hidden');
         }
 
-        async function submitCalendarRsvp(teamId, gameId, response) {
+        async function submitCalendarRsvp(teamId, gameId, response, childContext = {}) {
             try {
-                const playerIds = playerIdsByTeam.has(teamId)
-                    ? Array.from(playerIdsByTeam.get(teamId))
-                    : [];
-                const summary = await submitRsvp(teamId, gameId, currentUserId, {
-                    displayName: currentUser?.displayName || currentUser?.email || null,
-                    playerIds,
-                    response
-                });
+                const { playerIds, submitMode } = resolveCalendarRsvpSubmission(
+                    linkedPlayersByTeam,
+                    teamId,
+                    childContext?.selectedChildId || ''
+                );
+                const summary = submitMode === 'player'
+                    ? await submitRsvpForPlayer(teamId, gameId, currentUserId, {
+                        displayName: currentUser?.displayName || currentUser?.email || null,
+                        playerId: playerIds[0],
+                        response
+                    })
+                    : await submitRsvp(teamId, gameId, currentUserId, {
+                        displayName: currentUser?.displayName || currentUser?.email || null,
+                        playerIds,
+                        response
+                    });
                 allEvents.forEach(ev => {
                     if (ev.teamId === teamId && ev.id === gameId) {
                         ev.myRsvp = response;
@@ -623,12 +692,9 @@
                     }
                 });
                 applyFilters();
-                if (currentView === 'calendar') {
-                    // Keep day modal content fresh for current selection
-                    const title = document.getElementById('day-modal-title')?.textContent;
-                    if (title && !document.getElementById('day-modal')?.classList.contains('hidden')) {
-                        // No-op: user can click date again; avoid parsing locale title.
-                    }
+                const dayModal = document.getElementById('day-modal');
+                if (currentView === 'calendar' && activeDayDetail && dayModal && !dayModal.classList.contains('hidden')) {
+                    openDayDetail(activeDayDetail.year, activeDayDetail.month, activeDayDetail.day);
                 }
             } catch (err) {
                 alert('Failed to submit RSVP: ' + (err?.message || err));

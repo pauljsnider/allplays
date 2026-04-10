@@ -14,6 +14,13 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Browse public youth sports teams on Allplays and explore schedules, live games, replays, and team activity.">
+  <link rel="canonical" href="https://allplays.ai/teams.html">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ALL PLAYS">
+  <meta property="og:title" content="Browse Teams - ALL PLAYS">
+  <meta property="og:description" content="Browse public youth sports teams on Allplays and explore schedules, live games, replays, and team activity.">
+  <meta property="og:url" content="https://allplays.ai/teams.html">
   <link rel="icon" type="image/png" href="img/logo_small.png">
   <title>Browse Teams - ALL PLAYS</title>
   <script src="https://cdn.tailwindcss.com"></script>
@@ -67,9 +74,9 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeams } from './js/db.js?v=14';
+    import { getTeams } from './js/db.js?v=15';
     import { renderHeader, renderFooter } from './js/utils.js?v=8';
-    import { checkAuth } from './js/auth.js?v=9';
+    import { checkAuth } from './js/auth.js?v=10';
 
     checkAuth((user) => {
       // Allow viewing without login - user can be null

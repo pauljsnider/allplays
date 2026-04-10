@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Match Report - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -154,11 +155,95 @@
             </div>
         </div>
 
-        <!-- Player Stats Section -->
-        <div class="mb-8 md:mb-10">
+        <!-- Post-game Insights -->
+        <div id="insights-section" class="mb-8 md:mb-10 hidden">
             <div class="flex items-center gap-3 mb-4">
                 <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
-                <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Player Performance</h2>
+                <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Insights</h2>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div class="xl:col-span-1">
+                    <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200 h-full">
+                        <div class="flex items-center justify-between gap-3 mb-4">
+                            <h3 class="text-lg font-bold text-gray-900">Team Takeaways</h3>
+                            <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">Post-game</span>
+                        </div>
+                        <div id="team-insights-body" class="space-y-3"></div>
+                    </div>
+                </div>
+                <div class="xl:col-span-2">
+                    <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+                        <div class="flex items-center justify-between gap-3 mb-4">
+                            <h3 class="text-lg font-bold text-gray-900">Player Signals</h3>
+                            <span class="text-xs font-semibold uppercase tracking-wider text-gray-400">Linked to this report</span>
+                        </div>
+                        <div id="player-insights-body" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player Stats Section -->
+        <div class="mb-8 md:mb-10">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Player Performance</h2>
+                </div>
+                <button id="edit-stats-btn"
+                    class="hidden px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+                    Edit Stats
+                </button>
+            </div>
+            <div id="stats-editor-admin" class="hidden mb-4 bg-white shadow-sm rounded-xl p-4 border border-gray-200">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <div class="text-sm font-semibold text-gray-900">Post-game stat corrections</div>
+                        <p class="text-sm text-gray-500">Update one player at a time and move through the roster quickly.</p>
+                    </div>
+                    <span id="stats-editor-status" class="text-sm text-gray-500"></span>
+                </div>
+                <div id="stats-editor-panel" class="hidden mt-4 space-y-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <div id="stats-editor-player-name" class="text-lg font-bold text-gray-900"></div>
+                            <div id="stats-editor-player-meta" class="text-sm text-gray-500"></div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button id="stats-prev-btn"
+                                class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
+                                Previous
+                            </button>
+                            <button id="stats-next-btn"
+                                class="px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-semibold">
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                    <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                        <input id="stats-dnp-toggle" type="checkbox" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                        Did not play
+                    </label>
+                    <div id="stats-editor-fields" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+                    <div class="flex flex-wrap gap-2">
+                        <button id="stats-save-btn"
+                            class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+                            Save
+                        </button>
+                        <button id="stats-save-prev-btn"
+                            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold text-sm">
+                            Save and Previous
+                        </button>
+                        <button id="stats-save-next-btn"
+                            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold text-sm">
+                            Save and Next
+                        </button>
+                        <button id="stats-cancel-btn"
+                            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold text-sm">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
             </div>
             <div class="bg-white shadow-lg rounded-2xl overflow-hidden border border-gray-200">
                 <div class="overflow-x-auto">
@@ -251,16 +336,21 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto } from './js/db.js?v=14';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats } from './js/db.js?v=15';
+        import { generateGameInsights } from './js/post-game-insights.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=9';
-        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=9";
-        import { db } from './js/firebase.js?v=9';
+        import { checkAuth } from './js/auth.js?v=10';
+        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=10";
+        import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
+        import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
+        import { resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=1';
+        import { resolvePostGameStatFields, buildCompletedGamePlayerStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=1';
 
         let currentUser = null;
         let canManageStatSheet = false;
         let canEditSummary = false;
+        let canEditStats = false;
         let authResolved = false;
         let gameLoaded = false;
 
@@ -287,6 +377,85 @@
             toast.textContent = message;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 2000);
+        }
+
+        function insightToneClasses(tone) {
+            if (tone === 'positive') {
+                return 'border-green-200 bg-green-50';
+            }
+            if (tone === 'warning') {
+                return 'border-amber-200 bg-amber-50';
+            }
+            return 'border-gray-200 bg-gray-50';
+        }
+
+        function renderInsightsSection({ teamInsights, playerInsightsById, emptyMessage }, players, teamId, gameId) {
+            const section = document.getElementById('insights-section');
+            const teamBody = document.getElementById('team-insights-body');
+            const playerBody = document.getElementById('player-insights-body');
+            if (!section || !teamBody || !playerBody) return;
+
+            const playerLookup = new Map((players || []).map((player) => [player.id, player]));
+            const playerEntries = Object.entries(playerInsightsById || {});
+            const hasInsights = (teamInsights || []).length || playerEntries.length;
+
+            if (!hasInsights) {
+                section.classList.remove('hidden');
+                teamBody.innerHTML = `
+                    <div class="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                        ${escapeHtml(emptyMessage || 'No post-game insights are available for this report yet.')}
+                    </div>
+                `;
+                playerBody.innerHTML = `
+                    <div class="lg:col-span-2 rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                        Player-specific insights will appear here once a completed game has enough tracked activity.
+                    </div>
+                `;
+                return;
+            }
+
+            section.classList.remove('hidden');
+            teamBody.innerHTML = (teamInsights || []).map((item) => `
+                <div class="rounded-xl border px-4 py-4 ${insightToneClasses(item.tone)}">
+                    <div class="text-sm font-bold text-gray-900">${escapeHtml(item.title || 'Insight')}</div>
+                    <p class="mt-1 text-sm text-gray-700 leading-relaxed">${escapeHtml(item.body || '')}</p>
+                </div>
+            `).join('') || `
+                <div class="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                    ${escapeHtml(emptyMessage || 'No team insights available.')}
+                </div>
+            `;
+
+            playerBody.innerHTML = playerEntries.map(([playerId, insights]) => {
+                const player = playerLookup.get(playerId) || {};
+                return `
+                    <div class="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <div class="min-w-0">
+                                <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${playerId}"
+                                   class="text-base font-bold text-primary-700 hover:text-primary-800 hover:underline">
+                                    ${escapeHtml(player.name || 'Player')}
+                                </a>
+                                <div class="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                                    #${escapeHtml(player.number || '-')}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="space-y-2">
+                            ${insights.map((item) => `
+                                <div class="rounded-lg border px-3 py-3 ${insightToneClasses(item.tone)}">
+                                    <div class="text-sm font-semibold text-gray-900">${escapeHtml(item.title || 'Insight')}</div>
+                                    <p class="mt-1 text-sm text-gray-700">${escapeHtml(item.body || '')}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('') || `
+                <div class="lg:col-span-2 rounded-xl border border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 text-center">
+                    Player-specific insights will appear here once tracked stats tie back to individual players.
+                </div>
+            `;
         }
 
         // Summary toggle functionality
@@ -593,6 +762,209 @@ Write the match report now:`;
             cancelBtn.addEventListener('click', closeEditor);
         }
 
+        function formatMMSS(ms) {
+            const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function renderPlayerStatsTable({ teamId, gameId, players, statsMap, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
+            const tbody = document.getElementById('stats-body');
+            if (!tbody) return;
+
+            if ((players || []).length === 0) {
+                tbody.innerHTML = '<tr><td colspan="100%" class="p-8 text-center"><div class="text-gray-400 text-sm">No players found.</div></td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = players.map((p) => {
+                const pStats = statsMap[p.id] || {};
+                const pTime = timeMap[p.id] || 0;
+                const didNotPlay = didNotPlayMap[p.id] === true;
+                const statCells = statKeys.map((key) => `
+                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : (pStats[key] || 0)}</td>
+                `).join('');
+                const minutesCell = hasPlayingTime ? `
+                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : formatMMSS(pTime)}</td>
+                ` : '';
+                return `
+                    <tr class="bg-white hover:bg-gray-50 transition">
+                        <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number || '-')}</td>
+                        <td class="px-4 py-4 font-medium">
+                            <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
+                               class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
+                                <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+                                    ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
+                                        <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
+                                        </svg>
+                                    `}
+                                </span>
+                                <span class="flex items-center gap-2">
+                                    <span>${escapeHtml(p.name)}</span>
+                                    ${didNotPlay ? '<span class="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">DNP</span>' : ''}
+                                </span>
+                            </a>
+                        </td>
+                        ${statCells}
+                        ${minutesCell}
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function setupPostGameStatEditor({
+            teamId,
+            gameId,
+            game,
+            players,
+            statsMap,
+            didNotPlayMap,
+            timeMap,
+            resolvedConfig,
+            rerenderTable
+        }) {
+            const editBtn = document.getElementById('edit-stats-btn');
+            const admin = document.getElementById('stats-editor-admin');
+            const panel = document.getElementById('stats-editor-panel');
+            const status = document.getElementById('stats-editor-status');
+            const nameEl = document.getElementById('stats-editor-player-name');
+            const metaEl = document.getElementById('stats-editor-player-meta');
+            const fieldsEl = document.getElementById('stats-editor-fields');
+            const dnpToggle = document.getElementById('stats-dnp-toggle');
+            const prevBtn = document.getElementById('stats-prev-btn');
+            const nextBtn = document.getElementById('stats-next-btn');
+            const saveBtn = document.getElementById('stats-save-btn');
+            const savePrevBtn = document.getElementById('stats-save-prev-btn');
+            const saveNextBtn = document.getElementById('stats-save-next-btn');
+            const cancelBtn = document.getElementById('stats-cancel-btn');
+
+            if (!editBtn || !admin || !panel || !status || !nameEl || !metaEl || !fieldsEl || !dnpToggle) {
+                return;
+            }
+
+            const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
+            if (!canEditStats || !gameCompleted || !Array.isArray(players) || players.length === 0) {
+                editBtn.classList.add('hidden');
+                admin.classList.add('hidden');
+                return;
+            }
+
+            const statFields = resolvePostGameStatFields({ resolvedConfig, statsMap });
+            let currentIndex = 0;
+
+            function renderEditor() {
+                const player = players[currentIndex];
+                if (!player) return;
+                const playerStats = statsMap[player.id] || {};
+                const didNotPlay = didNotPlayMap[player.id] === true;
+
+                nameEl.textContent = player.name || 'Player';
+                metaEl.textContent = `#${player.number || '-'} • Player ${currentIndex + 1} of ${players.length}`;
+                dnpToggle.checked = didNotPlay;
+                fieldsEl.innerHTML = statFields.map((field) => {
+                    const key = field.fieldName;
+                    const value = didNotPlay ? 0 : (playerStats[key] || 0);
+                    return `
+                        <label class="block">
+                            <span class="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">${escapeHtml(field.label || key.toUpperCase())}</span>
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                data-stat-field="${escapeHtml(key)}"
+                                value="${escapeHtml(String(value))}"
+                                class="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm ${didNotPlay ? 'bg-gray-100 text-gray-400' : ''}"
+                                ${didNotPlay ? 'disabled' : ''}
+                            >
+                        </label>
+                    `;
+                }).join('');
+
+                prevBtn.disabled = currentIndex === 0;
+                nextBtn.disabled = currentIndex === players.length - 1;
+            }
+
+            function openEditor() {
+                admin.classList.remove('hidden');
+                panel.classList.remove('hidden');
+                status.textContent = '';
+                renderEditor();
+            }
+
+            function closeEditor() {
+                panel.classList.add('hidden');
+                status.textContent = '';
+            }
+
+            async function saveCurrent(direction = null) {
+                const player = players[currentIndex];
+                if (!player) return;
+
+                const values = {};
+                fieldsEl.querySelectorAll('[data-stat-field]').forEach((input) => {
+                    values[input.dataset.statField] = input.value;
+                });
+
+                const payload = buildCompletedGamePlayerStatsPayload({
+                    player,
+                    statFields,
+                    values,
+                    didNotPlay: dnpToggle.checked,
+                    existingTimeMs: timeMap[player.id] || 0
+                });
+
+                const buttons = [saveBtn, savePrevBtn, saveNextBtn, prevBtn, nextBtn, cancelBtn, editBtn];
+                buttons.forEach((button) => {
+                    if (button) button.disabled = true;
+                });
+                status.textContent = 'Saving stats…';
+
+                try {
+                    await setCompletedGamePlayerStats(teamId, gameId, player.id, payload);
+                    statsMap[player.id] = { ...(payload.stats || {}) };
+                    didNotPlayMap[player.id] = payload.didNotPlay === true;
+                    timeMap[player.id] = payload.timeMs || 0;
+                    rerenderTable();
+
+                    if (direction) {
+                        currentIndex = getPostGameEditorNextIndex(currentIndex, direction, players.length);
+                        renderEditor();
+                        status.textContent = 'Saved.';
+                    } else {
+                        closeEditor();
+                    }
+                } catch (error) {
+                    console.error('Error saving post-game stats:', error);
+                    status.textContent = `Error: ${error.message}`;
+                } finally {
+                    buttons.forEach((button) => {
+                        if (button) button.disabled = false;
+                    });
+                }
+            }
+
+            editBtn.classList.remove('hidden');
+            admin.classList.remove('hidden');
+            panel.classList.add('hidden');
+
+            editBtn.addEventListener('click', openEditor);
+            cancelBtn?.addEventListener('click', closeEditor);
+            prevBtn?.addEventListener('click', () => {
+                currentIndex = getPostGameEditorNextIndex(currentIndex, 'previous', players.length);
+                renderEditor();
+            });
+            nextBtn?.addEventListener('click', () => {
+                currentIndex = getPostGameEditorNextIndex(currentIndex, 'next', players.length);
+                renderEditor();
+            });
+            dnpToggle.addEventListener('change', renderEditor);
+            saveBtn?.addEventListener('click', () => saveCurrent(null));
+            savePrevBtn?.addEventListener('click', () => saveCurrent('previous'));
+            saveNextBtn?.addEventListener('click', () => saveCurrent('next'));
+        }
+
         async function loadGame() {
             if (gameLoaded) return;
             gameLoaded = true;
@@ -606,9 +978,10 @@ Write the match report now:`;
 
             try {
                 const [team, game, players] = await Promise.all([
-                    getTeam(teamId),
+                    // Reports are historical and must resolve soft-deleted teams.
+                    getTeam(teamId, { includeInactive: true }),
                     getGame(teamId, gameId),
-                    getPlayers(teamId)
+                    getPlayers(teamId, { includeInactive: true })
                 ]);
 
                 if (!game) {
@@ -634,6 +1007,7 @@ Write the match report now:`;
                     if (accessInfo.hasAccess) {
                         canManageStatSheet = accessInfo.accessLevel === 'full';
                         canEditSummary = accessInfo.accessLevel === 'full';
+                        canEditStats = accessInfo.accessLevel === 'full';
                         // Fetch unread count for chat badge
                         let unreadCount = 0;
                         try {
@@ -791,167 +1165,93 @@ Write the match report now:`;
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 const statsMap = {};
                 const timeMap = {};
+                const didNotPlayMap = {};
                 statsSnapshot.forEach(doc => {
                     const data = doc.data();
                     statsMap[doc.id] = data.stats;
                     timeMap[doc.id] = data.timeMs || 0;
+                    didNotPlayMap[doc.id] = data.didNotPlay === true;
                 });
 
                 // Fetch the config used for this game
-                let statKeys = [];
-                let statLabels = {};
+                let resolvedConfig = null;
 
-                if (game.statTrackerConfigId) {
-                    try {
-                        const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
-                        const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
-                        const config = configs.find(c => c.id === game.statTrackerConfigId);
-
-                        if (config && config.columns) {
-                            // First, collect all actual field names from the stats data
-                            const actualFields = new Set();
-                            Object.values(statsMap).forEach(stats => {
-                                Object.keys(stats).forEach(k => actualFields.add(k.toLowerCase()));
-                            });
-
-                            // Map config columns to actual field names in the data
-                            // Try variations: PTS -> points, pts, etc.
-                            config.columns.forEach(col => {
-                                const normalized = col.toLowerCase();
-                                let fieldName = normalized;
-
-                                // Try to find matching field in actual data
-                                // Check for common variations
-                                const variations = [
-                                    normalized,                                    // pts
-                                ];
-                                if (!normalized.endsWith('s')) {
-                                    variations.push(normalized + 's');             // pt -> pts
-                                } else {
-                                    variations.push(normalized.slice(0, -1));      // pts -> pt
-                                }
-
-                                // Special mappings
-                                if (normalized === 'pts' || normalized === 'points') {
-                                    variations.push('pts', 'points', 'pt');
-                                }
-                                if (normalized === 'rebs' || normalized === 'reb') {
-                                    variations.push('rebs', 'reb', 'rebounds');
-                                }
-                                if (normalized === 'ast' || normalized === 'assists') {
-                                    variations.push('ast', 'assists', 'assist');
-                                }
-
-                                // Find first matching variation in actual data
-                                for (const variant of variations) {
-                                    if (actualFields.has(variant)) {
-                                        fieldName = variant;
-                                        break;
-                                    }
-                                }
-
-                                statKeys.push(fieldName);
-                                statLabels[fieldName] = col;
-                            });
-                        }
-                    } catch (err) {
-                        console.error('Error fetching config:', err);
-                    }
-                }
-
-                // Fallback: if no config, collect all unique keys from statsMap
-                if (statKeys.length === 0) {
-                    const allKeys = new Set();
-                    Object.values(statsMap).forEach(stats => {
-                        Object.keys(stats).forEach(k => allKeys.add(k));
+                try {
+                    const configDoc = await getDocs(query(collection(db, `teams/${teamId}/statTrackerConfigs`)));
+                    const configs = configDoc.docs.map(d => ({ id: d.id, ...d.data() }));
+                    resolvedConfig = resolveLiveStatConfig({
+                        configs,
+                        game,
+                        team
                     });
-                    statKeys = Array.from(allKeys).sort();
-                    // Use uppercase for labels
-                    statKeys.forEach(key => {
-                        statLabels[key] = key.toUpperCase();
-                    });
+                } catch (err) {
+                    console.error('Error fetching config:', err);
                 }
 
-                // Always include fouls if present in the data
-                if (!statKeys.includes('fouls')) {
-                    // Check if fouls exist in any player's stats
-                    const hasFouls = Object.values(statsMap).some(stats => stats.fouls !== undefined);
-                    if (hasFouls) {
-                        statKeys.push('fouls');
-                        statLabels['fouls'] = 'FOULS';
-                    }
-                }
+                const { statKeys, statLabels } = resolveReportStatColumns({
+                    statsMap,
+                    resolvedConfig
+                });
 
                 // Setup summary controls
                 setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels);
-
-                // Check if we have any playing time data
-                const hasPlayingTime = Object.values(timeMap).some(t => t > 0);
-
-                // Render Table Header
                 const headerRow = document.getElementById('stats-header-row');
-                statKeys.forEach(key => {
-                    const th = document.createElement('th');
-                    th.className = "px-4 py-4 text-center";
-                    th.textContent = statLabels[key] || key.toUpperCase();
-                    headerRow.appendChild(th);
+                const computeHasPlayingTime = () => Object.values(timeMap).some((t) => t > 0);
+                function renderStatsTable() {
+                    const { statKeys: tableStatKeys, statLabels: tableStatLabels } = resolveReportStatColumns({
+                        statsMap,
+                        resolvedConfig
+                    });
+                    const hasPlayingTime = computeHasPlayingTime();
+
+                    if (headerRow) {
+                        headerRow.innerHTML = `
+                            <th class="px-4 py-4 text-left">#</th>
+                            <th class="px-4 py-4 text-left">Player</th>
+                        `;
+                        tableStatKeys.forEach((key) => {
+                            const th = document.createElement('th');
+                            th.className = 'px-4 py-4 text-center';
+                            th.textContent = tableStatLabels[key] || key.toUpperCase();
+                            headerRow.appendChild(th);
+                        });
+
+                        if (hasPlayingTime) {
+                            const minTh = document.createElement('th');
+                            minTh.className = 'px-4 py-4 text-center';
+                            minTh.textContent = 'MIN';
+                            headerRow.appendChild(minTh);
+                        }
+                    }
+
+                    renderPlayerStatsTable({
+                        teamId,
+                        gameId,
+                        players,
+                        statsMap,
+                        didNotPlayMap,
+                        timeMap,
+                        statKeys: tableStatKeys,
+                        hasPlayingTime
+                    });
+                }
+
+                renderStatsTable();
+
+                setupPostGameStatEditor({
+                    teamId,
+                    gameId,
+                    game,
+                    players,
+                    statsMap,
+                    didNotPlayMap,
+                    timeMap,
+                    resolvedConfig,
+                    rerenderTable: renderStatsTable
                 });
 
-                // Add Minutes column if we have playing time data
-                if (hasPlayingTime) {
-                    const minTh = document.createElement('th');
-                    minTh.className = "px-4 py-4 text-center";
-                    minTh.textContent = "MIN";
-                    headerRow.appendChild(minTh);
-                }
-
-                // Helper function to format milliseconds to MM:SS
-                function formatMMSS(ms) {
-                    const totalSeconds = Math.max(0, Math.floor((ms || 0) / 1000));
-                    const minutes = Math.floor(totalSeconds / 60);
-                    const seconds = totalSeconds % 60;
-                    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-                }
-
-                // Render Table Body
-                const tbody = document.getElementById('stats-body');
-                if (players.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="100%" class="p-8 text-center"><div class="text-gray-400 text-sm">No players found.</div></td></tr>';
-                } else {
-                    tbody.innerHTML = players.map(p => {
-                        const pStats = statsMap[p.id] || {};
-                        const pTime = timeMap[p.id] || 0;
-                        const statCells = statKeys.map(key => `
-                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${pStats[key] || 0}</td>
-                        `).join('');
-                        const minutesCell = hasPlayingTime ? `
-                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${formatMMSS(pTime)}</td>
-                        ` : '';
-                        return `
-                            <tr class="bg-white hover:bg-gray-50 transition">
-                                    <td class="px-4 py-4 font-mono text-gray-500 font-semibold">${escapeHtml(p.number || '-')}</td>
-                                    <td class="px-4 py-4 font-medium">
-                                        <a href="player.html#teamId=${teamId}&gameId=${gameId}&playerId=${p.id}"
-                                           class="flex items-center gap-3 text-primary-600 hover:text-primary-700 hover:underline transition">
-                                            <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                                ${p.photoUrl ? `<img src="${escapeHtml(p.photoUrl)}" alt="${escapeHtml(p.name)}" class="w-full h-full object-cover">` : `
-                                                    <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
-                                                    </svg>
-                                                `}
-                                            </span>
-                                            <span>${escapeHtml(p.name)}</span>
-                                        </a>
-                                    </td>
-                                ${statCells}
-                                ${minutesCell}
-                            </tr>
-                        `;
-                    }).join('');
-                }
-
                 // Render Playing Time Insights
-                if (hasPlayingTime) {
+                if (computeHasPlayingTime()) {
                     const playingTimeSection = document.getElementById('playing-time-insights');
                     playingTimeSection.classList.remove('hidden');
 
@@ -1054,30 +1354,16 @@ Write the match report now:`;
                     const opponentHeaderRow = document.getElementById('opponent-stats-header-row');
                     const opponentTbody = document.getElementById('opponent-stats-body');
 
-                    // Get stat keys from opponent stats
-                    const opponentStatKeys = new Set();
-                    const metadataKeys = new Set(['name', 'number', 'notes']);
-                    Object.values(game.opponentStats).forEach(stats => {
-                        Object.keys(stats).forEach(k => {
-                            if (!metadataKeys.has(k)) {
-                                opponentStatKeys.add(k);
-                            }
-                        });
+                    const { oppKeys, oppLabels } = resolveOpponentReportStatColumns({
+                        opponentStats: game.opponentStats,
+                        resolvedConfig
                     });
-                    let oppKeys = Array.from(opponentStatKeys).sort();
-
-                    // Move fouls to the end if present (for better visual organization)
-                    const foulIndex = oppKeys.indexOf('fouls');
-                    if (foulIndex > -1) {
-                        oppKeys.splice(foulIndex, 1);
-                        oppKeys.push('fouls');
-                    }
 
                     // Render header
                     oppKeys.forEach(key => {
                         const th = document.createElement('th');
                         th.className = "px-4 py-4 text-center";
-                        th.textContent = key.toUpperCase();
+                        th.textContent = oppLabels[key] || key.toUpperCase();
                         opponentHeaderRow.appendChild(th);
                     });
 
@@ -1118,7 +1404,27 @@ Write the match report now:`;
                 // Fetch and render game log (events)
                 const eventsQuery = query(collection(db, `teams/${teamId}/games/${gameId}/events`), orderBy('timestamp', 'asc'));
                 const eventsSnapshot = await getDocs(eventsQuery);
-                const events = eventsSnapshot.docs.map(doc => doc.data());
+                const events = eventsSnapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        ...data,
+                        clock: data.clock || data.gameTime || ''
+                    };
+                });
+
+                renderInsightsSection(
+                    generateGameInsights({
+                        team,
+                        game,
+                        players,
+                        statsMap,
+                        timeMap,
+                        events
+                    }),
+                    players,
+                    teamId,
+                    gameId
+                );
 
                 if (events.length > 0) {
                     const gameLogDiv = document.getElementById('game-log');

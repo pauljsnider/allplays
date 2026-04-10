@@ -47,6 +47,28 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function hasIncentivePlayerLink(data) {
+      return data.teamId is string &&
+             data.playerId is string &&
+             isParentForPlayer(data.teamId, data.playerId);
+    }
+
+    function isIncentiveCapPayloadValid(data) {
+      return data.maxPerGameCents is int &&
+             (
+               data.keys().hasOnly(['maxPerGameCents', 'updatedAt']) ||
+               hasIncentivePlayerLink(data)
+             );
+    }
+
+    function isIncentiveRulePayloadValid(data) {
+      return hasIncentivePlayerLink(data);
+    }
+
+    function isIncentivePaidGamePayloadValid(data) {
+      return hasIncentivePlayerLink(data);
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
@@ -96,10 +118,46 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if true;  // Public profiles
       allow write: if isOwner(userId) || isGlobalAdmin();  // Owner or global admin can update
+
+      // Incentive rules - private to the parent who created them
+      match /incentiveRules/{ruleId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                        (
+                          (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
+                          (!ruleId.matches('^_cap_.*') && isIncentiveRulePayloadValid(request.resource.data))
+                        );
+        allow update: if isOwner(userId) &&
+                        (
+                          (ruleId.matches('^_cap_.*') && isIncentiveCapPayloadValid(request.resource.data)) ||
+                          (!ruleId.matches('^_cap_.*') &&
+                           hasIncentivePlayerLink(resource.data) &&
+                           isIncentiveRulePayloadValid(request.resource.data))
+                        );
+        allow delete: if isOwner(userId);
+      }
+
+      // Incentive paid game records - private to the parent
+      match /incentivePaidGames/{recordId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isIncentivePaidGamePayloadValid(request.resource.data);
+        allow update: if isOwner(userId) &&
+                        hasIncentivePlayerLink(resource.data) &&
+                        isIncentivePaidGamePayloadValid(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      match /notificationPreferences/{teamId} {
+        allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
+
+      match /notificationDevices/{deviceId} {
+        allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
     }
 
-    // Access codes - allow public read for validation during signup
-    match /accessCodes/{codeId} {
+	    // Access codes - allow public read for validation during signup
+	    match /accessCodes/{codeId} {
       // Allow anyone to read for code validation (needed for unauthenticated signup)
       // This is secure because users can only query by exact code match
       allow read: if true;
@@ -110,11 +168,19 @@ service cloud.firestore {
                         // Allow marking as used only if setting these specific fields
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
                          request.resource.data.usedBy == request.auth.uid));
-      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
-    }
+	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
+	    }
 
-    // Collection group rule for games - allows cross-team queries (e.g., live games, recent games)
-    match /{path=**}/games/{gameId} {
+	    // Collection-group read for a parent's own membership requests.
+	    // This keeps parent-dashboard collectionGroup queries query-safe even
+	    // when the team-scoped rule also grants broader coach/admin access.
+	    match /{path=**}/membershipRequests/{requestId} {
+	      allow read: if isSignedIn() &&
+	                     resource.data.requesterUserId == request.auth.uid;
+	    }
+
+	    // Collection group rule for games - allows cross-team queries (e.g., live games, recent games)
+	    match /{path=**}/games/{gameId} {
       allow read: if true;  // Public read for collection group queries
     }
 
@@ -122,6 +188,19 @@ service cloud.firestore {
     // SECURITY: deny reads of any player doc that still contains sensitive fields.
     match /{path=**}/players/{playerId} {
       allow read: if !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+    }
+
+    // Parent-managed athlete profiles with explicit public/private sharing.
+    match /athleteProfiles/{profileId} {
+      allow read: if resource.data.privacy == 'public' ||
+                     (isSignedIn() && resource.data.parentUserId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       request.resource.data.parentUserId == request.auth.uid;
+      allow update: if isSignedIn() &&
+                       resource.data.parentUserId == request.auth.uid &&
+                       request.resource.data.parentUserId == resource.data.parentUserId;
+      allow delete: if isSignedIn() &&
+                       resource.data.parentUserId == request.auth.uid;
     }
 
     // Drill Library (top-level collection)
@@ -168,7 +247,8 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if isTeamOwnerOrAdmin(teamId);
+      allow update: if isTeamOwnerOrAdmin(teamId);
+      allow delete: if isGlobalAdmin();
 
 	      // Players subcollection
 	      match /players/{playerId} {
@@ -206,6 +286,33 @@ service cloud.firestore {
 
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
+      }
+
+      match /membershipRequests/{requestId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         requestId == request.auth.uid + "__" + request.resource.data.playerId &&
+                         request.resource.data.requesterUserId == request.auth.uid &&
+                         request.resource.data.teamId == teamId &&
+                         request.resource.data.status == 'pending' &&
+                         request.resource.data.playerId is string;
+
+        allow update: if isSignedIn() &&
+                         (
+                           (
+                             isTeamOwnerOrAdmin(teamId) &&
+                             resource.data.status == 'pending' &&
+                             request.resource.data.requesterUserId == resource.data.requesterUserId &&
+                             request.resource.data.playerId == resource.data.playerId &&
+                             request.resource.data.teamId == resource.data.teamId &&
+                             request.resource.data.createdAt == resource.data.createdAt &&
+                             request.resource.data.status in ['approved', 'denied']
+                           )
+                         );
+
+        allow delete: if false;
       }
 
       // Games subcollection
@@ -327,6 +434,18 @@ service cloud.firestore {
                                  request.resource.data.status == resource.data.status &&
                                  request.resource.data.status == 'pending' &&
                                  request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'updatedAt'])
+                               ) ||
+                               // Request owner can re-request after a decline or waitlist while the offer stays open.
+                               (
+                                 resource.data.parentUserId == request.auth.uid &&
+                                 request.resource.data.parentUserId == resource.data.parentUserId &&
+                                 request.resource.data.childId == resource.data.childId &&
+                                 isParentForPlayer(teamId, resource.data.childId) &&
+                                 resource.data.status in ['declined', 'waitlisted'] &&
+                                 request.resource.data.status == 'pending' &&
+                                 request.resource.data.respondedAt == null &&
+                                 isRideshareOfferOpen(teamId, gameId, offerId) &&
+                                 request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'status', 'requestedAt', 'respondedAt', 'updatedAt'])
                                )
                              );
             allow delete: if isSignedIn() &&
@@ -336,6 +455,14 @@ service cloud.firestore {
                              isRideshareSeatCountUpdateValid(teamId, gameId, offerId, resource.data.status, 'declined');
           }
         }
+      }
+
+      // Tournament brackets subcollection
+      match /brackets/{bracketId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isParentForTeam(teamId) ||
+                       resource.data.status == 'published';
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       // Stat tracker configs subcollection

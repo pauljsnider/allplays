@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Run Pre-Game Through Wrap-Up Command - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+
+      .wf-shell {
+        width: min(1160px, 100%);
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      .wf-back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #4338ca;
+      }
+
+      .wf-hero {
+        margin-top: 0.75rem;
+        background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%);
+        border-radius: 1.1rem;
+        padding: 1.25rem 1.25rem 1.15rem;
+        color: #ecfeff;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+      }
+
+      .wf-kicker {
+        font-size: 0.73rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.84;
+      }
+
+      .wf-title {
+        margin-top: 0.4rem;
+        font-size: clamp(1.75rem, 2.8vw, 2.35rem);
+        line-height: 1.15;
+        font-weight: 800;
+      }
+
+      .wf-summary {
+        margin-top: 0.75rem;
+        max-width: 60ch;
+        color: rgba(236, 254, 255, 0.95);
+        line-height: 1.58;
+      }
+
+      .wf-meta-row {
+        margin-top: 0.95rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        align-items: center;
+      }
+
+      .wf-meta-pill {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.78rem;
+        font-weight: 700;
+        border-radius: 999px;
+        border: 1px solid rgba(236, 254, 255, 0.36);
+        background: rgba(236, 254, 255, 0.12);
+        color: #ecfeff;
+        padding: 0.24rem 0.62rem;
+      }
+
+      .wf-layout {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .wf-panel {
+        background: var(--wf-panel);
+        border: 1px solid var(--wf-border);
+        border-radius: 1rem;
+        box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08);
+      }
+
+      .wf-panel-section {
+        padding: 1rem;
+        border-bottom: 1px solid var(--wf-border);
+      }
+
+      .wf-panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .wf-panel-title {
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #334155;
+        margin-bottom: 0.6rem;
+      }
+
+      .wf-role-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid #c7d2fe;
+        background: #eef2ff;
+        color: #3730a3;
+        padding: 0.22rem 0.66rem;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+
+      .wf-roles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .wf-toc {
+        display: grid;
+        gap: 0.33rem;
+      }
+
+      .wf-toc a {
+        display: block;
+        padding: 0.43rem 0.52rem;
+        border-radius: 0.55rem;
+        color: #334155;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        transition: background 120ms ease, color 120ms ease;
+      }
+
+      .wf-toc a:hover {
+        background: #eef2ff;
+        color: #3730a3;
+      }
+
+      .wf-toc a.is-active {
+        background: #e0e7ff;
+        color: #312e81;
+        font-weight: 700;
+      }
+
+      .wf-content {
+        padding: 1.2rem 1.15rem;
+      }
+
+      .help-workflow-body {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .help-workflow-body h2 {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #1f2937;
+        margin-top: 1.25rem;
+        padding-top: 1.05rem;
+        border-top: 1px solid #dbe7f0;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body h2:first-of-type {
+        margin-top: 0.15rem;
+        padding-top: 0;
+        border-top: 0;
+      }
+
+      .help-workflow-body h3 {
+        font-size: 1.08rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-top: 0.88rem;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body p,
+      .help-workflow-body li {
+        color: var(--wf-muted);
+        line-height: 1.67;
+      }
+
+      .help-workflow-body ol,
+      .help-workflow-body ul {
+        margin-left: 1.2rem;
+      }
+
+      .help-workflow-body code {
+        background: #eef2ff;
+        color: #3730a3;
+        border: 1px solid #c7d2fe;
+        padding: 0.1rem 0.35rem;
+        border-radius: 0.3rem;
+        font-size: 0.86em;
+      }
+
+      .wf-mobile-toc {
+        margin-top: 0.95rem;
+      }
+
+      @media (min-width: 1024px) {
+        .wf-layout {
+          grid-template-columns: 270px minmax(0, 1fr);
+          align-items: start;
+        }
+
+        .wf-sidebar {
+          position: sticky;
+          top: 1rem;
+        }
+      }
+
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) {
+          display: none;
+        }
+      }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Run Pre-Game Through Wrap-Up Command</h1>
+          <p class="wf-summary">Use Game Day Command Center for one continuous game-day flow.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">5 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles"><span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span></div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body"><h2 id="overview">Overview</h2>
+<p>Use Game Day Command Center for one continuous game-day flow.</p>
+<p>Confirm game details, lock availability and lineup, manage live decisions, then close with notes and summary. This keeps in-game decisions fast and post-game follow-through clean.</p>
+<h2 id="in-this-article">In This Article</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Choose the right starting path for your game-day situation.</li>
+<li>Run pre-game checks and save lineup.</li>
+<li>Manage live substitutions, logs, score, and stats.</li>
+<li>Complete wrap-up and hand off to reporting and practice planning.</li>
+<li>Recover from common game-day issues.</li>
+</ul>
+<h2 id="who-is-this-for">Who Is This For</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Coach: Owns lineup, substitutions, live coaching log, and wrap-up decisions.</li>
+<li>Admin: Owns schedule accuracy, availability support, and final data quality.</li>
+<li>Coach + Admin: Split work so one person coaches while the other updates score and logs.</li>
+</ul>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>A scheduled game exists with valid <code>teamId</code> and <code>gameId</code>.</li>
+<li>You have full team access (coach/admin-level controls).</li>
+<li>Open from <code>edit-schedule.html</code> using <strong>Command Center</strong>, or use <code>game-day.html?teamId=...&amp;gameId=...</code>.</li>
+<li>The roster is loaded so availability and lineup can be set.</li>
+</ul>
+<h2 id="choose-your-path">Choose Your Path</h2>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Start from schedule and run the full flow.</li>
+</ol>
+<p>Go to <code>edit-schedule.html</code>, find the game, and select <strong>Command Center</strong>.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Fix setup first, then run Command Center.</li>
+</ol>
+<p>In <code>edit-schedule.html</code>, select <strong>Edit</strong> and correct date, opponent, location, home/away, or kit. Then return and open <strong>Command Center</strong>.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Check quick context before kickoff.</li>
+</ol>
+<p>Open <code>team.html</code>, review <strong>Upcoming Games</strong> or <strong>Recent Results</strong>, then launch <strong>Command Center</strong> from <code>edit-schedule.html</code>.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Plan the next practice from game outcomes.</li>
+</ol>
+<p>In the Game Day pre-game rail, use <strong>Plan →</strong> from prior focus items, or finish wrap-up analysis first. Continue in <code>drills.html</code>.</p>
+<h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open the correct game.</li>
+</ol>
+<p>In <code>edit-schedule.html</code>, filter to upcoming games and select <strong>Command Center</strong>. Confirm opponent and date before changes.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Validate pre-game details.</li>
+</ol>
+<p>In <strong>Pre-Game</strong>, verify opponent, date/time, location, home/away, and kit badges. If needed, select <strong>Edit game details →</strong>, save fixes, and return.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Finalize availability and pre-game notes.</li>
+</ol>
+<p>In the RSVP panel, set each player to <strong>Going</strong>, <strong>Maybe</strong>, or <strong>Out</strong>. Add scouting notes. Use <strong>AI Coach Focus</strong> if you want a quick directive.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Build and save lineup.</li>
+</ol>
+<p>Select a formation. Place players on the lineup canvas, or use <strong>Balance</strong> or <strong>AI Optimize</strong>. Select <strong>Save Lineup</strong> before kickoff.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Switch to live operations.</li>
+</ol>
+<p>Move to <strong>Game Day</strong> mode when play starts. Select the active period (for example, <code>H1</code> or <code>H2</code>). Use <strong>Coach</strong> view for subs and notes, and <strong>Stats</strong> view for stat taps.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Run live controls.</li>
+</ol>
+<p>For substitutions, select <strong>OUT</strong> and <strong>IN</strong>, then select <strong>Apply Sub</strong>. Log events with <strong>Timeout</strong>, <strong>Formation Change</strong>, <strong>Injury</strong>, or free-text <strong>Log</strong>. Update score and select <strong>Save Score</strong> after key changes.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Keep live stats accurate.</li>
+</ol>
+<p>In <strong>Stats</strong> view, tap player stat buttons as events happen. If the last stat is wrong, use <strong>Undo Last</strong> right away.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Complete wrap-up.</li>
+</ol>
+<p>Open <strong>Wrap-Up</strong>. Confirm final score and add post-game notes. Run <strong>Analyze Game → Generate Practice Feed</strong>. Run <strong>Generate Game Summary</strong>.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Close and hand off.</li>
+</ol>
+<p>Select <strong>Done — See Match Report →</strong> to mark the game complete. Continue report sharing and replay from <code>team.html</code>, and practice planning in <code>drills.html</code>.</p>
+<h2 id="common-questions">Common Questions</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Do I have to include <code>gameId</code> in the URL?</strong> Recommended: yes. If it is missing, Game Day auto-selects a game in this order: live first, then nearest upcoming, then most recent.</li>
+<li><strong>Can Admin and Coach both use Command Center controls?</strong> Yes. Both need full team access. Without full access, users are redirected out of Game Day controls.</li>
+<li><strong>Can I change player availability inside Game Day?</strong> Yes. In <strong>Pre-Game</strong>, use the RSVP panel and set players to Going/Maybe/Out.</li>
+<li><strong>Do lineup and score changes auto-save?</strong> No. Use <strong>Save Lineup</strong> for lineup changes and <strong>Save Score</strong> for score changes.</li>
+<li><strong>Where does the summary go?</strong> <strong>Generate Game Summary</strong> saves to the game record and appears in the match report.</li>
+</ul>
+<h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Missing <code>teamId</code> or bad URL:</strong> Reopen from <code>edit-schedule.html</code> using <strong>Command Center</strong> so IDs pass correctly.</li>
+<li><strong>&quot;No games found&quot;:</strong> Add or uncancel a game in <code>edit-schedule.html</code>, then reopen Command Center.</li>
+<li><strong>Access denied or redirected to team page:</strong> Ask a team admin to grant full coach/admin access.</li>
+<li><strong>No players shown on field in Game Day:</strong> Return to <strong>Pre-Game</strong>, select a formation, assign players, and select <strong>Save Lineup</strong>.</li>
+<li><strong>Substitution will not apply:</strong> Make sure both OUT and IN players are selected, then apply again.</li>
+<li><strong>Score changed on screen but not in report:</strong> Re-enter the score and select <strong>Save Score</strong> before wrap-up completion.</li>
+<li><strong>AI actions fail in chat or wrap-up:</strong> Continue manually. Save notes, confirm final score, and finish the game. Re-run analysis later.</li>
+<li><strong>Wrap-up closed by mistake:</strong> Switch back to <strong>Wrap-Up</strong> mode from the top mode switcher.</li>
+</ul>
+<h2 id="related-workflows">Related Workflows</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><code>schedule</code>: Build or update games in <code>edit-schedule.html</code>.</li>
+<li><code>track-game</code>: Use tracker pages when you need stat-tracking flows outside Command Center.</li>
+<li><code>postgame</code>: Complete final report and replay review after game completion.</li>
+<li><code>communication</code>: Share live links, report links, and team updates.</li>
+</ul>
+<h2 id="need-more-help">Need More Help</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Start from <code>edit-schedule.html</code> and reopen the game through <strong>Command Center</strong> to reset context.</li>
+<li>If the issue continues, capture team name, opponent, date, URL, and the exact step that failed.</li>
+<li>Share those details with your team admin so access or schedule data can be corrected quickly.</li>
+</ul></div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=10';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+
+        if (mobileToc && window.innerWidth < 1024) {
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+        }
+
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = () => {
+          let active = headings[0];
+          for (const h of headings) {
+            if (h.getBoundingClientRect().top <= 140) active = h;
+          }
+          links.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+
+        window.addEventListener('scroll', setActive, { passive: true });
+        setActive();
+      })();
+    </script>
+</body>
+</html>

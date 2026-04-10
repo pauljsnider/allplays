@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Create or Access Your Account - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+
+      .wf-shell {
+        width: min(1160px, 100%);
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+
+      .wf-back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: #4338ca;
+      }
+
+      .wf-hero {
+        margin-top: 0.75rem;
+        background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%);
+        border-radius: 1.1rem;
+        padding: 1.25rem 1.25rem 1.15rem;
+        color: #ecfeff;
+        box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+      }
+
+      .wf-kicker {
+        font-size: 0.73rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.84;
+      }
+
+      .wf-title {
+        margin-top: 0.4rem;
+        font-size: clamp(1.75rem, 2.8vw, 2.35rem);
+        line-height: 1.15;
+        font-weight: 800;
+      }
+
+      .wf-summary {
+        margin-top: 0.75rem;
+        max-width: 60ch;
+        color: rgba(236, 254, 255, 0.95);
+        line-height: 1.58;
+      }
+
+      .wf-meta-row {
+        margin-top: 0.95rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.65rem;
+        align-items: center;
+      }
+
+      .wf-meta-pill {
+        display: inline-flex;
+        align-items: center;
+        font-size: 0.78rem;
+        font-weight: 700;
+        border-radius: 999px;
+        border: 1px solid rgba(236, 254, 255, 0.36);
+        background: rgba(236, 254, 255, 0.12);
+        color: #ecfeff;
+        padding: 0.24rem 0.62rem;
+      }
+
+      .wf-layout {
+        margin-top: 1rem;
+        display: grid;
+        gap: 1rem;
+      }
+
+      .wf-panel {
+        background: var(--wf-panel);
+        border: 1px solid var(--wf-border);
+        border-radius: 1rem;
+        box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08);
+      }
+
+      .wf-panel-section {
+        padding: 1rem;
+        border-bottom: 1px solid var(--wf-border);
+      }
+
+      .wf-panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .wf-panel-title {
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #334155;
+        margin-bottom: 0.6rem;
+      }
+
+      .wf-role-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        border: 1px solid #c7d2fe;
+        background: #eef2ff;
+        color: #3730a3;
+        padding: 0.22rem 0.66rem;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }
+
+      .wf-roles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+      }
+
+      .wf-toc {
+        display: grid;
+        gap: 0.33rem;
+      }
+
+      .wf-toc a {
+        display: block;
+        padding: 0.43rem 0.52rem;
+        border-radius: 0.55rem;
+        color: #334155;
+        font-size: 0.82rem;
+        line-height: 1.35;
+        transition: background 120ms ease, color 120ms ease;
+      }
+
+      .wf-toc a:hover {
+        background: #eef2ff;
+        color: #3730a3;
+      }
+
+      .wf-toc a.is-active {
+        background: #e0e7ff;
+        color: #312e81;
+        font-weight: 700;
+      }
+
+      .wf-content {
+        padding: 1.2rem 1.15rem;
+      }
+
+      .help-workflow-body {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      .help-workflow-body h2 {
+        font-size: 1.4rem;
+        font-weight: 800;
+        color: #1f2937;
+        margin-top: 1.25rem;
+        padding-top: 1.05rem;
+        border-top: 1px solid #dbe7f0;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body h2:first-of-type {
+        margin-top: 0.15rem;
+        padding-top: 0;
+        border-top: 0;
+      }
+
+      .help-workflow-body h3 {
+        font-size: 1.08rem;
+        font-weight: 700;
+        color: #1e293b;
+        margin-top: 0.88rem;
+        scroll-margin-top: 6rem;
+      }
+
+      .help-workflow-body p,
+      .help-workflow-body li {
+        color: var(--wf-muted);
+        line-height: 1.67;
+      }
+
+      .help-workflow-body ol,
+      .help-workflow-body ul {
+        margin-left: 1.2rem;
+      }
+
+      .help-workflow-body code {
+        background: #eef2ff;
+        color: #3730a3;
+        border: 1px solid #c7d2fe;
+        padding: 0.1rem 0.35rem;
+        border-radius: 0.3rem;
+        font-size: 0.86em;
+      }
+
+      .wf-mobile-toc {
+        margin-top: 0.95rem;
+      }
+
+      @media (min-width: 1024px) {
+        .wf-layout {
+          grid-template-columns: 270px minmax(0, 1fr);
+          align-items: start;
+        }
+
+        .wf-sidebar {
+          position: sticky;
+          top: 1rem;
+        }
+      }
+
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) {
+          display: none;
+        }
+      }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Create or Access Your Account</h1>
+          <p class="wf-summary">Use this workflow to get into ALL PLAYS fast.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles"><span class="wf-role-chip">Parent</span> <span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span> <span class="wf-role-chip">Member</span></div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body"><h2 id="overview">Overview</h2>
+<p>Use this workflow to get into ALL PLAYS fast.</p>
+<p>Choose the path that matches your situation: new account, sign-in, password reset, or email verification.</p>
+<h2 id="in-this-article">In This Article</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Choose the right account access path.</li>
+<li>Create a new account with an activation code.</li>
+<li>Sign in with email/password or Google.</li>
+<li>Verify your email now or later.</li>
+<li>Reset your password.</li>
+<li>Resolve common login and verification issues.</li>
+</ul>
+<h2 id="who-is-this-for">Who Is This For</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Parent: Create an account from a code, or sign in to continue team access.</li>
+<li>Coach: Create or sign in, then verify email and keep access active.</li>
+<li>Admin: Create or sign in, then continue invite-based onboarding when needed.</li>
+<li>Member: Create or sign in with an activation code and confirm access.</li>
+</ul>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>You can access your email inbox now.</li>
+<li>You have a stable internet connection and supported browser.</li>
+<li>For first-time signup, you have an 8-character activation code.</li>
+<li>If you prefer Google sign-in, you have a Google account.</li>
+</ul>
+<h2 id="choose-your-path">Choose Your Path</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Path A: I am new and have an activation code.</li>
+<li>Path B: I already have an account.</li>
+<li>Path C: I forgot my password.</li>
+<li>Path D: I need to verify my email or resend verification.</li>
+<li>Path E: I signed in with an email link and want to set a password.</li>
+</ul>
+<h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <code>index.html</code> and select <strong>Get Started Now</strong>, or go to <code>login.html</code>.</li>
+<li>Follow the path that matches your situation.</li>
+</ol>
+<h3 id="path-a-create-a-new-account">Path A: Create a new account</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>On <code>login.html</code>, select <strong>Sign Up</strong>.</li>
+<li>Enter your email, password, and confirm password.</li>
+<li>Enter your 8-character activation code.</li>
+<li>Select <strong>Create Account</strong>.</li>
+<li>Optional: Select <strong>Continue with Google</strong> in Sign Up mode. You still need an activation code.</li>
+<li>After signup, go to <code>verify-pending.html</code>.</li>
+<li>Open your verification email and select the link.</li>
+<li>If needed, select <strong>Resend Verification Email</strong>.</li>
+</ol>
+<h3 id="path-b-sign-in-to-an-existing-account">Path B: Sign in to an existing account</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>On <code>login.html</code>, stay in <strong>Login</strong> mode.</li>
+<li>Sign in with <strong>Sign In</strong> (email/password) or <strong>Continue with Google</strong>.</li>
+<li>If you are a Parent or Admin on an invite link, continue invite acceptance.</li>
+<li>If you are a Coach, Admin, or Member with normal sign-in, continue to your dashboard.</li>
+<li>If sign-in fails, go to Path C.</li>
+</ol>
+<h3 id="path-c-reset-a-forgotten-password">Path C: Reset a forgotten password</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>On <code>login.html</code>, enter your account email.</li>
+<li>Select <strong>Forgot Password?</strong>.</li>
+<li>Open the reset email and select the link.</li>
+<li>On <code>reset-password.html</code>, enter and confirm a new password (minimum 6 characters).</li>
+<li>Return to <code>login.html</code> and sign in with the new password.</li>
+</ol>
+<h3 id="path-d-verify-email-or-resend-verification">Path D: Verify email or resend verification</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>On <code>verify-pending.html</code>, select <strong>Resend Verification Email</strong> if needed.</li>
+<li>You can select <strong>Continue to Dashboard</strong> while verification is pending.</li>
+<li>If already signed in, open <code>profile.html</code>.</li>
+<li>If you see <strong>Email not verified</strong>, select <strong>Resend Email</strong>.</li>
+<li>Complete verification from your inbox.</li>
+</ol>
+<h3 id="path-e-set-a-password-after-email-link-sign-in">Path E: Set a password after email-link sign-in</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <code>profile.html</code>.</li>
+<li>If <strong>Set a Password</strong> appears, enter and confirm a password (6+ characters).</li>
+<li>Select <strong>Set Password</strong>.</li>
+<li>Use that password for future logins on <code>login.html</code>.</li>
+</ol>
+<h2 id="common-questions">Common Questions</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Do I need an activation code for my first account?</li>
+</ul>
+<p>Yes. New account creation requires an 8-character activation code.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Can I sign up with Google instead of a password?</li>
+</ul>
+<p>Yes. In Sign Up mode, a valid activation code is still required.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Do I have to verify my email before using the app?</li>
+</ul>
+<p>No. You can continue to dashboard and verify later from <code>profile.html</code>.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Why is <strong>Forgot Password?</strong> not working?</li>
+</ul>
+<p>Enter your email first, then select <strong>Forgot Password?</strong>.</p>
+<h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>No verification or reset email arrived:</li>
+</ul>
+<p>Check spam/junk, confirm your email address, then resend from <code>verify-pending.html</code> or <code>profile.html</code>.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Invalid or expired verification/reset link:</li>
+</ul>
+<p>Start again from <code>login.html</code> and use the newest email.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Password reset fails:</li>
+</ul>
+<p>Make sure both fields match and the password is at least 6 characters.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Too many resend attempts:</li>
+</ul>
+<p>Wait a few minutes, then try again.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Google sign-in is blocked:</li>
+</ul>
+<p>Allow pop-ups or redirects in your browser, then retry. If needed, use email/password.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>No activation code available:</li>
+</ul>
+<p>Ask your coach or admin for a new code or signup link.</p>
+<h2 id="related-workflows">Related Workflows</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><code>join-team</code>: Accept an invite and connect your account to the correct team.</li>
+<li><code>choose-home-dashboard</code>: Confirm the best home dashboard after first login.</li>
+</ul>
+<h2 id="need-more-help">Need More Help</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li>Ask your coach or admin to confirm your assigned email and activation code.</li>
+<li>When reporting an issue, include the page and exact error message.</li>
+<li>If access is still blocked, sign out, return to <code>login.html</code>, and retry the matching path.</li>
+</ul></div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=10';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+
+        if (mobileToc && window.innerWidth < 1024) {
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+        }
+
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = () => {
+          let active = headings[0];
+          for (const h of headings) {
+            if (h.getBoundingClientRect().top <= 140) active = h;
+          }
+          links.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+
+        window.addEventListener('scroll', setActive, { passive: true });
+        setActive();
+      })();
+    </script>
+</body>
+</html>

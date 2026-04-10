@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
   <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Game Day Planner - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -261,9 +262,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=14';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=9';
+        import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=15';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent } from './js/utils.js?v=10';
+        import { checkAuth } from './js/auth.js?v=10';
         import { getTeamAccessInfo } from './js/team-access.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -309,14 +310,38 @@
         let combinedGames = [];
         let plannerInitialized = false;
 
+        function createDefaultGamePlan(sportName = null) {
+            const gamePlanDefaults = {
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
+                formationId: null,
+                lineups: {}
+            };
+
+            const sport = sportName?.toLowerCase();
+            if (sport === 'basketball') {
+                return {
+                    ...gamePlanDefaults,
+                    numPeriods: 4,
+                    periodDuration: 8,
+                    subTimes: [4],
+                    formationId: 'basketball-5v5'
+                };
+            }
+
+            if (sport === 'soccer') {
+                return {
+                    ...gamePlanDefaults,
+                    formationId: 'soccer-9v9'
+                };
+            }
+
+            return gamePlanDefaults;
+        }
+
         // Game plan state
-        let gamePlan = {
-            numPeriods: 2,
-            periodDuration: 25,
-            subTimes: [7, 14, 21],
-            formationId: null,
-            lineups: {} // { 'period-time': { positionId: playerId } }
-        };
+        let gamePlan = createDefaultGamePlan();
 
         let draggedPlayerId = null;
 
@@ -381,7 +406,7 @@
                         try {
                             const calendarEvents = await fetchAndParseCalendar(calendarUrl);
                             calendarEvents.forEach(event => {
-                                if (trackedUids && trackedUids.includes(event.uid)) return;
+                                if (trackedUids && isTrackedCalendarEvent(event, trackedUids)) return;
                                 // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                                 const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
                                     event.summary?.includes('[CANCELED]');
@@ -467,26 +492,14 @@
                 <span class="text-sm text-gray-600">${formatDate(date)} @ ${formatTime(date)}</span>
             `;
 
-            // Load existing game plan if it exists
-            if (game.gamePlan) {
-                gamePlan = { ...gamePlan, ...game.gamePlan };
-            } else {
-                // Set defaults based on team sport
-                if (currentTeam.sport) {
-                    const sport = currentTeam.sport.toLowerCase();
-                    if (sport === 'basketball') {
-                        gamePlan.numPeriods = 4;
-                        gamePlan.periodDuration = 8;
-                        gamePlan.subTimes = [4];
-                        gamePlan.formationId = 'basketball-5v5';
-                    } else if (sport === 'soccer') {
-                        gamePlan.numPeriods = 2;
-                        gamePlan.periodDuration = 25;
-                        gamePlan.subTimes = [7, 14, 21];
-                        gamePlan.formationId = 'soccer-9v9';
-                    }
+            const baseGamePlan = createDefaultGamePlan(currentTeam?.sport);
+            gamePlan = game.gamePlan
+                ? {
+                    ...baseGamePlan,
+                    ...game.gamePlan,
+                    lineups: { ...(game.gamePlan.lineups || {}) }
                 }
-            }
+                : baseGamePlan;
 
             recentAssignments.clear();
             intervalsCache = [];

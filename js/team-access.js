@@ -1,3 +1,17 @@
+function getNormalizedUserEmail(user) {
+  return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+}
+
+export function normalizeAdminEmailList(adminEmails) {
+  return Array.from(
+    new Set(
+      (Array.isArray(adminEmails) ? adminEmails : [])
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+}
+
 /**
  * Check whether a user has full team management access.
  * Full access means owner, team admin email, or platform admin.
@@ -6,8 +20,8 @@ export function hasFullTeamAccess(user, team) {
   if (!user || !team) return false;
 
   const isOwner = team.ownerId === user.uid;
-  const normalizedEmail = (user.email || '').toLowerCase();
-  const adminEmails = (team.adminEmails || []).map((email) => String(email || '').toLowerCase());
+  const normalizedEmail = getNormalizedUserEmail(user);
+  const adminEmails = normalizeAdminEmailList(team.adminEmails);
   const isTeamAdmin = adminEmails.includes(normalizedEmail);
   const isPlatformAdmin = user.isAdmin === true;
 

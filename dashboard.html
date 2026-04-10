@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
   <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>My Teams - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -79,9 +80,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=14';
+        import { getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=15';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
-        import { requireAuth as authRequireAuth } from './js/auth.js?v=9';
+        import { requireAuth as authRequireAuth } from './js/auth.js?v=10';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -90,10 +91,17 @@
                 const user = await authRequireAuth();
 
                 // Load user profile to get isAdmin flag
+                let profile = null;
                 try {
-                    const profile = await getUserProfile(user.uid);
+                    profile = await getUserProfile(user.uid);
                     if (profile && profile.isAdmin) {
                         user.isAdmin = true;
+                    }
+                    if (profile?.email) {
+                        user.profileEmail = profile.email;
+                        if (!user.email) {
+                            user.email = profile.email;
+                        }
                     }
                 } catch (e) {
                     console.error('Error loading user profile:', e);
@@ -102,7 +110,7 @@
                 renderHeader(document.getElementById('header-container'), user);
 
                 const [coachTeams, parentTeams] = await Promise.all([
-                    getUserTeamsWithAccess(user.uid, user.email),
+                    getUserTeamsWithAccess(user.uid, user.email || profile?.email),
                     getParentTeams(user.uid)
                 ]);
 
@@ -267,11 +275,11 @@
                         const buttonEl = e.currentTarget;
                         const teamId = buttonEl.dataset.teamId;
                         const teamName = buttonEl.dataset.teamName;
-                        if (!confirm(`Delete team "${teamName}"? This will remove its schedule, roster, and stats.`)) return;
+                        if (!confirm(`Deactivate team "${teamName}"? Team data will be retained for history.`)) return;
                         const card = buttonEl.closest('[data-team-card]');
                         const originalText = buttonEl.textContent;
                         buttonEl.disabled = true;
-                        buttonEl.textContent = 'Deleting...';
+                        buttonEl.textContent = 'Deactivating...';
                         try {
                             await deleteTeam(teamId);
                             if (card) card.remove();
@@ -293,8 +301,8 @@
                                 `;
                             }
                         } catch (err) {
-                            console.error('Delete team failed', err);
-                            alert('Error deleting team. ' + (err?.message || 'Please try again.'));
+                            console.error('Deactivate team failed', err);
+                            alert('Error deactivating team. ' + (err?.message || 'Please try again.'));
                             buttonEl.disabled = false;
                             buttonEl.textContent = originalText;
                         }

@@ -16,12 +16,35 @@ describe('team access helpers', () => {
     expect(hasFullTeamAccess({ uid: 'u1', email: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
   });
 
+  it('grants full access when stored admin email has surrounding whitespace', () => {
+    expect(hasFullTeamAccess(
+      { uid: 'u1', email: 'admin@example.com' },
+      { ...TEAM, adminEmails: ['  ADMIN@EXAMPLE.COM  '] }
+    )).toBe(true);
+  });
+
+  it('grants full access when profile email matches admin list', () => {
+    expect(hasFullTeamAccess({ uid: 'u1', profileEmail: 'ADMIN@EXAMPLE.COM' }, TEAM)).toBe(true);
+  });
+
   it('grants full access to platform admin', () => {
     expect(hasFullTeamAccess({ uid: 'u2', isAdmin: true }, TEAM)).toBe(true);
   });
 
-  it('does not grant full access from coachOf alone', () => {
+  it('does not grant full access to delegated coach assignment alone', () => {
     expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toBe(false);
+  });
+
+  it('does not grant coach access when team id is missing', () => {
+    expect(hasFullTeamAccess({ uid: 'u3', coachOf: ['team-1'] }, { ownerId: 'owner-1' })).toBe(false);
+  });
+
+  it('returns no access for coach-assigned users without owner/admin privileges', () => {
+    expect(getTeamAccessInfo({ uid: 'u3', coachOf: ['team-1'] }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
+    });
   });
 
   it('returns parent access level for parent-linked users', () => {

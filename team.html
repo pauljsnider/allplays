@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Team Details - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -229,13 +230,15 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=14';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
+        import { computeNativeStandings } from './js/native-standings.js?v=1';
+        import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=9';
-        import { collection, getDocs } from "./js/firebase.js?v=9";
-        import { db } from './js/firebase.js?v=9';
+        import { checkAuth } from './js/auth.js?v=10';
+        import { collection, getDocs } from "./js/firebase.js?v=10";
+        import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
 
         renderFooter(document.getElementById('footer-container'));
@@ -319,6 +322,59 @@
             `;
         }
 
+        function buildNativeStandingsSnapshot(team, dbGames) {
+            const standingsConfig = team?.standingsConfig || {};
+            if (!standingsConfig.enabled) return null;
+
+            const teamName = String(team?.name || '').trim();
+            if (!teamName) return null;
+
+            const leagueGames = (Array.isArray(dbGames) ? dbGames : [])
+                .filter((game) => game?.type !== 'practice')
+                .map((game) => {
+                    const opponent = String(game?.opponent || '').trim();
+                    const isHome = game?.isHome !== false;
+                    return {
+                        homeTeam: isHome ? teamName : opponent,
+                        awayTeam: isHome ? opponent : teamName,
+                        homeScore: game?.homeScore,
+                        awayScore: game?.awayScore,
+                        status: game?.status
+                    };
+                });
+
+            const rows = computeNativeStandings(leagueGames, standingsConfig);
+            const match = rows.find((row) => row.team === teamName) || rows[0] || null;
+
+            return {
+                ok: rows.length > 0,
+                rows,
+                match,
+                config: standingsConfig
+            };
+        }
+
+        function renderNativeStandingsOverviewBody(snapshot) {
+            if (!snapshot || !snapshot.ok || !snapshot.match) {
+                return '<p class="text-sm text-gray-500">No completed games yet for native standings</p>';
+            }
+
+            const row = snapshot.match;
+            const mode = snapshot.config?.rankingMode === 'win_pct' ? 'Win %' : 'Points';
+            const rankLabel = typeof row.rank === 'number' ? `#${row.rank}` : 'N/A';
+
+            return `
+                <div class="mb-2">
+                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
+                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • ${escapeHtml(rankLabel)} • ${escapeHtml(mode)}</div>
+                </div>
+                <div class="text-xs text-gray-500">
+                    PTS ${Number(row.points) || 0} · PCT ${(Number(row.winPct) || 0).toFixed(3)} · PF ${Number(row.pf) || 0} · PA ${Number(row.pa) || 0} · PD ${Number(row.pd) || 0}
+                </div>
+                <div class="text-xs text-gray-400 mt-2">Computed from completed in-app games</div>
+            `;
+        }
+
         function ensureCountdownTimer() {
             if (countdownIntervalId) return;
             countdownIntervalId = setInterval(updateCountdown, 60000);
@@ -338,6 +394,28 @@
         function mapLink(locationText) {
             if (!locationText) return null;
             return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationText)}`;
+        }
+
+        function streamLinkHtml(team) {
+            if (team.twitchChannel) {
+                return `<a class="inline-flex items-center gap-1 text-sm text-purple-600 hover:text-purple-700 font-medium transition" target="_blank" rel="noopener noreferrer" href="https://twitch.tv/${encodeURIComponent(team.twitchChannel)}">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Watch on Twitch
+                </a>`;
+            }
+            const embedUrl = team.streamEmbedUrl || team.youtubeEmbedUrl;
+            if (embedUrl) {
+                const channelMatch = embedUrl.match(/channel=(UC[a-zA-Z0-9_-]{22})/);
+                const videoMatch = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+                const url = channelMatch
+                    ? `https://www.youtube.com/channel/${channelMatch[1]}`
+                    : videoMatch ? `https://www.youtube.com/watch?v=${videoMatch[1]}` : null;
+                if (url) return `<a class="inline-flex items-center gap-1 text-sm text-red-500 hover:text-red-600 font-medium transition" target="_blank" rel="noopener noreferrer" href="${url}">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                    Watch on YouTube
+                </a>`;
+            }
+            return '';
         }
 
         function toDateSafe(value) {
@@ -374,6 +452,59 @@
             const minutes = Math.floor(totalSeconds / 60);
             const seconds = totalSeconds % 60;
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        }
+
+        function renderConfiguredTeamLeaderboards(snapshot, teamId) {
+            if (!snapshot?.topStats?.length) return '';
+
+            return `
+                <div class="bg-white rounded-xl p-6 shadow-md border border-primary-100 lg:col-span-2">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-900">Configured Stat Leaders</h3>
+                            <p class="text-sm text-gray-500">Season rankings generated from your stat tracker configuration.</p>
+                        </div>
+                        <span class="text-xs font-semibold uppercase tracking-wide text-primary-700 bg-primary-50 px-3 py-1 rounded-full">${snapshot.topStats.length} top stat${snapshot.topStats.length === 1 ? '' : 's'}</span>
+                    </div>
+                    <div class="space-y-5">
+                        ${snapshot.groups.map((group) => `
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">${escapeHtml(group.label)}</div>
+                                <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                    ${group.stats.map((stat) => `
+                                        <div class="rounded-xl border border-gray-200 bg-gradient-to-br from-white to-primary-50 p-4">
+                                            <div class="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">${escapeHtml(stat.label)}</div>
+                                                    <div class="mt-2 text-2xl font-bold text-primary-700">${escapeHtml(stat.leader?.formattedValue || '0')}</div>
+                                                </div>
+                                                <div class="text-right text-xs text-gray-500">
+                                                    <div>#1 Leader</div>
+                                                    <div class="mt-1 font-semibold text-gray-700">${escapeHtml(stat.leader?.playerName || 'Player')}</div>
+                                                </div>
+                                            </div>
+                                            <div class="mt-4 space-y-2">
+                                                ${stat.leaders.slice(0, 3).map((entry) => `
+                                                    <a href="player.html#teamId=${encodeURIComponent(teamId)}&playerId=${encodeURIComponent(entry.playerId)}" class="flex items-center justify-between gap-3 rounded-lg bg-white/80 border border-white px-3 py-2 hover:border-primary-200 transition">
+                                                        <div class="flex items-center gap-3">
+                                                            <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-primary-100 text-primary-700 text-xs font-bold">#${entry.rank}</span>
+                                                            <div>
+                                                                <div class="text-sm font-semibold text-gray-900">${escapeHtml(entry.playerName)}</div>
+                                                                <div class="text-xs text-gray-500">No. ${escapeHtml(entry.playerNumber)}</div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="text-sm font-bold text-gray-900">${escapeHtml(entry.formattedValue)}</div>
+                                                    </a>
+                                                `).join('')}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
         }
 
         async function findLatestGameWithPlayingTime(teamId, games, maxLookback = 6) {
@@ -522,6 +653,7 @@
             const upcomingEvents = allEvents
                 .filter(event => {
                     if (event.type === 'db' && event.status === 'completed') return false;
+                    if (event.isCancelled) return false;
                     if (event.isPractice && !showPractices) return false;
                     return event.date > cutoff;
                 })
@@ -572,11 +704,34 @@
             currentTeamId = teamId;
 
             try {
-                const [team, players, dbGames] = await Promise.all([
+                const [team, players, dbGames, configs] = await Promise.all([
                     getTeam(teamId),
                     getPlayers(teamId),
-                    getGames(teamId)
+                    getGames(teamId),
+                    getConfigs(teamId)
                 ]);
+                const seasonStatsByPlayerId = {};
+                const completedGames = dbGames.filter(g => g.status === 'completed');
+                for (const game of completedGames) {
+                    const snap = await getDocs(collection(db, `teams/${teamId}/games/${game.id}/aggregatedStats`));
+                    snap.forEach((docSnap) => {
+                        const stats = docSnap.data()?.stats || {};
+                        if (!seasonStatsByPlayerId[docSnap.id]) {
+                            seasonStatsByPlayerId[docSnap.id] = {};
+                        }
+                        Object.entries(stats).forEach(([stat, value]) => {
+                            seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
+                        });
+                    });
+                }
+                const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || '');
+                const leaderboardSnapshot = analyticsConfig
+                    ? buildPlayerLeaderboardSnapshot({
+                        config: analyticsConfig,
+                        players,
+                        seasonStatsByPlayerId
+                    })
+                    : null;
 
                 teamGames = dbGames;
                 gamesById = {};
@@ -682,6 +837,7 @@
                                     </a>`
                         : ''
                     }
+                                ${streamLinkHtml(team)}
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
                         </div>
@@ -692,9 +848,12 @@
                 const totalGames = seasonMeta.totalGames;
                 const winPercentage = seasonMeta.winPercentage;
                 const record = seasonMeta.record;
-                const leagueSnapshot = team.leagueUrl
-                    ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
-                    : { ok: false, reason: 'missing-url', rows: [], match: null };
+                const nativeStandingsSnapshot = buildNativeStandingsSnapshot(team, dbGames);
+                const leagueSnapshot = (nativeStandingsSnapshot && nativeStandingsSnapshot.ok)
+                    ? null
+                    : (team.leagueUrl
+                        ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
+                        : { ok: false, reason: 'missing-url', rows: [], match: null });
 
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
@@ -761,7 +920,9 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-5m3 5V7m3 10v-3m4 8H5a2 2 0 01-2-2V4a2 2 0 012-2h14a2 2 0 012 2v16a2 2 0 01-2 2z"></path>
                             </svg>
                         </div>
-                        ${renderLeagueOverviewBody(leagueSnapshot, team)}
+                        ${(nativeStandingsSnapshot && nativeStandingsSnapshot.ok)
+                            ? renderNativeStandingsOverviewBody(nativeStandingsSnapshot)
+                            : renderLeagueOverviewBody(leagueSnapshot, team)}
                     </div>
                 `;
 
@@ -783,7 +944,6 @@
 
                 // Render Team Advanced Stats
                 const teamAdvancedStatsDiv = document.getElementById('team-advanced-stats');
-                const completedGames = dbGames.filter(g => g.status === 'completed');
                 if (completedGames.length >= 3) {
                     // Calculate win/loss trend (recent vs earlier)
                     const sortedGames = [...completedGames].sort((a, b) => {
@@ -940,6 +1100,15 @@
                     `;
                 }
 
+                if (leaderboardSnapshot?.topStats?.length) {
+                    teamAdvancedStatsDiv.innerHTML = `
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            ${renderConfiguredTeamLeaderboards(leaderboardSnapshot, teamId)}
+                        </div>
+                        ${teamAdvancedStatsDiv.innerHTML}
+                    `;
+                }
+
                 // Render Roster
                 const rosterBody = document.getElementById('roster-list');
                 if (players.length === 0) {
@@ -992,7 +1161,7 @@
                         const calendarEvents = await fetchAndParseCalendar(calendarUrl);
 
                         calendarEvents.forEach(event => {
-                            if (trackedUids.includes(event.uid)) return;
+                            if (isTrackedCalendarEvent(event, trackedUids)) return;
 
                             // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                             const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
@@ -1031,15 +1200,25 @@
                 const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
                 const id = game.id || game.gameId;
                 const isPractice = game.type === 'practice';
+                const isCancelled = String(game.status || '').toLowerCase() === 'cancelled';
                 allEvents.push({
                     type: 'db',
+                    id,
+                    gameId: id,
                     date: gameDate,
                     opponent: game.opponent,
                     location: game.location || 'TBD',
                     status: game.status,
+                    liveStatus: game.liveStatus,
                     homeScore: game.homeScore,
                     awayScore: game.awayScore,
-                    gameId: id,
+                    isHome: game.isHome,
+                    kitColor: game.kitColor,
+                    arrivalTime: game.arrivalTime,
+                    notes: game.notes,
+                    assignments: game.assignments,
+                    rsvpSummary: game.rsvpSummary,
+                    isCancelled,
                     isPractice
                 });
             });
@@ -1056,8 +1235,9 @@
         function getFilteredScheduleEvents() {
             const now = new Date();
             const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
             const events = (allScheduleEvents || []).filter((event) => {
-                if (!showPractices && event.isPractice) return false;
+                if (!showPractices && event.isPractice && !forcePracticeVisibility) return false;
                 return true;
             });
 
@@ -1343,28 +1523,35 @@
 
         function renderDbGame(game) {
             const isPractice = !!game.isPractice;
-            const isCompleted = game.status === 'completed' && !isPractice;
-            const isLive = game.liveStatus === 'live';
+            const normalizedStatus = String(game.status || '').toLowerCase();
+            const normalizedLiveStatus = String(game.liveStatus || '').toLowerCase();
+            const isCancelled = normalizedStatus === 'cancelled';
+            const isCompleted = normalizedStatus === 'completed' && !isPractice;
+            const isLive = normalizedLiveStatus === 'live' && !isCancelled;
             const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-            const isUpcoming = !isCompleted && gameDate > new Date();
+            const isUpcoming = !isCancelled && !isCompleted && gameDate > new Date();
             const won = isCompleted && game.homeScore > game.awayScore;
             const lost = isCompleted && game.homeScore < game.awayScore;
             const tied = isCompleted && game.homeScore === game.awayScore;
+            const borderAccentClass = isCancelled
+                ? 'border-gray-400'
+                : (won ? 'border-green-500' : (lost ? 'border-red-500' : (tied ? 'border-yellow-500' : 'border-primary-500')));
 
             return `
-                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${won ? 'border-green-500' : (lost ? 'border-red-500' : (tied ? 'border-yellow-500' : 'border-primary-500'))
-                } overflow-hidden border border-gray-200">
+                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${borderAccentClass} overflow-hidden border border-gray-200">
                     <div class="p-5">
                         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
                             <div class="flex-grow">
                                 <div class="flex flex-wrap items-center gap-2 mb-2">
-                                    ${isCompleted
-                    ? `<span class="text-xs ${won ? 'bg-green-100 text-green-800' : (lost ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800')} px-2.5 py-0.5 rounded-full font-semibold">
+                                    ${isCancelled
+                    ? '<span class="text-xs bg-red-100 text-red-800 px-2.5 py-0.5 rounded-full font-semibold">Cancelled</span>'
+                    : (isCompleted
+                        ? `<span class="text-xs ${won ? 'bg-green-100 text-green-800' : (lost ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800')} px-2.5 py-0.5 rounded-full font-semibold">
                                             ${won ? 'W' : (lost ? 'L' : 'T')}
                                           </span>`
-                    : (isUpcoming
-                        ? `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
-                        : `<span class="text-xs bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full font-semibold">Not Tracked</span>`)
+                        : (isUpcoming
+                            ? `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
+                            : `<span class="text-xs bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full font-semibold">Not Tracked</span>`))
                 }
                                     ${isLive ? `
                                         <span class="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-semibold">
@@ -1388,7 +1575,7 @@
                                     ${game.isHome === true ? '<span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
                                     ${game.isHome === false ? '<span class="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
                                     ${game.kitColor ? `<span class="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
-                                    ${game.status === 'cancelled' ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-semibold">CANCELLED</span>' : ''}
+                                    ${isCancelled ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-semibold">CANCELLED</span>' : ''}
                                 </div>
                                 ${game.arrivalTime ? `<div class="text-xs text-amber-600 mt-1">Arrive by ${formatTime(game.arrivalTime)}</div>` : ''}
                                 ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
