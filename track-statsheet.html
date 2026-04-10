@@ -207,6 +207,7 @@
     import { checkAuth } from './js/auth.js?v=10';
     import { renderTeamAdminBanner } from './js/team-admin-banner.js';
     import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=3';
+    import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=1';
     import { getApp } from './js/vendor/firebase-app.js';
     import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -726,27 +727,11 @@ RETURN JSON:
       const applyBtn = document.getElementById('apply-btn');
       applyStatus.textContent = '';
 
-      const includedHome = homeRows.filter(r => r.include);
       const includedVisitor = visitorRows.filter(r => r.include);
-
-      if (!includedHome.length) {
-        alert('Please include at least one home player.');
+      const validation = validateTrackStatsheetApplyRows(homeRows);
+      if (!validation.ok) {
+        alert(validation.alertMessage);
         return;
-      }
-
-      const unmatched = includedHome.filter(r => !r.mappedPlayerId);
-      if (unmatched.length) {
-        alert('Please map every included home row to a roster player or uncheck it.');
-        return;
-      }
-
-      const duplicateCheck = new Set();
-      for (const row of includedHome) {
-        if (duplicateCheck.has(row.mappedPlayerId)) {
-          alert('A roster player is selected more than once. Please fix duplicates.');
-          return;
-        }
-        duplicateCheck.add(row.mappedPlayerId);
       }
 
       try {
@@ -765,8 +750,6 @@ RETURN JSON:
 
         const homeScore = Number(document.getElementById('home-score-input').value || 0);
         const visitorScore = Number(document.getElementById('visitor-score-input').value || 0);
-        const pointsKey = getPointsKey();
-        const configColumns = (currentConfig?.columns || []).map(col => col.toLowerCase());
 
         applyStatus.textContent = 'Checking existing game data…';
         const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
@@ -782,48 +765,24 @@ RETURN JSON:
           await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
         }
 
-        const batch = writeBatch(db);
-        includedHome.forEach(row => {
-          const player = roster.find(p => p.id === row.mappedPlayerId);
-          if (!player) return;
-          const statsObj = {};
-          configColumns.forEach(col => {
-            statsObj[col] = 0;
-          });
-          statsObj[pointsKey] = row.totalPoints || 0;
-          statsObj.fouls = row.fouls || 0;
-          const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, player.id);
-          batch.set(statsRef, {
-            playerName: player.name,
-            playerNumber: player.number,
-            stats: statsObj
-          });
+        const applyPlan = buildTrackStatsheetApplyPlan({
+          includedHome: validation.includedHome,
+          includedVisitor,
+          roster,
+          columns: currentConfig?.columns || [],
+          homeScore,
+          awayScore: visitorScore,
+          statSheetPhotoUrl: statSheetUrl
         });
 
-        const opponentStats = {};
-        includedVisitor.forEach((row, index) => {
-          const oppId = `statsheet_${index + 1}`;
-          opponentStats[oppId] = {
-            name: row.name || '',
-            number: row.number || '',
-            fouls: row.fouls || 0
-          };
-          opponentStats[oppId][pointsKey] = row.totalPoints || 0;
-          configColumns.forEach(col => {
-            if (opponentStats[oppId][col] === undefined) {
-              opponentStats[oppId][col] = 0;
-            }
-          });
+        const batch = writeBatch(db);
+        applyPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
+          const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+          batch.set(statsRef, data);
         });
 
         const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
-        batch.update(gameRef, {
-          homeScore,
-          awayScore: visitorScore,
-          opponentStats,
-          status: 'completed',
-          statSheetPhotoUrl: statSheetUrl || null
-        });
+        batch.update(gameRef, applyPlan.gameUpdate);
 
         applyStatus.textContent = 'Saving stats…';
         const commitPromise = batch.commit();
@@ -831,6 +790,10 @@ RETURN JSON:
           setTimeout(() => reject(new Error('Save timed out. Please try again.')), 30000);
         });
         await Promise.race([commitPromise, commitTimeout]);
+        currentGame = {
+          ...currentGame,
+          ...applyPlan.gameUpdate
+        };
         applyStatus.textContent = 'Stats saved! Now you can add a game summary.';
 
         // Show summary section instead of redirecting
@@ -938,6 +901,7 @@ Write the match report now:`;
 
     // Cancel/Close preview buttons
     const hideSummaryPreview = () => {
+      generatedSummary = '';
       document.getElementById('summary-preview').classList.add('hidden');
       document.getElementById('summary-status').textContent = '';
     };
@@ -949,7 +913,7 @@ Write the match report now:`;
     document.getElementById('save-continue-btn').addEventListener('click', async () => {
       const saveBtn = document.getElementById('save-continue-btn');
       const status = document.getElementById('summary-status');
-      const summaryText = document.getElementById('summary-notes').value.trim() || generatedSummary.trim();
+      const summaryText = document.getElementById('summary-notes').value.trim();
 
       saveBtn.disabled = true;
 

@@ -192,6 +192,58 @@ export function renderViewerLineupSections({
   };
 }
 
+export function resolveOpponentStatColumns(statColumns = [], opponentStats = {}) {
+  const columns = normalizeLiveStatColumns(statColumns);
+  const hasFoulAlias = columns.some((column) => statKeyMap[column] === 'fouls');
+  const hasOpponentEntries = Object.keys(opponentStats || {}).length > 0;
+
+  if (!hasFoulAlias && hasOpponentEntries) {
+    return [...columns, 'FLS'];
+  }
+
+  return columns;
+}
+
+export function renderOpponentStatsCards({
+  opponentStats = {},
+  statColumns = [],
+  lastStatChange = null
+} = {}) {
+  const oppEntries = Object.entries(opponentStats || {});
+  if (!oppEntries.length) {
+    return '<div class="text-sand/40 text-xs">No opponent stats yet</div>';
+  }
+
+  const columns = resolveOpponentStatColumns(statColumns, opponentStats);
+  return oppEntries.map(([id, player]) => {
+    const highlight = lastStatChange?.isOpponent && lastStatChange?.playerId === id;
+    const nameClass = highlight ? 'text-coral' : 'text-sand';
+    const statClass = highlight ? 'text-coral' : 'text-sand';
+    const statItems = columns.map((column) => {
+      const key = statKeyMap[column] || column.toLowerCase();
+      const value = player?.[key] || 0;
+      return `<span class="${statClass}">${value} ${escapeHtml(column)}</span>`;
+    }).join('');
+    const initial = escapeHtml((player?.name || 'O')[0]);
+    const avatar = player?.photoUrl
+      ? `<img src="${escapeHtml(player.photoUrl)}" class="w-6 h-6 rounded-full object-cover" alt="">`
+      : `<div class="w-6 h-6 rounded-full bg-coral/20 text-coral text-[10px] flex items-center justify-center">${initial}</div>`;
+
+    return `
+      <div class="bg-slate/50 rounded-lg px-3 py-2">
+        <div class="flex items-center gap-2 min-w-0">
+          ${avatar}
+          <span class="text-coral font-mono text-xs">#${escapeHtml(player?.number || '')}</span>
+          <span class="${nameClass} text-xs truncate">${escapeHtml(player?.name || 'Opponent')}</span>
+        </div>
+        <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
+          ${statItems}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
 export function applyResetEventState(currentState, event) {
   const period = event?.period || currentState?.period || getDefaultLivePeriod({
     sport: event?.sport || currentState?.sport,
@@ -354,7 +406,6 @@ export function isLiveEventVisibleForResetBoundary(event = {}, resetBoundaryMs =
   if (!Number.isFinite(eventMs)) return true;
   return eventMs >= resetBoundaryMs;
 }
-
 function getLiveEventTimestampMs(event = {}) {
   const createdAt = event?.createdAt;
   if (typeof createdAt === 'number') return createdAt;

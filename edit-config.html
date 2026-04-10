@@ -110,7 +110,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getConfigs, createConfig, deleteConfig, getUnreadChatCount } from './js/db.js?v=15';
+        import { getTeam, getConfigs, createConfig, deleteConfig, getUnreadChatCount } from './js/db.js?v=16';
         import { parseAdvancedStatDefinitions } from './js/stat-leaderboards.js?v=1';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=10';
@@ -212,8 +212,13 @@
             document.querySelectorAll('.delete-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     if (confirm('Are you sure you want to delete this config?')) {
-                        await deleteConfig(currentTeamId, e.target.dataset.id);
-                        loadConfigs();
+                        try {
+                            await deleteConfig(currentTeamId, e.target.dataset.id);
+                            loadConfigs();
+                        } catch (error) {
+                            console.error(error);
+                            alert(error?.message || 'Error deleting config.');
+                        }
                     }
                 });
             });

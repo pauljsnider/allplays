@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createLoginRedirectCoordinator } from '../../js/login-page.js';
+import { createLoginRedirectCoordinator, createLoginAuthStateManager } from '../../js/login-page.js';
 
 function createCoordinator({
     search = '?code=ab12cd34&type=parent',
@@ -78,5 +78,41 @@ describe('login page redirect coordination', () => {
         const { coordinator } = createCoordinator({ search: '?code=ab12cd34&type=admin', defaultRedirect: 'dashboard.html' });
 
         expect(coordinator.getAutoRedirectUrl({ isAdmin: true })).toBe('accept-invite.html?code=AB12CD34');
+    });
+});
+
+describe('login page auth state manager', () => {
+    it('replays a pending authenticated user after redirect processing finishes', () => {
+        const authState = createLoginAuthStateManager();
+        const user = { uid: 'user-1' };
+
+        authState.beginProcessing();
+
+        expect(authState.captureAuthenticatedUser(user)).toBe(false);
+        expect(authState.consumePendingRedirectUser()).toBe(null);
+
+        authState.finishProcessing();
+
+        expect(authState.consumePendingRedirectUser()).toBe(user);
+        expect(authState.consumePendingRedirectUser()).toBe(null);
+    });
+
+    it('allows immediate redirect when auth processing is not active', () => {
+        const authState = createLoginAuthStateManager();
+
+        expect(authState.captureAuthenticatedUser({ uid: 'user-2' })).toBe(true);
+        expect(authState.consumePendingRedirectUser()).toBe(null);
+    });
+
+    it('clears a buffered user when auth later becomes unauthenticated during processing', () => {
+        const authState = createLoginAuthStateManager();
+
+        authState.beginProcessing();
+        expect(authState.captureAuthenticatedUser({ uid: 'user-3' })).toBe(false);
+        expect(authState.captureAuthenticatedUser(null)).toBe(false);
+
+        authState.finishProcessing();
+
+        expect(authState.consumePendingRedirectUser()).toBe(null);
     });
 });

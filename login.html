@@ -100,23 +100,39 @@
         import { getUserProfile } from './js/db.js?v=15';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=1';
-        import { createForgotPasswordHandler, createLoginRedirectCoordinator } from './js/login-page.js?v=2';
+        import * as loginPageModule from './js/login-page.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
         let isLogin = true;
-        let isProcessingAuth = false; // Flag to prevent auto-redirect during login/signup
 
-        const redirectCoordinator = createLoginRedirectCoordinator({
+        const createLoginAuthStateManager = loginPageModule.createLoginAuthStateManager || function createFallbackLoginAuthStateManager() {
+            return {
+                beginProcessing() {},
+                finishProcessing() {},
+                captureAuthenticatedUser(user) {
+                    return Boolean(user);
+                },
+                consumePendingRedirectUser() {
+                    return null;
+                }
+            };
+        };
+        const redirectCoordinator = loginPageModule.createLoginRedirectCoordinator({
             getRedirectUrl,
             getPostAuthRedirectUrl
         });
+        const authState = createLoginAuthStateManager();
         const { urlCodeParam, shouldRedeemInviteFromLogin } = redirectCoordinator;
+
+        function redirectAuthenticatedUser(user) {
+            window.location.href = redirectCoordinator.getAutoRedirectUrl(user);
+        }
 
         // Handle Google redirect result on page load
         (async () => {
             // Block checkAuth auto-redirect until we finish validating redirect result
-            isProcessingAuth = true;
+            authState.beginProcessing();
             console.log('[Login Page] Starting Google redirect result check');
 
             const errorDiv = document.getElementById('error-message');
@@ -146,7 +162,12 @@
             } finally {
                 // Always clear the processing flag so checkAuth can work normally
                 console.log('[Login Page] Clearing isProcessingAuth flag');
-                isProcessingAuth = false;
+                authState.finishProcessing();
+
+                const pendingUser = authState.consumePendingRedirectUser();
+                if (pendingUser) {
+                    redirectAuthenticatedUser(pendingUser);
+                }
             }
         })();
 
@@ -190,9 +211,8 @@
         }
 
         checkAuth((user) => {
-            // Only auto-redirect if not currently processing login/signup
-            if (user && !isProcessingAuth) {
-                window.location.href = redirectCoordinator.getAutoRedirectUrl(user);
+            if (authState.captureAuthenticatedUser(user)) {
+                redirectAuthenticatedUser(user);
             }
             renderHeader(document.getElementById('header-container'), user);
         });
@@ -237,7 +257,7 @@
             const password = document.getElementById('password').value;
             const errorDiv = document.getElementById('error-message');
 
-            isProcessingAuth = true; // Prevent auto-redirect during process
+            authState.beginProcessing(); // Prevent auto-redirect during process
 
             try {
                 if (isLogin) {
@@ -263,7 +283,7 @@
                     return;
                 }
             } catch (error) {
-                isProcessingAuth = false; // Reset flag on error
+                authState.finishProcessing(); // Reset flag on error
                 errorDiv.textContent = error.message; // Show actual error
                 errorDiv.classList.remove('hidden');
                 console.error(error);
@@ -305,7 +325,7 @@
             }
         });
 
-        document.getElementById('forgot-password-btn').addEventListener('click', createForgotPasswordHandler({
+        document.getElementById('forgot-password-btn').addEventListener('click', loginPageModule.createForgotPasswordHandler({
             emailInput: document.getElementById('email'),
             errorDiv: document.getElementById('error-message'),
             resetPassword

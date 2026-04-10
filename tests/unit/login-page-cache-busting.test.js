@@ -7,7 +7,7 @@ describe('login page cache busting', () => {
         const source = readFileSync(resolve(process.cwd(), 'login.html'), 'utf8');
 
         expect(source).toContain(
-            "import { createForgotPasswordHandler, createLoginRedirectCoordinator } from './js/login-page.js?v=2';"
+            "import * as loginPageModule from './js/login-page.js?v=2';"
         );
     });
 });

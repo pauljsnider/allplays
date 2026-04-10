@@ -30,7 +30,7 @@ import {
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
@@ -701,34 +701,11 @@ function renderPlayByPlay(event, isNew = false) {
 
 function renderStats() {
   if (!els.opponentStats) return;
-  const oppEntries = Object.entries(state.opponentStats || {});
-  const columns = normalizeLiveStatColumns(state.statColumns);
-  els.opponentStats.innerHTML = oppEntries.map(([id, player]) => {
-    const highlight = state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id;
-    const nameClass = highlight ? 'text-coral' : 'text-sand';
-    const statClass = highlight ? 'text-coral' : 'text-sand';
-    const statItems = columns.map(col => {
-      const key = statKeyMap[col] || col.toLowerCase();
-      const val = player[key] || 0;
-      return `<span class="${statClass}">${val} ${escapeHtml(col)}</span>`;
-    }).join('');
-    const initial = escapeHtml((player.name || 'O')[0]);
-    const avatar = player.photoUrl
-      ? `<img src="${escapeHtml(player.photoUrl)}" class="w-6 h-6 rounded-full object-cover" alt="">`
-      : `<div class="w-6 h-6 rounded-full bg-coral/20 text-coral text-[10px] flex items-center justify-center">${initial}</div>`;
-    return `
-      <div class="bg-slate/50 rounded-lg px-3 py-2">
-        <div class="flex items-center gap-2 min-w-0">
-          ${avatar}
-          <span class="text-coral font-mono text-xs">#${escapeHtml(player.number || '')}</span>
-          <span class="${nameClass} text-xs truncate">${escapeHtml(player.name || 'Opponent')}</span>
-        </div>
-        <div class="mt-2 flex flex-wrap gap-2 text-[11px] text-sand/70">
-          ${statItems}
-        </div>
-      </div>
-    `;
-  }).join('') || '<div class="text-sand/40 text-xs">No opponent stats yet</div>';
+  els.opponentStats.innerHTML = renderOpponentStatsCards({
+    opponentStats: state.opponentStats,
+    statColumns: state.statColumns,
+    lastStatChange: state.lastStatChange
+  });
 }
 
 function renderLineup() {
