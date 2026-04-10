@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
   <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Game Day Planner - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -262,7 +263,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=14';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { getTeamAccessInfo } from './js/team-access.js';
 
@@ -381,7 +382,7 @@
                         try {
                             const calendarEvents = await fetchAndParseCalendar(calendarUrl);
                             calendarEvents.forEach(event => {
-                                if (trackedUids && trackedUids.includes(event.uid)) return;
+                                if (trackedUids && isTrackedCalendarEvent(event, trackedUids)) return;
                                 // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
                                 const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
                                     event.summary?.includes('[CANCELED]');

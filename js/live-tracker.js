@@ -1,8 +1,8 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=14';
 import { db } from './firebase.js?v=9';
-import { getUrlParams, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=9';
+import { getUrlParams, escapeHtml } from './utils.js?v=9';
+import { checkAuth } from './auth.js?v=10';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=9';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -10,7 +10,12 @@ import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLi
 import { canApplySubstitution, applySubstitution, canTrustScoreLogForFinalization, reconcileFinalScoreFromLog, acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=1';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { deriveResumeClockState } from './live-tracker-resume.js?v=2';
+import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
+import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
+import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
+import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
+import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -37,7 +42,7 @@ function statDefaults(columns) {
 }
 
 let state = {
-  period: 'Q1',
+  period: getDefaultLivePeriod(),
   clock: 0,
   running: false,
   lastTick: null,
@@ -66,6 +71,8 @@ let liveState = {
   chatExpanded: false,
   unreadChatCount: 0,
   lastChatSeenAt: Date.now(),
+  lastChatSnapshotAt: Date.now(),
+  lastChatSnapshotIds: [],
   chatInitialized: false,
   eventQueue: [],
   retryAttempt: 0,
@@ -844,6 +851,23 @@ function undo() {
   }
 }
 
+async function syncClockToGameDoc() {
+  if (!currentTeamId || !currentGameId) return;
+
+  const updates = {
+    liveClockMs: state.clock,
+    liveClockRunning: state.running,
+    liveClockPeriod: state.period,
+    liveClockUpdatedAt: Date.now()
+  };
+
+  try {
+    await updateGame(currentTeamId, currentGameId, updates);
+  } catch (error) {
+    console.warn('Failed to sync live clock to game doc:', error);
+  }
+}
+
 function renderAll() {
   renderHeader();
   renderLineup();
@@ -974,6 +998,22 @@ async function broadcastEvent(eventData) {
   }
 }
 
+async function broadcastResetEvent(description = 'Tracker reset. Live viewer state cleared.') {
+  if (!currentTeamId || !currentGameId) return;
+  await broadcastEvent(buildLiveResetEvent({
+    period: state.period || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig }),
+    gameClockMs: 0,
+    homeScore: 0,
+    awayScore: 0,
+    onCourt: state.onCourt || [],
+    bench: state.bench || roster.map((player) => player.id),
+    sport: currentTeam?.sport || currentGame?.sport || currentConfig?.baseType || '',
+    periods: currentConfig?.periods || null,
+    createdBy: currentUser?.uid || null,
+    description
+  }));
+}
+
 function scheduleRetry() {
   if (liveState.retryTimeout) return;
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
@@ -1077,30 +1117,28 @@ function renderChatMessages(messages) {
 }
 
 function updateUnread(messages) {
-  if (!messages || !messages.length) return;
-  if (!liveState.chatInitialized) {
-    liveState.chatInitialized = true;
-    liveState.lastChatSeenAt = Date.now();
-    liveState.unreadChatCount = 0;
-    updateUnreadBadge();
-    return;
-  }
-
-  if (liveState.chatExpanded) {
-    liveState.lastChatSeenAt = Date.now();
-    liveState.unreadChatCount = 0;
-    updateUnreadBadge();
-    return;
-  }
-
-  let newlyUnread = 0;
-  messages.forEach(msg => {
-    const ts = msg.createdAt?.toMillis ? msg.createdAt.toMillis() : null;
-    if (!ts || ts > liveState.lastChatSeenAt) newlyUnread += 1;
+  const next = advanceLiveChatUnreadState({
+    messages,
+    chatInitialized: liveState.chatInitialized,
+    chatExpanded: liveState.chatExpanded,
+    unreadChatCount: liveState.unreadChatCount,
+    lastChatSeenAt: liveState.lastChatSeenAt,
+    lastChatSnapshotAt: liveState.lastChatSnapshotAt,
+    lastChatSnapshotIds: liveState.lastChatSnapshotIds
   });
+  const shouldRefreshBadge =
+    next.unreadChatCount !== liveState.unreadChatCount ||
+    next.chatInitialized !== liveState.chatInitialized ||
+    next.lastChatSeenAt !== liveState.lastChatSeenAt ||
+    next.lastChatSnapshotAt !== liveState.lastChatSnapshotAt;
 
-  if (newlyUnread > 0) {
-    liveState.unreadChatCount += newlyUnread;
+  liveState.chatInitialized = next.chatInitialized;
+  liveState.unreadChatCount = next.unreadChatCount;
+  liveState.lastChatSeenAt = next.lastChatSeenAt;
+  liveState.lastChatSnapshotAt = next.lastChatSnapshotAt;
+  liveState.lastChatSnapshotIds = next.lastChatSnapshotIds;
+
+  if (shouldRefreshBadge) {
     updateUnreadBadge();
   }
 }
@@ -1139,6 +1177,8 @@ function toggleChat() {
   }
   if (liveState.chatExpanded) {
     liveState.lastChatSeenAt = Date.now();
+    liveState.lastChatSnapshotAt = liveState.lastChatSeenAt;
+    liveState.lastChatSnapshotIds = [];
     liveState.unreadChatCount = 0;
     updateUnreadBadge();
   }
@@ -1178,6 +1218,7 @@ async function startLiveBroadcast() {
   } catch (error) {
     console.warn('Failed to set live status:', error);
   }
+  syncClockToGameDoc();
   scheduleScoreSync();
   initChat();
   initViewerCount();
@@ -1535,6 +1576,7 @@ async function startStop() {
       type: 'clock_pause',
       description: 'Game paused'
     }));
+    syncClockToGameDoc();
   } else {
     // If no local activity yet, check for existing tracked data and offer to clear
     const hasLocalActivity = state.clock > 0 || state.home > 0 || state.away > 0 || (state.log && state.log.length > 0);
@@ -1547,6 +1589,8 @@ async function startStop() {
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
+        const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));
+        await Promise.all(liveEventsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
         await updateGame(currentTeamId, currentGameId, { 
           homeScore: 0, 
@@ -1558,6 +1602,12 @@ async function startStop() {
           opponentTeamName: currentGame.opponentTeamName,
           opponentTeamPhoto: currentGame.opponentTeamPhoto
         });
+        currentGame.liveStatus = 'scheduled';
+        currentGame.liveHasData = false;
+        currentGame.homeScore = 0;
+        currentGame.awayScore = 0;
+        currentGame.opponentStats = {};
+        await broadcastResetEvent('Tracker reset before restart. Live viewer state cleared.');
       }
     }
 
@@ -1599,6 +1649,7 @@ function tick() {
       type: 'clock_sync',
       description: 'Clock sync'
     }));
+    syncClockToGameDoc();
   }
 }
 
@@ -1639,6 +1690,16 @@ function setPeriod(p) {
   }
 
   renderHeader();
+}
+
+function applyPeriodButtons() {
+  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig }).slice(0, 5);
+  const fallbackLabel = labels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+  document.querySelectorAll('.period-btn').forEach((button, index) => {
+    const label = labels[index] || fallbackLabel;
+    button.dataset.period = label;
+    button.textContent = label;
+  });
 }
 
 function addStat(id, key, delta) {
@@ -2320,20 +2381,28 @@ async function init() {
       photoUrl: p.photoUrl || p.photo || ''
     }));
 
-    if (game.statTrackerConfigId) {
-      const configs = await getConfigs(teamId);
-      currentConfig = configs.find(c => c.id === game.statTrackerConfigId) || null;
-    }
+    const configs = await getConfigs(teamId);
+    currentConfig = resolveLiveStatConfig({
+      configs,
+      game,
+      team
+    });
+    const resolvedColumns = resolveLiveStatColumns({
+      configs,
+      game,
+      team
+    });
+
     if (!currentConfig) {
       currentConfig = {
         name: 'Default',
-        baseType: 'Basketball',
-        columns: ['PTS', 'REB', 'AST', 'STL', 'TO']
+        baseType: team?.sport || 'Basketball',
+        columns: resolvedColumns
       };
     }
 
     // Reset base state
-    state.period = 'Q1';
+    state.period = getDefaultLivePeriod({ game, team, config: currentConfig });
     state.clock = 0;
     state.running = false;
     state.lastTick = null;
@@ -2356,6 +2425,7 @@ async function init() {
     state.activeVoiceRecognition = null;
     setVoiceNoteButtonLabel(false);
     setVoiceNoteHint(false);
+    applyPeriodButtons();
 
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
@@ -2370,21 +2440,11 @@ async function init() {
       }
 
       if (!shouldResume) {
-        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
+        const [eventsSnapshot, statsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats')
         ]);
-        const deletions = [
-          ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...statsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...liveEventsSnapshot.docs.map(d => deleteDoc(d.ref))
-        ];
-        const results = await Promise.allSettled(deletions);
-        const failedDeletes = results.filter(r => r.status === 'rejected');
-        if (failedDeletes.length) {
-          console.warn('Some live data could not be deleted:', failedDeletes);
-        }
+        const resetAt = Date.now();
         try {
           await updateGame(teamId, gameId, {
             homeScore: 0,
@@ -2392,6 +2452,11 @@ async function init() {
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
+            liveResetAt: resetAt,
+            liveClockMs: 0,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q1',
+            liveClockUpdatedAt: resetAt,
             liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
             // Preserve opponent fields
             opponent: game.opponent,
@@ -2404,18 +2469,46 @@ async function init() {
         } catch (error) {
           console.warn('Failed to reset game metadata:', error);
         }
+        currentGame.liveClockMs = 0;
+        currentGame.liveClockRunning = false;
+        currentGame.liveClockPeriod = 'Q1';
+        currentGame.liveClockUpdatedAt = resetAt;
+        const deletions = [
+          ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
+          ...statsSnapshot.docs.map(d => deleteDoc(d.ref))
+        ];
+        const results = await Promise.allSettled(deletions);
+        const failedDeletes = results.filter(r => r.status === 'rejected');
+        if (failedDeletes.length) {
+          console.warn('Some live data could not be deleted:', failedDeletes);
+        }
         state.home = 0;
         state.away = 0;
+        await broadcastResetEvent('Tracker restarted from zero. Live viewer state cleared.');
       }
 
       if (shouldResume) {
+        const restoredLineup = restoreLiveLineup({
+          liveLineup: game.liveLineup,
+          roster
+        });
+        state.onCourt = restoredLineup.onCourt;
+        state.bench = restoredLineup.bench;
+
         const statsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats');
         const hasAggregatedStats = statsSnapshot.size > 0;
         const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
         const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
-        const resumeClockState = deriveResumeClockState(liveEvents, { period: state.period, clock: state.clock });
+        const resumeClockState = deriveResumeClockState(
+          liveEvents,
+          { period: state.period, clock: state.clock },
+          {
+            liveClockPeriod: currentGame?.liveClockPeriod,
+            liveClockMs: currentGame?.liveClockMs
+          }
+        );
         if (resumeClockState.restored) {
           state.period = resumeClockState.period;
           state.clock = resumeClockState.clock;

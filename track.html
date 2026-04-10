@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Track Game - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -277,6 +278,7 @@
         import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=9';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
+        import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { getApp } from './js/vendor/firebase-app.js';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
@@ -1169,6 +1171,15 @@ Write the match report now:`;
         const finishBtn = document.getElementById('finish-btn');
         const cancelBtn = document.getElementById('cancel-finish');
         const finishForm = document.getElementById('finish-form');
+        const aiSummaryButton = document.getElementById('generateAISummary');
+        const aiSummaryLoading = document.getElementById('aiSummaryLoading');
+        const aiSummaryEnabled = isAISummaryEnabled();
+
+        applyAISummaryAvailability({
+            button: aiSummaryButton,
+            loadingDiv: aiSummaryLoading,
+            enabled: aiSummaryEnabled
+        });
 
         finishBtn.addEventListener('click', () => {
             document.getElementById('finalHomeScore').value = homeScore;
@@ -1187,7 +1198,9 @@ Write the match report now:`;
         document.getElementById('gameSummary').addEventListener('input', updateEmailPreview);
 
         // AI Summary button
-        document.getElementById('generateAISummary').addEventListener('click', generateAIMatchReport);
+        if (aiSummaryEnabled) {
+            document.getElementById('generateAISummary').addEventListener('click', generateAIMatchReport);
+        }
 
         function updateEmailPreview() {
             const finalHome = parseInt(document.getElementById('finalHomeScore').value) || 0;

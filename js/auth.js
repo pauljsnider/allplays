@@ -15,9 +15,10 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=9';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail } from './db.js?v=14';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=1';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=2';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, addTeamAdminEmail, listMyParentMembershipRequests } from './db.js?v=14';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=3';
+import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
@@ -198,7 +199,14 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     getUserProfile,
                     updateUserProfile
                 });
+            } catch (e) {
+                console.error('Error linking admin invite:', e);
+                clearPendingActivationCode();
+                await cleanupFailedNewUser(result.user, 'admin invite link failure');
+                throw e;
+            }
 
+            try {
                 await updateUserProfile(userId, {
                     email: result.user.email,
                     fullName: result.user.displayName,
@@ -206,7 +214,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
                     createdAt: new Date()
                 });
             } catch (e) {
-                console.error('Error linking admin invite:', e);
+                console.error('Error creating user profile after admin invite redeem:', e);
             }
         } else {
             try {
@@ -291,7 +299,23 @@ export function checkAuth(callback, options = {}) {
     return onAuthStateChanged(auth, async (user) => {
         if (user) {
             try {
-                const profile = await getUserProfile(user.uid);
+                let profile = await getUserProfile(user.uid) || {};
+
+                try {
+                    const approvedRequests = await listMyParentMembershipRequests(user.uid);
+                    const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
+                    if (parentRequestSync.changed) {
+                        await updateUserProfile(user.uid, parentRequestSync.userUpdate);
+                        profile = {
+                            ...profile,
+                            ...parentRequestSync.userUpdate
+                        };
+                        console.log('[auth] Synced approved parent membership requests to user profile');
+                    }
+                } catch (err) {
+                    console.warn('[auth] Failed to sync approved parent membership requests:', err);
+                }
+
                 if (profile) {
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;

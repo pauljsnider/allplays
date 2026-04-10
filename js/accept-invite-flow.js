@@ -32,51 +32,18 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
     }
 
     if (validation.type === 'admin_invite') {
-        if (typeof redeemAdminInviteAtomically === 'function') {
-            const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId);
-            return {
-                success: true,
-                message: `You've been added as an admin of ${redeemResult.teamName || 'the team'}!`,
-                redirectUrl: 'dashboard.html'
-            };
+        if (typeof redeemAdminInviteAtomically !== 'function') {
+            throw new Error('Missing atomic admin invite redemption handler');
         }
 
-        const team = await getTeam(validation.data.teamId);
-        if (!team) {
-            throw new Error('Team not found');
+        const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId, authEmail);
+        if (!redeemResult || !redeemResult.success) {
+            throw new Error('Failed to redeem admin invite atomically');
         }
-
-        const profile = await getUserProfile(userId);
-        const userEmail = profile?.email || authEmail || validation?.data?.email;
-        const adminEmails = Array.isArray(team.adminEmails) ? [...team.adminEmails] : [];
-        const normalizedEmail = userEmail ? userEmail.toLowerCase() : null;
-        const normalizedAdminEmails = adminEmails.map((email) => String(email || '').toLowerCase());
-
-        if (normalizedEmail && !normalizedAdminEmails.includes(normalizedEmail)) {
-            adminEmails.push(normalizedEmail);
-            await updateTeam(validation.data.teamId, {
-                adminEmails
-            });
-        }
-
-        const existingCoachOf = Array.isArray(profile?.coachOf) ? [...profile.coachOf] : [];
-        const mergedCoachOf = Array.from(new Set([...existingCoachOf, validation.data.teamId]));
-        const existingRoles = Array.isArray(profile?.roles) ? profile.roles : [];
-        const mergedRoles = existingRoles.includes('coach') ? existingRoles : [...existingRoles, 'coach'];
-
-        await updateUserProfile(userId, {
-            coachOf: mergedCoachOf,
-            roles: mergedRoles
-        });
-
-        if (!validation.codeId) {
-            throw new Error('Invite code record not found');
-        }
-        await markAccessCodeAsUsed(validation.codeId, userId);
 
         return {
             success: true,
-            message: `You've been added as an admin of ${team?.name || 'the team'}!`,
+            message: `You've been added as an admin of ${redeemResult.teamName || 'the team'}!`,
             redirectUrl: 'dashboard.html'
         };
     }

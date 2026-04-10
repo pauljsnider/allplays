@@ -14,13 +14,15 @@ import {
   getConfigs,
   subscribeGame
 } from './db.js?v=14';
-import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=8';
+import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=9';
+import { checkAuth } from './auth.js?v=10';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
-import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=1';
+import { getReplayElapsedMs, getReplayStartTimeAfterSpeedChange } from './live-game-replay.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary } from './live-game-state.js?v=3';
+import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
 
 const state = {
   teamId: null,
@@ -42,8 +44,10 @@ const state = {
   statColumns: [],
   homeScore: 0,
   awayScore: 0,
-  period: 'Q1',
+  period: getDefaultLivePeriod(),
   gameClockMs: 0,
+  sport: null,
+  periods: null,
 
   chatMessages: [],
   unreadChatCount: 0,
@@ -72,7 +76,8 @@ const state = {
   lastStatChange: null,
   scoringRun: { team: null, points: 0 },
   lastRunAnnounced: 0,
-  hasVideoStream: false
+  hasVideoStream: false,
+  lastResetAt: 0
 };
 
 const els = {
@@ -166,7 +171,7 @@ function showToast(message) {
 
 function buildShareText(mode, url) {
   const teamName = state.team?.name || 'Team';
-  const opponent = state.game?.opponent || 'Opponent';
+  const opponent = resolveOpponentDisplayName(state.game);
   const dateLabel = formatShortDate(state.game?.date);
   const timeLabel = formatTime(state.game?.date);
   if (mode === 'report') {
@@ -277,7 +282,7 @@ function setupVideoPanel() {
 
 function renderGameInfo() {
   els.homeTeamName.textContent = state.team?.name || 'Home Team';
-  els.awayTeamName.textContent = state.game?.opponent || 'Away Team';
+  els.awayTeamName.textContent = resolveOpponentDisplayName(state.game);
   if (els.homeTeamPhoto) {
     if (state.team?.photoUrl) {
       els.homeTeamPhoto.src = state.team.photoUrl;
@@ -367,9 +372,7 @@ function renderPlayByPlay(event, isNew = false) {
 function renderStats() {
   if (!els.opponentStats) return;
   const oppEntries = Object.entries(state.opponentStats || {});
-  const columns = (state.statColumns && state.statColumns.length)
-    ? state.statColumns
-    : ['PTS', 'REB', 'AST', 'FLS'];
+  const columns = normalizeLiveStatColumns(state.statColumns);
   els.opponentStats.innerHTML = oppEntries.map(([id, player]) => {
     const highlight = state.lastStatChange?.isOpponent && state.lastStatChange?.playerId === id;
     const nameClass = highlight ? 'text-coral' : 'text-sand';
@@ -414,9 +417,7 @@ function renderLineup() {
       const highlight = state.lastStatChange?.playerId === id && !state.lastStatChange?.isOpponent;
       const nameClass = highlight ? 'text-teal' : 'text-sand';
       const statClass = highlight ? 'text-teal' : 'text-sand';
-      const columns = (state.statColumns && state.statColumns.length)
-        ? state.statColumns
-        : ['PTS', 'REB', 'AST', 'FLS'];
+      const columns = normalizeLiveStatColumns(state.statColumns);
       const statItems = columns.map(col => {
         const key = statKeyMap[col] || col.toLowerCase();
         const val = stats[key] || 0;
@@ -443,8 +444,8 @@ function renderLineup() {
     }).join('');
   };
 
-  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'Lineup not set');
-  els.lineupBench.innerHTML = renderList(benchIds, 'Bench not set');
+  els.lineupOnCourt.innerHTML = renderList(onCourtIds, 'No players currently on field');
+  els.lineupBench.innerHTML = renderList(benchIds, 'No players currently on bench');
 }
 
 function renderChat() {
@@ -761,10 +762,50 @@ function updateMomentum(event) {
   }
 }
 
+function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting for plays...') {
+  const liveLineup = gameDoc?.liveLineup || {};
+  const next = applyResetEventState(state, {
+    period: gameDoc?.period || getDefaultLivePeriod({ game: gameDoc, team: state.team }),
+    homeScore: gameDoc?.homeScore || 0,
+    awayScore: gameDoc?.awayScore || 0,
+    gameClockMs: Number.isFinite(gameDoc?.liveClockMs) ? gameDoc.liveClockMs : 0,
+    sport: gameDoc?.sport || state.sport,
+    onCourt: Array.isArray(liveLineup.onCourt) ? liveLineup.onCourt : [],
+    bench: Array.isArray(liveLineup.bench) ? liveLineup.bench : []
+  });
+  Object.assign(state, next);
+  if (els.playsFeed) {
+    els.playsFeed.innerHTML = `<div data-placeholder="plays" class="text-center text-sand/40 py-8">${placeholder}</div>`;
+  }
+  renderScoreboard();
+  renderStats();
+  renderLineup();
+}
+
 function processNewEvents(events) {
-  const newEvents = events.filter(ev => !state.eventIds.has(ev.id));
+  const resetBoundaryMs = Number(state.lastResetAt) || 0;
+  const newEvents = events.filter(ev => (
+    !state.eventIds.has(ev.id) &&
+    isLiveEventVisibleForResetBoundary(ev, resetBoundaryMs)
+  ));
   newEvents.forEach(event => {
     state.eventIds.add(event.id);
+    if (event.type === 'reset') {
+      const resetAt = getTimestampMs(event.createdAt) || Date.now();
+      if (resetAt > (state.lastResetAt || 0)) {
+        state.lastResetAt = resetAt;
+      }
+      const next = applyResetEventState(state, event);
+      Object.assign(state, next);
+      state.eventIds.add(event.id);
+      if (els.playsFeed) {
+        els.playsFeed.innerHTML = '<div data-placeholder="plays" class="text-center text-sand/40 py-8">Game reset. Waiting for plays...</div>';
+      }
+      renderScoreboard();
+      renderStats();
+      renderLineup();
+      return;
+    }
     if (Array.isArray(event.onCourt)) state.onCourt = event.onCourt;
     if (Array.isArray(event.bench)) state.bench = event.bench;
     if (Array.isArray(event.onCourt) || Array.isArray(event.bench)) {
@@ -874,6 +915,14 @@ function startLiveEvents() {
       const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
       if (placeholder) placeholder.textContent = 'Connected. Waiting for plays...';
     }
+    if (!state.liveEventsFirstLoad && events.length === 0) {
+      const hadLiveState = state.events.length > 0 ||
+        Object.keys(state.stats || {}).length > 0 ||
+        Object.keys(state.opponentStats || {}).length > 0;
+      if (hadLiveState) {
+        resetViewerStateFromGameDoc(state.game, 'Game reset. Waiting for plays...');
+      }
+    }
     state.liveEventsFirstLoad = false;
     processNewEvents(events);
   }, (error) => {
@@ -973,7 +1022,7 @@ async function startReplay() {
   state.opponentStats = {};
   state.homeScore = 0;
   state.awayScore = 0;
-  state.period = 'Q1';
+  state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
   state.gameClockMs = 0;
   state.replayIndex = 0;
   state.replayChatIndex = 0;
@@ -1094,7 +1143,7 @@ function seekReplay(targetMs) {
   state.opponentStats = {};
   state.homeScore = 0;
   state.awayScore = 0;
-  state.period = 'Q1';
+  state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
   state.gameClockMs = targetMs;
   state.replayIndex = 0;
   state.replayChatIndex = 0;
@@ -1144,12 +1193,19 @@ function initReplayControls() {
       if (!Number.isFinite(speed) || speed <= 0) return;
       if (state.replayPlaying) {
         const nowMs = Date.now();
+        const currentElapsedMs = Number.isFinite(state.replayStartTime) && Number.isFinite(state.replaySpeed) && state.replaySpeed > 0
+          ? getReplayElapsedMs(nowMs, state.replayStartTime, state.replaySpeed)
+          : state.gameClockMs;
+        state.gameClockMs = currentElapsedMs;
+        if (els.replayCurrent) {
+          els.replayCurrent.textContent = formatClock(currentElapsedMs);
+        }
         state.replayStartTime = getReplayStartTimeAfterSpeedChange(
           nowMs,
           state.replayStartTime,
           state.replaySpeed,
           speed,
-          state.gameClockMs
+          currentElapsedMs
         );
       }
       state.replaySpeed = speed;
@@ -1316,6 +1372,15 @@ function formatFirestoreError(error) {
 function handleGameUpdate(gameDoc) {
   if (!gameDoc) return;
   state.game = gameDoc;
+  renderGameInfo();
+  const resetAt = getTimestampMs(gameDoc.liveResetAt) || 0;
+  if (resetAt > state.lastResetAt) {
+    state.lastResetAt = resetAt;
+    resetViewerStateFromGameDoc(gameDoc, 'Game reset. Waiting for plays...');
+  }
+  if (shouldResetViewerFromGameDoc(gameDoc, state)) {
+    resetViewerStateFromGameDoc(gameDoc, 'Game reset. Waiting for plays...');
+  }
   if (gameDoc.liveLineup) {
     state.onCourt = Array.isArray(gameDoc.liveLineup.onCourt) ? gameDoc.liveLineup.onCourt : state.onCourt;
     state.bench = Array.isArray(gameDoc.liveLineup.bench) ? gameDoc.liveLineup.bench : state.bench;
@@ -1325,6 +1390,11 @@ function handleGameUpdate(gameDoc) {
     state.homeScore = gameDoc.homeScore || state.homeScore;
     state.awayScore = gameDoc.awayScore || state.awayScore;
     state.period = gameDoc.period || state.period;
+    if (Number.isFinite(gameDoc.liveClockMs)) {
+      state.gameClockMs = gameDoc.liveClockMs;
+    } else if (Number.isFinite(gameDoc.gameClockMs)) {
+      state.gameClockMs = gameDoc.gameClockMs;
+    }
     renderScoreboard();
   }
 
@@ -1403,18 +1473,14 @@ async function init() {
   state.team = team;
   state.game = game;
   state.players = players || [];
-  if (game?.statTrackerConfigId && Array.isArray(configs)) {
-    const config = configs.find(c => c.id === game.statTrackerConfigId);
-    if (config && Array.isArray(config.columns)) {
-      state.statColumns = config.columns.map(c => String(c).toUpperCase());
-    }
-  }
-  if (!state.statColumns.length) {
-    state.statColumns = ['PTS', 'REB', 'AST', 'STL', 'TO'];
-  }
-  if (!state.statColumns.includes('FLS') && !state.statColumns.includes('FOULS')) {
-    state.statColumns.push('FLS');
-  }
+  state.sport = game?.sport || team?.sport || null;
+  state.periods = null;
+  state.statColumns = resolveLiveStatColumns({
+    columns: state.statColumns,
+    configs,
+    game,
+    team
+  });
   state.opponentStats = game.opponentStats || {};
   if (game.liveLineup) {
     state.onCourt = Array.isArray(game.liveLineup.onCourt) ? game.liveLineup.onCourt : [];
@@ -1422,7 +1488,8 @@ async function init() {
   }
   state.homeScore = game.homeScore || 0;
   state.awayScore = game.awayScore || 0;
-  state.period = game.period || 'Q1';
+  state.period = game.period || getDefaultLivePeriod({ game, team });
+  state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
   setupVideoPanel();
   renderGameInfo();

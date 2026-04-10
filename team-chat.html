@@ -13,6 +13,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Team Chat - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -183,7 +184,7 @@
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, toggleChatReaction } from './js/db.js?v=20';
-        import { shouldUpdateChatLastRead } from './js/team-chat-last-read.js?v=1';
+        import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -307,6 +308,7 @@
         let canModerate = false;
         let unsubscribeChat = null;
         let initialSnapshotLoaded = false;
+        let awaitingPostResumeSnapshot = false;
         let pendingScrollToBottom = false;
         let aiInFlight = false;
         let aiThinkingStartedAt = null;
@@ -495,21 +497,48 @@
                     scrollToBottom();
                 }
 
-                const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
-                const isWindowFocused = document.hasFocus();
-
-                if (shouldUpdateChatLastRead({
-                    hasCurrentUser: Boolean(currentUser?.uid),
-                    hasTeamId: Boolean(teamId),
-                    isPageVisible,
-                    isWindowFocused
-                })) {
-                    updateChatLastRead(currentUser.uid, teamId).catch(err =>
-                        console.warn('Failed to update last read:', err)
-                    );
-                }
+                awaitingPostResumeSnapshot = false;
+                maybeUpdateChatLastRead();
                 pendingScrollToBottom = false;
             });
+        }
+
+        function maybeUpdateChatLastRead() {
+            const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
+            const isWindowFocused = document.hasFocus();
+
+            if (shouldUpdateChatLastRead({
+                hasCurrentUser: Boolean(currentUser?.uid),
+                hasTeamId: Boolean(teamId),
+                isPageVisible,
+                isWindowFocused
+            })) {
+                updateChatLastRead(currentUser.uid, teamId).catch(err =>
+                    console.warn('Failed to update last read:', err)
+                );
+            }
+        }
+
+        function retryChatLastReadOnViewReturn() {
+            const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
+            const isWindowFocused = document.hasFocus();
+
+            if (shouldRetryChatLastReadOnViewReturn({
+                hasCurrentUser: Boolean(currentUser?.uid),
+                hasTeamId: Boolean(teamId),
+                isPageVisible,
+                isWindowFocused,
+                hasMessages: messages.length > 0,
+                hasLoadedSnapshot: initialSnapshotLoaded,
+                isAwaitingPostResumeSnapshot: awaitingPostResumeSnapshot
+            })) {
+                maybeUpdateChatLastRead();
+            }
+        }
+
+        function handleChatViewReturn() {
+            awaitingPostResumeSnapshot = initialSnapshotLoaded;
+            retryChatLastReadOnViewReturn();
         }
 
         function renderMessages() {
@@ -1505,6 +1534,12 @@
                 }
             });
             document.addEventListener('touchend', () => window.endReactionLongPress(), { passive: true });
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    handleChatViewReturn();
+                }
+            });
+            window.addEventListener('focus', handleChatViewReturn);
             window.addEventListener('beforeunload', stopVoiceCapture);
             sendBtn.disabled = true;
             updateComposerState();

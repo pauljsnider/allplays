@@ -14,6 +14,7 @@
 
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex,nofollow">
     <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Edit Roster - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -346,7 +347,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount } from './js/db.js?v=14';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest } from './js/db.js?v=15';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -406,10 +407,11 @@
         }
 
         async function loadRoster() {
-            const [players, games, allUsers] = await Promise.all([
+            const [players, games, allUsers, membershipRequests] = await Promise.all([
                 getPlayers(currentTeamId, { includeInactive: true }),
                 getGames(currentTeamId),
-                getAllUsers()
+                getAllUsers(),
+                listTeamParentMembershipRequests(currentTeamId)
             ]);
             const latestGameId = [...games].sort((a, b) => {
                 const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
@@ -434,6 +436,14 @@
                     parentsByPlayerId.set(link.playerId, existing);
                 });
             });
+            const pendingRequestsByPlayerId = new Map();
+            (membershipRequests || [])
+                .filter((request) => request?.status === 'pending')
+                .forEach((request) => {
+                    const existing = pendingRequestsByPlayerId.get(request.playerId) || [];
+                    existing.push(request);
+                    pendingRequestsByPlayerId.set(request.playerId, existing);
+                });
 
             if (players.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">No players yet.</td></tr>';
@@ -442,6 +452,7 @@
 
             tbody.innerHTML = players.map(p => {
                 const profileParents = parentsByPlayerId.get(p.id) || [];
+                const pendingRequests = pendingRequestsByPlayerId.get(p.id) || [];
 
                 const parentChips = profileParents.length > 0 ? `
                                 <div class="mt-1 flex flex-wrap gap-1 text-xs">
@@ -457,6 +468,31 @@
                                             </button>
                                         </span>
                                     `).join('')}
+                                </div>
+                            ` : '';
+                const pendingRequestBlock = pendingRequests.length > 0 ? `
+                                <div class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-amber-800">Pending Access Requests</div>
+                                    <div class="mt-2 space-y-2">
+                                        ${pendingRequests.map((request) => `
+                                            <div class="rounded border border-amber-200 bg-white px-2 py-2">
+                                                <div class="text-xs font-semibold text-gray-900">${escapeHtml(request.requesterName || request.requesterEmail || 'Parent')}</div>
+                                                <div class="text-[11px] text-gray-500">${escapeHtml(request.requesterEmail || 'No email on file')} · ${escapeHtml(request.relation || 'Parent')}</div>
+                                                <div class="mt-2 flex items-center gap-2">
+                                                    <button type="button"
+                                                        class="approve-parent-request-btn text-[11px] font-semibold px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                                        data-request-id="${request.id}">
+                                                        Approve
+                                                    </button>
+                                                    <button type="button"
+                                                        class="deny-parent-request-btn text-[11px] font-semibold px-2 py-1 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100"
+                                                        data-request-id="${request.id}">
+                                                        Deny
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
                                 </div>
                             ` : '';
 
@@ -478,6 +514,7 @@
                                 ${p.active === false ? '<span class="inline-flex ml-2 text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Inactive</span>' : ''}
                             </a>
                             ${parentChips}
+                            ${pendingRequestBlock}
                         </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div class="flex items-center gap-3 justify-end">
@@ -534,6 +571,40 @@
                         console.error('Error removing parent from player', err);
                         alert('Error removing parent connection: ' + (err?.message || 'Please try again.'));
                         buttonEl.disabled = false;
+                    }
+                });
+            });
+
+            document.querySelectorAll('.approve-parent-request-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const requestId = e.currentTarget?.dataset?.requestId || '';
+                    if (!requestId) return;
+                    if (!confirm('Approve this parent access request?')) return;
+                    try {
+                        e.currentTarget.disabled = true;
+                        await approveParentMembershipRequest(currentTeamId, requestId);
+                        await loadRoster();
+                    } catch (err) {
+                        console.error('Error approving parent request', err);
+                        alert('Error approving request: ' + (err?.message || 'Please try again.'));
+                        e.currentTarget.disabled = false;
+                    }
+                });
+            });
+
+            document.querySelectorAll('.deny-parent-request-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const requestId = e.currentTarget?.dataset?.requestId || '';
+                    if (!requestId) return;
+                    if (!confirm('Deny this parent access request?')) return;
+                    try {
+                        e.currentTarget.disabled = true;
+                        await denyParentMembershipRequest(currentTeamId, requestId);
+                        await loadRoster();
+                    } catch (err) {
+                        console.error('Error denying parent request', err);
+                        alert('Error denying request: ' + (err?.message || 'Please try again.'));
+                        e.currentTarget.disabled = false;
                     }
                 });
             });

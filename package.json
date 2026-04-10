@@ -1,0 +1,13 @@
+{
+  "name": "allplays",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run tests/unit",
+    "test:unit": "vitest run tests/unit",
+    "test:unit:ci": "vitest run tests/unit --reporter=dot"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
+  }
+}
