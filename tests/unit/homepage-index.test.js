@@ -167,6 +167,28 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('TIME:2026-03-28T18:00:00.000Z');
     });
 
+    it('excludes cancelled upcoming games from the homepage list', async () => {
+        const cancelledGame = createGame({
+            id: 'game-cancelled',
+            opponent: 'Cancelled Falcons',
+            status: 'cancelled'
+        });
+        const scheduledGame = createGame({
+            id: 'game-4',
+            opponent: 'Owls'
+        });
+
+        const { elements } = await runHomepage({
+            upcomingGames: [cancelledGame, scheduledGame]
+        });
+
+        const liveMarkup = elements.get('live-games-list').innerHTML;
+        expect(liveMarkup).toContain('gameId=game-4');
+        expect(liveMarkup).toContain('vs Owls');
+        expect(liveMarkup).not.toContain('gameId=game-cancelled');
+        expect(liveMarkup).not.toContain('Cancelled Falcons');
+    });
+
     it('replaces loading placeholders with exact empty and error fallback copy', async () => {
         const { elements } = await runHomepage({
             liveGames: [],

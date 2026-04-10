@@ -229,6 +229,11 @@
         let currentPlayer = null; // Store for modal access
         let currentPrivateProfile = null; // Sensitive fields live in a private doc
         let currentTeamId = null;
+        let privateProfileLoadFailed = false;
+        let privateFieldsDirty = {
+            emergencyContact: false,
+            medicalInfo: false
+        };
 
         checkAuth((user) => {
             currentUser = user;
@@ -1020,6 +1025,11 @@
         async function openEditModal() {
              if (!currentPlayer) return;
              document.getElementById('edit-player-modal').classList.remove('hidden');
+             privateProfileLoadFailed = false;
+             privateFieldsDirty = {
+                 emergencyContact: false,
+                 medicalInfo: false
+             };
 
              // Load sensitive fields from the private profile doc.
              // If denied or missing, treat as empty.
@@ -1028,6 +1038,7 @@
              } catch (e) {
                  console.warn('Failed to load private player profile:', e);
                  currentPrivateProfile = null;
+                 privateProfileLoadFailed = true;
              }
 
              document.getElementById('edit-ec-name').value = currentPrivateProfile?.emergencyContact?.name || '';
@@ -1042,8 +1053,50 @@
              }
         }
 
+        function buildPlayerProfileUpdatePayload({
+            emergencyContactName,
+            emergencyContactPhone,
+            medicalInfo,
+            photoUrl,
+            privateProfileLoadFailed,
+            privateFieldsDirty
+        }) {
+            const data = {};
+            const shouldIncludeEmergencyContact = !privateProfileLoadFailed || privateFieldsDirty.emergencyContact;
+            const shouldIncludeMedicalInfo = !privateProfileLoadFailed || privateFieldsDirty.medicalInfo;
+
+            if (shouldIncludeEmergencyContact) {
+                data.emergencyContact = {
+                    name: emergencyContactName,
+                    phone: emergencyContactPhone
+                };
+            }
+
+            if (shouldIncludeMedicalInfo) {
+                data.medicalInfo = medicalInfo;
+            }
+
+            if (typeof photoUrl !== 'undefined') {
+                data.photoUrl = photoUrl;
+            }
+
+            return data;
+        }
+
         document.getElementById('close-edit-modal').addEventListener('click', () => {
             document.getElementById('edit-player-modal').classList.add('hidden');
+        });
+
+        document.getElementById('edit-ec-name').addEventListener('input', () => {
+            privateFieldsDirty.emergencyContact = true;
+        });
+
+        document.getElementById('edit-ec-phone').addEventListener('input', () => {
+            privateFieldsDirty.emergencyContact = true;
+        });
+
+        document.getElementById('edit-medical-info').addEventListener('input', () => {
+            privateFieldsDirty.medicalInfo = true;
         });
 
         document.getElementById('edit-photo-input').addEventListener('change', (e) => {
@@ -1064,19 +1117,20 @@
             btn.textContent = 'Saving...';
 
             try {
-                const data = {
-                    emergencyContact: {
-                        name: document.getElementById('edit-ec-name').value,
-                        phone: document.getElementById('edit-ec-phone').value
-                    },
-                    medicalInfo: document.getElementById('edit-medical-info').value
-                };
-
                 const photoFile = document.getElementById('edit-photo-input').files[0];
+                let photoUrl;
                 if (photoFile) {
-                    const url = await uploadPlayerPhoto(photoFile);
-                    data.photoUrl = url;
+                    photoUrl = await uploadPlayerPhoto(photoFile);
                 }
+
+                const data = buildPlayerProfileUpdatePayload({
+                    emergencyContactName: document.getElementById('edit-ec-name').value,
+                    emergencyContactPhone: document.getElementById('edit-ec-phone').value,
+                    medicalInfo: document.getElementById('edit-medical-info').value,
+                    photoUrl,
+                    privateProfileLoadFailed,
+                    privateFieldsDirty
+                });
 
                 await updatePlayerProfile(currentTeamId, currentPlayer.id, data);
                 
