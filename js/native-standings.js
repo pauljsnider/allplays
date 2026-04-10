@@ -3,6 +3,12 @@ function toInt(value) {
     return Number.isFinite(n) ? n : 0;
 }
 
+function toNullableInt(value) {
+    if (value === '' || value == null) return null;
+    const n = Number.parseInt(String(value), 10);
+    return Number.isFinite(n) ? n : null;
+}
+
 function normalizeTeamName(value) {
     return String(value || '').trim();
 }
@@ -20,12 +26,28 @@ function safePointsSchema(points) {
     };
 }
 
-function safeTiebreakers(list) {
-    const defaults = ['head_to_head', 'point_diff', 'points_for', 'fewest_points_against', 'name'];
-    if (!Array.isArray(list) || list.length === 0) return defaults;
-    return list
-        .map((item) => String(item || '').trim())
+function normalizeTiebreaker(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (normalized === 'goal_diff') return 'point_diff';
+    if (normalized === 'goals_for') return 'points_for';
+    if (normalized === 'fewest_goals_allowed') return 'fewest_points_against';
+    if (normalized === 'most_games_won') return 'wins';
+    return normalized;
+}
+
+function safeTiebreakers(list, defaults) {
+    if (!Array.isArray(list) || list.length === 0) return [...defaults];
+    const normalized = list
+        .map(normalizeTiebreaker)
         .filter(Boolean);
+    return normalized.length > 0 ? normalized : [...defaults];
+}
+
+function safeMaxGoalDiff(value) {
+    const parsed = toNullableInt(value);
+    if (!Number.isFinite(parsed) || parsed == null || parsed <= 0) return null;
+    return parsed;
 }
 
 function compareNumbersDesc(a, b) {
@@ -43,69 +65,40 @@ function isFinalGameStatus(game) {
     return status === 'completed' || status === 'final';
 }
 
-function getHeadToHeadSummary(games, teamA, teamB) {
-    let winsA = 0;
-    let winsB = 0;
-    let ties = 0;
+function safeStandingsConfig(configInput = {}) {
+    const points = safePointsSchema(configInput.points);
+    const defaults = ['head_to_head', 'point_diff', 'points_for', 'fewest_points_against', 'name'];
+    const multiDefaults = ['group_head_to_head', 'point_diff', 'points_for', 'fewest_points_against', 'name'];
+    const legacyTiebreakers = safeTiebreakers(configInput.tiebreakers, defaults);
+    const twoTeamTiebreakers = safeTiebreakers(configInput.twoTeamTiebreakers, legacyTiebreakers);
+    const multiTeamFallback = legacyTiebreakers.map((item) => item === 'head_to_head' ? 'group_head_to_head' : item);
+    const multiTeamTiebreakers = safeTiebreakers(configInput.multiTeamTiebreakers, multiTeamFallback.length ? multiTeamFallback : multiDefaults);
 
-    for (const game of games) {
-        if (!game) continue;
-        const homeTeam = normalizeTeamName(game.homeTeam);
-        const awayTeam = normalizeTeamName(game.awayTeam);
-        const involvesPair = (homeTeam === teamA && awayTeam === teamB) || (homeTeam === teamB && awayTeam === teamA);
-        if (!involvesPair) continue;
-
-        const homeScore = Number(game.homeScore);
-        const awayScore = Number(game.awayScore);
-        if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) continue;
-
-        if (homeScore === awayScore) {
-            ties += 1;
-            continue;
-        }
-
-        const homeWon = homeScore > awayScore;
-        const winner = homeWon ? homeTeam : awayTeam;
-        if (winner === teamA) winsA += 1;
-        if (winner === teamB) winsB += 1;
-    }
-
-    const total = winsA + winsB + ties;
-    if (total === 0) return null;
     return {
-        teamAWinPct: (winsA + ties * 0.5) / total,
-        teamBWinPct: (winsB + ties * 0.5) / total
+        rankingMode: safeRankingMode(configInput.rankingMode),
+        points,
+        maxGoalDiff: safeMaxGoalDiff(configInput.maxGoalDiff),
+        tiebreakers: legacyTiebreakers,
+        twoTeamTiebreakers,
+        multiTeamTiebreakers
     };
 }
 
-function compareByTiebreaker(tiebreaker, a, b, allGames) {
-    if (tiebreaker === 'head_to_head') {
-        const hh = getHeadToHeadSummary(allGames, a.team, b.team);
-        if (!hh) return 0;
-        return compareNumbersDesc(hh.teamAWinPct, hh.teamBWinPct);
-    }
-    if (tiebreaker === 'point_diff') return compareNumbersDesc(a.pd, b.pd);
-    if (tiebreaker === 'points_for') return compareNumbersDesc(a.pf, b.pf);
-    if (tiebreaker === 'fewest_points_against') return compareNumbersAsc(a.pa, b.pa);
-    if (tiebreaker === 'wins') return compareNumbersDesc(a.w, b.w);
-    if (tiebreaker === 'name') return a.team.localeCompare(b.team);
-    return 0;
+function getCappedDiff(homeScore, awayScore, maxGoalDiff) {
+    const diff = homeScore - awayScore;
+    if (!Number.isFinite(maxGoalDiff)) return diff;
+    if (diff === 0) return 0;
+    return Math.sign(diff) * Math.min(Math.abs(diff), maxGoalDiff);
 }
 
 function buildRecordString(entry) {
     return entry.t > 0 ? `${entry.w}-${entry.l}-${entry.t}` : `${entry.w}-${entry.l}`;
 }
 
-export function computeNativeStandings(gamesInput, configInput = {}) {
-    const games = Array.isArray(gamesInput) ? gamesInput : [];
-    const completedGames = games.filter(isFinalGameStatus);
-    const rankingMode = safeRankingMode(configInput.rankingMode);
-    const pointsSchema = safePointsSchema(configInput.points);
-    const tiebreakers = safeTiebreakers(configInput.tiebreakers);
-
+function buildRawTable(games, config) {
     const tableByTeam = new Map();
 
-    for (const game of completedGames) {
+    for (const game of games) {
         const homeTeam = normalizeTeamName(game?.homeTeam);
         const awayTeam = normalizeTeamName(game?.awayTeam);
         const homeScore = Number(game?.homeScore);
@@ -123,6 +116,7 @@ export function computeNativeStandings(gamesInput, configInput = {}) {
 
         const homeEntry = tableByTeam.get(homeTeam);
         const awayEntry = tableByTeam.get(awayTeam);
+        const cappedDiff = getCappedDiff(homeScore, awayScore, config.maxGoalDiff);
 
         homeEntry.gp += 1;
         awayEntry.gp += 1;
@@ -130,52 +124,187 @@ export function computeNativeStandings(gamesInput, configInput = {}) {
         homeEntry.pa += awayScore;
         awayEntry.pf += awayScore;
         awayEntry.pa += homeScore;
+        homeEntry.pd += cappedDiff;
+        awayEntry.pd -= cappedDiff;
 
         if (homeScore > awayScore) {
             homeEntry.w += 1;
             awayEntry.l += 1;
-            homeEntry.points += pointsSchema.win;
-            awayEntry.points += pointsSchema.loss;
+            homeEntry.points += config.points.win;
+            awayEntry.points += config.points.loss;
         } else if (homeScore < awayScore) {
             awayEntry.w += 1;
             homeEntry.l += 1;
-            awayEntry.points += pointsSchema.win;
-            homeEntry.points += pointsSchema.loss;
+            awayEntry.points += config.points.win;
+            homeEntry.points += config.points.loss;
         } else {
             homeEntry.t += 1;
             awayEntry.t += 1;
-            homeEntry.points += pointsSchema.tie;
-            awayEntry.points += pointsSchema.tie;
+            homeEntry.points += config.points.tie;
+            awayEntry.points += config.points.tie;
         }
     }
 
-    const table = Array.from(tableByTeam.values()).map((entry) => {
+    return Array.from(tableByTeam.values()).map((entry) => {
         const gp = entry.gp || 0;
-        const winPct = gp > 0 ? (entry.w + (entry.t * 0.5)) / gp : 0;
-        const pd = entry.pf - entry.pa;
         return {
             ...entry,
-            pd,
-            winPct,
+            winPct: gp > 0 ? (entry.w + (entry.t * 0.5)) / gp : 0,
             record: buildRecordString(entry)
         };
     });
+}
 
-    table.sort((a, b) => {
-        const primary = rankingMode === 'win_pct'
-            ? compareNumbersDesc(a.winPct, b.winPct)
-            : compareNumbersDesc(a.points, b.points);
-        if (primary !== 0) return primary;
+function getPrimaryMetric(entry, config) {
+    return config.rankingMode === 'win_pct' ? entry.winPct : entry.points;
+}
 
-        for (const tiebreaker of tiebreakers) {
-            const decision = compareByTiebreaker(tiebreaker, a, b, completedGames);
+function getApplicableTiebreakers(config, groupSize) {
+    if (groupSize > 2) return config.multiTeamTiebreakers;
+    return config.twoTeamTiebreakers;
+}
+
+function buildHeadToHeadMetric(group, allGames, config) {
+    const teamSet = new Set(group.map((row) => row.team));
+    const relevantGames = allGames.filter((game) => teamSet.has(normalizeTeamName(game?.homeTeam)) && teamSet.has(normalizeTeamName(game?.awayTeam)));
+    if (relevantGames.length === 0) return null;
+
+    const miniTable = buildRawTable(relevantGames, config);
+    if (miniTable.length === 0) return null;
+
+    const values = new Map();
+    for (const row of miniTable) {
+        values.set(row.team, getPrimaryMetric(row, config));
+    }
+
+    return group.map((row) => ({
+        row,
+        value: values.has(row.team) ? values.get(row.team) : null
+    }));
+}
+
+function buildTiebreakerValues(tiebreaker, group, allGames, config) {
+    if (tiebreaker === 'head_to_head') {
+        if (group.length !== 2) return null;
+        return buildHeadToHeadMetric(group, allGames, config);
+    }
+    if (tiebreaker === 'group_head_to_head') {
+        if (group.length <= 2) return null;
+        return buildHeadToHeadMetric(group, allGames, config);
+    }
+    if (tiebreaker === 'point_diff') {
+        return group.map((row) => ({ row, value: row.pd }));
+    }
+    if (tiebreaker === 'points_for') {
+        return group.map((row) => ({ row, value: row.pf }));
+    }
+    if (tiebreaker === 'fewest_points_against') {
+        return group.map((row) => ({ row, value: row.pa }));
+    }
+    if (tiebreaker === 'wins') {
+        return group.map((row) => ({ row, value: row.w }));
+    }
+    if (tiebreaker === 'name') {
+        return group.map((row) => ({ row, value: row.team }));
+    }
+    return null;
+}
+
+function compareTiebreakerValues(tiebreaker, a, b) {
+    if (tiebreaker === 'fewest_points_against') return compareNumbersAsc(a, b);
+    if (tiebreaker === 'name') return String(a).localeCompare(String(b));
+    return compareNumbersDesc(a, b);
+}
+
+function partitionTieGroup(group, tiebreaker, values) {
+    const ordered = values
+        .filter((item) => item.value != null)
+        .sort((a, b) => {
+            const decision = compareTiebreakerValues(tiebreaker, a.value, b.value);
             if (decision !== 0) return decision;
+            return a.row.team.localeCompare(b.row.team);
+        });
+
+    if (ordered.length !== group.length) return [group];
+
+    const partitions = [];
+    let current = [];
+
+    for (const item of ordered) {
+        if (current.length === 0) {
+            current.push(item);
+            continue;
         }
 
-        return a.team.localeCompare(b.team);
-    });
+        const last = current[current.length - 1];
+        if (compareTiebreakerValues(tiebreaker, last.value, item.value) === 0) {
+            current.push(item);
+            continue;
+        }
 
-    return table.map((row, index) => ({
+        partitions.push(current.map((entry) => entry.row));
+        current = [item];
+    }
+
+    if (current.length > 0) {
+        partitions.push(current.map((entry) => entry.row));
+    }
+
+    return partitions.length > 0 ? partitions : [group];
+}
+
+function resolveTieGroup(group, tiebreakers, allGames, config) {
+    if (group.length <= 1) return [...group];
+    if (!Array.isArray(tiebreakers) || tiebreakers.length === 0) {
+        return [...group].sort((a, b) => a.team.localeCompare(b.team));
+    }
+
+    const [current, ...rest] = tiebreakers;
+    const values = buildTiebreakerValues(current, group, allGames, config);
+    if (!values) {
+        return resolveTieGroup(group, rest, allGames, config);
+    }
+
+    const partitions = partitionTieGroup(group, current, values);
+    if (partitions.length === 1 && partitions[0].length === group.length) {
+        return resolveTieGroup(group, rest, allGames, config);
+    }
+
+    return partitions.flatMap((partition) => {
+        const nextTiebreakers = getApplicableTiebreakers(config, partition.length);
+        return resolveTieGroup(partition, nextTiebreakers, allGames, config);
+    });
+}
+
+function sortStandingsTable(table, allGames, config) {
+    const primaryGroups = new Map();
+    for (const row of table) {
+        const key = String(getPrimaryMetric(row, config));
+        const existing = primaryGroups.get(key) || [];
+        existing.push(row);
+        primaryGroups.set(key, existing);
+    }
+
+    const sortedPrimaryKeys = Array.from(primaryGroups.keys()).sort((a, b) => compareNumbersDesc(Number(a), Number(b)));
+    const resolved = [];
+
+    for (const key of sortedPrimaryKeys) {
+        const group = primaryGroups.get(key) || [];
+        const tiebreakers = getApplicableTiebreakers(config, group.length);
+        resolved.push(...resolveTieGroup(group, tiebreakers, allGames, config));
+    }
+
+    return resolved;
+}
+
+export function computeNativeStandings(gamesInput, configInput = {}) {
+    const games = Array.isArray(gamesInput) ? gamesInput : [];
+    const completedGames = games.filter(isFinalGameStatus);
+    const config = safeStandingsConfig(configInput);
+    const table = buildRawTable(completedGames, config);
+    const sortedTable = sortStandingsTable(table, completedGames, config);
+
+    return sortedTable.map((row, index) => ({
         ...row,
         rank: index + 1
     }));

@@ -1516,6 +1516,11 @@ async function startStop() {
           opponentTeamName: currentGame.opponentTeamName,
           opponentTeamPhoto: currentGame.opponentTeamPhoto
         });
+        currentGame.liveStatus = 'scheduled';
+        currentGame.liveHasData = false;
+        currentGame.homeScore = 0;
+        currentGame.awayScore = 0;
+        currentGame.opponentStats = {};
         await broadcastResetEvent('Tracker reset before restart. Live viewer state cleared.');
       }
     }
