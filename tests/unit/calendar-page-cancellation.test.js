@@ -10,7 +10,8 @@ describe('calendar page ICS cancellation handling', () => {
         const source = readCalendarPage();
 
         expect(source).toContain('buildGlobalCalendarIcsEvent');
-        expect(source).toContain('const mappedEvent = buildGlobalCalendarIcsEvent({');
+        expect(source).toContain('mergeGlobalCalendarIcsEvents');
+        expect(source).toContain('events.push(...mergeGlobalCalendarIcsEvents({');
         expect(source).not.toContain("status: 'scheduled'");
     });
 
