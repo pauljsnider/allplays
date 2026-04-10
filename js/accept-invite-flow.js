@@ -1,3 +1,5 @@
+import { hasFullTeamAccess } from './team-access.js?v=1';
+
 export function createInviteProcessor(deps) {
     return async function processInvite(userId, code, authEmail = null) {
         return processInviteCode(userId, code, deps, authEmail);
@@ -39,6 +41,22 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         const redeemResult = await redeemAdminInviteAtomically(validation.codeId, userId, authEmail);
         if (!redeemResult || !redeemResult.success) {
             throw new Error('Failed to redeem admin invite atomically');
+        }
+
+        const teamId = redeemResult.teamId || validation?.data?.teamId || null;
+        const [team, profile] = await Promise.all([
+            typeof getTeam === 'function' && teamId ? getTeam(teamId) : null,
+            typeof getUserProfile === 'function' ? getUserProfile(userId) : null
+        ]);
+        const accessUser = {
+            uid: userId,
+            email: authEmail,
+            profileEmail: profile?.email,
+            isAdmin: profile?.isAdmin === true
+        };
+
+        if (!team || !hasFullTeamAccess(accessUser, { ...team, id: team?.id || teamId })) {
+            throw new Error('Admin invite did not grant team management access');
         }
 
         return {
