@@ -159,6 +159,38 @@ export function buildFinishCompletionPlan({
   };
 }
 
+export function prepareFinishPlanForSave({
+  finishPlanArgs = {},
+  period = '',
+  clock = '',
+  now = () => Date.now(),
+  buildPlan = buildFinishCompletionPlan
+} = {}) {
+  let finishPlan = buildPlan(finishPlanArgs);
+  let addedReconciliationLogEntry = null;
+  let updatedLog = Array.isArray(finishPlanArgs.log) ? finishPlanArgs.log : [];
+
+  if (finishPlan.scoreReconciliation.mismatch) {
+    addedReconciliationLogEntry = {
+      text: finishPlan.reconciliationNote,
+      ts: now(),
+      period,
+      clock
+    };
+    updatedLog = [addedReconciliationLogEntry, ...updatedLog];
+    finishPlan = buildPlan({
+      ...finishPlanArgs,
+      log: updatedLog
+    });
+  }
+
+  return {
+    finishPlan,
+    addedReconciliationLogEntry,
+    updatedLog
+  };
+}
+
 export function executeFinishNavigationPlan(navigation = [], {
   navigate = (href) => {
     window.location.href = href;
