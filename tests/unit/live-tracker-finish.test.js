@@ -251,8 +251,8 @@ describe('live tracker finish completion plan', () => {
     });
   });
 
-  it('wires save preparation through the shared finish helper in live tracker', () => {
+  it('wires the shared save-and-complete workflow through live tracker', () => {
     const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
-    expect(source).toContain('prepareFinishPlanForSave');
+    expect(source).toContain('runSaveAndCompleteWorkflow');
   });
 });

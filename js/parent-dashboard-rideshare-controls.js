@@ -1,3 +1,5 @@
+import { canRequestRide, findRequestForChild } from './rideshare-helpers.js';
+
 export function resolveSelectedRideChildId({
     includeChildPicker = false,
     selectedChildId = '',
@@ -43,6 +45,27 @@ export function resolveRideRequestSelection({
     return {
         childId,
         childName: selectedChild?.childName || defaultChildName || 'Player'
+    };
+}
+
+export function getRideOfferUiState({
+    offer = {},
+    parentUserId = '',
+    selectedChildId = '',
+    selectedChildName = '',
+    defaultChildName = 'Player'
+} = {}) {
+    const myRequest = findRequestForChild(offer, parentUserId, selectedChildId);
+    const canRequest = canRequestRide(offer, parentUserId, selectedChildId);
+    const requestableChildName = myRequest?.childName || selectedChildName || defaultChildName || 'Player';
+
+    return {
+        myRequest,
+        canRequest,
+        requestableChildName,
+        showRequestButton: canRequest,
+        showCancelButton: Boolean(myRequest),
+        statusText: myRequest ? `Your request for ${requestableChildName}: ${myRequest.status || 'pending'}` : ''
     };
 }
 

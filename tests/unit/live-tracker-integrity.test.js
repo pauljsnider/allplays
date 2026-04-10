@@ -182,8 +182,10 @@ describe('live tracker integrity helpers', () => {
   });
 
   it('wires final score completion through the shared integrity helper in live tracker', () => {
-    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
-    expect(source).toContain('resolveFinalScoreForCompletion');
-    expect(source).toContain('scoreLogIsComplete: state.scoreLogIsComplete');
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const workflowSource = readFileSync(new URL('../../js/live-tracker-save-complete.js', import.meta.url), 'utf8');
+    expect(liveTrackerSource).toContain('runSaveAndCompleteWorkflow');
+    expect(workflowSource).toContain('scoreLogIsComplete: state.scoreLogIsComplete');
+    expect(workflowSource).toContain('buildFinishCompletionPlan');
   });
 });

@@ -636,8 +636,7 @@
           <h4 class="text-white font-semibold mb-4">Support</h4>
           <ul class="space-y-2 text-sm">
             <li><a href="help.html" class="hover:text-white transition">Help Center</a></li>
-            <li><a href="https://paulsnider.net" class="hover:text-white transition"
-                target="_blank" rel="noopener noreferrer">Contact</a></li>
+            <li><a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support" class="hover:text-white transition">Contact</a></li>
           </ul>
         </div>
       </div>
@@ -651,14 +650,15 @@
   </footer>
 
   <script type="module">
-    import { checkAuth } from './js/auth.js?v=10';
+    import { checkAuth, getRedirectUrl } from './js/auth.js?v=10';
     import { renderHeader, formatDate, formatTime } from './js/utils.js?v=8';
-    import { getUpcomingLiveGames, getLiveGamesNow, getRecentLiveTrackedGames } from './js/db.js?v=15';
-    import { initHomepage } from './js/homepage.js?v=1';
+    import { getUpcomingLiveGames, getLiveGamesNow, getRecentLiveTrackedGames } from './js/db.js?v=16';
+    import { initHomepage } from './js/homepage.js?v=2';
 
     initHomepage({
       document,
       checkAuth,
+      getRedirectUrl,
       renderHeader,
       getLiveGamesNow,
       getUpcomingLiveGames,

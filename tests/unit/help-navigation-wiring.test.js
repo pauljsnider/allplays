@@ -9,6 +9,13 @@ describe('help navigation wiring', () => {
     it('links footer help center to help page', () => {
         const utilsJs = readRepoFile('js/utils.js');
         expect(utilsJs).toContain('<li><a href="help.html" class="hover:text-white transition">Help Center</a></li>');
+        expect(utilsJs).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support');
+    });
+
+    it('keeps homepage footer support links aligned with the shared footer contract', () => {
+        const indexHtml = readRepoFile('index.html');
+        expect(indexHtml).toContain('<li><a href="help.html" class="hover:text-white transition">Help Center</a></li>');
+        expect(indexHtml).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support');
     });
 
     it('includes help destination in team navigation banner with role context', () => {
