@@ -97,4 +97,95 @@ describe('computeNativeStandings', () => {
     expect(table[0].team).toBe('Alpha');
     expect(table[1].team).toBe('Bravo');
   });
+
+  it('caps goal differential without changing raw goals for and against', () => {
+    const games = [
+      { homeTeam: 'Alpha', awayTeam: 'Bravo', homeScore: 10, awayScore: 0, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 },
+      maxGoalDiff: 3,
+      tiebreakers: ['point_diff', 'name']
+    });
+
+    expect(table.find((row) => row.team === 'Alpha')).toMatchObject({
+      pf: 10,
+      pa: 0,
+      pd: 3,
+      points: 3
+    });
+    expect(table.find((row) => row.team === 'Bravo')).toMatchObject({
+      pf: 0,
+      pa: 10,
+      pd: -3,
+      points: 0
+    });
+  });
+
+  it('resolves multi-team ties with group head-to-head before overall point differential', () => {
+    const games = [
+      { homeTeam: 'Alpha', awayTeam: 'Bravo', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Alpha', awayTeam: 'Comets', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Dragons', awayTeam: 'Alpha', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Eagles', awayTeam: 'Alpha', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Comets', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Dragons', homeScore: 4, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Eagles', awayTeam: 'Bravo', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Comets', awayTeam: 'Dragons', homeScore: 10, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Comets', awayTeam: 'Falcons', homeScore: 10, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Eagles', awayTeam: 'Comets', homeScore: 1, awayScore: 0, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 },
+      twoTeamTiebreakers: ['head_to_head', 'point_diff', 'name'],
+      multiTeamTiebreakers: ['group_head_to_head', 'point_diff', 'name']
+    });
+
+    expect(table.slice(1, 4).map((row) => row.team)).toEqual(['Alpha', 'Bravo', 'Comets']);
+    expect(table.find((row) => row.team === 'Comets').pd).toBeGreaterThan(table.find((row) => row.team === 'Alpha').pd);
+  });
+
+  it('uses the two-team tiebreaker stack when the new config shape is present', () => {
+    const games = [
+      { homeTeam: 'Alpha', awayTeam: 'Comets', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Alpha', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Comets', awayTeam: 'Bravo', homeScore: 5, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Alpha', awayTeam: 'Dragons', homeScore: 1, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Comets', awayTeam: 'Dragons', homeScore: 5, awayScore: 0, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 },
+      twoTeamTiebreakers: ['head_to_head', 'point_diff', 'name'],
+      multiTeamTiebreakers: ['group_head_to_head', 'point_diff', 'name']
+    });
+
+    expect(table.slice(0, 2).map((row) => row.team)).toEqual(['Alpha', 'Comets']);
+  });
+
+  it('restarts with the two-team stack after a multi-team split leaves two teams tied', () => {
+    const games = [
+      { homeTeam: 'Bravo', awayTeam: 'Comets', homeScore: 3, awayScore: 0, status: 'completed' },
+      { homeTeam: 'Dragons', awayTeam: 'Bravo', homeScore: 3, awayScore: 1, status: 'completed' },
+      { homeTeam: 'Bravo', awayTeam: 'Eagles', homeScore: 1, awayScore: 2, status: 'completed' },
+      { homeTeam: 'Eagles', awayTeam: 'Bravo', homeScore: 1, awayScore: 3, status: 'completed' },
+      { homeTeam: 'Comets', awayTeam: 'Dragons', homeScore: 1, awayScore: 3, status: 'completed' },
+      { homeTeam: 'Dragons', awayTeam: 'Eagles', homeScore: 0, awayScore: 2, status: 'completed' }
+    ];
+
+    const table = computeNativeStandings(games, {
+      rankingMode: 'points',
+      points: { win: 3, tie: 1, loss: 0 },
+      twoTeamTiebreakers: ['head_to_head', 'point_diff', 'name'],
+      multiTeamTiebreakers: ['group_head_to_head', 'point_diff', 'name']
+    });
+
+    expect(table.map((row) => row.team)).toEqual(['Eagles', 'Dragons', 'Bravo', 'Comets']);
+    expect(table.find((row) => row.team === 'Dragons').pd).toBe(table.find((row) => row.team === 'Bravo').pd);
+  });
 });

@@ -145,7 +145,13 @@ function createEnvironment(initialState, overrides = {}) {
         'leagueUrl',
         'standingsEnabled',
         'standingsRankingMode',
+        'standingsPointWin',
+        'standingsPointTie',
+        'standingsPointLoss',
+        'standingsMaxGoalDiff',
         'standingsTiebreakers',
+        'standingsTwoTeamTiebreakers',
+        'standingsMultiTeamTiebreakers',
         'zip',
         'isPublic',
         'streamUrl',
@@ -359,6 +365,7 @@ async function bootEditTeam(initialState, overrides = {}) {
     };
 
     await runEditTeamModule(deps);
+    await Promise.resolve();
 
     return env;
 }
@@ -409,7 +416,7 @@ describe('edit team admin access persistence', () => {
         }
     });
 
-    it('adds a mixed-case admin once in lowercase and keeps next-load access aligned with the saved list', async () => {
+  it('adds a mixed-case admin once in lowercase and keeps next-load access aligned with the saved list', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -455,6 +462,63 @@ describe('edit team admin access persistence', () => {
             expect(reloadEnv.elements.get('admin-list').querySelectorAll('.remove-admin-btn')).toHaveLength(2);
         } finally {
             reloadEnv.cleanup();
+        }
+    });
+
+    it('round-trips expanded standings settings for tournament rules', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Soccer',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: {
+                    enabled: true,
+                    rankingMode: 'points',
+                    points: { win: 3, tie: 1, loss: 0 },
+                    maxGoalDiff: 4,
+                    twoTeamTiebreakers: ['head_to_head', 'goal_diff', 'name'],
+                    multiTeamTiebreakers: ['group_head_to_head', 'goal_diff', 'goals_for', 'name']
+                },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            expect(env.elements.get('standingsPointWin').value).toBe('3');
+            expect(env.elements.get('standingsMaxGoalDiff').value).toBe('4');
+            expect(env.elements.get('standingsTwoTeamTiebreakers').value).toBe('head_to_head, goal_diff, name');
+            expect(env.elements.get('standingsMultiTeamTiebreakers').value).toBe('group_head_to_head, goal_diff, goals_for, name');
+
+            env.elements.get('standingsPointWin').value = '5';
+            env.elements.get('standingsPointTie').value = '2';
+            env.elements.get('standingsPointLoss').value = '1';
+            env.elements.get('standingsMaxGoalDiff').value = '3';
+            env.elements.get('standingsTwoTeamTiebreakers').value = 'head_to_head, wins';
+            env.elements.get('standingsMultiTeamTiebreakers').value = 'group_head_to_head, goals_for, fewest_goals_allowed';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.standingsConfig).toEqual({
+                enabled: true,
+                rankingMode: 'points',
+                points: { win: 5, tie: 2, loss: 1 },
+                maxGoalDiff: 3,
+                tiebreakers: ['head_to_head', 'wins'],
+                twoTeamTiebreakers: ['head_to_head', 'wins'],
+                multiTeamTiebreakers: ['group_head_to_head', 'goals_for', 'fewest_goals_allowed']
+            });
+        } finally {
+            env.cleanup();
         }
     });
 });

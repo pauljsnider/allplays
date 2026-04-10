@@ -84,3 +84,48 @@ export function createLoginRedirectCoordinator({
         getAutoRedirectUrl
     };
 }
+
+export function createLoginAuthStateManager() {
+    let isProcessingAuth = false;
+    let pendingRedirectUser = null;
+
+    function beginProcessing() {
+        isProcessingAuth = true;
+        pendingRedirectUser = null;
+    }
+
+    function finishProcessing() {
+        isProcessingAuth = false;
+    }
+
+    function captureAuthenticatedUser(user) {
+        if (!user) {
+            pendingRedirectUser = null;
+            return false;
+        }
+
+        if (isProcessingAuth) {
+            pendingRedirectUser = user;
+            return false;
+        }
+
+        return true;
+    }
+
+    function consumePendingRedirectUser() {
+        if (isProcessingAuth || !pendingRedirectUser) {
+            return null;
+        }
+
+        const user = pendingRedirectUser;
+        pendingRedirectUser = null;
+        return user;
+    }
+
+    return {
+        beginProcessing,
+        finishProcessing,
+        captureAuthenticatedUser,
+        consumePendingRedirectUser
+    };
+}

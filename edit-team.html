@@ -116,7 +116,46 @@
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700">Tiebreakers (ordered, comma-separated)</label>
+                        <label class="block text-sm font-medium text-gray-700">Standings Points</label>
+                        <div class="mt-1 grid grid-cols-3 gap-3">
+                            <div>
+                                <label for="standingsPointWin" class="block text-xs text-gray-500">Win</label>
+                                <input type="number" id="standingsPointWin" value="3"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label for="standingsPointTie" class="block text-xs text-gray-500">Tie</label>
+                                <input type="number" id="standingsPointTie" value="1"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label for="standingsPointLoss" class="block text-xs text-gray-500">Loss</label>
+                                <input type="number" id="standingsPointLoss" value="0"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Max Goal Differential</label>
+                        <input type="number" id="standingsMaxGoalDiff" min="1"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="Leave blank for no cap">
+                        <p class="text-xs text-gray-500 mt-1">Caps the per-game goal differential used by differential tiebreakers.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Two-Team Tiebreakers (ordered, comma-separated)</label>
+                        <input type="text" id="standingsTwoTeamTiebreakers"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="head_to_head, goal_diff, goals_for, fewest_goals_allowed, wins, name">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Multi-Team Tiebreakers (ordered, comma-separated)</label>
+                        <input type="text" id="standingsMultiTeamTiebreakers"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                            placeholder="group_head_to_head, goal_diff, goals_for, fewest_goals_allowed, wins, name">
+                    </div>
+                    <div class="hidden">
+                        <label class="block text-sm font-medium text-gray-700">Legacy Tiebreakers</label>
                         <input type="text" id="standingsTiebreakers"
                             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
                             placeholder="head_to_head, point_diff, points_for, fewest_points_against, name">
@@ -258,6 +297,18 @@
         let pendingAdminInviteEmails = [];
         let isInitPending = true;
 
+        function parseStandingsNumber(value, fallback) {
+            const parsed = Number.parseInt(String(value ?? ''), 10);
+            return Number.isFinite(parsed) ? parsed : fallback;
+        }
+
+        function splitStandingsList(value) {
+            return String(value || '')
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean);
+        }
+
         const saveBtn = document.getElementById('save-btn');
         saveBtn.disabled = true;
         saveBtn.textContent = initialTeamId ? 'Loading Team...' : 'Loading...';
@@ -324,9 +375,24 @@
                 document.getElementById('leagueUrl').value = team.leagueUrl || '';
                 document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
                 document.getElementById('standingsRankingMode').value = team.standingsConfig?.rankingMode === 'win_pct' ? 'win_pct' : 'points';
-                document.getElementById('standingsTiebreakers').value = Array.isArray(team.standingsConfig?.tiebreakers)
-                    ? team.standingsConfig.tiebreakers.join(', ')
+                document.getElementById('standingsPointWin').value = String(parseStandingsNumber(team.standingsConfig?.points?.win, 3));
+                document.getElementById('standingsPointTie').value = String(parseStandingsNumber(team.standingsConfig?.points?.tie, 1));
+                document.getElementById('standingsPointLoss').value = String(parseStandingsNumber(team.standingsConfig?.points?.loss, 0));
+                document.getElementById('standingsMaxGoalDiff').value = team.standingsConfig?.maxGoalDiff != null
+                    ? String(parseStandingsNumber(team.standingsConfig?.maxGoalDiff, ''))
                     : '';
+                const legacyTiebreakers = Array.isArray(team.standingsConfig?.tiebreakers)
+                    ? team.standingsConfig.tiebreakers
+                    : [];
+                const twoTeamTiebreakers = Array.isArray(team.standingsConfig?.twoTeamTiebreakers)
+                    ? team.standingsConfig.twoTeamTiebreakers
+                    : legacyTiebreakers;
+                const multiTeamTiebreakers = Array.isArray(team.standingsConfig?.multiTeamTiebreakers)
+                    ? team.standingsConfig.multiTeamTiebreakers
+                    : legacyTiebreakers.map((value) => value === 'head_to_head' ? 'group_head_to_head' : value);
+                document.getElementById('standingsTiebreakers').value = legacyTiebreakers.join(', ');
+                document.getElementById('standingsTwoTeamTiebreakers').value = twoTeamTiebreakers.join(', ');
+                document.getElementById('standingsMultiTeamTiebreakers').value = multiTeamTiebreakers.join(', ');
                 document.getElementById('zip').value = team.zip || '';
                 document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
                 // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
@@ -619,10 +685,19 @@
                 const zipRaw = document.getElementById('zip').value.trim();
                 const zipDigits = zipRaw ? zipRaw.replace(/[^0-9]/g, '') : '';
                 const zip = zipDigits.length >= 5 ? zipDigits.slice(0, 9) : '';
-                const standingsTiebreakers = document.getElementById('standingsTiebreakers').value
-                    .split(',')
-                    .map((value) => value.trim())
-                    .filter(Boolean);
+                const standingsTiebreakers = splitStandingsList(document.getElementById('standingsTiebreakers').value);
+                const standingsTwoTeamTiebreakers = splitStandingsList(document.getElementById('standingsTwoTeamTiebreakers').value);
+                const standingsMultiTeamTiebreakers = splitStandingsList(document.getElementById('standingsMultiTeamTiebreakers').value);
+                const points = {
+                    win: parseStandingsNumber(document.getElementById('standingsPointWin').value, 3),
+                    tie: parseStandingsNumber(document.getElementById('standingsPointTie').value, 1),
+                    loss: parseStandingsNumber(document.getElementById('standingsPointLoss').value, 0)
+                };
+                const maxGoalDiffRaw = document.getElementById('standingsMaxGoalDiff').value.trim();
+                const maxGoalDiff = maxGoalDiffRaw === '' ? null : parseStandingsNumber(maxGoalDiffRaw, null);
+                const legacyFallbackTiebreakers = standingsTwoTeamTiebreakers.length > 0
+                    ? standingsTwoTeamTiebreakers
+                    : standingsTiebreakers;
 
                 const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
                 adminEmails = normalizedAdminEmails;
@@ -635,7 +710,11 @@
                     standingsConfig: {
                         enabled: document.getElementById('standingsEnabled').checked,
                         rankingMode: document.getElementById('standingsRankingMode').value === 'win_pct' ? 'win_pct' : 'points',
-                        tiebreakers: standingsTiebreakers
+                        points,
+                        maxGoalDiff: Number.isFinite(maxGoalDiff) && maxGoalDiff > 0 ? maxGoalDiff : null,
+                        tiebreakers: legacyFallbackTiebreakers,
+                        twoTeamTiebreakers: standingsTwoTeamTiebreakers.length > 0 ? standingsTwoTeamTiebreakers : legacyFallbackTiebreakers,
+                        multiTeamTiebreakers: standingsMultiTeamTiebreakers
                     },
                     zip,
                     photoUrl: currentPhotoUrl,

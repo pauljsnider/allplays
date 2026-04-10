@@ -68,7 +68,8 @@ async function runHomepage({
     replayGames = [],
     liveError = null,
     upcomingError = null,
-    replayError = null
+    replayError = null,
+    getRedirectUrl = () => 'dashboard.html'
 } = {}) {
     const { document, elements } = createEnvironment();
     const renderHeader = vi.fn((container, currentUser) => {
@@ -80,6 +81,7 @@ async function runHomepage({
         checkAuth(callback) {
             callback(user);
         },
+        getRedirectUrl,
         renderHeader,
         async getLiveGamesNow() {
             if (liveError) {
@@ -115,7 +117,7 @@ async function runHomepage({
 }
 
 describe('homepage index workflow', () => {
-    it('renders auth-aware CTA, deduplicates live and upcoming games, and preserves replay links', async () => {
+    it('routes coach users to the team dashboard CTA, deduplicates live and upcoming games, and preserves replay links', async () => {
         const duplicatedLiveGame = createGame({ liveViewerCount: 5 });
         const replayGame = createGame({
             id: 'game-2',
@@ -125,13 +127,16 @@ describe('homepage index workflow', () => {
         });
 
         const { elements, renderHeader } = await runHomepage({
-            user: { uid: 'coach-1' },
+            user: { uid: 'coach-1', coachOf: ['team-1'] },
             liveGames: [duplicatedLiveGame],
             upcomingGames: [duplicatedLiveGame],
-            replayGames: [replayGame]
+            replayGames: [replayGame],
+            getRedirectUrl(user) {
+                return user.coachOf?.length ? 'dashboard.html' : 'parent-dashboard.html';
+            }
         });
 
-        expect(renderHeader).toHaveBeenCalledWith(elements.get('header-container'), { uid: 'coach-1' });
+        expect(renderHeader).toHaveBeenCalledWith(elements.get('header-container'), { uid: 'coach-1', coachOf: ['team-1'] });
         expect(elements.get('hero-cta').textContent).toBe('Go to Dashboard');
         expect(elements.get('hero-cta').href).toBe('dashboard.html');
 
@@ -146,6 +151,25 @@ describe('homepage index workflow', () => {
         expect(replayMarkup).not.toContain('Loading replays...');
         expect(replayMarkup).toContain('Watch Replay');
         expect(replayMarkup).toContain('gameId=game-2&replay=true');
+    });
+
+    it('routes parent users to the parent dashboard CTA', async () => {
+        const { elements, renderHeader } = await runHomepage({
+            user: {
+                uid: 'parent-1',
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+            },
+            getRedirectUrl(user) {
+                return user.parentOf?.length ? 'parent-dashboard.html' : 'dashboard.html';
+            }
+        });
+
+        expect(renderHeader).toHaveBeenCalledWith(elements.get('header-container'), {
+            uid: 'parent-1',
+            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+        });
+        expect(elements.get('hero-cta').textContent).toBe('Go to Dashboard');
+        expect(elements.get('hero-cta').href).toBe('parent-dashboard.html');
     });
 
     it('keeps upcoming cards visible when live games fail and sets the guest CTA', async () => {
@@ -165,6 +189,28 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('gameId=game-3');
         expect(liveMarkup).toContain('DATE:2026-03-28T18:00:00.000Z');
         expect(liveMarkup).toContain('TIME:2026-03-28T18:00:00.000Z');
+    });
+
+    it('excludes cancelled upcoming games from the homepage list', async () => {
+        const cancelledGame = createGame({
+            id: 'game-cancelled',
+            opponent: 'Cancelled Falcons',
+            status: 'cancelled'
+        });
+        const scheduledGame = createGame({
+            id: 'game-4',
+            opponent: 'Owls'
+        });
+
+        const { elements } = await runHomepage({
+            upcomingGames: [cancelledGame, scheduledGame]
+        });
+
+        const liveMarkup = elements.get('live-games-list').innerHTML;
+        expect(liveMarkup).toContain('gameId=game-4');
+        expect(liveMarkup).toContain('vs Owls');
+        expect(liveMarkup).not.toContain('gameId=game-cancelled');
+        expect(liveMarkup).not.toContain('Cancelled Falcons');
     });
 
     it('replaces loading placeholders with exact empty and error fallback copy', async () => {

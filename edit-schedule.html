@@ -774,6 +774,7 @@
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
+        import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
         import { Timestamp, deleteField } from "./js/firebase.js?v=10";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -1270,9 +1271,12 @@
                         notes: event.notes,
                         isHome: event.isHome ?? null,
                         kitColor: event.kitColor || null,
-                        seasonLabel: event.seasonLabel || null,
-                        competitionType: event.competitionType || 'league',
-                        countsTowardSeasonRecord: event.countsTowardSeasonRecord !== false,
+                        ...buildSeasonRecordGameFields({
+                            parsedGameDate: eventDate,
+                            seasonLabel: event.seasonLabel,
+                            competitionType: event.competitionType,
+                            countsTowardSeasonRecord: event.countsTowardSeasonRecord
+                        }),
                         arrivalTime: event.arrivalTime || null,
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
                         rsvpSummary: event.rsvpSummary || null,
@@ -1291,7 +1295,7 @@
             // Sort by date
             allEvents.sort((a, b) => a.date - b.date);
 
-            const hiddenPracticeCount = allEvents.filter(event => event.isPractice).length;
+            const hiddenPracticeCount = allEvents.filter(event => event.isPractice && !event.isCancelled).length;
             console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
 
             const now = new Date();
@@ -1300,7 +1304,7 @@
             // Filter by practice checkbox + schedule view
             const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
             let filteredEvents = allEvents.filter(event => {
-                if (event.isPractice && !showPractices && !forcePracticeVisibility) return false;
+                if (event.isPractice && !event.isCancelled && !showPractices && !forcePracticeVisibility) return false;
                 return true;
             });
             if (scheduleViewFilter === 'upcoming-all') {
@@ -1670,7 +1674,10 @@
             if (configId) {
                 const config = allConfigs.find(c => c.id === configId);
                 if (config) {
-                    return (config.baseType || '').toLowerCase() === 'basketball';
+                    const baseType = (config.baseType || '').toLowerCase();
+                    if (baseType) {
+                        return baseType === 'basketball';
+                    }
                 }
             }
             // If no config, infer from team sport
@@ -1790,11 +1797,15 @@
             // Populate new fields
             setHomeAway(game.isHome === true ? 'home' : (game.isHome === false ? 'away' : null));
             document.getElementById('kitColor').value = game.kitColor || '';
-            document.getElementById('seasonLabel').value = game.seasonLabel || inferSeasonLabel(date);
-            document.getElementById('competitionType').value = game.competitionType || 'league';
+            const seasonRecordFields = hydrateSeasonRecordFormFields({
+                game,
+                fallbackDate: date
+            });
+            document.getElementById('seasonLabel').value = seasonRecordFields.seasonLabel;
+            document.getElementById('competitionType').value = seasonRecordFields.competitionType;
             populateTournamentForm(game.tournament || null);
             updateTournamentSettingsVisibility();
-            document.getElementById('countsTowardSeasonRecord').checked = game.countsTowardSeasonRecord !== false;
+            document.getElementById('countsTowardSeasonRecord').checked = seasonRecordFields.countsTowardSeasonRecord;
             if (game.arrivalTime) {
                 const at = game.arrivalTime.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime);
                 document.getElementById('arrivalTime').value = formatIsoForInput(at);
@@ -1915,6 +1926,12 @@
                 const notifyNote = document.getElementById('game-notify-note').value.trim();
                 const notificationSettings = getTeamScheduleNotificationSettings();
                 const tournamentData = readTournamentFormState();
+                const seasonRecordFields = buildSeasonRecordGameFields({
+                    parsedGameDate,
+                    seasonLabel: document.getElementById('seasonLabel').value.trim(),
+                    competitionType: document.getElementById('competitionType').value,
+                    countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked
+                });
                 const gameData = {
                     type: 'game',
                     date: Timestamp.fromDate(parsedGameDate),
@@ -1926,9 +1943,7 @@
                     opponentTeamPhoto: selectedOpponentTeam ? selectedOpponentTeam.photoUrl || null : null,
                     isHome: isHomeVal === 'home' ? true : (isHomeVal === 'away' ? false : null),
                     kitColor: document.getElementById('kitColor').value.trim() || null,
-                    seasonLabel: document.getElementById('seasonLabel').value.trim() || inferSeasonLabel(parsedGameDate),
-                    competitionType: document.getElementById('competitionType').value || 'league',
-                    countsTowardSeasonRecord: document.getElementById('countsTowardSeasonRecord').checked,
+                    ...seasonRecordFields,
                     arrivalTime: arrivalVal ? Timestamp.fromDate(new Date(arrivalVal)) : null,
                     notes: document.getElementById('gameNotes').value.trim() || null,
                     assignments: getAssignmentsFromForm(),
