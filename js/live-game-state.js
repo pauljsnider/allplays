@@ -406,7 +406,6 @@ export function isLiveEventVisibleForResetBoundary(event = {}, resetBoundaryMs =
   if (!Number.isFinite(eventMs)) return true;
   return eventMs >= resetBoundaryMs;
 }
-
 function getLiveEventTimestampMs(event = {}) {
   const createdAt = event?.createdAt;
   if (typeof createdAt === 'number') return createdAt;

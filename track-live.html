@@ -1645,16 +1645,25 @@
                             }),
                             opponentStats: gameState.opponentStats
                         });
+                        if (currentGame) {
+                            currentGame.liveHasData = false;
+                            currentGame.liveStatus = 'scheduled';
+                            currentGame.homeScore = 0;
+                            currentGame.awayScore = 0;
+                            currentGame.opponentStats = gameState.opponentStats;
+                        }
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     },
                     cleanupPersistedState: async () => {
-                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
+                        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
                             getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
                         ]);
                         const cleanupResults = await Promise.allSettled([
                             ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
-                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref)),
+                            ...liveEventsSnapshot.docs.map(liveDoc => deleteDoc(liveDoc.ref))
                         ]);
                         const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
                         if (failedDeletes.length) {
