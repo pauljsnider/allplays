@@ -33,6 +33,7 @@ describe('parent dashboard rideshare wiring', () => {
 
         expect(html).toContain("from './js/parent-dashboard-rideshare-controls.js?v=1'");
         expect(html).toContain('resolveSelectedRideChildId({');
+        expect(html).toContain('getRideOfferUiState({');
         expect(html).toContain('createRideRequestHandlers({');
         expect(html).toContain('selectedRideChildByOffer');
     });

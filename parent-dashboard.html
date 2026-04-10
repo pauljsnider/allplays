@@ -297,8 +297,8 @@
         import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';
-        import { getEventRideshareSummary, getOfferSeatInfo, canRequestRide, findRequestForChild } from './js/rideshare-helpers.js?v=1';
-        import { resolveSelectedRideChildId, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
+        import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';
+        import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -609,9 +609,14 @@
                             );
                             const selectedChild = childChoices.find((child) => child.childId === selectedChildId);
                             const selectedChildName = selectedChild?.childName || defaultChildName;
-                            const myRequest = findRequestForChild(offer, currentUserId, selectedChildId);
-                            const canRequest = canRequestRide(offer, currentUserId, selectedChildId);
-                            const requestableChildName = myRequest?.childName || selectedChildName;
+                            const rideOfferUiState = getRideOfferUiState({
+                                offer,
+                                parentUserId: currentUserId,
+                                selectedChildId,
+                                selectedChildName,
+                                defaultChildName
+                            });
+                            const { myRequest, canRequest, statusText } = rideOfferUiState;
                             return `
                                 <div class="rounded-lg border border-gray-200 bg-white p-2">
                                     <div class="flex items-center justify-between gap-2">
@@ -637,7 +642,7 @@
                                             ` : ''}
                                         </div>
                                     </div>
-                                    ${myRequest ? `<div class="text-[11px] mt-1 font-semibold ${myRequest.status === 'confirmed' ? 'text-emerald-700' : myRequest.status === 'waitlisted' ? 'text-amber-700' : myRequest.status === 'declined' ? 'text-red-700' : 'text-gray-600'}">Your request for ${escapeHtml(requestableChildName)}: ${escapeHtml(myRequest.status || 'pending')}</div>` : ''}
+                                    ${myRequest ? `<div class="text-[11px] mt-1 font-semibold ${myRequest.status === 'confirmed' ? 'text-emerald-700' : myRequest.status === 'waitlisted' ? 'text-amber-700' : myRequest.status === 'declined' ? 'text-red-700' : 'text-gray-600'}">${escapeHtml(statusText)}</div>` : ''}
                                     ${canManageOffer && offer.requests?.length
                                         ? `<div class="mt-2 pt-2 border-t border-gray-100 space-y-1">
                                             ${offer.requests.map((request) => `
