@@ -23,6 +23,7 @@ export function validateCalendarImportUrl(url) {
 function toDate(value) {
     if (value instanceof Date) return value;
     if (typeof value?.toDate === 'function') return value.toDate();
+    if (!value) return null;
     return new Date(value);
 }
 
@@ -46,7 +47,8 @@ export function mergeCalendarImportEvents({
 
         const hasConflict = (dbEvents || []).some((dbEvent) => {
             const dbDate = toDate(dbEvent?.date);
-            return !Number.isNaN(dbDate.getTime()) && Math.abs(dbDate - eventDate) < 60000;
+            if (!(dbDate instanceof Date) || Number.isNaN(dbDate.getTime())) return false;
+            return Math.abs(dbDate - eventDate) < 60000;
         });
         if (hasConflict) return;
 
@@ -57,6 +59,7 @@ export function mergeCalendarImportEvents({
             source: 'calendar',
             eventType: isPractice ? 'practice' : 'game',
             date: eventDate,
+            end: toDate(event?.dtend),
             opponent: extractOpponent(cleanSummary, currentTeamName),
             location: event.location || 'TBD',
             isPractice,
