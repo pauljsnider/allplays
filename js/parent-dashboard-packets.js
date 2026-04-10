@@ -8,6 +8,38 @@ function normalizeTitle(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+export function getScopedPracticePacketRow(row, selectedPlayerId = '') {
+  const children = Array.isArray(row?.children) ? row.children : [];
+  const visibleChildren = selectedPlayerId
+    ? children.filter((child) => child?.id === selectedPlayerId)
+    : [...children];
+  const visibleChildIds = new Set(visibleChildren.map((child) => child?.id).filter(Boolean));
+  const visibleChildNames = visibleChildren.map((child) => child?.name).filter(Boolean);
+  const completionChildIds = new Set(
+    (Array.isArray(row?.completions) ? row.completions : [])
+      .filter((completion) => completion?.status === 'completed')
+      .map((completion) => completion?.childId)
+      .filter((childId) => visibleChildIds.has(childId))
+  );
+
+  return {
+    ...row,
+    visibleChildren,
+    visibleChildNames,
+    completionChildIds,
+    completedCount: visibleChildren.filter((child) => completionChildIds.has(child?.id)).length
+  };
+}
+
+export function buildPracticePacketCompletionPayload({ currentUserId, currentUser, childId, childName }) {
+  return {
+    parentUserId: currentUserId,
+    parentName: currentUser?.displayName || currentUser?.email || 'Parent',
+    childId,
+    childName: childName || null
+  };
+}
+
 export function resolvePracticePacketSessionIdForEvent(event, allPracticePacketSessions = []) {
   if (event?.practiceSessionId) return event.practiceSessionId;
   const sessions = Array.isArray(allPracticePacketSessions) ? allPracticePacketSessions : [];
