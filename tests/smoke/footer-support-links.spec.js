@@ -40,7 +40,7 @@ test('homepage footer support links navigate to live support destinations', asyn
     const { helpLink, helpHref, contactHref } = await getFooterSupportLinks(page);
 
     expectLiveSupportHref(helpHref, 'help.html');
-    expectLiveSupportHref(contactHref, 'https://paulsnider.net');
+    expectLiveSupportHref(contactHref, 'mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support');
 
     const navigationPromise = page.waitForNavigation({ url: '**/help.html' });
     await helpLink.click();
@@ -58,5 +58,5 @@ test('shared footer support links stay wired on login page', async ({ page, base
     const { helpHref, contactHref } = await getFooterSupportLinks(page);
 
     expectLiveSupportHref(helpHref, 'help.html');
-    expectLiveSupportHref(contactHref, 'https://paulsnider.net');
+    expectLiveSupportHref(contactHref, 'mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support');
 });

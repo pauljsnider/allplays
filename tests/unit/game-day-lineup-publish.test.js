@@ -6,6 +6,8 @@ import {
   buildLineupPublishPayload,
   buildLineupPublishMessage
 } from '../../js/game-day-lineup-publish.js';
+import { buildRotationPlanFromGamePlan } from '../../js/game-plan-interop.js';
+import { getPeriodsForFormation, normalizeActivePeriod } from '../../js/game-day-periods.js';
 
 describe('game day lineup publish helpers', () => {
   it('builds a published lineup payload with versioned metadata and recipients', () => {
@@ -105,6 +107,38 @@ describe('game day lineup publish helpers', () => {
       changedAssignments: 3
     })).toContain('updated');
   });
+
+  it('round-trips a saved 4-period lineup and restores the first visible game-day period', () => {
+    const rotationPlan = {
+      Q1: { pg: 'p1', sg: 'p2' },
+      Q2: { pg: 'p3', sg: 'p4' },
+      Q3: { pg: 'p5' },
+      Q4: { pg: 'p6' }
+    };
+
+    const payload = buildLineupPublishPayload({
+      formationId: 'basketball-5v5',
+      numPeriods: 4,
+      rotationPlan,
+      previousGamePlan: {}
+    });
+
+    expect(payload).toMatchObject({
+      formationId: 'basketball-5v5',
+      numPeriods: 4,
+      lineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q2-pg': 'p3',
+        'Q2-sg': 'p4',
+        'Q3-pg': 'p5',
+        'Q4-pg': 'p6'
+      }
+    });
+
+    expect(buildRotationPlanFromGamePlan(payload)).toEqual(rotationPlan);
+    expect(normalizeActivePeriod(getPeriodsForFormation(payload), 'H1')).toBe('Q1');
+  });
 });
 
 describe('game-day page wiring', () => {
@@ -126,5 +160,12 @@ describe('game-day page wiring', () => {
     expect(source).toContain('previousGamePlan: getPersistedGamePlan()');
     expect(source).toContain('previousGamePlan?.publishedLineups');
     expect(source).toContain("alert('Lineup published successfully, but the team notification could not be sent. Please notify your team manually.');");
+  });
+
+  it('normalizes the visible game-day period when a saved lineup reloads', () => {
+    const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+    expect(source).toContain("import { getPeriodsForFormation, normalizeActivePeriod } from './js/game-day-periods.js?v=1';");
+    expect(source).toContain('state.activePeriodGD = normalizeActivePeriod(periods, state.activePeriodGD);');
   });
 });
