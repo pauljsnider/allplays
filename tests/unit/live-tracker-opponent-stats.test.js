@@ -206,6 +206,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     './live-tracker-finish.js',
     'const { buildOpponentStatsSnapshotFromEntries, buildFinishCompletionPlan, executeFinishNavigationPlan } = deps.liveTrackerFinish;'
   );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
+    './live-tracker-save-complete.js',
+    'const { runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;'
+  );
 
   return rewritten
     .replace(authHook, '')
@@ -340,6 +345,9 @@ async function bootLiveTracker({ updateGame }) {
       },
       buildFinishCompletionPlan: () => ({}),
       executeFinishNavigationPlan: () => {}
+    },
+    liveTrackerSaveComplete: {
+      runSaveAndCompleteWorkflow: async () => ({})
     }
   };
   const window = { location: { href: '' } };
