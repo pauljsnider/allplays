@@ -49,6 +49,7 @@ describe('edit schedule calendar import helpers', () => {
         const importedPractice = {
             uid: 'new-practice-uid',
             dtstart: new Date('2026-03-28T17:30:00.000Z'),
+            dtend: new Date('2026-03-28T19:00:00.000Z'),
             summary: 'Team Practice',
             location: 'Gym'
         };
@@ -85,6 +86,7 @@ describe('edit schedule calendar import helpers', () => {
                 isPractice: true,
                 opponent: 'Team Practice',
                 location: 'Gym',
+                end: importedPractice.dtend,
                 calendarEvent: importedPractice
             })
         ]);

@@ -488,11 +488,12 @@
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=15';
+        } from './js/db.js?v=16';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js';
+        import { getPeriodsForFormation, normalizeActivePeriod } from './js/game-day-periods.js?v=1';
         import {
             buildLineupDraftPayload,
             buildLineupPublishPayload,
@@ -508,6 +509,7 @@
             buildGameSummaryPrompt
         } from './js/game-day-wrapup.js?v=1';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
+        import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -612,6 +614,14 @@
             // Unsubs
             unsubscribers: []
         };
+        const gameDayRsvpController = createGameDayRsvpController({
+            state,
+            documentRef: document,
+            escapeHtml,
+            submitRsvpForPlayer,
+            loadRsvps
+        });
+        window.setCoachPlayerRsvp = gameDayRsvpController.setCoachPlayerRsvp;
         let pageInitialized = false;
 
         function getChatStorageKey() {
@@ -1154,84 +1164,14 @@
                 const breakdown = await getRsvpBreakdownByPlayer(state.teamId, state.gameId);
                 state.rsvpBreakdown = breakdown?.grouped || breakdown || null;
                 markAiChatContextDirty();
-                renderRsvpPanel();
+                gameDayRsvpController.renderRsvpPanel();
+                return true;
             } catch (err) {
                 console.error('loadRsvps error', err);
                 document.getElementById('rsvp-panel').innerHTML = '<span class="text-xs text-red-400">Failed to load RSVPs</span>';
+                return false;
             }
         }
-
-        function renderRsvpPanel() {
-            const breakdown = state.rsvpBreakdown;
-            if (!breakdown) return;
-            const el = document.getElementById('rsvp-panel');
-            if (!el) return;
-
-            const going = Array.isArray(breakdown.going) ? breakdown.going : [];
-            const maybe = Array.isArray(breakdown.maybe) ? breakdown.maybe : [];
-            const notGoing = Array.isArray(breakdown.not_going) ? breakdown.not_going : [];
-            const noResponse = Array.isArray(breakdown.not_responded) ? breakdown.not_responded : [];
-
-            const rowActions = (p, currentResponse) => {
-                const mkBtn = (label, response, activeClass, idleClass) => `
-                    <button
-                        onclick="setCoachPlayerRsvp(decodeURIComponent('${encodeURIComponent(p.playerId || '')}'),'${response}')"
-                        class="px-1.5 py-0.5 rounded border text-[10px] font-semibold ${currentResponse === response ? activeClass : idleClass}">
-                        ${label}
-                    </button>`;
-                return `
-                    <span class="ml-1 inline-flex items-center gap-1">
-                        ${mkBtn('Going', 'going', 'bg-green-600 text-white border-green-600', 'bg-white text-green-700 border-green-300 hover:bg-green-50')}
-                        ${mkBtn('Maybe', 'maybe', 'bg-amber-500 text-white border-amber-500', 'bg-white text-amber-700 border-amber-300 hover:bg-amber-50')}
-                        ${mkBtn('Out', 'not_going', 'bg-red-500 text-white border-red-500', 'bg-white text-red-700 border-red-300 hover:bg-red-50')}
-                    </span>
-                `;
-            };
-
-            const chip = (p, responseKey) => `
-                <span class="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded-full text-xs font-medium">
-                    ${p.playerNumber ? `#${p.playerNumber} ` : ''}${escapeHtml(p.playerName)}
-                    ${rowActions(p, responseKey)}
-                </span>
-            `;
-
-            const section = (label, color, players) => {
-                if (!players.length) return '';
-                return `<div class="mb-2">
-                    <div class="text-xs font-semibold ${color} mb-1">${label} (${players.length})</div>
-                    <div class="flex flex-wrap gap-1">${players.map((p) => chip(p, p.response)).join('')}</div>
-                </div>`;
-            };
-
-            el.innerHTML =
-                section('Going', 'text-green-600', going) +
-                section('Maybe', 'text-amber-600', maybe) +
-                section('Not Going', 'text-red-500', notGoing) +
-                section('No Response', 'text-gray-400', noResponse) +
-                '<div id="coach-rsvp-status" class="text-[11px] text-gray-400 mt-2"></div>';
-        }
-
-        window.setCoachPlayerRsvp = async function(playerId, response) {
-            const statusEl = document.getElementById('coach-rsvp-status');
-            if (!playerId || !response) return;
-            try {
-                if (statusEl) statusEl.textContent = 'Saving availability…';
-                await submitRsvpForPlayer(state.teamId, state.gameId, state.user?.uid, {
-                    displayName: state.user?.displayName || state.user?.email || null,
-                    playerId,
-                    response
-                });
-                await loadRsvps();
-                if (statusEl) statusEl.textContent = 'Saved';
-                setTimeout(() => {
-                    const nextStatusEl = document.getElementById('coach-rsvp-status');
-                    if (nextStatusEl) nextStatusEl.textContent = '';
-                }, 1800);
-            } catch (err) {
-                console.error('setCoachPlayerRsvp error', err);
-                if (statusEl) statusEl.textContent = 'Save failed';
-            }
-        };
 
         function renderScoutingNotes() {
             const ta = document.getElementById('scouting-notes');
@@ -1602,10 +1542,7 @@ Assistant:`;
 
         function getPeriods(formationId) {
             const f = FORMATIONS[formationId];
-            if (!f) return ['H1', 'H2'];
-            const n = f.numPeriods || 2;
-            if (n === 4) return ['Q1', 'Q2', 'Q3', 'Q4'];
-            return ['H1', 'H2'];
+            return getPeriodsForFormation(f);
         }
 
         function renderPeriodTabs() {
@@ -2015,6 +1952,7 @@ Respond ONLY with valid JSON.`;
 
         function renderGDPeriodTabs() {
             const periods = state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
+            state.activePeriodGD = normalizeActivePeriod(periods, state.activePeriodGD);
             document.getElementById('gd-h1-btn').textContent = periods[0];
             document.getElementById('gd-h2-btn').textContent = periods[1] || 'H2';
         }

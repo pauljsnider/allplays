@@ -310,14 +310,38 @@
         let combinedGames = [];
         let plannerInitialized = false;
 
+        function createDefaultGamePlan(sportName = null) {
+            const gamePlanDefaults = {
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
+                formationId: null,
+                lineups: {}
+            };
+
+            const sport = sportName?.toLowerCase();
+            if (sport === 'basketball') {
+                return {
+                    ...gamePlanDefaults,
+                    numPeriods: 4,
+                    periodDuration: 8,
+                    subTimes: [4],
+                    formationId: 'basketball-5v5'
+                };
+            }
+
+            if (sport === 'soccer') {
+                return {
+                    ...gamePlanDefaults,
+                    formationId: 'soccer-9v9'
+                };
+            }
+
+            return gamePlanDefaults;
+        }
+
         // Game plan state
-        let gamePlan = {
-            numPeriods: 2,
-            periodDuration: 25,
-            subTimes: [7, 14, 21],
-            formationId: null,
-            lineups: {} // { 'period-time': { positionId: playerId } }
-        };
+        let gamePlan = createDefaultGamePlan();
 
         let draggedPlayerId = null;
 
@@ -468,26 +492,14 @@
                 <span class="text-sm text-gray-600">${formatDate(date)} @ ${formatTime(date)}</span>
             `;
 
-            // Load existing game plan if it exists
-            if (game.gamePlan) {
-                gamePlan = { ...gamePlan, ...game.gamePlan };
-            } else {
-                // Set defaults based on team sport
-                if (currentTeam.sport) {
-                    const sport = currentTeam.sport.toLowerCase();
-                    if (sport === 'basketball') {
-                        gamePlan.numPeriods = 4;
-                        gamePlan.periodDuration = 8;
-                        gamePlan.subTimes = [4];
-                        gamePlan.formationId = 'basketball-5v5';
-                    } else if (sport === 'soccer') {
-                        gamePlan.numPeriods = 2;
-                        gamePlan.periodDuration = 25;
-                        gamePlan.subTimes = [7, 14, 21];
-                        gamePlan.formationId = 'soccer-9v9';
-                    }
+            const baseGamePlan = createDefaultGamePlan(currentTeam?.sport);
+            gamePlan = game.gamePlan
+                ? {
+                    ...baseGamePlan,
+                    ...game.gamePlan,
+                    lineups: { ...(game.gamePlan.lineups || {}) }
                 }
-            }
+                : baseGamePlan;
 
             recentAssignments.clear();
             intervalsCache = [];
