@@ -33,13 +33,15 @@ describe('live tracker summary email recipient', () => {
   });
 
   it('wires recipient resolution into live tracker finish flow', () => {
-    const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
-    expect(source).toContain('resolveSummaryRecipient');
-    expect(source).toContain('teamNotificationEmail: currentTeam?.notificationEmail');
-    expect(source).toContain('buildFinishCompletionPlan');
-    expect(source).toContain('executeFinishNavigationPlan');
-    expect(source).not.toContain('<<<<<<<');
-    expect(source).not.toContain('=======');
-    expect(source).not.toContain('>>>>>>>');
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const workflowSource = readFileSync(new URL('../../js/live-tracker-save-complete.js', import.meta.url), 'utf8');
+    expect(liveTrackerSource).toContain('runSaveAndCompleteWorkflow');
+    expect(workflowSource).toContain('resolveSummaryRecipient');
+    expect(workflowSource).toContain('teamNotificationEmail: currentTeam?.notificationEmail');
+    expect(workflowSource).toContain('buildFinishCompletionPlan');
+    expect(workflowSource).toContain('executeFinishNavigationPlan');
+    expect(workflowSource).not.toContain('<<<<<<<');
+    expect(workflowSource).not.toContain('=======');
+    expect(workflowSource).not.toContain('>>>>>>>');
   });
 });

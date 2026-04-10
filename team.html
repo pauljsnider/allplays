@@ -653,6 +653,7 @@
             const upcomingEvents = allEvents
                 .filter(event => {
                     if (event.type === 'db' && event.status === 'completed') return false;
+                    if (event.isCancelled) return false;
                     if (event.isPractice && !showPractices) return false;
                     return event.date > cutoff;
                 })
@@ -1199,15 +1200,25 @@
                 const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
                 const id = game.id || game.gameId;
                 const isPractice = game.type === 'practice';
+                const isCancelled = String(game.status || '').toLowerCase() === 'cancelled';
                 allEvents.push({
                     type: 'db',
+                    id,
+                    gameId: id,
                     date: gameDate,
                     opponent: game.opponent,
                     location: game.location || 'TBD',
                     status: game.status,
+                    liveStatus: game.liveStatus,
                     homeScore: game.homeScore,
                     awayScore: game.awayScore,
-                    gameId: id,
+                    isHome: game.isHome,
+                    kitColor: game.kitColor,
+                    arrivalTime: game.arrivalTime,
+                    notes: game.notes,
+                    assignments: game.assignments,
+                    rsvpSummary: game.rsvpSummary,
+                    isCancelled,
                     isPractice
                 });
             });
@@ -1511,28 +1522,35 @@
 
         function renderDbGame(game) {
             const isPractice = !!game.isPractice;
-            const isCompleted = game.status === 'completed' && !isPractice;
-            const isLive = game.liveStatus === 'live';
+            const normalizedStatus = String(game.status || '').toLowerCase();
+            const normalizedLiveStatus = String(game.liveStatus || '').toLowerCase();
+            const isCancelled = normalizedStatus === 'cancelled';
+            const isCompleted = normalizedStatus === 'completed' && !isPractice;
+            const isLive = normalizedLiveStatus === 'live' && !isCancelled;
             const gameDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-            const isUpcoming = !isCompleted && gameDate > new Date();
+            const isUpcoming = !isCancelled && !isCompleted && gameDate > new Date();
             const won = isCompleted && game.homeScore > game.awayScore;
             const lost = isCompleted && game.homeScore < game.awayScore;
             const tied = isCompleted && game.homeScore === game.awayScore;
+            const borderAccentClass = isCancelled
+                ? 'border-gray-400'
+                : (won ? 'border-green-500' : (lost ? 'border-red-500' : (tied ? 'border-yellow-500' : 'border-primary-500')));
 
             return `
-                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${won ? 'border-green-500' : (lost ? 'border-red-500' : (tied ? 'border-yellow-500' : 'border-primary-500'))
-                } overflow-hidden border border-gray-200">
+                <div class="group bg-white rounded-xl shadow-md hover:shadow-lg transition border-l-4 ${borderAccentClass} overflow-hidden border border-gray-200">
                     <div class="p-5">
                         <div class="flex flex-col md:flex-row justify-between items-start gap-4">
                             <div class="flex-grow">
                                 <div class="flex flex-wrap items-center gap-2 mb-2">
-                                    ${isCompleted
-                    ? `<span class="text-xs ${won ? 'bg-green-100 text-green-800' : (lost ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800')} px-2.5 py-0.5 rounded-full font-semibold">
+                                    ${isCancelled
+                    ? '<span class="text-xs bg-red-100 text-red-800 px-2.5 py-0.5 rounded-full font-semibold">Cancelled</span>'
+                    : (isCompleted
+                        ? `<span class="text-xs ${won ? 'bg-green-100 text-green-800' : (lost ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800')} px-2.5 py-0.5 rounded-full font-semibold">
                                             ${won ? 'W' : (lost ? 'L' : 'T')}
                                           </span>`
-                    : (isUpcoming
-                        ? `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
-                        : `<span class="text-xs bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full font-semibold">Not Tracked</span>`)
+                        : (isUpcoming
+                            ? `<span class="text-xs bg-primary-100 text-primary-800 px-2.5 py-0.5 rounded-full font-semibold">Upcoming</span>`
+                            : `<span class="text-xs bg-gray-100 text-gray-600 px-2.5 py-0.5 rounded-full font-semibold">Not Tracked</span>`))
                 }
                                     ${isLive ? `
                                         <span class="inline-flex items-center gap-1 text-xs bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-semibold">
@@ -1556,7 +1574,7 @@
                                     ${game.isHome === true ? '<span class="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full font-semibold">HOME</span>' : ''}
                                     ${game.isHome === false ? '<span class="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full font-semibold">AWAY</span>' : ''}
                                     ${game.kitColor ? `<span class="text-xs bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full font-semibold">${escapeHtml(game.kitColor)}</span>` : ''}
-                                    ${game.status === 'cancelled' ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-semibold">CANCELLED</span>' : ''}
+                                    ${isCancelled ? '<span class="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-semibold">CANCELLED</span>' : ''}
                                 </div>
                                 ${game.arrivalTime ? `<div class="text-xs text-amber-600 mt-1">Arrive by ${formatTime(game.arrivalTime)}</div>` : ''}
                                 ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
