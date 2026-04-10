@@ -96,6 +96,10 @@ const Blob = deps.Blob;
             'const { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } = deps.utils;'
         )
         .replace(
+            "import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';",
+            'const { mergeGlobalCalendarIcsEvents } = deps.calendarIcsSync;'
+        )
+        .replace(
             "import { requireAuth, checkAuth } from './js/auth.js?v=10';",
             'const { requireAuth, checkAuth } = deps.auth;'
         )
@@ -180,10 +184,29 @@ function createEnvironment() {
     return { document, elements, window };
 }
 
-function createDeps(submitRecorder) {
-    const eventDate = new Date('2026-03-15T18:00:00.000Z');
-    const initialSummary = { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 };
-    const updatedSummary = { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 };
+function createDeps(submitRecorder, overrides = {}) {
+    const eventDate = overrides.eventDate || new Date('2026-03-15T18:00:00.000Z');
+    const initialSummary = overrides.initialSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 };
+    const updatedSummary = overrides.updatedSummary || { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 };
+    const games = overrides.games || [
+        {
+            id: 'game-1',
+            type: 'game',
+            opponent: 'Lions',
+            date: eventDate.toISOString(),
+            location: 'North Field',
+            status: 'scheduled'
+        }
+    ];
+    const trackedUids = overrides.trackedUids || [];
+    const icsEvents = overrides.icsEvents || [
+        {
+            uid: 'ics-1',
+            dtstart: new Date('2026-03-15T20:30:00.000Z'),
+            summary: 'Team dinner',
+            location: 'Clubhouse'
+        }
+    ];
 
     return {
         db: {
@@ -191,7 +214,7 @@ function createDeps(submitRecorder) {
                 return [];
             },
             async getParentTeams() {
-                return [
+                return overrides.parentTeams || [
                     {
                         id: 'team-1',
                         name: 'Tigers',
@@ -200,22 +223,13 @@ function createDeps(submitRecorder) {
                 ];
             },
             async getGames() {
-                return [
-                    {
-                        id: 'game-1',
-                        type: 'game',
-                        opponent: 'Lions',
-                        date: eventDate.toISOString(),
-                        location: 'North Field',
-                        status: 'scheduled'
-                    }
-                ];
+                return games;
             },
             async getTeam() {
                 return null;
             },
             async getTrackedCalendarEventUids() {
-                return [];
+                return trackedUids;
             },
             async getUserProfile() {
                 return {
@@ -251,14 +265,7 @@ function createDeps(submitRecorder) {
                 return String(value ?? '');
             },
             async fetchAndParseCalendar() {
-                return [
-                    {
-                        uid: 'ics-1',
-                        dtstart: new Date('2026-03-15T20:30:00.000Z'),
-                        summary: 'Team dinner',
-                        location: 'Clubhouse'
-                    }
-                ];
+                return icsEvents;
             },
             expandRecurrence() {
                 return [];
@@ -287,8 +294,11 @@ function createDeps(submitRecorder) {
                     source: 'ics'
                 };
             },
-            isTrackedCalendarEvent() {
-                return false;
+            isTrackedCalendarEvent(event, currentTrackedUids) {
+                if (typeof overrides.isTrackedCalendarEvent === 'function') {
+                    return overrides.isTrackedCalendarEvent(event, currentTrackedUids);
+                }
+                return currentTrackedUids.includes(event.uid);
             }
         },
         auth: {
@@ -305,6 +315,36 @@ function createDeps(submitRecorder) {
                     email: 'parent@example.com',
                     displayName: 'Parent User'
                 });
+            }
+        },
+        calendarIcsSync: {
+            mergeGlobalCalendarIcsEvents({
+                team,
+                teamColor,
+                existingEvents,
+                icsEvents,
+                trackedUids,
+                isTrackedCalendarEvent,
+                buildGlobalCalendarIcsEvent
+            }) {
+                return (icsEvents || []).reduce((mergedEvents, event) => {
+                    if (isTrackedCalendarEvent(event, trackedUids)) {
+                        return mergedEvents;
+                    }
+                    const hasTrackedConflict = (existingEvents || []).some((existingEvent) => {
+                        if (existingEvent?.source !== 'db') return false;
+                        if (existingEvent?.teamId !== team.id) return false;
+                        return Math.abs(existingEvent.date - event.dtstart) < 60000;
+                    });
+                    if (hasTrackedConflict) {
+                        return mergedEvents;
+                    }
+                    const mappedEvent = buildGlobalCalendarIcsEvent({ team, teamColor, event });
+                    if (mappedEvent) {
+                        mergedEvents.push(mappedEvent);
+                    }
+                    return mergedEvents;
+                }, []);
             }
         },
         calendarRsvp: {
@@ -341,10 +381,10 @@ function createDeps(submitRecorder) {
     };
 }
 
-async function bootCalendar() {
+async function bootCalendar(overrides = {}) {
     const submitRecorder = { calls: [] };
     const env = createEnvironment();
-    const deps = createDeps(submitRecorder);
+    const deps = createDeps(submitRecorder, overrides);
 
     await runCalendarModule({
         ...deps,
@@ -392,5 +432,38 @@ describe('calendar day modal RSVP refresh', () => {
         expect(afterHtml).toContain(`${updatedSummary.going} going · ${updatedSummary.maybe} maybe · ${updatedSummary.notGoing} can't go · ${updatedSummary.notResponded} no response`);
         expect(afterHtml).toContain('Availability opens after this event is tracked in the schedule.');
         expect((afterHtml.match(/submitCalendarRsvpFromButton/g) || []).length).toBe(3);
+    });
+
+    it('renders only the DB-backed event after the ICS uid is marked tracked', async () => {
+        const trackedDate = new Date('2026-03-15T18:00:00.000Z');
+        const { elements, window } = await bootCalendar({
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'game',
+                    opponent: 'Tracked Opponent',
+                    date: trackedDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    calendarEventUid: 'ics-1'
+                }
+            ],
+            trackedUids: ['ics-1'],
+            icsEvents: [
+                {
+                    uid: 'ics-1',
+                    dtstart: trackedDate,
+                    summary: 'Tigers vs Tracked Opponent',
+                    location: 'North Field'
+                }
+            ]
+        });
+
+        window.setTimeRange('all');
+
+        const html = elements.get('calendar-content').innerHTML;
+        expect(html).toContain('vs. Tracked Opponent');
+        expect(html).not.toContain('Tigers vs Tracked Opponent');
+        expect(html).not.toContain('Availability opens after this event is tracked in the schedule.');
     });
 });
