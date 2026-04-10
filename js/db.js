@@ -42,6 +42,7 @@ import {
 } from './parent-membership-utils.js?v=1';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
+import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
@@ -2765,54 +2766,101 @@ export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const fetchBatchSize = Math.max(limitCount * 3, 20);
 
     const gamesRef = collectionGroup(db, 'games');
-    const q = query(
-        gamesRef,
+    const queryConstraints = [
         where('type', '==', 'game'),
         where('date', '>=', Timestamp.fromDate(startOfToday)),
         where('date', '<=', Timestamp.fromDate(oneWeekFromNow)),
-        orderBy('date', 'asc'),
-        limitQuery(limitCount)
-    );
-
-    let snapshot;
+        orderBy('date', 'asc')
+    ];
     const games = [];
+    let snapshot;
 
     try {
-        snapshot = await getDocs(q);
+        let lastDoc = null;
+        let exhausted = false;
+
+        while (games.length < limitCount && !exhausted) {
+            const pageConstraints = [...queryConstraints, limitQuery(fetchBatchSize)];
+            if (lastDoc) {
+                pageConstraints.push(startAfterQuery(lastDoc));
+            }
+
+            snapshot = await getDocs(query(gamesRef, ...pageConstraints));
+            if (snapshot.empty) {
+                break;
+            }
+
+            lastDoc = snapshot.docs[snapshot.docs.length - 1];
+
+            for (const docSnap of snapshot.docs) {
+                const gameData = { id: docSnap.id, ...docSnap.data() };
+                if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+                    continue;
+                }
+                if (!gameData.type) {
+                    gameData.type = 'game';
+                }
+                const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
+                if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
+                    continue;
+                }
+                // Get team info (parent document)
+                const teamRef = docSnap.ref.parent.parent;
+                const teamSnap = await getDoc(teamRef);
+                if (teamSnap.exists()) {
+                    gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+                    gameData.teamId = teamSnap.id;
+                    if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                        continue;
+                    }
+                } else {
+                    continue;
+                }
+                games.push(gameData);
+                if (games.length >= limitCount) {
+                    break;
+                }
+            }
+
+            exhausted = snapshot.docs.length < fetchBatchSize;
+        }
     } catch (error) {
         // Fallback when the collection group date index isn't ready yet.
         // Pull a limited sample and filter client-side.
         const fallbackQuery = query(gamesRef, limitQuery(200));
         snapshot = await getDocs(fallbackQuery);
-    }
-
-    for (const docSnap of snapshot.docs) {
-        const gameData = { id: docSnap.id, ...docSnap.data() };
-        if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.liveStatus === 'completed') {
-            continue;
-        }
-        if (!gameData.type) {
-            gameData.type = 'game';
-        }
-        const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
-        if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
-            continue;
-        }
-        // Get team info (parent document)
-        const teamRef = docSnap.ref.parent.parent;
-        const teamSnap = await getDoc(teamRef);
-        if (teamSnap.exists()) {
-            gameData.team = { id: teamSnap.id, ...teamSnap.data() };
-            gameData.teamId = teamSnap.id;
-            if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+        for (const docSnap of snapshot.docs) {
+            const gameData = { id: docSnap.id, ...docSnap.data() };
+            if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
                 continue;
             }
-        } else {
-            continue;
+            if (!gameData.type) {
+                gameData.type = 'game';
+            }
+            const gameDate = gameData.date?.toDate ? gameData.date.toDate() : new Date(gameData.date);
+            if (gameDate < startOfToday || gameDate > oneWeekFromNow) {
+                continue;
+            }
+            // Get team info (parent document)
+            const teamRef = docSnap.ref.parent.parent;
+            const teamSnap = await getDoc(teamRef);
+            if (teamSnap.exists()) {
+                gameData.team = { id: teamSnap.id, ...teamSnap.data() };
+                gameData.teamId = teamSnap.id;
+                if (!shouldIncludeTeamInLiveOrUpcoming(gameData.team)) {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            games.push(gameData);
+            if (games.length >= limitCount) {
+                break;
+            }
         }
-        games.push(gameData);
     }
 
     games.sort((a, b) => {
@@ -2821,7 +2869,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         return aDate - bDate;
     });
 
-    return games;
+    return games.slice(0, limitCount);
 }
 
 // ============================================
@@ -3903,90 +3951,5 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-
-    const byPlayer = new Map();
-    players.forEach((player) => {
-        byPlayer.set(player.id, {
-            playerId: player.id,
-            playerName: player.name || `#${player.number || ''}`.trim() || 'Unknown Player',
-            playerNumber: player.number || '',
-            response: 'not_responded',
-            respondedAt: null,
-            note: null,
-            responderUserId: null
-        });
-    });
-
-    const toMillis = (value) => {
-        if (!value) return 0;
-        if (typeof value?.toMillis === 'function') return value.toMillis();
-        if (value instanceof Date) return value.getTime();
-        const parsed = new Date(value);
-        return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
-    };
-
-    rsvps.forEach((rsvp) => {
-        const ids = resolveRsvpPlayerIds(rsvp, fallbackByUser);
-        if (!ids.length) return;
-        ids.forEach((playerId) => {
-            let existing = byPlayer.get(playerId);
-            if (!existing) {
-                existing = {
-                    playerId,
-                    playerName: 'Former Player',
-                    playerNumber: '',
-                    response: 'not_responded',
-                    respondedAt: null,
-                    note: null,
-                    responderUserId: null
-                };
-            }
-            const existingMillis = toMillis(existing.respondedAt);
-            const nextMillis = toMillis(rsvp.respondedAt);
-            if (nextMillis < existingMillis) return;
-            existing.response = normalizeRsvpResponse(rsvp.response);
-            existing.respondedAt = rsvp.respondedAt || null;
-            existing.note = rsvp.note || null;
-            existing.responderUserId = rsvp.userId || null;
-            byPlayer.set(playerId, existing);
-        });
-    });
-
-    const grouped = {
-        going: [],
-        maybe: [],
-        not_going: [],
-        not_responded: []
-    };
-
-    Array.from(byPlayer.values())
-        .sort((a, b) => {
-            const an = (a.playerNumber ?? '').toString();
-            const bn = (b.playerNumber ?? '').toString();
-            const ai = Number.parseInt(an, 10);
-            const bi = Number.parseInt(bn, 10);
-            const aNum = Number.isFinite(ai);
-            const bNum = Number.isFinite(bi);
-            if (aNum && bNum && ai !== bi) return ai - bi;
-            if (aNum && !bNum) return -1;
-            if (!aNum && bNum) return 1;
-            return (a.playerName || '').localeCompare(b.playerName || '');
-        })
-        .forEach((row) => {
-            const key = row.response === 'going' || row.response === 'maybe' || row.response === 'not_going'
-                ? row.response
-                : 'not_responded';
-            grouped[key].push(row);
-        });
-
-    return {
-        grouped,
-        counts: {
-            going: grouped.going.length,
-            maybe: grouped.maybe.length,
-            notGoing: grouped.not_going.length,
-            notResponded: grouped.not_responded.length,
-            total: players.length
-        }
-    };
+    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
 }
