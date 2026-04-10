@@ -148,6 +148,43 @@ describe('parent dashboard RSVP controller', () => {
         });
         expect(allScheduleEvents[0].myRsvp).toBe('going');
     });
+
+    it('runs the optional post-render hook after a grouped RSVP save', async () => {
+        const allScheduleEvents = [
+            { teamId: 'team-1', id: 'game-1', childId: 'child-a', myRsvp: null, rsvpSummary: null },
+            { teamId: 'team-1', id: 'game-1', childId: 'child-b', myRsvp: null, rsvpSummary: null }
+        ];
+        const submitRsvp = vi.fn().mockResolvedValue({ going: 2, maybe: 0, notGoing: 0, notResponded: 0, total: 2 });
+        const afterRender = vi.fn();
+        const controller = createParentDashboardRsvpController({
+            getAllScheduleEvents: () => allScheduleEvents,
+            getCurrentUserId: () => 'parent-1',
+            getCurrentUser: () => ({ displayName: 'Parent One', email: 'parent@example.com' }),
+            documentRef: {
+                getElementById(id) {
+                    if (id === 'player-filter') return { value: '' };
+                    return null;
+                }
+            },
+            resolveRsvpPlayerIdsForSubmission,
+            submitRsvp,
+            submitRsvpForPlayer: vi.fn(),
+            renderScheduleFromControls: vi.fn(),
+            afterRender,
+            alertFn: vi.fn(),
+            consoleRef: { error: vi.fn() }
+        });
+
+        await controller.submitGameRsvpFromButton({
+            dataset: {
+                teamId: 'team-1',
+                gameId: 'game-1',
+                childIds: 'child-a,child-b'
+            }
+        }, 'going');
+
+        expect(afterRender).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('parent dashboard RSVP wiring', () => {
