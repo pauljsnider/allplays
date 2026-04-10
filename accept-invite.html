@@ -182,6 +182,31 @@
             getUserProfile,
             markAccessCodeAsUsed
         });
+        const processedInviteKeys = new Set();
+        const inFlightInviteKeys = new Set();
+
+        async function processInviteOnce(userId, code, authEmail) {
+            const normalizedCode = String(code || '').trim().toUpperCase();
+            const inviteKey = `${userId}:${normalizedCode}`;
+
+            if (!normalizedCode) {
+                throw new Error('Invalid or expired invite code');
+            }
+
+            if (processedInviteKeys.has(inviteKey) || inFlightInviteKeys.has(inviteKey)) {
+                return null;
+            }
+
+            inFlightInviteKeys.add(inviteKey);
+
+            try {
+                const inviteResult = await processInvite(userId, code, authEmail);
+                processedInviteKeys.add(inviteKey);
+                return inviteResult;
+            } finally {
+                inFlightInviteKeys.delete(inviteKey);
+            }
+        }
 
         async function init() {
             renderHeader(document.getElementById('header-container'), null);
@@ -211,8 +236,10 @@
 
                     // Process the invite code
                     if (inviteCode) {
-                        const inviteResult = await processInvite(userId, inviteCode, result?.user?.email || email);
-                        showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                        const inviteResult = await processInviteOnce(userId, inviteCode, result?.user?.email || email);
+                        if (inviteResult) {
+                            showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                        }
                     } else {
                         // No invite code - just redirect to dashboard
                         const profile = await getUserProfile(userId);
@@ -237,8 +264,10 @@
                     if (user && inviteCode) {
                         // User is logged in and has an invite code - process it
                         try {
-                            const inviteResult = await processInvite(user.uid, inviteCode, user.email);
-                            showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                            const inviteResult = await processInviteOnce(user.uid, inviteCode, user.email);
+                            if (inviteResult) {
+                                showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                            }
                         } catch (error) {
                             console.error('Error processing invite:', error);
                             showError(error.message);
@@ -330,8 +359,10 @@
                 }
 
                 try {
-                    const inviteResult = await processInvite(user.uid, code, user.email);
-                    showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                    const inviteResult = await processInviteOnce(user.uid, code, user.email);
+                    if (inviteResult) {
+                        showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                    }
                 } catch (error) {
                     console.error('Error:', error);
                     errorDiv.textContent = error.message || 'Invalid or expired code';
