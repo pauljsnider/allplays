@@ -504,7 +504,9 @@
             shouldPromptWrapupOnCompletion,
             getWrapupFormState,
             buildFinishGamePayload,
-            buildMatchReportUrl
+            buildMatchReportUrl,
+            buildPracticeFeedPrompt,
+            buildGameSummaryPrompt
         } from './js/game-day-wrapup.js?v=1';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
@@ -2331,17 +2333,18 @@ Respond ONLY with valid JSON.`;
             status.textContent = 'Analyzing game… this may take a moment.';
             try {
                 const model = getAIModel();
-                const stats = state.aggregatedStats;
                 const events = state.liveEvents.slice(-30);
                 const notes = document.getElementById('post-game-notes').value;
 
-                const prompt = `Analyze this soccer game and return JSON: { "practiceFeedItems": [ { "weakness": "...", "evidence": "...", "drillCategory": "...", "urgency": "high|medium|low" } ] }
-Game: ${state.team?.name || 'Team'} vs ${state.game?.opponent || 'Opponent'}
-Score: ${state.score.home}-${state.score.away}
-Coaching notes: ${state.coachingNotes.map(n => n.text).join(', ') || 'None'}
-Post-game notes: ${notes || 'None'}
-Key events: ${events.map(e => `${e.playerName || ''} ${e.stat || e.type || ''}`).join(', ') || 'None'}
-Identify 2-4 specific areas to improve. Respond ONLY with valid JSON.`;
+                const prompt = buildPracticeFeedPrompt({
+                    game: state.game,
+                    team: state.team,
+                    config: state.statConfig,
+                    score: state.score,
+                    coachingNotes: state.coachingNotes,
+                    notes,
+                    events
+                });
 
                 const result = await model.generateContent(prompt);
                 const text = result.response.text().trim();
@@ -2370,12 +2373,14 @@ Identify 2-4 specific areas to improve. Respond ONLY with valid JSON.`;
             try {
                 const model = getAIModel();
                 const notes = document.getElementById('post-game-notes').value;
-                const prompt = `Write a 3-5 sentence game summary for a youth soccer team.
-Team: ${state.team?.name || 'Team'} vs ${state.game?.opponent || 'Opponent'}
-Final score: ${state.score.home}-${state.score.away}
-Coach notes: ${notes || 'None'}
-Key highlights: ${state.coachingNotes.map(n => n.text).join(', ') || 'None'}
-Be encouraging and specific. No markdown.`;
+                const prompt = buildGameSummaryPrompt({
+                    game: state.game,
+                    team: state.team,
+                    config: state.statConfig,
+                    score: state.score,
+                    coachingNotes: state.coachingNotes,
+                    notes
+                });
                 const result = await model.generateContent(prompt);
                 const summary = result.response.text().trim();
                 await updateGame(state.teamId, state.gameId, { summary });
