@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     createRideRequestHandlers,
+    getRideOfferUiState,
     resolveRideRequestSelection,
     resolveSelectedRideChildId
 } from '../../js/parent-dashboard-rideshare-controls.js';
@@ -37,6 +38,43 @@ describe('parent dashboard rideshare controls', () => {
         })).toEqual({
             childId: 'child-b',
             childName: 'Child B'
+        });
+    });
+
+    it('switches modal rideshare actions and status copy with the selected sibling', () => {
+        const offer = {
+            id: 'offer-1',
+            status: 'open',
+            driverUserId: 'driver-1',
+            seatCapacity: 3,
+            seatCountConfirmed: 0,
+            requests: [
+                { id: 'req-b', parentUserId: 'parent-1', childId: 'child-b', childName: 'Child B', status: 'pending' }
+            ]
+        };
+
+        expect(getRideOfferUiState({
+            offer,
+            parentUserId: 'parent-1',
+            selectedChildId: 'child-a',
+            selectedChildName: 'Child A'
+        })).toMatchObject({
+            canRequest: true,
+            showRequestButton: true,
+            showCancelButton: false,
+            statusText: ''
+        });
+
+        expect(getRideOfferUiState({
+            offer,
+            parentUserId: 'parent-1',
+            selectedChildId: 'child-b',
+            selectedChildName: 'Child B'
+        })).toMatchObject({
+            canRequest: false,
+            showRequestButton: false,
+            showCancelButton: true,
+            statusText: 'Your request for Child B: pending'
         });
     });
 
