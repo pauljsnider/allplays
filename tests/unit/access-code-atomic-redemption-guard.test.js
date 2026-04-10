@@ -25,5 +25,7 @@ describe('access code atomic redemption guard', () => {
 
         const afterFunction = source.slice(fnIndex, fnIndex + 5000);
         expect(afterFunction).toContain('runTransaction(db, async (transaction) =>');
+        expect(afterFunction).toContain('if (isAccessCodeExpired(latestCodeData.expiresAt))');
+        expect(afterFunction).toContain('throw new Error("Code has expired")');
     });
 });
