@@ -111,7 +111,7 @@ const setTimeout = deps.setTimeout;
             'const { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=3';",
+            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=4';",
             'const { createInviteProcessor } = deps.acceptInviteFlow;'
         )
         .replace(
