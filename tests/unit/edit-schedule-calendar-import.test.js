@@ -49,6 +49,7 @@ describe('edit schedule calendar import helpers', () => {
         const importedPractice = {
             uid: 'new-practice-uid',
             dtstart: new Date('2026-03-28T17:30:00.000Z'),
+            dtend: new Date('2026-03-28T19:00:00.000Z'),
             summary: 'Team Practice',
             location: 'Gym'
         };
@@ -85,7 +86,38 @@ describe('edit schedule calendar import helpers', () => {
                 isPractice: true,
                 opponent: 'Team Practice',
                 location: 'Gym',
+                end: importedPractice.dtend,
                 calendarEvent: importedPractice
+            })
+        ]);
+    });
+
+    it('preserves parser-provided practice classification for cancelled imported rows', () => {
+        const importedCancelledPractice = {
+            uid: 'cancelled-practice-uid',
+            dtstart: new Date('2026-03-29T17:30:00.000Z'),
+            summary: '[CANCELED] Team Session',
+            location: 'Gym',
+            isPractice: true
+        };
+
+        const merged = mergeCalendarImportEvents({
+            calendarEvents: [importedCancelledPractice],
+            dbEvents: [],
+            trackedUids: [],
+            currentTeamName: 'Wildcats',
+            isTrackedCalendarEvent: () => false,
+            getCalendarEventStatus: () => 'cancelled',
+            isPracticeEvent: () => false,
+            extractOpponent: (summary) => summary
+        });
+
+        expect(merged).toEqual([
+            expect.objectContaining({
+                eventType: 'practice',
+                isPractice: true,
+                isCancelled: true,
+                opponent: 'Team Session'
             })
         ]);
     });

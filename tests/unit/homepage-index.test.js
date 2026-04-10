@@ -121,9 +121,16 @@ describe('homepage index workflow', () => {
         const duplicatedLiveGame = createGame({ liveViewerCount: 5 });
         const replayGame = createGame({
             id: 'game-2',
+            teamId: 'team-9',
             opponent: 'Bears',
             homeScore: 77,
-            awayScore: 72
+            awayScore: 72,
+            date: '2026-03-29T19:30:00.000Z',
+            team: {
+                id: 'team-9',
+                name: 'Panthers',
+                photoUrl: ''
+            }
         });
 
         const { elements, renderHeader } = await runHomepage({
@@ -149,8 +156,12 @@ describe('homepage index workflow', () => {
 
         const replayMarkup = elements.get('past-games-list').innerHTML;
         expect(replayMarkup).not.toContain('Loading replays...');
+        expect(replayMarkup).toContain('Panthers');
+        expect(replayMarkup).toContain('vs Bears');
+        expect(replayMarkup).toContain('77 - 72');
+        expect(replayMarkup).toContain('DATE:2026-03-29T19:30:00.000Z');
         expect(replayMarkup).toContain('Watch Replay');
-        expect(replayMarkup).toContain('gameId=game-2&replay=true');
+        expect(replayMarkup).toContain('href="live-game.html?teamId=team-9&gameId=game-2&replay=true"');
     });
 
     it('routes parent users to the parent dashboard CTA', async () => {
@@ -191,6 +202,30 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('TIME:2026-03-28T18:00:00.000Z');
     });
 
+    it('replaces replay loading placeholder with exact empty-state copy', async () => {
+        const { elements } = await runHomepage({
+            liveGames: [],
+            upcomingGames: [],
+            replayGames: []
+        });
+
+        expect(elements.get('past-games-list').innerHTML).not.toContain('Loading replays...');
+        expect(elements.get('past-games-list').textContent).toBe('No recent replays available');
+    });
+
+    it('replaces loading placeholders with exact error fallback copy when replay loading fails', async () => {
+        const { elements } = await runHomepage({
+            liveGames: [],
+            upcomingGames: [],
+            replayError: new Error('replay query failed')
+        });
+
+        expect(elements.get('live-games-list').innerHTML).not.toContain('Loading games...');
+        expect(elements.get('past-games-list').innerHTML).not.toContain('Loading replays...');
+        expect(elements.get('live-games-list').textContent).toBe('No upcoming live games scheduled');
+        expect(elements.get('past-games-list').textContent).toBe('Unable to load replays');
+    });
+
     it('excludes cancelled upcoming games from the homepage list', async () => {
         const cancelledGame = createGame({
             id: 'game-cancelled',
@@ -211,19 +246,6 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('vs Owls');
         expect(liveMarkup).not.toContain('gameId=game-cancelled');
         expect(liveMarkup).not.toContain('Cancelled Falcons');
-    });
-
-    it('replaces loading placeholders with exact empty and error fallback copy', async () => {
-        const { elements } = await runHomepage({
-            liveGames: [],
-            upcomingGames: [],
-            replayError: new Error('replay query failed')
-        });
-
-        expect(elements.get('live-games-list').innerHTML).not.toContain('Loading games...');
-        expect(elements.get('past-games-list').innerHTML).not.toContain('Loading replays...');
-        expect(elements.get('live-games-list').textContent).toBe('No upcoming live games scheduled');
-        expect(elements.get('past-games-list').textContent).toBe('Unable to load replays');
     });
 
     it('escapes untrusted homepage game fields before inserting markup', async () => {
