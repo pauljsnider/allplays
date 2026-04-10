@@ -1295,7 +1295,7 @@
             // Sort by date
             allEvents.sort((a, b) => a.date - b.date);
 
-            const hiddenPracticeCount = allEvents.filter(event => event.isPractice).length;
+            const hiddenPracticeCount = allEvents.filter(event => event.isPractice && !event.isCancelled).length;
             console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
 
             const now = new Date();
@@ -1304,7 +1304,7 @@
             // Filter by practice checkbox + schedule view
             const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
             let filteredEvents = allEvents.filter(event => {
-                if (event.isPractice && !showPractices && !forcePracticeVisibility) return false;
+                if (event.isPractice && !event.isCancelled && !showPractices && !forcePracticeVisibility) return false;
                 return true;
             });
             if (scheduleViewFilter === 'upcoming-all') {
@@ -1674,7 +1674,10 @@
             if (configId) {
                 const config = allConfigs.find(c => c.id === configId);
                 if (config) {
-                    return (config.baseType || '').toLowerCase() === 'basketball';
+                    const baseType = (config.baseType || '').toLowerCase();
+                    if (baseType) {
+                        return baseType === 'basketball';
+                    }
                 }
             }
             // If no config, infer from team sport
