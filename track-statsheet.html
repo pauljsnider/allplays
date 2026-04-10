@@ -901,6 +901,7 @@ Write the match report now:`;
 
     // Cancel/Close preview buttons
     const hideSummaryPreview = () => {
+      generatedSummary = '';
       document.getElementById('summary-preview').classList.add('hidden');
       document.getElementById('summary-status').textContent = '';
     };
@@ -912,7 +913,7 @@ Write the match report now:`;
     document.getElementById('save-continue-btn').addEventListener('click', async () => {
       const saveBtn = document.getElementById('save-continue-btn');
       const status = document.getElementById('summary-status');
-      const summaryText = document.getElementById('summary-notes').value.trim() || generatedSummary.trim();
+      const summaryText = document.getElementById('summary-notes').value.trim();
 
       saveBtn.disabled = true;
 
