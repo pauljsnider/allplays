@@ -322,6 +322,7 @@
         let parentMembershipRequests = [];
         let incentivesPanelPlayer = null;  // { id, name, teamId }
         let incentivesPanelRules = [];
+        let parentDashboardHydrationRun = 0;
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
@@ -830,9 +831,11 @@
                      renderHeader(document.getElementById('header-container'), updatedUser);
                 });
 
-                const data = await getParentDashboardData(user.uid);
-                await loadRequestAccessOptions();
-                await refreshParentMembershipRequestList(user.uid);
+                const [data] = await Promise.all([
+                    getParentDashboardData(user.uid),
+                    loadRequestAccessOptions(),
+                    refreshParentMembershipRequestList(user.uid)
+                ]);
                 renderPlayers(data.children);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
@@ -846,61 +849,7 @@
                 await ensureParentTeamAccess(user.uid, teamIds);
                 const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
                 renderTeamChats(data.children, unreadCounts);
-                const combinedSchedule = await buildCombinedSchedule(data.children);
-                allScheduleEvents = combinedSchedule;
-                await hydrateRideshareOffersForSchedule(allScheduleEvents);
-
-                // Fetch my RSVPs for tracked DB events (games + practices).
-                const uniqueGameKeys = [...new Set(
-                    allScheduleEvents
-                        .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
-                        .map((event) => `${event.teamId}::${event.id}`)
-                )];
-                const unsummarizedByTeam = new Map();
-                uniqueGameKeys.forEach((key) => {
-                    const [teamId, gameId] = parseTeamGameKey(key);
-                    const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
-                    if (!shouldLoadSummary) return;
-                    if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
-                    unsummarizedByTeam.get(teamId).push(gameId);
-                });
-
-                const summaryMapsByTeam = new Map();
-                await Promise.all(Array.from(unsummarizedByTeam.entries()).map(async ([teamId, gameIds]) => {
-                    try {
-                        summaryMapsByTeam.set(teamId, await getRsvpSummaries(teamId, gameIds));
-                    } catch (e) {
-                        summaryMapsByTeam.set(teamId, new Map());
-                    }
-                }));
-
-                await Promise.all(uniqueGameKeys.map(async (key) => {
-                    const [teamId, gameId] = parseTeamGameKey(key);
-                    try {
-                        const rsvps = await getRsvps(teamId, gameId);
-                        const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, currentUserId);
-                        const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
-                        applyRsvpHydration(allScheduleEvents, teamId, gameId, {
-                            summary
-                        });
-                        allScheduleEvents.forEach((event) => {
-                            if (event?.teamId !== teamId || event?.id !== gameId) return;
-                            const childId = event?.childId || event?.playerId || '';
-                            if (!childId) return;
-                            event.myRsvp = Object.prototype.hasOwnProperty.call(myRsvpByChild, childId)
-                                ? myRsvpByChild[childId]
-                                : null;
-                        });
-                    } catch (e) {
-                        // Ignore per-game RSVP read failures.
-                    }
-                }));
-
-                allPracticePacketSessions = await buildPracticePacketSessions(data.children);
-                initPlayerFilter(data.children);
-                setScheduleFilter('upcoming-all');
-                renderScheduleFromControls();
-                renderPracticePackets();
+                queueParentDashboardHydration(data.children, user.uid);
 
                 // Redeem Code Logic
                 document.getElementById('redeem-code-btn').addEventListener('click', async () => {
@@ -937,6 +886,87 @@
             } catch (error) {
                 console.error(error);
             }
+        }
+
+        function queueParentDashboardHydration(children, userId) {
+            const runId = ++parentDashboardHydrationRun;
+            window.setTimeout(() => {
+                hydrateParentDashboardData(children, userId, runId).catch((error) => {
+                    if (runId !== parentDashboardHydrationRun) return;
+                    console.error('[parent-dashboard] Failed to hydrate schedule data:', error);
+                    allScheduleEvents = [];
+                    allPracticePacketSessions = [];
+                    initPlayerFilter(children);
+                    setScheduleFilter('upcoming-all');
+                    renderScheduleFromControls();
+                    renderPracticePackets();
+                });
+            }, 150);
+        }
+
+        async function hydrateParentDashboardData(children, userId, runId) {
+            const combinedSchedule = await buildCombinedSchedule(children);
+            if (runId !== parentDashboardHydrationRun) return;
+
+            allScheduleEvents = combinedSchedule;
+            await hydrateRideshareOffersForSchedule(allScheduleEvents);
+            if (runId !== parentDashboardHydrationRun) return;
+
+            // Fetch my RSVPs for tracked DB events (games + practices).
+            const uniqueGameKeys = [...new Set(
+                allScheduleEvents
+                    .filter((event) => event.isDbGame && !event.isCancelled && event.teamId && event.id)
+                    .map((event) => `${event.teamId}::${event.id}`)
+            )];
+            const unsummarizedByTeam = new Map();
+            uniqueGameKeys.forEach((key) => {
+                const [teamId, gameId] = parseTeamGameKey(key);
+                const shouldLoadSummary = allScheduleEvents.some((event) => event.teamId === teamId && event.id === gameId && !event.rsvpSummary);
+                if (!shouldLoadSummary) return;
+                if (!unsummarizedByTeam.has(teamId)) unsummarizedByTeam.set(teamId, []);
+                unsummarizedByTeam.get(teamId).push(gameId);
+            });
+
+            const summaryMapsByTeam = new Map();
+            await Promise.all(Array.from(unsummarizedByTeam.entries()).map(async ([teamId, gameIds]) => {
+                try {
+                    summaryMapsByTeam.set(teamId, await getRsvpSummaries(teamId, gameIds));
+                } catch (e) {
+                    summaryMapsByTeam.set(teamId, new Map());
+                }
+            }));
+            if (runId !== parentDashboardHydrationRun) return;
+
+            await Promise.all(uniqueGameKeys.map(async (key) => {
+                const [teamId, gameId] = parseTeamGameKey(key);
+                try {
+                    const rsvps = await getRsvps(teamId, gameId);
+                    const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, userId);
+                    const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
+                    applyRsvpHydration(allScheduleEvents, teamId, gameId, {
+                        summary
+                    });
+                    allScheduleEvents.forEach((event) => {
+                        if (event?.teamId !== teamId || event?.id !== gameId) return;
+                        const childId = event?.childId || event?.playerId || '';
+                        if (!childId) return;
+                        event.myRsvp = Object.prototype.hasOwnProperty.call(myRsvpByChild, childId)
+                            ? myRsvpByChild[childId]
+                            : null;
+                    });
+                } catch (e) {
+                    // Ignore per-game RSVP read failures.
+                }
+            }));
+            if (runId !== parentDashboardHydrationRun) return;
+
+            allPracticePacketSessions = await buildPracticePacketSessions(children);
+            if (runId !== parentDashboardHydrationRun) return;
+
+            initPlayerFilter(children);
+            setScheduleFilter('upcoming-all');
+            renderScheduleFromControls();
+            renderPracticePackets();
         }
 
         async function ensureParentTeamAccess(userId, teamIds, options = {}) {
@@ -981,22 +1011,23 @@
             }
 
             const allEvents = [];
-
-            for (const [teamId, teamChildren] of byTeam.entries()) {
+            const teamEventBatches = await Promise.all(Array.from(byTeam.entries()).map(async ([teamId, teamChildren]) => {
+                const teamEvents = [];
                 let team = null;
                 let dbGames = [];
                 let trackedUids = [];
                 let practiceSessions = [];
                 try {
-                    team = await getTeam(teamId);
-                    if (!team) continue;
-
-                    dbGames = await getGames(teamId);
-                    trackedUids = await getTrackedCalendarEventUids(teamId);
-                    practiceSessions = await getPracticeSessions(teamId);
+                    [team, dbGames, trackedUids, practiceSessions] = await Promise.all([
+                        getTeam(teamId),
+                        getGames(teamId),
+                        getTrackedCalendarEventUids(teamId),
+                        getPracticeSessions(teamId)
+                    ]);
+                    if (!team) return teamEvents;
                 } catch (err) {
                     console.warn('[parent-dashboard] Failed to load team schedule data:', teamId, err);
-                    continue;
+                    return teamEvents;
                 }
                 if (!Array.isArray(dbGames)) dbGames = [];
                 if (!Array.isArray(trackedUids)) trackedUids = [];
@@ -1059,7 +1090,7 @@
                             const occId = `${occ.masterId}__${occ.instanceDate}`;
                             const session = resolvePracticeSession({ id: occId }, occDate);
                             for (const child of teamChildren) {
-                                allEvents.push({
+                                teamEvents.push({
                                     type: 'practice',
                                     date: occDate,
                                     location: occ.location || 'TBD',
@@ -1089,7 +1120,7 @@
                         const id = game.id || game.gameId;
                         const session = isPractice ? resolvePracticeSession(game, date) : null;
                         for (const child of teamChildren) {
-                            allEvents.push({
+                            teamEvents.push({
                                 type,
                                 date,
                                 location: game.location || 'TBD',
@@ -1119,60 +1150,64 @@
                 // Calendar (ICS) events for this team
                 if (team.calendarUrls && team.calendarUrls.length > 0) {
                     console.log(`[parent-dashboard] Team ${team.name} has ${team.calendarUrls.length} calendar URL(s)`);
-                    for (const calendarUrl of team.calendarUrls) {
+                    const calendarResults = await Promise.all(team.calendarUrls.map(async (calendarUrl) => {
                         try {
                             console.log(`[parent-dashboard] Fetching calendar: ${calendarUrl}`);
                             const calendarEvents = await fetchAndParseCalendar(calendarUrl);
                             console.log(`[parent-dashboard] Got ${calendarEvents.length} events from calendar`);
-
-                            calendarEvents.forEach(event => {
-                                if (isTrackedCalendarEvent(event, trackedUids)) return;
-
-                                // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
-                                const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
-                                    event.summary?.includes('[CANCELED]');
-
-                                const eventDate = event.dtstart;
-                                if (!eventDate) return;
-
-                                // Skip if a DB game already occupies this slot (within 1 minute)
-                                const hasConflict = dbGames.some(dbGame => {
-                                    const dbDate = dbGame.date?.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
-                                    return Math.abs(dbDate - eventDate) < 60000;
-                                });
-                                if (hasConflict) return;
-
-                                const isPractice = isPracticeEvent(event.summary);
-                                // Clean [CANCELED] prefix from summary before extracting opponent
-                                const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
-                                const opponent = extractOpponent(cleanSummary, team.name);
-                                const location = event.location || 'TBD';
-                                const type = isPractice ? 'practice' : 'game';
-                                const session = isPractice ? resolvePracticeSession(event, eventDate) : null;
-
-                                for (const child of teamChildren) {
-                                allEvents.push({
-                                        type,
-                                        date: eventDate,
-                                        location,
-                                        opponent,
-                                        teamId,
-                                        id: getCalendarEventTrackingId(event) || null,
-                                        calendarEventUid: event.uid || null,
-                                        isDbGame: false,
-                                        childId: child.playerId,
-                                        childName: child.playerName,
-                                        isCancelled,
-                                        practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
-                                        practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
-                                        practiceSessionId: isPractice ? (session?.id || null) : null
-                                    });
-                                }
-                            });
+                            return { calendarUrl, calendarEvents };
                         } catch (err) {
                             console.error('Error fetching calendar for parent dashboard:', calendarUrl, err);
+                            return { calendarUrl, calendarEvents: [] };
                         }
-                    }
+                    }));
+
+                    calendarResults.forEach(({ calendarEvents }) => {
+                        calendarEvents.forEach(event => {
+                            if (isTrackedCalendarEvent(event, trackedUids)) return;
+
+                            // Check if event is cancelled (standard iCal STATUS or TeamSnap [CANCELED] prefix)
+                            const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
+                                event.summary?.includes('[CANCELED]');
+
+                            const eventDate = event.dtstart;
+                            if (!eventDate) return;
+
+                            // Skip if a DB game already occupies this slot (within 1 minute)
+                            const hasConflict = dbGames.some(dbGame => {
+                                const dbDate = dbGame.date?.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                                return Math.abs(dbDate - eventDate) < 60000;
+                            });
+                            if (hasConflict) return;
+
+                            const isPractice = isPracticeEvent(event.summary);
+                            // Clean [CANCELED] prefix from summary before extracting opponent
+                            const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+                            const opponent = extractOpponent(cleanSummary, team.name);
+                            const location = event.location || 'TBD';
+                            const type = isPractice ? 'practice' : 'game';
+                            const session = isPractice ? resolvePracticeSession(event, eventDate) : null;
+
+                            for (const child of teamChildren) {
+                                teamEvents.push({
+                                    type,
+                                    date: eventDate,
+                                    location,
+                                    opponent,
+                                    teamId,
+                                    id: getCalendarEventTrackingId(event) || null,
+                                    calendarEventUid: event.uid || null,
+                                    isDbGame: false,
+                                    childId: child.playerId,
+                                    childName: child.playerName,
+                                    isCancelled,
+                                    practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+                                    practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
+                                    practiceSessionId: isPractice ? (session?.id || null) : null
+                                });
+                            }
+                        });
+                    });
                 }
 
                 // Include upcoming draft/planned sessions that don't currently map to a schedule event.
@@ -1185,7 +1220,7 @@
                     })
                     .forEach((session) => {
                         for (const child of teamChildren) {
-                            allEvents.push({
+                            teamEvents.push({
                                 type: 'practice',
                                 date: session._parsedDate,
                                 location: session.location || 'TBD',
@@ -1202,8 +1237,13 @@
                             });
                         }
                     });
-            }
 
+                return teamEvents;
+            }));
+
+            teamEventBatches.forEach((batch) => {
+                allEvents.push(...batch);
+            });
             allEvents.sort((a, b) => a.date - b.date);
             return allEvents;
         }
@@ -1488,9 +1528,11 @@
                 if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
                 byTeam.get(child.teamId).push(child);
             });
-            for (const [teamId, teamChildren] of byTeam.entries()) {
-                const sessions = await getPracticeSessions(teamId);
-                const dbGames = await getGames(teamId);
+            const teamRows = await Promise.all(Array.from(byTeam.entries()).map(async ([teamId, teamChildren]) => {
+                const [sessions, dbGames] = await Promise.all([
+                    getPracticeSessions(teamId),
+                    getGames(teamId)
+                ]);
                 const visibleSessions = filterVisiblePracticeSessions(sessions || [], dbGames);
                 const completionsBySessionId = new Map();
                 await Promise.all(visibleSessions.map(async (session) => {
@@ -1501,13 +1543,13 @@
                         completionsBySessionId.set(session.id, []);
                     }
                 }));
-                visibleSessions.forEach((session) => {
+                return visibleSessions.map((session) => {
                     const d = session?.date?.toDate ? session.date.toDate() : new Date(session?.date);
-                    if (!d || Number.isNaN(d.getTime())) return;
+                    if (!d || Number.isNaN(d.getTime())) return null;
                     const hasAttendance = hasRecordedAttendance(session?.attendance);
                     const hasPacket = hasHomePacket(session);
-                    if (!hasAttendance && !hasPacket) return;
-                    rows.push({
+                    if (!hasAttendance && !hasPacket) return null;
+                    return {
                         sessionId: session.id,
                         teamId,
                         eventId: session.eventId || session.id,
@@ -1520,9 +1562,10 @@
                         childNames: teamChildren.map(c => c.playerName).filter(Boolean),
                         childIds: teamChildren.map(c => c.playerId).filter(Boolean),
                         children: teamChildren.map(c => ({ id: c.playerId, name: c.playerName }))
-                    });
-                });
-            }
+                    };
+                }).filter(Boolean);
+            }));
+            teamRows.forEach((batch) => rows.push(...batch));
             rows.sort((a, b) => a.date - b.date);
             return rows;
         }
