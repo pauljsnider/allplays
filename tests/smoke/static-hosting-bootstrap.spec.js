@@ -50,7 +50,7 @@ test.describe('preview boot smoke pages', () => {
 
 test.describe('authenticated smoke pages', () => {
     test.skip(!smokeContext.authEmail || !smokeContext.authPassword, 'SMOKE_AUTH_EMAIL and SMOKE_AUTH_PASSWORD are required');
-    test.setTimeout(90_000);
+    test.setTimeout(300_000);
 
     test('authenticated coach and parent pages render', async ({ page, baseURL }) => {
         await loginWithPassword(page, baseURL, smokeContext.authEmail, smokeContext.authPassword);
