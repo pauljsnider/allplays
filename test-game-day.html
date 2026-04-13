@@ -157,12 +157,11 @@
 
         function getSubPlayerId(players, sub, direction) {
             if (!sub) return null;
-            const idKey = `${direction}Id`;
-            const nameKey = direction;
-            const directId = sub[idKey] || sub[nameKey];
+            const directId = sub[`${direction}PlayerId`] || sub[`${direction}Id`] || null;
             if (directId && players.some(p => p.id === directId)) return directId;
-            const playerName = sub[nameKey];
-            const player = playerName ? players.find(p => p.name === playerName) : null;
+            const directValue = sub[direction];
+            if (directValue && players.some(p => p.id === directValue)) return directValue;
+            const player = directValue ? players.find(p => p.name === directValue) : null;
             return player?.id || null;
         }
 
@@ -470,7 +469,7 @@
         test('next substitution resolves position from current occupant after reload', () => {
             const plan = { H1: { keeper: 'p1', striker: 'p2' } };
             const actual = {
-                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outId: 'p2', in: 'Carol', inId: 'p3', appliedAt: '2024-01-01' }] }
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outPlayerId: 'p2', in: 'Carol', inPlayerId: 'p3', appliedAt: '2024-01-01' }] }
             };
             const position = findSubPosition(plan, actual, mockPlayers, 'H1', 'p3');
             assertEquals(position, 'striker', 'Follow-up substitution should target Carol\'s current position, not stale plan data');
@@ -489,6 +488,45 @@
             };
             const map = buildOnFieldMap(plan, actual, players, 'H1');
             assertEquals(map['striker'], 'p4', 'Duplicate names should resolve using the stored player id');
+        });
+
+        test('buildOnFieldMap prefers substitution inPlayerId when roster names collide', () => {
+            const players = [
+                { id: 'p1', name: 'Alex' },
+                { id: 'p2', name: 'Jordan' },
+                { id: 'p3', name: 'Alex' },
+                { id: 'p4', name: 'Taylor' }
+            ];
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Jordan', outPlayerId: 'p2', in: 'Alex', inPlayerId: 'p3', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, players, 'H1');
+            assertEquals(map.striker, 'p3', 'Reloaded state should keep the substituted player by ID, not the first matching name');
+        });
+
+        test('buildOnFieldMap falls back to legacy name matching when inPlayerId is absent', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
+            assertEquals(map.striker, 'p3', 'Legacy substitution records without IDs should still resolve by name');
+        });
+
+        test('buildOnFieldMap keeps substituted player after roster rename when inPlayerId exists', () => {
+            const players = [
+                { id: 'p1', name: 'Alice' },
+                { id: 'p2', name: 'Bob' },
+                { id: 'p3', name: 'Carolyn' },
+                { id: 'p4', name: 'Dana' }
+            ];
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outPlayerId: 'p2', in: 'Carol', inPlayerId: 'p3', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, players, 'H1');
+            assertEquals(map.striker, 'p3', 'Reloaded state should survive later player renames when IDs are stored');
         });
 
         // ============================================================
@@ -710,7 +748,7 @@
             { name: 'Suite 2: Rotation Plan — Flatten & Rebuild', count: 7 },
             { name: 'Suite 3: Mode State Machine', count: 6 },
             { name: 'Suite 4: Player Color System', count: 8 },
-            { name: 'Suite 5: On-Field Map / Sub Logic', count: 9 },
+            { name: 'Suite 5: On-Field Map / Sub Logic', count: 12 },
             { name: 'Suite 6: Balance Playing Time', count: 5 },
             { name: 'Suite 7: escapeHtml / XSS Prevention', count: 8 },
             { name: 'Suite 8: Access Control Logic', count: 7 },

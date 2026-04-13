@@ -9,12 +9,11 @@ function getPlayersByName(players = []) {
 
 function getSubPlayerId(sub, direction, playerIdsByName, players = []) {
     if (!sub) return null;
-    const idKey = `${direction}Id`;
-    const nameKey = direction;
-    const directId = sub[idKey] || sub[nameKey];
+    const directId = sub[`${direction}PlayerId`] || sub[`${direction}Id`] || null;
     if (directId && players.some((player) => player.id === directId)) return directId;
-    const playerName = sub[nameKey];
-    return playerName ? playerIdsByName.get(playerName) || null : null;
+    const directValue = sub[direction];
+    if (directValue && players.some((player) => player.id === directValue)) return directValue;
+    return directValue ? playerIdsByName.get(directValue) || null : null;
 }
 
 export function buildOnFieldMap({
@@ -95,8 +94,10 @@ export function applyLiveSubstitution({
                 position,
                 out: outPlayer.name,
                 outId: outPlayer.id,
+                outPlayerId: outPlayer.id,
                 in: inPlayer.name,
                 inId: inPlayer.id,
+                inPlayerId: inPlayer.id,
                 appliedAt: now.toISOString()
             }]
         }
