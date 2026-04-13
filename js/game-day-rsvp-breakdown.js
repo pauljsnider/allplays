@@ -1,3 +1,5 @@
+import { selectLatestRsvpByPlayer } from './rsvp-summary.js';
+
 function normalizeRsvpResponse(response) {
     if (response === 'going' || response === 'maybe' || response === 'not_going') {
         return response;
@@ -28,14 +30,6 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
     return uid ? uniqueNonEmptyIds(fallbackByUser.get(uid) || []) : [];
 }
 
-function toMillis(value) {
-    if (!value) return 0;
-    if (typeof value?.toMillis === 'function') return value.toMillis();
-    if (value instanceof Date) return value.getTime();
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
-}
-
 export function buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser = new Map() }) {
     const roster = Array.isArray(players) ? players : [];
     const responses = Array.isArray(rsvps) ? rsvps : [];
@@ -53,31 +47,28 @@ export function buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser = new
         });
     });
 
-    responses.forEach((rsvp) => {
-        const ids = resolveRsvpPlayerIds(rsvp, fallbackByUser);
-        if (!ids.length) return;
-        ids.forEach((playerId) => {
-            let existing = byPlayer.get(playerId);
-            if (!existing) {
-                existing = {
-                    playerId,
-                    playerName: 'Former Player',
-                    playerNumber: '',
-                    response: 'not_responded',
-                    respondedAt: null,
-                    note: null,
-                    responderUserId: null
-                };
-            }
-            const existingMillis = toMillis(existing.respondedAt);
-            const nextMillis = toMillis(rsvp.respondedAt);
-            if (nextMillis < existingMillis) return;
-            existing.response = normalizeRsvpResponse(rsvp.response);
-            existing.respondedAt = rsvp.respondedAt || null;
-            existing.note = rsvp.note || null;
-            existing.responderUserId = rsvp.userId || null;
-            byPlayer.set(playerId, existing);
-        });
+    const latestByPlayer = selectLatestRsvpByPlayer({
+        rsvps: responses,
+        fallbackByUser,
+        normalizeResponse: normalizeRsvpResponse,
+        resolvePlayerIds: resolveRsvpPlayerIds
+    });
+
+    latestByPlayer.forEach((entry, playerId) => {
+        const existing = byPlayer.get(playerId) || {
+            playerId,
+            playerName: 'Former Player',
+            playerNumber: '',
+            response: 'not_responded',
+            respondedAt: null,
+            note: null,
+            responderUserId: null
+        };
+        existing.response = entry.responseKey;
+        existing.respondedAt = entry.respondedAt;
+        existing.note = entry.note;
+        existing.responderUserId = entry.responderUserId;
+        byPlayer.set(playerId, existing);
     });
 
     const grouped = {
