@@ -185,7 +185,8 @@ async function bootAcceptInvite({
     authUser,
     authCallbackCount = 1,
     storageEntries,
-    dbOverrides = {}
+    dbOverrides = {},
+    authOverrides = {}
 } = {}) {
     const env = createEnvironment({ href, storage: createStorage(storageEntries) });
     const db = {
@@ -219,7 +220,8 @@ async function bootAcceptInvite({
                 return () => {};
             })();
             return auth.pendingCheckAuth;
-        })
+        }),
+        ...authOverrides
     };
     const previousGlobals = new Map();
     const globalOverrides = {
@@ -313,5 +315,117 @@ describe('accept-invite page parent flow', () => {
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledOnce();
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledWith('parent-2', 'AB12CD34');
         expect(authenticated.window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+});
+
+describe('accept-invite page admin flow', () => {
+    it('processes an authenticated admin invite and redirects to the coach dashboard', async () => {
+        const { elements, window, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
+            authUser: { uid: 'admin-1', email: 'coach@example.com' },
+            authCallbackCount: 2,
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    codeId: 'code-admin-1',
+                    type: 'admin_invite',
+                    data: {
+                        teamId: 'team-9'
+                    }
+                }),
+                redeemAdminInviteAtomically: vi.fn().mockResolvedValue({
+                    success: true,
+                    teamId: 'team-9',
+                    teamName: 'Tigers'
+                }),
+                getTeam: vi.fn().mockResolvedValue({
+                    id: 'team-9',
+                    name: 'Tigers',
+                    ownerId: 'owner-1',
+                    adminEmails: ['coach@example.com']
+                }),
+                getUserProfile: vi.fn().mockResolvedValue({
+                    email: 'coach@example.com'
+                })
+            }
+        });
+
+        expect(db.validateAccessCode).toHaveBeenCalledWith('exist111');
+        expect(db.redeemAdminInviteAtomically).toHaveBeenCalledOnce();
+        expect(db.redeemAdminInviteAtomically).toHaveBeenCalledWith('code-admin-1', 'admin-1', 'coach@example.com');
+        expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
+        expect(elements.get('success-message').textContent).toContain('admin of Tigers');
+        expect(window.location.href).toBe('http://example.com/dashboard.html');
+    });
+
+    it('preserves the admin invite type when a signed-out user submits a manual code', async () => {
+        const loggedOut = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
+            authUser: null,
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    codeId: 'code-admin-2',
+                    type: 'admin_invite',
+                    data: {
+                        teamId: 'team-9'
+                    }
+                })
+            }
+        });
+
+        await loggedOut.elements.get('code-form').dispatchEvent(new MockEvent('submit'));
+
+        expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=EXIST111&type=admin');
+    });
+
+    it('completes cross-device email-link admin redemption after the user confirms their email', async () => {
+        const { elements, window, auth, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
+            authUser: null,
+            authOverrides: {
+                isEmailSignInLink: vi.fn(() => true),
+                completeEmailLinkSignIn: vi.fn().mockResolvedValue({
+                    user: {
+                        uid: 'admin-1',
+                        email: 'coach@example.com'
+                    }
+                })
+            },
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    codeId: 'code-admin-3',
+                    type: 'admin_invite',
+                    data: {
+                        teamId: 'team-9'
+                    }
+                }),
+                redeemAdminInviteAtomically: vi.fn().mockResolvedValue({
+                    success: true,
+                    teamId: 'team-9',
+                    teamName: 'Tigers'
+                }),
+                getTeam: vi.fn().mockResolvedValue({
+                    id: 'team-9',
+                    name: 'Tigers',
+                    ownerId: 'owner-1',
+                    adminEmails: ['coach@example.com']
+                }),
+                getUserProfile: vi.fn().mockResolvedValue({
+                    email: 'coach@example.com'
+                })
+            }
+        });
+
+        expect(elements.get('email-required-state').classList.contains('hidden')).toBe(false);
+
+        elements.get('email-input').value = 'coach@example.com';
+        await elements.get('email-form').dispatchEvent(new MockEvent('submit'));
+
+        expect(auth.completeEmailLinkSignIn).toHaveBeenCalledWith('coach@example.com');
+        expect(db.redeemAdminInviteAtomically).toHaveBeenCalledWith('code-admin-3', 'admin-1', 'coach@example.com');
+        expect(elements.get('success-message').textContent).toContain('admin of Tigers');
+        expect(window.location.href).toBe('http://example.com/dashboard.html');
     });
 });

@@ -3,10 +3,22 @@ export function normalizeInviteCode(inviteCode) {
     return normalized.length === 8 ? normalized : null;
 }
 
-export function getPostAuthRedirectUrl(defaultRedirectUrl, inviteCode, shouldRedeemInvite = false) {
+function normalizeInviteType(inviteType) {
+    const normalized = typeof inviteType === 'string' ? inviteType.trim().toLowerCase() : '';
+    return normalized === 'parent' || normalized === 'admin' ? normalized : null;
+}
+
+export function getPostAuthRedirectUrl(defaultRedirectUrl, inviteCode, shouldRedeemInvite = false, inviteType = null) {
     const normalizedCode = normalizeInviteCode(inviteCode);
     if (shouldRedeemInvite && normalizedCode) {
-        return `accept-invite.html?code=${encodeURIComponent(normalizedCode)}`;
+        const searchParams = new URLSearchParams({
+            code: normalizedCode
+        });
+        const normalizedInviteType = normalizeInviteType(inviteType);
+        if (normalizedInviteType) {
+            searchParams.set('type', normalizedInviteType);
+        }
+        return `accept-invite.html?${searchParams.toString()}`;
     }
     return defaultRedirectUrl;
 }

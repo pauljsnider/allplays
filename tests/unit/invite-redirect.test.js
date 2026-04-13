@@ -14,6 +14,10 @@ describe('invite redirect helper', () => {
         expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true)).toBe('accept-invite.html?code=ABCD1234');
     });
 
+    it('preserves the admin invite type when redemption is requested', () => {
+        expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'Admin')).toBe('accept-invite.html?code=ABCD1234&type=admin');
+    });
+
     it('uses default redirect when no valid code exists', () => {
         expect(getPostAuthRedirectUrl('dashboard.html', '', true)).toBe('dashboard.html');
     });

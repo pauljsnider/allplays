@@ -63,7 +63,7 @@ export function createLoginRedirectCoordinator({
 
     function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
         const defaultRedirect = getRedirectUrl(userWithRoles);
-        return getPostAuthRedirectUrl(defaultRedirect, urlCodeParam, shouldRedeemInvite);
+        return getPostAuthRedirectUrl(defaultRedirect, urlCodeParam, shouldRedeemInvite, urlInviteType);
     }
 
     function getGoogleRedirectUrl(userWithRoles) {
