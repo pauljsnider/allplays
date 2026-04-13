@@ -1351,6 +1351,12 @@ export async function createConfig(teamId, configData) {
     return docRef.id;
 }
 
+export async function updateConfig(teamId, configId, configData) {
+    const normalizedConfig = normalizeStatTrackerConfig(configData);
+    normalizedConfig.updatedAt = Timestamp.now();
+    await updateDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId), normalizedConfig);
+}
+
 // Backwards-compat helper: older pages import addConfig
 // Route through createConfig so default templates can be created without breaking
 export async function addConfig(teamId, configData) {
@@ -1367,6 +1373,30 @@ export async function deleteConfig(teamId, configId) {
         throw new Error('This config is still assigned to one or more games. Remove it from those games before deleting the config.');
     }
     await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));
+}
+
+export async function resetTeamStatConfigs(teamId) {
+    const configs = await getConfigs(teamId);
+
+    for (const config of configs) {
+        const referencingGames = await getDocs(query(
+            collection(db, `teams/${teamId}/games`),
+            where("statTrackerConfigId", "==", config.id),
+            limit(1)
+        ));
+
+        if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, config.id)) {
+            throw new Error('One or more stat configs are still assigned to scheduled or shared games. Remove those assignments before resetting the stats setup.');
+        }
+    }
+
+    const batch = writeBatch(db);
+    configs.forEach((config) => {
+        batch.delete(doc(db, `teams/${teamId}/statTrackerConfigs`, config.id));
+    });
+
+    await batch.commit();
+    return configs.length;
 }
 
 // Stats
