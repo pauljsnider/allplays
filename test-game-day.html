@@ -168,6 +168,20 @@
             return onField;
         }
 
+        function getSubDropdownPlayerIds(rotationPlan, rotationActual, players, period) {
+            const onField = buildOnFieldMap(rotationPlan, rotationActual, players, period);
+            const onFieldIds = new Set(Object.values(onField).filter(Boolean));
+            return {
+                outIds: players.filter(p => onFieldIds.has(p.id)).map(p => p.id),
+                inIds: players.filter(p => !onFieldIds.has(p.id)).map(p => p.id)
+            };
+        }
+
+        function findSubPosition(rotationPlan, rotationActual, players, period, outId) {
+            const onField = buildOnFieldMap(rotationPlan, rotationActual, players, period);
+            return Object.entries(onField).find(([_, playerId]) => playerId === outId)?.[0] || 'unknown';
+        }
+
         function determineInitialMode(liveStatus, status) {
             if (liveStatus === 'live') return 'gameday';
             if (liveStatus === 'completed' || status === 'completed') return 'wrapup';
@@ -423,6 +437,25 @@
             assertEquals(Object.keys(map).length, 0, 'H2 with no plan should return empty map');
         });
 
+        test('sub dropdowns use merged on-field state after reopening live game', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+            };
+            const dropdowns = getSubDropdownPlayerIds(plan, actual, mockPlayers, 'H1');
+            assertDeepEquals(dropdowns.outIds, ['p1', 'p3'], 'OUT choices should reflect current on-field players');
+            assertDeepEquals(dropdowns.inIds, ['p2', 'p4'], 'IN choices should exclude players already subbed onto the field');
+        });
+
+        test('next substitution resolves position from current occupant after reload', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+            };
+            const position = findSubPosition(plan, actual, mockPlayers, 'H1', 'p3');
+            assertEquals(position, 'striker', 'Follow-up substitution should target Carol\'s current position, not stale plan data');
+        });
+
         // ============================================================
         // SUITE 6: Balance Playing Time
         // ============================================================
@@ -642,7 +675,7 @@
             { name: 'Suite 2: Rotation Plan — Flatten & Rebuild', count: 7 },
             { name: 'Suite 3: Mode State Machine', count: 6 },
             { name: 'Suite 4: Player Color System', count: 8 },
-            { name: 'Suite 5: On-Field Map / Sub Logic', count: 5 },
+            { name: 'Suite 5: On-Field Map / Sub Logic', count: 7 },
             { name: 'Suite 6: Balance Playing Time', count: 5 },
             { name: 'Suite 7: escapeHtml / XSS Prevention', count: 8 },
             { name: 'Suite 8: Access Control Logic', count: 7 },
