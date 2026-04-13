@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
+const interactiveSelector = 'a, button, input, select, textarea, summary, [role="button"], [role="link"]';
+
 function readTeamsPage() {
     return readFileSync(new URL('../../teams.html', import.meta.url), 'utf8');
 }
@@ -44,8 +46,6 @@ ${body}
 }
 
 describe('teams page location link navigation', () => {
-    const interactiveSelector = 'a, button, input, select, textarea, summary, [role="button"], [role="link"]';
-
     it('navigates to the team page when the card body is clicked', () => {
         const { window, handler } = buildTeamCardClickHandler();
 
@@ -60,15 +60,18 @@ describe('teams page location link navigation', () => {
 
     it('does not navigate the current tab when the nested location link is clicked', () => {
         const { window, handler } = buildTeamCardClickHandler();
+        const closest = (selector) => {
+            if (selector === interactiveSelector) {
+                return { tagName: 'A' };
+            }
+            return null;
+        };
+
+        expect(closest('article')).toBeNull();
 
         handler({
             target: {
-                closest: (selector) => {
-                    if (selector === interactiveSelector) {
-                        return {};
-                    }
-                    return null;
-                }
+                closest
             }
         });
 
