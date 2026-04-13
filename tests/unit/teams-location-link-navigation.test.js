@@ -44,6 +44,8 @@ ${body}
 }
 
 describe('teams page location link navigation', () => {
+    const interactiveSelector = 'a, button, input, select, textarea, summary, [role="button"], [role="link"]';
+
     it('navigates to the team page when the card body is clicked', () => {
         const { window, handler } = buildTeamCardClickHandler();
 
@@ -61,7 +63,12 @@ describe('teams page location link navigation', () => {
 
         handler({
             target: {
-                closest: (selector) => (selector.includes('a') ? {} : null)
+                closest: (selector) => {
+                    if (selector === interactiveSelector) {
+                        return {};
+                    }
+                    return null;
+                }
             }
         });
 
