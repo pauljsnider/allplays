@@ -7,6 +7,16 @@ function getPlayersByName(players = []) {
     return byName;
 }
 
+function getSubPlayerId(sub, direction, playerIdsByName, players = []) {
+    if (!sub) return null;
+    const idKey = `${direction}Id`;
+    const nameKey = direction;
+    const directId = sub[idKey] || sub[nameKey];
+    if (directId && players.some((player) => player.id === directId)) return directId;
+    const playerName = sub[nameKey];
+    return playerName ? playerIdsByName.get(playerName) || null : null;
+}
+
 export function buildOnFieldMap({
     period,
     rotationPlan = {},
@@ -19,8 +29,8 @@ export function buildOnFieldMap({
     const playerIdsByName = getPlayersByName(players);
 
     Object.values(actual).flat().forEach((sub) => {
-        if (!sub?.position || !sub?.in) return;
-        const playerId = playerIdsByName.get(sub.in);
+        if (!sub?.position) return;
+        const playerId = getSubPlayerId(sub, 'in', playerIdsByName, players);
         if (playerId) onField[sub.position] = playerId;
     });
 
@@ -84,7 +94,9 @@ export function applyLiveSubstitution({
             [subKey]: [{
                 position,
                 out: outPlayer.name,
+                outId: outPlayer.id,
                 in: inPlayer.name,
+                inId: inPlayer.id,
                 appliedAt: now.toISOString()
             }]
         }
