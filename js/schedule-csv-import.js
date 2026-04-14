@@ -381,14 +381,15 @@ function parseTimeText(value) {
     const trimmed = String(value || '').trim();
     if (!trimmed) return null;
 
-    const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+    const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?\s*(AM|PM)?$/i);
     if (!match) return null;
 
     let hours = Number(match[1]);
     const minutes = Number(match[2] || '0');
-    const meridiem = match[3] ? match[3].toUpperCase() : null;
+    const seconds = Number(match[3] || '0');
+    const meridiem = match[4] ? match[4].toUpperCase() : null;
 
-    if (minutes > 59 || hours > 23 || hours < 0) return null;
+    if (minutes > 59 || seconds > 59 || hours > 23 || hours < 0) return null;
 
     if (meridiem) {
         if (hours < 1 || hours > 12) return null;
