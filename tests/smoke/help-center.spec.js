@@ -98,9 +98,16 @@ test('help manifest and page-reference files resolve successfully', async ({ pag
     expect(referenceFiles).toContain('help-page-reference.html');
 
     const uniqueFiles = [...new Set([...workflowFiles, ...referenceFiles])];
+    const indexResponse = await request.get(buildUrl(baseURL, '/index.html'));
+    expect(indexResponse.ok(), 'index.html should resolve successfully').toBeTruthy();
+    const indexHtml = await indexResponse.text();
 
     for (const file of uniqueFiles) {
         const response = await request.get(buildUrl(baseURL, `/${file}`));
         expect(response.ok(), `${file} should resolve successfully`).toBeTruthy();
+
+        const responseHtml = await response.text();
+        expect(responseHtml, `${file} should return HTML content`).toMatch(/<!doctype html>|<html/i);
+        expect(responseHtml, `${file} should not rewrite to index.html`).not.toBe(indexHtml);
     }
 });
