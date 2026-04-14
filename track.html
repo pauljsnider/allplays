@@ -1246,17 +1246,28 @@ Write the match report now:`;
                     });
                 });
 
-                // 2. Write aggregated stats for each player
-                Object.entries(gameState.playerStats).forEach(([playerId, stats]) => {
-                    const player = players.find(p => p.id === playerId);
-                    if (player) {
-                        const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-                        batch.set(statsRef, {
-                            playerName: player.name,
-                            playerNumber: player.number,
-                            stats: stats
-                        });
-                    }
+                // 2. Write aggregated stats for every rostered player, including zero-stat appearances
+                players.forEach((player) => {
+                    const playerStats = gameState.playerStats[player.id] || {};
+                    const normalizedStats = {};
+
+                    currentConfig.columns.forEach((col) => {
+                        const key = String(col || '').toLowerCase();
+                        normalizedStats[key] = Number(playerStats[key]) || 0;
+                    });
+
+                    Object.entries(playerStats).forEach(([statKey, value]) => {
+                        if (normalizedStats[statKey] === undefined) {
+                            normalizedStats[statKey] = Number(value) || 0;
+                        }
+                    });
+
+                    const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, player.id);
+                    batch.set(statsRef, {
+                        playerName: player.name,
+                        playerNumber: player.number,
+                        stats: normalizedStats
+                    });
                 });
 
                 // 3. Update game document with final data
