@@ -23,36 +23,41 @@ function assertDeepEquals(actual, expected, label) {
     }
 }
 
+function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
+    const playerStatsByLowerKey = {};
+    const normalizedStats = {};
+
+    Object.entries(playerStats).forEach(([statKey, value]) => {
+        playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
+    });
+
+    columns.forEach((col) => {
+        const key = String(col || '').toLowerCase();
+        normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
+            ? playerStatsByLowerKey[key]
+            : 0;
+    });
+
+    Object.entries(playerStats).forEach(([statKey, value]) => {
+        const normalizedKey = String(statKey).toLowerCase();
+        if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
+            normalizedStats[statKey] = Number(value) || 0;
+        }
+    });
+
+    return normalizedStats;
+}
+
 function buildAggregatedStatsWrites(players, columns, playerStatsById) {
     return players.map((player) => {
         const playerStats = playerStatsById[player.id] || {};
-        const playerStatsByLowerKey = {};
-        const normalizedStats = {};
-
-        Object.entries(playerStats).forEach(([statKey, value]) => {
-            playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
-        });
-
-        columns.forEach((col) => {
-            const key = String(col || '').toLowerCase();
-            normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
-                ? playerStatsByLowerKey[key]
-                : 0;
-        });
-
-        Object.entries(playerStats).forEach(([statKey, value]) => {
-            const normalizedKey = String(statKey).toLowerCase();
-            if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
-                normalizedStats[statKey] = Number(value) || 0;
-            }
-        });
 
         return {
             playerId: player.id,
             data: {
                 playerName: player.name,
                 playerNumber: player.number,
-                stats: normalizedStats
+                stats: buildNormalizedPlayerStats(playerStats, columns)
             }
         };
     });
@@ -85,6 +90,22 @@ test('zero-stat players get zeroed configured stats', () => {
         writes[0].data.stats,
         { pts: 0, reb: 0, ast: 0 },
         'Scoreless player should still get a zeroed stats object'
+    );
+});
+
+test('uppercase source stat keys survive lowercase configured lookups', () => {
+    const writes = buildAggregatedStatsWrites(
+        [{ id: 'player-a', name: 'Player A', number: '12' }],
+        ['PTS', 'REB'],
+        {
+            'player-a': { PTS: 5, REB: 3 }
+        }
+    );
+
+    assertDeepEquals(
+        writes[0].data.stats,
+        { pts: 5, reb: 3 },
+        'Configured stat values should survive uppercase source keys when config columns normalize to lowercase'
     );
 });
 

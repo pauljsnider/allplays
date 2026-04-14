@@ -1214,6 +1214,31 @@ Write the match report now:`;
             document.getElementById('emailPreview').textContent = emailBody;
         }
 
+        function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
+            const playerStatsByLowerKey = {};
+            const normalizedStats = {};
+
+            Object.entries(playerStats).forEach(([statKey, value]) => {
+                playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
+            });
+
+            columns.forEach((col) => {
+                const key = String(col || '').toLowerCase();
+                normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
+                    ? playerStatsByLowerKey[key]
+                    : 0;
+            });
+
+            Object.entries(playerStats).forEach(([statKey, value]) => {
+                const normalizedKey = String(statKey).toLowerCase();
+                if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
+                    normalizedStats[statKey] = Number(value) || 0;
+                }
+            });
+
+            return normalizedStats;
+        }
+
         cancelBtn.addEventListener('click', () => {
             modal.classList.add('hidden');
         });
@@ -1237,33 +1262,13 @@ Write the match report now:`;
                 const primaryBatch = writeBatch(db);
                 const aggregatedStatsWrites = players.map((player) => {
                     const playerStats = gameState.playerStats[player.id] || {};
-                    const playerStatsByLowerKey = {};
-                    const normalizedStats = {};
-
-                    Object.entries(playerStats).forEach(([statKey, value]) => {
-                        playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
-                    });
-
-                    currentConfig.columns.forEach((col) => {
-                        const key = String(col || '').toLowerCase();
-                        normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
-                            ? playerStatsByLowerKey[key]
-                            : 0;
-                    });
-
-                    Object.entries(playerStats).forEach(([statKey, value]) => {
-                        const normalizedKey = String(statKey).toLowerCase();
-                        if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
-                            normalizedStats[statKey] = Number(value) || 0;
-                        }
-                    });
 
                     return {
                         playerId: player.id,
                         data: {
                             playerName: player.name,
                             playerNumber: player.number,
-                            stats: normalizedStats
+                            stats: buildNormalizedPlayerStats(playerStats, currentConfig.columns)
                         }
                     };
                 });
@@ -1294,7 +1299,10 @@ Write the match report now:`;
                     opponentStats: gameState.opponentStats
                 });
 
-                // 2. Chunk roster-wide aggregated stats writes into secondary batches to avoid Firestore's 500-write limit.
+                // 2. Commit the historical finish data first so completion data lands even if a later stats batch fails.
+                await primaryBatch.commit();
+
+                // 3. Chunk roster-wide aggregated stats writes into secondary batches to avoid Firestore's 500-write limit.
                 for (let i = 0; i < aggregatedStatsWrites.length; i += MAX_AGGREGATED_STATS_BATCH_WRITES) {
                     const statsBatch = writeBatch(db);
                     aggregatedStatsWrites.slice(i, i + MAX_AGGREGATED_STATS_BATCH_WRITES).forEach(({ playerId, data }) => {
@@ -1304,7 +1312,6 @@ Write the match report now:`;
                     await statsBatch.commit();
                 }
 
-                await primaryBatch.commit();
                 console.log('Game data saved successfully');
 
                 // Disable beforeunload warning since we're finishing successfully
