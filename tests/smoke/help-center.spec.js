@@ -108,6 +108,9 @@ test('help manifest and page-reference files resolve successfully', async ({ pag
 
         const responseHtml = await response.text();
         expect(responseHtml, `${file} should return HTML content`).toMatch(/<!doctype html>|<html/i);
-        expect(responseHtml, `${file} should not rewrite to index.html`).not.toBe(indexHtml);
+
+        if (file !== 'index.html') {
+            expect(responseHtml, `${file} should not rewrite to index.html`).not.toBe(indexHtml);
+        }
     }
 });
