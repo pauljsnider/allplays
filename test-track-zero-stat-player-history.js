@@ -26,15 +26,23 @@ function assertDeepEquals(actual, expected, label) {
 function buildAggregatedStatsWrites(players, columns, playerStatsById) {
     return players.map((player) => {
         const playerStats = playerStatsById[player.id] || {};
+        const playerStatsByLowerKey = {};
         const normalizedStats = {};
+
+        Object.entries(playerStats).forEach(([statKey, value]) => {
+            playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
+        });
 
         columns.forEach((col) => {
             const key = String(col || '').toLowerCase();
-            normalizedStats[key] = Number(playerStats[key]) || 0;
+            normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
+                ? playerStatsByLowerKey[key]
+                : 0;
         });
 
         Object.entries(playerStats).forEach(([statKey, value]) => {
-            if (normalizedStats[statKey] === undefined) {
+            const normalizedKey = String(statKey).toLowerCase();
+            if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
                 normalizedStats[statKey] = Number(value) || 0;
             }
         });
@@ -77,6 +85,22 @@ test('zero-stat players get zeroed configured stats', () => {
         writes[0].data.stats,
         { pts: 0, reb: 0, ast: 0 },
         'Scoreless player should still get a zeroed stats object'
+    );
+});
+
+test('mixed-case configured stat keys are normalized without losing values', () => {
+    const writes = buildAggregatedStatsWrites(
+        [{ id: 'player-a', name: 'Player A', number: '12' }],
+        ['PTS', 'REB', 'AST'],
+        {
+            'player-a': { PTS: 8, ReB: 5, ast: 2 }
+        }
+    );
+
+    assertDeepEquals(
+        writes[0].data.stats,
+        { pts: 8, reb: 5, ast: 2 },
+        'Configured stat values should survive mixed-case source keys without duplicate variants'
     );
 });
 

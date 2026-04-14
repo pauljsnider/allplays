@@ -1249,15 +1249,23 @@ Write the match report now:`;
                 // 2. Write aggregated stats for every rostered player, including zero-stat appearances
                 players.forEach((player) => {
                     const playerStats = gameState.playerStats[player.id] || {};
+                    const playerStatsByLowerKey = {};
                     const normalizedStats = {};
+
+                    Object.entries(playerStats).forEach(([statKey, value]) => {
+                        playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
+                    });
 
                     currentConfig.columns.forEach((col) => {
                         const key = String(col || '').toLowerCase();
-                        normalizedStats[key] = Number(playerStats[key]) || 0;
+                        normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
+                            ? playerStatsByLowerKey[key]
+                            : 0;
                     });
 
                     Object.entries(playerStats).forEach(([statKey, value]) => {
-                        if (normalizedStats[statKey] === undefined) {
+                        const normalizedKey = String(statKey).toLowerCase();
+                        if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
                             normalizedStats[statKey] = Number(value) || 0;
                         }
                     });
