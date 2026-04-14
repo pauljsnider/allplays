@@ -234,6 +234,10 @@ function extractEditTeamModule() {
             'const { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
+            "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
+            'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
+        )
+        .replace(
             "import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';",
             'const { renderHeader, renderFooter, getUrlParams } = deps.utils;'
         )
@@ -338,6 +342,11 @@ async function bootEditTeam(initialState, overrides = {}) {
         liveStreamUtils: {
             normalizeYouTubeEmbedUrl(url) {
                 return url;
+            }
+        },
+        statConfigPresets: {
+            getDefaultStatConfigForSport() {
+                return null;
             }
         },
         teamAccess: await import('../../js/team-access.js'),
