@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { buildUrl } from './helpers/boot-path.js';
 
@@ -23,6 +24,33 @@ async function readPageReferenceFiles(page) {
     const cells = page.locator('tbody td.font-mono');
     const values = await cells.allInnerTexts();
     return values.filter((value) => value.endsWith('.html'));
+}
+
+function readRepoHtml(relativePath) {
+    return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
+
+function extractTitle(html) {
+    return html.match(/<title>\s*([^<]+?)\s*<\/title>/i)?.[1]?.trim() || null;
+}
+
+async function expectRequestedPageResponse(request, baseURL, file, indexHtml) {
+    const response = await request.get(buildUrl(baseURL, `/${file}`));
+    expect(response.ok(), `${file} should resolve successfully`).toBeTruthy();
+
+    const responseHtml = await response.text();
+    expect(responseHtml, `${file} should return HTML content`).toMatch(/<!doctype html>|<html/i);
+
+    if (file !== 'index.html') {
+        expect(responseHtml, `${file} should not rewrite to index.html`).not.toBe(indexHtml);
+    }
+
+    const expectedTitle = extractTitle(readRepoHtml(file));
+    expect(expectedTitle, `${file} should declare a page title in the repo source`).toBeTruthy();
+    expect(
+        extractTitle(responseHtml),
+        `${file} should serve its own HTML instead of an index.html rewrite fallback`
+    ).toBe(expectedTitle);
 }
 
 test('help center supports workflow discovery and page-reference navigation', async ({ page, baseURL }) => {
@@ -103,16 +131,6 @@ test('help manifest and page-reference files resolve successfully', async ({ pag
     const indexHtml = await indexResponse.text();
 
     for (const file of uniqueFiles) {
-        const response = await request.get(buildUrl(baseURL, `/${file}`));
-        expect(response.ok(), `${file} should resolve successfully`).toBeTruthy();
-
-        const responseHtml = await response.text();
-        expect(responseHtml, `${file} should return HTML content`).toMatch(/<!doctype html>|<html/i);
-
-        if (file === 'index.html') {
-            continue;
-        }
-
-        expect(responseHtml, `${file} should not rewrite to index.html`).not.toBe(indexHtml);
+        await expectRequestedPageResponse(request, baseURL, file, indexHtml);
     }
 });
