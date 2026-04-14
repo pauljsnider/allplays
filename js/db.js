@@ -1375,17 +1375,46 @@ export async function deleteConfig(teamId, configId) {
     await deleteDoc(doc(db, `teams/${teamId}/statTrackerConfigs`, configId));
 }
 
+function isResetBlockingLocalGameAssignment(game = {}) {
+    const status = String(game?.status || '').toLowerCase();
+    const liveStatus = String(game?.liveStatus || '').toLowerCase();
+
+    if (status === 'completed' || status === 'final' || status === 'cancelled' || liveStatus === 'completed') {
+        return false;
+    }
+
+    return Boolean(String(game?.statTrackerConfigId || '').trim());
+}
+
+async function hasResetBlockingLocalGameUsingConfig(teamId, configId) {
+    const referencingGames = await getDocs(query(
+        collection(db, `teams/${teamId}/games`),
+        where("statTrackerConfigId", "==", configId)
+    ));
+
+    return referencingGames.docs.some((gameDoc) => isResetBlockingLocalGameAssignment(gameDoc.data()));
+}
+
+async function hasResetBlockingSharedGameUsingConfig(teamId, configId) {
+    const sharedGamesRef = collectionGroup(db, 'sharedGames');
+    const queries = [
+        query(sharedGamesRef, where('homeTeamId', '==', teamId), where('statTrackerConfigId', '==', configId)),
+        query(sharedGamesRef, where('awayTeamId', '==', teamId), where('statTrackerConfigId', '==', configId)),
+        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), where('statTrackerConfigId', '==', configId))
+    ];
+
+    const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
+    return snapshots.some((result) => (
+        result.status === 'fulfilled'
+        && result.value.docs.some((gameDoc) => isResetBlockingLocalGameAssignment(gameDoc.data()))
+    ));
+}
+
 export async function resetTeamStatConfigs(teamId) {
     const configs = await getConfigs(teamId);
 
     for (const config of configs) {
-        const referencingGames = await getDocs(query(
-            collection(db, `teams/${teamId}/games`),
-            where("statTrackerConfigId", "==", config.id),
-            limit(1)
-        ));
-
-        if (!referencingGames.empty || await hasSharedGameUsingConfig(teamId, config.id)) {
+        if (await hasResetBlockingLocalGameUsingConfig(teamId, config.id) || await hasResetBlockingSharedGameUsingConfig(teamId, config.id)) {
             throw new Error('One or more stat configs are still assigned to scheduled or shared games. Remove those assignments before resetting the stats setup.');
         }
     }
