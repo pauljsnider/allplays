@@ -18,7 +18,7 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('Athlete Profile');
     });
 
-    it('includes builder fields for native media uploads, curation, and sharing privacy', () => {
+    it('includes builder fields for native media uploads, curation, sharing privacy, and blob preview cleanup', () => {
         const source = readFile('athlete-profile-builder.html');
 
         expect(source).toContain('Upload Headshot');
@@ -26,6 +26,8 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('Add External Link');
         expect(source).toContain('Move Up');
         expect(source).toContain('Share on the web');
+        expect(source).toContain('URL.revokeObjectURL');
+        expect(source).toContain('releaseProfilePhotoPreview();');
     });
 
     it('includes a public athlete profile page with inline media rendering and share action', () => {

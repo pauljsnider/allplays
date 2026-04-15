@@ -219,6 +219,17 @@
             }
         }
 
+        function revokeObjectUrl(url = '') {
+            if (!String(url || '').startsWith('blob:')) {
+                return;
+            }
+            URL.revokeObjectURL(url);
+        }
+
+        function releaseProfilePhotoPreview() {
+            revokeObjectUrl(profilePhotoState?.previewUrl || '');
+        }
+
         function normalizeClipForUi(clip = {}) {
             const source = clip.source === 'upload' ? 'upload' : 'external';
             const mimeType = String(clip.mimeType || '').trim();
@@ -316,6 +327,7 @@
 
             wrapper.querySelector('.remove-clip-btn').addEventListener('click', () => {
                 pendingClipFiles.delete(normalized.id);
+                revokeObjectUrl(wrapper.dataset.previewUrl || '');
                 wrapper.remove();
                 ensureClipPlaceholder();
             });
@@ -346,6 +358,7 @@
         }
 
         function clearClipList() {
+            Array.from(clipList.querySelectorAll('[data-clip-id]')).forEach((row) => revokeObjectUrl(row.dataset.previewUrl || ''));
             clipList.innerHTML = '';
         }
 
@@ -443,6 +456,7 @@
         }
 
         function hydrateProfileState(profile) {
+            releaseProfilePhotoPreview();
             currentProfile = profile || null;
             linkedProfilePhotoUrl = currentProfile?.profilePhotoPath ? '' : String(currentProfile?.profilePhotoUrl || '');
             profilePhotoState = currentProfile?.profilePhotoPath ? {
@@ -592,6 +606,7 @@
             if (!file) return;
             try {
                 validateMediaFile(file, 'profile-photo');
+                releaseProfilePhotoPreview();
                 pendingProfilePhotoFile = file;
                 profilePhotoState = {
                     url: '',
@@ -612,6 +627,7 @@
         });
 
         resetHeadshotButton.addEventListener('click', () => {
+            releaseProfilePhotoPreview();
             pendingProfilePhotoFile = null;
             profilePhotoState = null;
             renderProfilePhoto();
