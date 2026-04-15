@@ -17,7 +17,7 @@
             <div class="flex items-center justify-between gap-4">
                 <div>
                     <h1 class="text-3xl md:text-4xl font-bold text-gray-900">Athlete Profile Builder</h1>
-                    <p class="text-sm text-gray-600 mt-2">Selected Seasons, bio details, career stats, and Highlight Clips in one parent-managed profile.</p>
+                    <p class="text-sm text-gray-600 mt-2">Selected seasons, a custom headshot, and curated highlight media in one parent-managed profile.</p>
                 </div>
                 <a href="parent-dashboard.html" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Back</a>
             </div>
@@ -58,6 +58,21 @@
                         </div>
 
                         <div>
+                            <div class="flex items-center justify-between gap-3">
+                                <div>
+                                    <h2 class="text-lg font-bold text-gray-900">Profile Headshot</h2>
+                                    <p class="text-sm text-gray-500 mt-1">Upload a dedicated athlete headshot or keep the linked season photo.</p>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <input id="profile-photo-input" type="file" accept="image/*" class="hidden">
+                                    <button type="button" id="upload-headshot-btn" class="px-3 py-2 rounded-xl border border-primary-200 bg-primary-50 text-primary-700 font-semibold hover:bg-primary-100">Upload Headshot</button>
+                                    <button type="button" id="reset-headshot-btn" class="hidden px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Use Linked Season Photo</button>
+                                </div>
+                            </div>
+                            <div id="profile-photo-preview" class="mt-3"></div>
+                        </div>
+
+                        <div>
                             <h2 class="text-lg font-bold text-gray-900">Selected Seasons</h2>
                             <p class="text-sm text-gray-500 mt-1">Choose which linked player seasons should roll into the career profile.</p>
                             <div id="season-options" class="mt-3 grid gap-3"></div>
@@ -67,9 +82,13 @@
                             <div class="flex items-center justify-between gap-3">
                                 <div>
                                     <h2 class="text-lg font-bold text-gray-900">Highlight Clips</h2>
-                                    <p class="text-sm text-gray-500 mt-1">Attach favorite video links for family or coaches.</p>
+                                    <p class="text-sm text-gray-500 mt-1">Upload native clips or keep compatible external links for legacy highlights.</p>
                                 </div>
-                                <button type="button" id="add-clip-btn" class="px-3 py-2 rounded-xl border border-primary-200 bg-primary-50 text-primary-700 font-semibold hover:bg-primary-100">Add Clip</button>
+                                <div class="flex flex-wrap gap-2">
+                                    <input id="clip-upload-input" type="file" accept="video/*,image/*" multiple class="hidden">
+                                    <button type="button" id="upload-clip-btn" class="px-3 py-2 rounded-xl border border-primary-200 bg-primary-50 text-primary-700 font-semibold hover:bg-primary-100">Upload Clip</button>
+                                    <button type="button" id="add-clip-link-btn" class="px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Add External Link</button>
+                                </div>
                             </div>
                             <div id="clip-list" class="mt-3 space-y-3"></div>
                         </div>
@@ -126,7 +145,9 @@
             getUserProfile,
             getAthleteProfile,
             saveAthleteProfile,
-            listAthleteProfilesForParent
+            listAthleteProfilesForParent,
+            uploadAthleteProfileMedia,
+            deleteAthleteProfileMediaByPath
         } from './js/db.js?v=24';
         import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=1';
 
@@ -138,36 +159,213 @@
         const shareButton = document.getElementById('share-profile-btn');
         const savedProfilesList = document.getElementById('saved-profiles-list');
         const careerStats = document.getElementById('career-stats');
+        const profilePhotoPreview = document.getElementById('profile-photo-preview');
+        const profilePhotoInput = document.getElementById('profile-photo-input');
+        const clipUploadInput = document.getElementById('clip-upload-input');
+        const resetHeadshotButton = document.getElementById('reset-headshot-btn');
 
         let currentUser = null;
         let currentProfile = null;
         let availableLinks = [];
+        let workingProfileId = params.profileId || createLocalId('profile');
+        let pendingClipFiles = new Map();
+        let pendingProfilePhotoFile = null;
+        let profilePhotoState = null;
+        let linkedProfilePhotoUrl = '';
 
         renderFooter(document.getElementById('footer-container'));
         checkAuth((user) => renderHeader(document.getElementById('header-container'), user));
 
-        function renderClipRow(clip = {}) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'grid gap-3 md:grid-cols-[1fr_1fr_auto]';
-            wrapper.innerHTML = `
-                <input type="text" data-clip-field="title" value="${escapeHtml(clip.title || '')}" placeholder="Clip title" class="rounded-xl border border-gray-300 px-3 py-2">
-                <input type="url" data-clip-field="url" value="${escapeHtml(clip.url || '')}" placeholder="https://..." class="rounded-xl border border-gray-300 px-3 py-2">
-                <button type="button" class="remove-clip-btn px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50">Remove</button>
-                <input type="text" data-clip-field="label" value="${escapeHtml(clip.label || '')}" placeholder="Optional note" class="md:col-span-2 rounded-xl border border-gray-300 px-3 py-2">
+        function createLocalId(prefix) {
+            if (window.crypto?.randomUUID) {
+                return `${prefix}_${window.crypto.randomUUID()}`;
+            }
+            return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        }
+
+        function toMediaType(value = '') {
+            const lower = String(value || '').toLowerCase();
+            if (lower.startsWith('image/')) return 'image';
+            if (lower.startsWith('video/')) return 'video';
+            return 'link';
+        }
+
+        function fileTitle(fileName = '') {
+            return String(fileName || '').replace(/\.[^.]+$/, '').trim();
+        }
+
+        function setStatus(message, isError = false) {
+            saveStatus.textContent = message || '';
+            saveStatus.className = `text-sm ${isError ? 'text-rose-600' : 'text-gray-500'}`;
+        }
+
+        function validateMediaFile(file, kind = 'clip') {
+            if (!file) {
+                throw new Error('Select a file to upload.');
+            }
+            if (!Number.isFinite(file.size) || file.size <= 0) {
+                throw new Error('The selected file is empty. Choose a valid image or video.');
+            }
+            const isImage = String(file.type || '').startsWith('image/');
+            const isVideo = String(file.type || '').startsWith('video/');
+            if (kind === 'profile-photo' && !isImage) {
+                throw new Error('Headshots must be image files.');
+            }
+            if (kind === 'clip' && !isImage && !isVideo) {
+                throw new Error('Highlight clips must be image or video files.');
+            }
+            if (file.size > 100 * 1024 * 1024) {
+                throw new Error('Choose a file under 100 MB.');
+            }
+        }
+
+        function normalizeClipForUi(clip = {}) {
+            const source = clip.source === 'upload' ? 'upload' : 'external';
+            const mimeType = String(clip.mimeType || '').trim();
+            return {
+                id: String(clip.id || createLocalId('clip')).trim(),
+                source,
+                mediaType: source === 'upload'
+                    ? (clip.mediaType || toMediaType(mimeType || clip.url))
+                    : (clip.mediaType === 'image' || clip.mediaType === 'video' ? clip.mediaType : 'link'),
+                title: String(clip.title || '').trim(),
+                url: String(clip.url || '').trim(),
+                label: String(clip.label || '').trim(),
+                storagePath: String(clip.storagePath || '').trim(),
+                mimeType,
+                sizeBytes: Number.isFinite(clip.sizeBytes) ? clip.sizeBytes : (Number.isFinite(Number(clip.sizeBytes)) ? Number(clip.sizeBytes) : null),
+                uploadedAtMs: Number.isFinite(clip.uploadedAtMs) ? clip.uploadedAtMs : (Number.isFinite(Number(clip.uploadedAtMs)) ? Number(clip.uploadedAtMs) : null),
+                pendingUpload: !!clip.pendingUpload,
+                previewUrl: String(clip.previewUrl || clip.url || '').trim()
+            };
+        }
+
+        function renderProfilePhoto() {
+            const photoUrl = profilePhotoState?.previewUrl || profilePhotoState?.url || linkedProfilePhotoUrl;
+            const sourceLabel = profilePhotoState?.storagePath || profilePhotoState?.pendingUpload
+                ? 'Custom uploaded headshot'
+                : (photoUrl ? 'Using linked season photo' : 'No headshot selected');
+
+            profilePhotoPreview.innerHTML = `
+                <div class="rounded-2xl border border-gray-200 p-4 flex items-center gap-4 bg-gray-50">
+                    <div class="h-24 w-24 rounded-full overflow-hidden border border-gray-200 bg-white flex items-center justify-center shrink-0">
+                        ${photoUrl ? `<img src="${escapeHtml(photoUrl)}" alt="Athlete headshot" class="w-full h-full object-cover">` : '<span class="text-xs text-gray-400">No Photo</span>'}
+                    </div>
+                    <div>
+                        <div class="font-semibold text-gray-900">${escapeHtml(sourceLabel)}</div>
+                        <div class="text-sm text-gray-500 mt-1">Uploads replace the linked season photo on the public profile until you reset them.</div>
+                    </div>
+                </div>
             `;
-            wrapper.querySelector('.remove-clip-btn').addEventListener('click', () => wrapper.remove());
+
+            resetHeadshotButton.classList.toggle('hidden', !profilePhotoState);
+            resetHeadshotButton.textContent = 'Use Linked Season Photo';
+        }
+
+        function clipPreviewHtml(clip) {
+            const previewUrl = clip.previewUrl || clip.url;
+            if (!previewUrl) {
+                return '<div class="rounded-xl border border-dashed border-gray-300 bg-white p-4 text-sm text-gray-500">This clip will be available after you add media or a link.</div>';
+            }
+            if (clip.mediaType === 'image') {
+                return `<img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(clip.title || 'Highlight image')}" class="w-full h-48 rounded-xl object-cover border border-gray-200 bg-white">`;
+            }
+            if (clip.mediaType === 'video') {
+                return `<video controls preload="metadata" class="w-full h-48 rounded-xl border border-gray-200 bg-black" src="${escapeHtml(previewUrl)}"></video>`;
+            }
+            return `<a href="${escapeHtml(previewUrl)}" target="_blank" rel="noopener noreferrer" class="block rounded-xl border border-gray-200 bg-white p-4 text-sm text-primary-700 hover:bg-primary-50">Open external clip ↗</a>`;
+        }
+
+        function renderClipCard(clip = {}) {
+            const normalized = normalizeClipForUi(clip);
+            const wrapper = document.createElement('div');
+            wrapper.dataset.clipId = normalized.id;
+            wrapper.dataset.source = normalized.source;
+            wrapper.dataset.mediaType = normalized.mediaType;
+            wrapper.dataset.storagePath = normalized.storagePath || '';
+            wrapper.dataset.mimeType = normalized.mimeType || '';
+            wrapper.dataset.sizeBytes = normalized.sizeBytes ?? '';
+            wrapper.dataset.uploadedAtMs = normalized.uploadedAtMs ?? '';
+            wrapper.dataset.url = normalized.url || '';
+            wrapper.dataset.previewUrl = normalized.previewUrl || '';
+            wrapper.dataset.pendingUpload = normalized.pendingUpload ? 'true' : 'false';
+            wrapper.className = 'rounded-2xl border border-gray-200 p-4 bg-gray-50 space-y-4';
+            wrapper.innerHTML = `
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <div class="font-semibold text-gray-900">${escapeHtml(normalized.source === 'upload' ? `Uploaded ${normalized.mediaType}` : 'External highlight link')}</div>
+                        <div class="text-xs text-gray-500 mt-1">${escapeHtml(normalized.pendingUpload ? 'Will upload when you save the profile.' : (normalized.storagePath ? 'Saved in athlete-profile media storage.' : 'Legacy compatible outbound link.'))}</div>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" class="move-clip-up-btn px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-100">Move Up</button>
+                        <button type="button" class="move-clip-down-btn px-3 py-2 rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-100">Move Down</button>
+                        <button type="button" class="remove-clip-btn px-3 py-2 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100">Remove</button>
+                    </div>
+                </div>
+                <div class="grid md:grid-cols-[0.9fr_1.1fr] gap-4" data-athlete-clip-card>
+                    <div>${clipPreviewHtml(normalized)}</div>
+                    <div class="space-y-3">
+                        <input type="text" data-clip-field="title" value="${escapeHtml(normalized.title)}" placeholder="Clip title" class="w-full rounded-xl border border-gray-300 px-3 py-2 bg-white">
+                        <input type="text" data-clip-field="label" value="${escapeHtml(normalized.label)}" placeholder="Optional note" class="w-full rounded-xl border border-gray-300 px-3 py-2 bg-white">
+                        ${normalized.source === 'external'
+                            ? `<input type="url" data-clip-field="url" value="${escapeHtml(normalized.url)}" placeholder="https://..." class="w-full rounded-xl border border-gray-300 px-3 py-2 bg-white">`
+                            : `<div class="rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 break-all">${escapeHtml(normalized.previewUrl || normalized.url || 'Uploads will receive a hosted media URL after save.')}</div>`}
+                    </div>
+                </div>
+            `;
+
+            wrapper.querySelector('.remove-clip-btn').addEventListener('click', () => {
+                pendingClipFiles.delete(normalized.id);
+                wrapper.remove();
+                ensureClipPlaceholder();
+            });
+            wrapper.querySelector('.move-clip-up-btn').addEventListener('click', () => {
+                const previous = wrapper.previousElementSibling;
+                if (previous) {
+                    clipList.insertBefore(wrapper, previous);
+                }
+            });
+            wrapper.querySelector('.move-clip-down-btn').addEventListener('click', () => {
+                const next = wrapper.nextElementSibling;
+                if (next) {
+                    clipList.insertBefore(next, wrapper);
+                }
+            });
             clipList.appendChild(wrapper);
+        }
+
+        function ensureClipPlaceholder() {
+            if (clipList.children.length) {
+                return;
+            }
+            const empty = document.createElement('div');
+            empty.className = 'rounded-2xl border border-dashed border-gray-300 p-4 text-sm text-gray-500';
+            empty.dataset.clipPlaceholder = 'true';
+            empty.textContent = 'No clips added yet. Upload a native clip or keep an external link.';
+            clipList.appendChild(empty);
+        }
+
+        function clearClipList() {
+            clipList.innerHTML = '';
         }
 
         function collectSelectedSeasonKeys() {
             return Array.from(document.querySelectorAll('input[name="seasonKey"]:checked')).map((input) => input.value);
         }
 
-        function collectClips() {
-            return Array.from(clipList.children).map((row) => ({
+        function collectClipDrafts() {
+            return Array.from(clipList.querySelectorAll('[data-clip-id]')).map((row) => ({
+                id: row.dataset.clipId || createLocalId('clip'),
+                source: row.dataset.source || 'external',
+                mediaType: row.dataset.mediaType || 'link',
                 title: row.querySelector('[data-clip-field="title"]')?.value || '',
-                url: row.querySelector('[data-clip-field="url"]')?.value || '',
-                label: row.querySelector('[data-clip-field="label"]')?.value || ''
+                label: row.querySelector('[data-clip-field="label"]')?.value || '',
+                url: row.querySelector('[data-clip-field="url"]')?.value || row.dataset.url || row.dataset.previewUrl || '',
+                storagePath: row.dataset.storagePath || '',
+                mimeType: row.dataset.mimeType || '',
+                sizeBytes: row.dataset.sizeBytes ? Number(row.dataset.sizeBytes) : null,
+                uploadedAtMs: row.dataset.uploadedAtMs ? Number(row.dataset.uploadedAtMs) : null,
+                pendingUpload: row.dataset.pendingUpload === 'true'
             }));
         }
 
@@ -226,12 +424,7 @@
             const shareUrl = buildAthleteProfileShareUrl(window.location.origin, currentProfile.id);
             previewLink.href = shareUrl;
             previewLink.classList.remove('hidden');
-
-            if (currentProfile.privacy === 'public') {
-                shareButton.classList.remove('hidden');
-            } else {
-                shareButton.classList.add('hidden');
-            }
+            shareButton.classList.toggle('hidden', currentProfile.privacy !== 'public');
         }
 
         async function refreshSavedProfiles() {
@@ -244,9 +437,33 @@
             savedProfilesList.innerHTML = profiles.map((profile) => `
                 <a href="athlete-profile-builder.html?profileId=${escapeHtml(profile.id)}" class="block rounded-xl border border-gray-200 p-4 hover:bg-gray-50">
                     <div class="font-semibold text-gray-900">${escapeHtml(profile.athlete?.name || 'Athlete')}</div>
-                    <div class="text-xs text-gray-500 mt-1">${escapeHtml(profile.privacy || 'private')} · ${escapeHtml(profile.seasons?.length || 0)} seasons</div>
+                    <div class="text-xs text-gray-500 mt-1">${escapeHtml(profile.privacy || 'private')} · ${escapeHtml(profile.seasons?.length || 0)} seasons · ${escapeHtml(profile.clips?.length || 0)} clips</div>
                 </a>
             `).join('');
+        }
+
+        function hydrateProfileState(profile) {
+            currentProfile = profile || null;
+            linkedProfilePhotoUrl = currentProfile?.profilePhotoPath ? '' : String(currentProfile?.profilePhotoUrl || '');
+            profilePhotoState = currentProfile?.profilePhotoPath ? {
+                url: currentProfile.profilePhotoUrl || '',
+                previewUrl: currentProfile.profilePhotoUrl || '',
+                storagePath: currentProfile.profilePhotoPath || '',
+                mimeType: currentProfile.profilePhotoMimeType || '',
+                sizeBytes: currentProfile.profilePhotoSizeBytes ?? null,
+                uploadedAtMs: currentProfile.profilePhotoUploadedAtMs ?? null,
+                pendingUpload: false
+            } : null;
+            pendingProfilePhotoFile = null;
+            pendingClipFiles = new Map();
+            renderProfilePhoto();
+
+            clearClipList();
+            const clips = Array.isArray(currentProfile?.clips) && currentProfile.clips.length
+                ? currentProfile.clips
+                : [];
+            clips.forEach((clip) => renderClipCard(clip));
+            ensureClipPlaceholder();
         }
 
         async function loadBuilder() {
@@ -255,12 +472,15 @@
             availableLinks = Array.isArray(profile?.parentOf) ? profile.parentOf : [];
 
             if (!availableLinks.length) {
-                saveStatus.textContent = 'No linked players were found for this account.';
+                setStatus('No linked players were found for this account.', true);
                 return;
             }
 
             if (params.profileId) {
                 currentProfile = await getAthleteProfile(params.profileId);
+                if (currentProfile?.id) {
+                    workingProfileId = currentProfile.id;
+                }
             }
 
             const defaultKey = params.teamId && params.playerId ? `${params.teamId}::${params.playerId}` : '';
@@ -277,15 +497,157 @@
             if (privacyInput) privacyInput.checked = true;
 
             renderSeasonOptions(selectedKeys);
-            const clips = currentProfile?.clips?.length ? currentProfile.clips : [{ title: '', url: '', label: '' }];
-            clipList.innerHTML = '';
-            clips.forEach((clip) => renderClipRow(clip));
+            hydrateProfileState(currentProfile);
             renderCareerSummary(currentProfile?.careerSummary || null);
             updateShareControls();
             await refreshSavedProfiles();
         }
 
-        document.getElementById('add-clip-btn').addEventListener('click', () => renderClipRow({}));
+        async function uploadPendingMedia() {
+            const newlyUploadedPaths = [];
+            let profilePhoto = null;
+
+            if (pendingProfilePhotoFile) {
+                const uploadedPhoto = await uploadAthleteProfileMedia(currentUser.uid, workingProfileId, pendingProfilePhotoFile, { kind: 'profile-photo' });
+                newlyUploadedPaths.push(uploadedPhoto.storagePath);
+                profilePhoto = uploadedPhoto;
+            } else if (profilePhotoState?.storagePath || profilePhotoState?.url) {
+                profilePhoto = {
+                    url: profilePhotoState.url || profilePhotoState.previewUrl || '',
+                    storagePath: profilePhotoState.storagePath || '',
+                    mimeType: profilePhotoState.mimeType || '',
+                    sizeBytes: profilePhotoState.sizeBytes ?? null,
+                    uploadedAtMs: profilePhotoState.uploadedAtMs ?? null
+                };
+            }
+
+            const clips = [];
+            for (const clip of collectClipDrafts()) {
+                if (clip.pendingUpload) {
+                    const file = pendingClipFiles.get(clip.id);
+                    if (!file) {
+                        throw new Error('One of the pending clips could not be found. Please re-add it and try again.');
+                    }
+                    const uploadedClip = await uploadAthleteProfileMedia(currentUser.uid, workingProfileId, file, { kind: 'clip' });
+                    newlyUploadedPaths.push(uploadedClip.storagePath);
+                    clips.push({
+                        id: clip.id,
+                        source: 'upload',
+                        mediaType: uploadedClip.mediaType,
+                        title: clip.title,
+                        label: clip.label,
+                        url: uploadedClip.url,
+                        storagePath: uploadedClip.storagePath,
+                        mimeType: uploadedClip.mimeType,
+                        sizeBytes: uploadedClip.sizeBytes,
+                        uploadedAtMs: uploadedClip.uploadedAtMs
+                    });
+                } else {
+                    clips.push({
+                        id: clip.id,
+                        source: clip.source,
+                        mediaType: clip.mediaType,
+                        title: clip.title,
+                        label: clip.label,
+                        url: clip.url,
+                        storagePath: clip.storagePath,
+                        mimeType: clip.mimeType,
+                        sizeBytes: clip.sizeBytes,
+                        uploadedAtMs: clip.uploadedAtMs
+                    });
+                }
+            }
+
+            return {
+                newlyUploadedPaths,
+                draft: {
+                    athlete: {
+                        name: document.getElementById('athlete-name').value,
+                        headline: document.getElementById('athlete-headline').value
+                    },
+                    bio: {
+                        position: document.getElementById('athlete-position').value,
+                        graduationYear: document.getElementById('athlete-grad-year').value,
+                        hometown: document.getElementById('athlete-hometown').value,
+                        dominantHand: document.getElementById('athlete-hand').value,
+                        achievements: document.getElementById('athlete-achievements').value
+                    },
+                    privacy: document.querySelector('input[name="privacy"]:checked')?.value || 'private',
+                    profilePhoto,
+                    clips,
+                    selectedSeasonKeys: collectSelectedSeasonKeys()
+                }
+            };
+        }
+
+        document.getElementById('upload-headshot-btn').addEventListener('click', () => profilePhotoInput.click());
+        document.getElementById('upload-clip-btn').addEventListener('click', () => clipUploadInput.click());
+        document.getElementById('add-clip-link-btn').addEventListener('click', () => {
+            clipList.querySelector('[data-clip-placeholder]')?.remove();
+            renderClipCard({ source: 'external', mediaType: 'link' });
+        });
+
+        profilePhotoInput.addEventListener('change', (event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            try {
+                validateMediaFile(file, 'profile-photo');
+                pendingProfilePhotoFile = file;
+                profilePhotoState = {
+                    url: '',
+                    previewUrl: URL.createObjectURL(file),
+                    storagePath: '',
+                    mimeType: file.type || '',
+                    sizeBytes: file.size || null,
+                    uploadedAtMs: null,
+                    pendingUpload: true
+                };
+                renderProfilePhoto();
+                setStatus('Headshot ready to upload on save.');
+            } catch (error) {
+                setStatus(error?.message || 'Unable to use that headshot.', true);
+            } finally {
+                event.target.value = '';
+            }
+        });
+
+        resetHeadshotButton.addEventListener('click', () => {
+            pendingProfilePhotoFile = null;
+            profilePhotoState = null;
+            renderProfilePhoto();
+            setStatus('Using the linked season photo for this athlete profile.');
+        });
+
+        clipUploadInput.addEventListener('change', (event) => {
+            const files = Array.from(event.target.files || []);
+            files.forEach((file) => {
+                try {
+                    validateMediaFile(file, 'clip');
+                    clipList.querySelector('[data-clip-placeholder]')?.remove();
+                    const clipId = createLocalId('clip');
+                    pendingClipFiles.set(clipId, file);
+                    renderClipCard({
+                        id: clipId,
+                        source: 'upload',
+                        mediaType: toMediaType(file.type),
+                        title: fileTitle(file.name),
+                        url: '',
+                        label: '',
+                        storagePath: '',
+                        mimeType: file.type || '',
+                        sizeBytes: file.size || null,
+                        uploadedAtMs: null,
+                        pendingUpload: true,
+                        previewUrl: URL.createObjectURL(file)
+                    });
+                    setStatus('Clip ready to upload on save.');
+                } catch (error) {
+                    setStatus(error?.message || 'Unable to use that clip.', true);
+                }
+            });
+            event.target.value = '';
+            ensureClipPlaceholder();
+        });
 
         shareButton.addEventListener('click', async () => {
             if (!currentProfile?.id) return;
@@ -299,43 +661,35 @@
 
         document.getElementById('athlete-profile-form').addEventListener('submit', async (event) => {
             event.preventDefault();
-            saveStatus.textContent = 'Saving...';
+            setStatus('Saving...');
 
+            let newlyUploadedPaths = [];
             try {
-                currentProfile = await saveAthleteProfile(currentUser.uid, {
-                    athlete: {
-                        name: document.getElementById('athlete-name').value,
-                        headline: document.getElementById('athlete-headline').value
-                    },
-                    bio: {
-                        position: document.getElementById('athlete-position').value,
-                        graduationYear: document.getElementById('athlete-grad-year').value,
-                        hometown: document.getElementById('athlete-hometown').value,
-                        dominantHand: document.getElementById('athlete-hand').value,
-                        achievements: document.getElementById('athlete-achievements').value
-                    },
-                    privacy: document.querySelector('input[name="privacy"]:checked')?.value || 'private',
-                    clips: collectClips(),
-                    selectedSeasonKeys: collectSelectedSeasonKeys()
-                }, {
-                    profileId: currentProfile?.id || params.profileId || null
+                const prepared = await uploadPendingMedia();
+                newlyUploadedPaths = prepared.newlyUploadedPaths;
+                currentProfile = await saveAthleteProfile(currentUser.uid, prepared.draft, {
+                    profileId: currentProfile?.id || params.profileId || workingProfileId
                 });
 
+                workingProfileId = currentProfile.id;
                 params.profileId = currentProfile.id;
+                window.history.replaceState({}, '', `athlete-profile-builder.html?profileId=${encodeURIComponent(currentProfile.id)}`);
+
+                hydrateProfileState(currentProfile);
                 renderCareerSummary(currentProfile.careerSummary);
                 updateShareControls();
                 await refreshSavedProfiles();
-                saveStatus.textContent = 'Athlete profile saved.';
-                window.history.replaceState({}, '', `athlete-profile-builder.html?profileId=${encodeURIComponent(currentProfile.id)}`);
+                setStatus('Athlete profile saved.');
             } catch (error) {
+                await Promise.allSettled(newlyUploadedPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
                 console.error('Failed to save athlete profile', error);
-                saveStatus.textContent = error?.message || 'Unable to save athlete profile.';
+                setStatus(error?.message || 'Unable to save athlete profile.', true);
             }
         });
 
         loadBuilder().catch((error) => {
             console.error(error);
-            saveStatus.textContent = 'Unable to load athlete profile builder.';
+            setStatus('Unable to load athlete profile builder.', true);
         });
     </script>
 </body>

@@ -47,16 +47,36 @@
             return cards || '<div class="text-sm text-slate-500">Career stats will appear here once games with tracked stats are included.</div>';
         }
 
+        function renderClipMedia(clip) {
+            const url = String(clip?.url || '').trim();
+            if (!url) {
+                return '<div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">Clip unavailable.</div>';
+            }
+
+            if (clip?.mediaType === 'image') {
+                return `<img src="${escapeHtml(url)}" alt="${escapeHtml(clip?.title || 'Highlight image')}" class="w-full h-56 rounded-2xl object-cover border border-slate-200 bg-slate-50">`;
+            }
+
+            if (clip?.mediaType === 'video') {
+                return `<video controls preload="metadata" class="w-full h-56 rounded-2xl border border-slate-200 bg-black" src="${escapeHtml(url)}"></video>`;
+            }
+
+            return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100">Open clip ↗</a>`;
+        }
+
         function renderClips(clips) {
             if (!Array.isArray(clips) || !clips.length) {
                 return '<div class="text-sm text-slate-500">No clips attached yet.</div>';
             }
 
             return clips.map((clip) => `
-                <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer" class="block rounded-2xl border border-slate-200 p-4 hover:bg-slate-50">
-                    <div class="font-semibold text-slate-900">${escapeHtml(clip.title || 'Highlight Clip')}</div>
-                    <div class="text-sm text-slate-500 mt-1">${escapeHtml(clip.label || clip.url)}</div>
-                </a>
+                <article data-athlete-clip-card class="rounded-3xl border border-slate-200 p-4 bg-white shadow-sm">
+                    ${renderClipMedia(clip)}
+                    <div class="mt-4">
+                        <div class="font-semibold text-slate-900">${escapeHtml(clip?.title || 'Highlight Clip')}</div>
+                        <div class="text-sm text-slate-500 mt-1">${escapeHtml(clip?.label || (clip?.source === 'upload' ? 'Hosted by ALL PLAYS' : clip?.url || ''))}</div>
+                    </div>
+                </article>
             `).join('');
         }
 

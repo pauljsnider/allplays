@@ -1,3 +1,84 @@
+function toCleanString(value) {
+    return String(value || '').trim();
+}
+
+function toFiniteNumber(value) {
+    const num = typeof value === 'string' ? Number(value) : value;
+    return Number.isFinite(num) ? num : null;
+}
+
+function inferUploadMediaType({ mediaType = '', mimeType = '', url = '' } = {}) {
+    const explicit = toCleanString(mediaType).toLowerCase();
+    if (explicit === 'image' || explicit === 'video' || explicit === 'link') {
+        return explicit;
+    }
+
+    const mime = toCleanString(mimeType).toLowerCase();
+    if (mime.startsWith('image/')) return 'image';
+    if (mime.startsWith('video/')) return 'video';
+
+    const lowerUrl = toCleanString(url).toLowerCase();
+    if (/\.(png|jpe?g|gif|webp|avif)(\?|#|$)/.test(lowerUrl)) return 'image';
+    if (/\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/.test(lowerUrl)) return 'video';
+
+    return 'link';
+}
+
+function normalizeClip(clip = {}) {
+    const url = toCleanString(clip.url);
+    if (!url) return null;
+
+    const trimmedSource = toCleanString(clip.source).toLowerCase();
+    const source = trimmedSource === 'upload' ? 'upload' : 'external';
+    const mimeType = toCleanString(clip.mimeType);
+    const mediaType = source === 'upload'
+        ? inferUploadMediaType({ mediaType: clip.mediaType, mimeType, url })
+        : (['image', 'video'].includes(toCleanString(clip.mediaType).toLowerCase())
+            ? toCleanString(clip.mediaType).toLowerCase()
+            : 'link');
+
+    return {
+        id: toCleanString(clip.id),
+        source,
+        mediaType,
+        title: toCleanString(clip.title),
+        url,
+        label: toCleanString(clip.label),
+        storagePath: toCleanString(clip.storagePath),
+        mimeType,
+        sizeBytes: toFiniteNumber(clip.sizeBytes),
+        uploadedAtMs: toFiniteNumber(clip.uploadedAtMs)
+    };
+}
+
+function normalizeProfilePhoto(profilePhoto = null, input = {}) {
+    const candidate = profilePhoto || {
+        url: input?.profilePhotoUrl,
+        storagePath: input?.profilePhotoPath,
+        mimeType: input?.profilePhotoMimeType,
+        sizeBytes: input?.profilePhotoSizeBytes,
+        uploadedAtMs: input?.profilePhotoUploadedAtMs
+    };
+
+    const url = toCleanString(candidate?.url);
+    const storagePath = toCleanString(candidate?.storagePath);
+    const mimeType = toCleanString(candidate?.mimeType);
+    const sizeBytes = toFiniteNumber(candidate?.sizeBytes);
+    const uploadedAtMs = toFiniteNumber(candidate?.uploadedAtMs);
+
+    if (!url && !storagePath) {
+        return null;
+    }
+
+    return {
+        url,
+        storagePath,
+        mimeType,
+        sizeBytes,
+        uploadedAtMs
+    };
+}
+
 export function normalizeAthleteProfileDraft(input = {}) {
     const athlete = input?.athlete || {};
     const bio = input?.bio || {};
@@ -7,30 +88,53 @@ export function normalizeAthleteProfileDraft(input = {}) {
 
     return {
         athlete: {
-            name: String(athlete.name || '').trim(),
-            headline: String(athlete.headline || '').trim()
+            name: toCleanString(athlete.name),
+            headline: toCleanString(athlete.headline)
         },
         bio: {
-            hometown: String(bio.hometown || '').trim(),
-            graduationYear: String(bio.graduationYear || '').trim(),
-            position: String(bio.position || '').trim(),
-            dominantHand: String(bio.dominantHand || '').trim(),
-            achievements: String(bio.achievements || '').trim()
+            hometown: toCleanString(bio.hometown),
+            graduationYear: toCleanString(bio.graduationYear),
+            position: toCleanString(bio.position),
+            dominantHand: toCleanString(bio.dominantHand),
+            achievements: toCleanString(bio.achievements)
         },
         privacy,
+        profilePhoto: normalizeProfilePhoto(input?.profilePhoto, input),
         clips: rawClips
-            .map((clip) => ({
-                title: String(clip?.title || '').trim(),
-                url: String(clip?.url || '').trim(),
-                label: String(clip?.label || '').trim()
-            }))
-            .filter((clip) => clip.url),
+            .map((clip) => normalizeClip(clip))
+            .filter(Boolean),
         selectedSeasonKeys: [...new Set(
             rawSeasonKeys
-                .map((key) => String(key || '').trim())
+                .map((key) => toCleanString(key))
                 .filter(Boolean)
         )]
     };
+}
+
+export function collectAthleteProfileMediaCleanupPaths(previousProfile = {}, nextDraft = {}) {
+    const normalizedNext = normalizeAthleteProfileDraft(nextDraft);
+    const retainedPaths = new Set(
+        [
+            normalizedNext.profilePhoto?.storagePath || '',
+            ...normalizedNext.clips.map((clip) => clip.storagePath || '')
+        ].filter(Boolean)
+    );
+
+    const cleanupPaths = [];
+    const previousPhotoPath = toCleanString(previousProfile?.profilePhotoPath || previousProfile?.profilePhoto?.storagePath);
+    if (previousPhotoPath && !retainedPaths.has(previousPhotoPath)) {
+        cleanupPaths.push(previousPhotoPath);
+    }
+
+    const previousClips = Array.isArray(previousProfile?.clips) ? previousProfile.clips : [];
+    previousClips.forEach((clip) => {
+        const storagePath = toCleanString(clip?.storagePath);
+        if (storagePath && !retainedPaths.has(storagePath) && !cleanupPaths.includes(storagePath)) {
+            cleanupPaths.push(storagePath);
+        }
+    });
+
+    return cleanupPaths;
 }
 
 export function summarizeAthleteProfileCareer(seasons = []) {

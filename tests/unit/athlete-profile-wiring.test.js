@@ -18,20 +18,24 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('Athlete Profile');
     });
 
-    it('includes builder fields for seasons, clips, and sharing privacy', () => {
+    it('includes builder fields for native media uploads, curation, and sharing privacy', () => {
         const source = readFile('athlete-profile-builder.html');
 
-        expect(source).toContain('Selected Seasons');
-        expect(source).toContain('Highlight Clips');
+        expect(source).toContain('Upload Headshot');
+        expect(source).toContain('Upload Clip');
+        expect(source).toContain('Add External Link');
+        expect(source).toContain('Move Up');
         expect(source).toContain('Share on the web');
     });
 
-    it('includes a public athlete profile page with career stats and share action', () => {
+    it('includes a public athlete profile page with inline media rendering and share action', () => {
         const source = readFile('athlete-profile.html');
 
         expect(source).toContain('Career Stats');
         expect(source).toContain('Highlight Clips');
         expect(source).toContain('Share Profile');
+        expect(source).toContain('renderClipMedia');
+        expect(source).toContain('data-athlete-clip-card');
     });
 
     it('adds dedicated athlete profile security rules', () => {
@@ -42,12 +46,15 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('resource.data.parentUserId == request.auth.uid');
     });
 
-    it('guards private athlete profile reads and skips stale season keys in db helpers', () => {
+    it('guards private athlete profile reads and adds athlete media upload helpers', () => {
         const source = readFile('js/db.js');
 
         expect(source).toContain("if (profile.privacy !== 'public' && !isOwner)");
         expect(source).toContain('const seasonLink = allowedSeasons.get(seasonKey);');
         expect(source).toContain('Season key ${seasonKey} not found in allowed seasons, skipping');
         expect(source).toContain('getTeam(link.teamId, { includeInactive: true })');
+        expect(source).toContain('uploadAthleteProfileMedia');
+        expect(source).toContain('deleteAthleteProfileMediaByPath');
+        expect(source).toContain('collectAthleteProfileMediaCleanupPaths');
     });
 });
