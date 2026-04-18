@@ -123,7 +123,7 @@ test('email/password login from an invite link redirects existing parents to acc
     await page.locator('#password').fill('secret123');
     await page.locator('#login-form').dispatchEvent('submit');
 
-    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34&type=parent$/);
 });
 
 test('google redirect login mode keeps existing admin invites on accept-invite', async ({ page, baseURL }) => {
@@ -148,5 +148,5 @@ test('google redirect login mode keeps existing admin invites on accept-invite',
         waitUntil: 'domcontentloaded'
     });
 
-    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34&type=admin$/);
 });

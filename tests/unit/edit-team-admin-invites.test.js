@@ -236,16 +236,16 @@ describe('edit team admin invite processing', () => {
             {
                 email: 'coach1@example.com',
                 code: 'EXIST111',
-                acceptInviteUrl: 'https://allplays.ai/accept-invite.html?code=EXIST111'
+                acceptInviteUrl: 'https://allplays.ai/accept-invite.html?code=EXIST111&type=admin'
             },
             {
                 email: 'coach2@example.com',
                 code: 'FALL222',
-                acceptInviteUrl: 'https://allplays.ai/accept-invite.html?code=FALL222'
+                acceptInviteUrl: 'https://allplays.ai/accept-invite.html?code=FALL222&type=admin'
             }
         ]);
-        expect(followUp.shareableDetails).toContain('coach1@example.com | code: EXIST111 | https://allplays.ai/accept-invite.html?code=EXIST111');
-        expect(followUp.shareableDetails).toContain('coach2@example.com | code: FALL222 | https://allplays.ai/accept-invite.html?code=FALL222');
+        expect(followUp.shareableDetails).toContain('coach1@example.com | code: EXIST111 | https://allplays.ai/accept-invite.html?code=EXIST111&type=admin');
+        expect(followUp.shareableDetails).toContain('coach2@example.com | code: FALL222 | https://allplays.ai/accept-invite.html?code=FALL222&type=admin');
     });
 
     it('counts unresolved follow-up entries when no code is available or processing failed', () => {

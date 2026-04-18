@@ -26,9 +26,9 @@ function createCoordinator({
     const coordinator = createLoginRedirectCoordinator({
         windowObject,
         getRedirectUrl: vi.fn(() => defaultRedirect),
-        getPostAuthRedirectUrl: (redirect, inviteCode, shouldRedeemInvite) => (
+        getPostAuthRedirectUrl: (redirect, inviteCode, shouldRedeemInvite, inviteType) => (
             shouldRedeemInvite
-                ? `accept-invite.html?code=${inviteCode.toUpperCase()}`
+                ? `accept-invite.html?code=${inviteCode.toUpperCase()}${inviteType ? `&type=${String(inviteType).trim().toLowerCase()}` : ''}`
                 : redirect
         )
     });
@@ -45,7 +45,7 @@ describe('login page redirect coordination', () => {
 
         expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
         expect(coordinator.getPostAuthRedirect({ isAdmin: true }, coordinator.shouldRedeemInviteFromLogin))
-            .toBe('accept-invite.html?code=AB12CD34');
+            .toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 
     it('does not redeem invite redirects when the invite code is missing', () => {
@@ -62,7 +62,7 @@ describe('login page redirect coordination', () => {
         const { coordinator, windowObject } = createCoordinator({ postGoogleAuthMode: 'login' });
 
         expect(coordinator.getGoogleRedirectUrl({ parentOf: [{ teamId: 'team-1' }] }))
-            .toBe('accept-invite.html?code=AB12CD34');
+            .toBe('accept-invite.html?code=AB12CD34&type=parent');
         expect(windowObject.sessionStorage.removeItem).toHaveBeenCalledWith('postGoogleAuthMode');
     });
 
@@ -77,7 +77,7 @@ describe('login page redirect coordination', () => {
     it('still redeems the invite for authenticated users who directly open an invite link', () => {
         const { coordinator } = createCoordinator({ search: '?code=ab12cd34&type=admin', defaultRedirect: 'dashboard.html' });
 
-        expect(coordinator.getAutoRedirectUrl({ isAdmin: true })).toBe('accept-invite.html?code=AB12CD34');
+        expect(coordinator.getAutoRedirectUrl({ isAdmin: true })).toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 });
 
