@@ -215,7 +215,12 @@
 
         // Attach card navigation
         container.querySelectorAll('.team-card').forEach(cardEl => {
-          cardEl.addEventListener('click', () => {
+          cardEl.addEventListener('click', (event) => {
+            const interactiveTarget = event.target.closest('a, button, input, select, textarea, summary, [role="button"], [role="link"]');
+            if (interactiveTarget) {
+              return;
+            }
+
             const id = cardEl.dataset.teamId;
             window.location.href = `team.html#teamId=${id}`;
           });

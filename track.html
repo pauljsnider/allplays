@@ -1214,6 +1214,31 @@ Write the match report now:`;
             document.getElementById('emailPreview').textContent = emailBody;
         }
 
+        function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
+            const playerStatsByLowerKey = {};
+            const normalizedStats = {};
+
+            Object.entries(playerStats).forEach(([statKey, value]) => {
+                playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
+            });
+
+            columns.forEach((col) => {
+                const key = String(col || '').toLowerCase();
+                normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
+                    ? playerStatsByLowerKey[key]
+                    : 0;
+            });
+
+            Object.entries(playerStats).forEach(([statKey, value]) => {
+                const normalizedKey = String(statKey).toLowerCase();
+                if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
+                    normalizedStats[statKey] = Number(value) || 0;
+                }
+            });
+
+            return normalizedStats;
+        }
+
         cancelBtn.addEventListener('click', () => {
             modal.classList.add('hidden');
         });
@@ -1226,13 +1251,32 @@ Write the match report now:`;
             const sendEmail = document.getElementById('sendEmailCheckbox').checked;
 
             try {
-                // Create a batch write for all data
-                const batch = writeBatch(db);
+                const MAX_PRIMARY_BATCH_WRITES = 500;
+                const MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
+                const primaryBatchWriteCount = gameState.gameLog.length + 1;
 
-                // 1. Write all game log events
+                if (primaryBatchWriteCount > MAX_PRIMARY_BATCH_WRITES) {
+                    throw new Error(`Game has ${gameState.gameLog.length} logged events. Finish requires chunked event persistence before it can safely exceed Firestore's ${MAX_PRIMARY_BATCH_WRITES}-write batch limit.`);
+                }
+
+                const primaryBatch = writeBatch(db);
+                const aggregatedStatsWrites = players.map((player) => {
+                    const playerStats = gameState.playerStats[player.id] || {};
+
+                    return {
+                        playerId: player.id,
+                        data: {
+                            playerName: player.name,
+                            playerNumber: player.number,
+                            stats: buildNormalizedPlayerStats(playerStats, currentConfig.columns)
+                        }
+                    };
+                });
+
+                // 1. Keep the primary batch at its historical size: events + final game update.
                 gameState.gameLog.forEach(entry => {
                     const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-                    batch.set(eventRef, {
+                    primaryBatch.set(eventRef, {
                         text: entry.text,
                         gameTime: entry.time,
                         period: entry.period,
@@ -1246,22 +1290,8 @@ Write the match report now:`;
                     });
                 });
 
-                // 2. Write aggregated stats for each player
-                Object.entries(gameState.playerStats).forEach(([playerId, stats]) => {
-                    const player = players.find(p => p.id === playerId);
-                    if (player) {
-                        const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-                        batch.set(statsRef, {
-                            playerName: player.name,
-                            playerNumber: player.number,
-                            stats: stats
-                        });
-                    }
-                });
-
-                // 3. Update game document with final data
                 const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
-                batch.update(gameRef, {
+                primaryBatch.update(gameRef, {
                     homeScore: finalHome,
                     awayScore: finalAway,
                     summary: summary,
@@ -1269,8 +1299,19 @@ Write the match report now:`;
                     opponentStats: gameState.opponentStats
                 });
 
-                // Commit all writes in a single batch
-                await batch.commit();
+                // 2. Commit the historical finish data first so completion data lands even if a later stats batch fails.
+                await primaryBatch.commit();
+
+                // 3. Chunk roster-wide aggregated stats writes into secondary batches to avoid Firestore's 500-write limit.
+                for (let i = 0; i < aggregatedStatsWrites.length; i += MAX_AGGREGATED_STATS_BATCH_WRITES) {
+                    const statsBatch = writeBatch(db);
+                    aggregatedStatsWrites.slice(i, i + MAX_AGGREGATED_STATS_BATCH_WRITES).forEach(({ playerId, data }) => {
+                        const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+                        statsBatch.set(statsRef, data);
+                    });
+                    await statsBatch.commit();
+                }
+
                 console.log('Game data saved successfully');
 
                 // Disable beforeunload warning since we're finishing successfully

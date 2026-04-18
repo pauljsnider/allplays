@@ -18,7 +18,7 @@ describe('admin invite signup cache busting', () => {
             "import { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=15';"
         );
         expect(acceptInviteSource).toContain(
-            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=4';"
+            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=5';"
         );
     });
 
