@@ -1402,9 +1402,16 @@
             const dayStart = new Date(year, month, day);
             const dayEnd = new Date(year, month, day, 23, 59, 59);
             const playerId = document.getElementById('player-filter')?.value || '';
-            const events = getCalendarEntries(getFilteredScheduleEvents(playerId))
+            const getEventsForModal = (sourceEvents) => getCalendarEntries(sourceEvents)
                 .filter((ev) => ev.date >= dayStart && ev.date <= dayEnd)
                 .sort((a, b) => a.date - b.date);
+            let events = getEventsForModal(getFilteredScheduleEvents(playerId));
+            if (!events.length) {
+                const fallbackEvents = playerId
+                    ? allScheduleEvents.filter((ev) => ev.childId === playerId)
+                    : allScheduleEvents;
+                events = getEventsForModal(fallbackEvents);
+            }
 
             titleEl.textContent = dayStart.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
             if (!events.length) {

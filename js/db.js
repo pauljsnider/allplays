@@ -60,6 +60,7 @@ import {
 } from './shared-games.js?v=1';
 import {
     normalizeAthleteProfileDraft,
+    collectAthleteProfileMediaCleanupPaths,
     summarizeAthleteProfileCareer
 } from './athlete-profile-utils.js?v=1';
 import {
@@ -2297,6 +2298,50 @@ async function buildAthleteProfileSeasonSummary(link) {
     };
 }
 
+function sanitizeAthleteProfileMediaName(fileName) {
+    return String(fileName || 'media').replace(/[^\w.\-]+/g, '_');
+}
+
+export async function uploadAthleteProfileMedia(userId, profileId, file, options = {}) {
+    if (!userId) {
+        throw new Error('A signed-in parent account is required to upload athlete profile media.');
+    }
+    if (!profileId) {
+        throw new Error('A profile id is required to upload athlete profile media.');
+    }
+    if (!file) {
+        throw new Error('Select a media file to upload.');
+    }
+
+    await requireImageAuth();
+
+    const safeName = sanitizeAthleteProfileMediaName(file.name);
+    const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
+    const storagePath = `athlete-profile-media/${userId}/${profileId}/${Date.now()}_${kind}_${safeName}`;
+    const storageRef = ref(imageStorage, storagePath);
+    const snapshot = await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(snapshot.ref);
+    const mimeType = String(file.type || '').trim();
+    const mediaType = kind === 'profile-photo'
+        ? 'image'
+        : (mimeType.startsWith('video/') ? 'video' : (mimeType.startsWith('image/') ? 'image' : 'link'));
+
+    return {
+        url,
+        storagePath,
+        mimeType,
+        sizeBytes: Number.isFinite(file.size) ? file.size : null,
+        uploadedAtMs: Date.now(),
+        mediaType
+    };
+}
+
+export async function deleteAthleteProfileMediaByPath(storagePath) {
+    if (!storagePath) return;
+    const storageRef = ref(imageStorage, storagePath);
+    await deleteObject(storageRef);
+}
+
 export async function listAthleteProfilesForParent(userId) {
     const snapshot = await getDocs(query(
         collection(db, 'athleteProfiles'),
@@ -2360,8 +2405,13 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
     const profileRef = options.profileId
         ? doc(db, 'athleteProfiles', options.profileId)
         : doc(collection(db, 'athleteProfiles'));
-    const existingProfile = options.profileId ? await getAthleteProfile(options.profileId) : null;
+    const existingSnap = options.profileId ? await getDoc(profileRef) : null;
+    const existingProfile = existingSnap?.exists() ? { id: existingSnap.id, ...(existingSnap.data() || {}) } : null;
+    if (existingProfile && existingProfile.parentUserId !== userId) {
+        throw new Error('You do not have permission to edit this athlete profile.');
+    }
 
+    const cleanupPaths = collectAthleteProfileMediaCleanupPaths(existingProfile || {}, normalized);
     const payload = {
         parentUserId: userId,
         athlete: {
@@ -2373,7 +2423,11 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
         clips: normalized.clips,
         seasons: seasonSummaries,
         careerSummary: summarizeAthleteProfileCareer(seasonSummaries),
-        profilePhotoUrl: coverSeason.playerPhotoUrl || null,
+        profilePhotoUrl: normalized.profilePhoto?.url || coverSeason.playerPhotoUrl || null,
+        profilePhotoPath: normalized.profilePhoto?.storagePath || null,
+        profilePhotoMimeType: normalized.profilePhoto?.mimeType || null,
+        profilePhotoSizeBytes: normalized.profilePhoto?.sizeBytes ?? null,
+        profilePhotoUploadedAtMs: normalized.profilePhoto?.uploadedAtMs ?? null,
         updatedAt: serverTimestamp()
     };
 
@@ -2382,6 +2436,13 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
     }
 
     await setDoc(profileRef, payload, { merge: true });
+
+    const cleanupResults = await Promise.allSettled(cleanupPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
+    cleanupResults.forEach((result) => {
+        if (result.status === 'rejected') {
+            console.warn('Failed to clean up removed athlete profile media', result.reason);
+        }
+    });
 
     return {
         id: profileRef.id,
