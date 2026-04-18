@@ -680,6 +680,8 @@ function addSelectedOpponentRoster() {
       stats: statDefaults(currentConfig.columns)
     });
   });
+  scheduleOpponentStatsSync();
+  scheduleLiveHasData();
   renderOpponents();
 }
 

@@ -1,5 +1,6 @@
 import { escapeHtml } from './utils.js?v=8';
 import { getTeams } from './db.js?v=15';
+import { filterSearchableTeams } from './global-search-visibility.js?v=1';
 import {
     db,
     collectionGroup,
@@ -297,7 +298,7 @@ function openModal({ initialQuery = '' } = {}) {
 
         const playerItems = (players || []);
 
-        const teamItems = (teams || []).map(t => ({
+        const teamItems = filterSearchableTeams(teams, currentUser).map(t => ({
             kind: 'team',
             title: t.name || 'Team',
             subtitle: [t.sport, t.zip].filter(Boolean).join(' • '),

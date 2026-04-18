@@ -250,6 +250,42 @@ function toNumericScore(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function normalizeComparableValue(value) {
+  if (value == null) {
+    return null;
+  }
+
+  if (typeof value?.toMillis === 'function') {
+    const millis = value.toMillis();
+    if (Number.isFinite(millis)) {
+      return { __type: 'timestamp', value: millis };
+    }
+  }
+
+  if (value instanceof Date) {
+    return { __type: 'date', value: value.getTime() };
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeComparableValue(entry));
+  }
+
+  if (typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .reduce((normalized, key) => {
+        normalized[key] = normalizeComparableValue(value[key]);
+        return normalized;
+      }, {});
+  }
+
+  return value;
+}
+
+function valuesDiffer(beforeValue, afterValue) {
+  return JSON.stringify(normalizeComparableValue(beforeValue)) !== JSON.stringify(normalizeComparableValue(afterValue));
+}
+
 function detectGameNotificationCategory(beforeGame, afterGame) {
   const beforeHome = toNumericScore(beforeGame?.homeScore);
   const beforeAway = toNumericScore(beforeGame?.awayScore);
@@ -260,11 +296,7 @@ function detectGameNotificationCategory(beforeGame, afterGame) {
   }
 
   const scheduleFields = ['date', 'location', 'status', 'opponent', 'title'];
-  const scheduleChanged = scheduleFields.some((field) => {
-    const before = beforeGame?.[field] ?? null;
-    const after = afterGame?.[field] ?? null;
-    return before !== after;
-  });
+  const scheduleChanged = scheduleFields.some((field) => valuesDiffer(beforeGame?.[field] ?? null, afterGame?.[field] ?? null));
 
   return scheduleChanged ? 'schedule' : null;
 }
