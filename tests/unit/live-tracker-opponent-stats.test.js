@@ -219,11 +219,16 @@ return {
   state,
   els,
   renderOpponents,
+  addSelectedOpponentRoster,
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
     currentGameId = context.gameId || null;
     currentConfig = context.config || null;
     currentGame = context.game || null;
+  },
+  setOpponentRoster(players = [], selectedIds = []) {
+    opponentRoster = players;
+    opponentRosterSelected = new Set(selectedIds);
   }
 };`);
 }
@@ -406,6 +411,70 @@ describe('live tracker opponent stats harness', () => {
 });
 
 describe('live tracker opponent stats hydration', () => {
+  it('preserves linked opponent roster additions so resume restores selected players', async () => {
+    const updateCalls = [];
+    const page = await bootLiveTracker({
+      updateGame: async (_teamId, _gameId, payload) => {
+        updateCalls.push(payload);
+      }
+    });
+
+    page.setContext({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      config: { columns: ['PTS'] },
+      game: { liveHasData: false }
+    });
+    page.state.opp = [];
+    page.setOpponentRoster([
+      { id: 'opp10', name: 'Taylor Guard', number: '10', photoUrl: 'https://img/10.png' },
+      { id: 'opp22', name: 'Jordan Wing', number: '22', photoUrl: '' }
+    ], ['opp10', 'opp22']);
+
+    page.addSelectedOpponentRoster();
+    await page.flushTimers();
+
+    expect(page.state.opp).toEqual([
+      {
+        id: 'opp10',
+        playerId: 'opp10',
+        name: 'Taylor Guard',
+        number: '10',
+        photoUrl: 'https://img/10.png',
+        stats: { pts: 0, fouls: 0, time: 0 }
+      },
+      {
+        id: 'opp22',
+        playerId: 'opp22',
+        name: 'Jordan Wing',
+        number: '22',
+        photoUrl: '',
+        stats: { pts: 0, fouls: 0, time: 0 }
+      }
+    ]);
+    expect(updateCalls).toContainEqual({
+      opponentStats: {
+        opp10: {
+          name: 'Taylor Guard',
+          number: '10',
+          playerId: 'opp10',
+          photoUrl: 'https://img/10.png',
+          pts: 0,
+          fouls: 0
+        },
+        opp22: {
+          name: 'Jordan Wing',
+          number: '22',
+          playerId: 'opp22',
+          photoUrl: '',
+          pts: 0,
+          fouls: 0
+        }
+      }
+    });
+    expect(updateCalls).toContainEqual({ liveHasData: true });
+  });
+
   it('preserves persisted fouls when resuming opponent stats', () => {
     const hydrated = hydrateOpponentStats({ pts: 8, ast: 2, fouls: 3 }, ['PTS', 'AST']);
     expect(hydrated.pts).toBe(8);
