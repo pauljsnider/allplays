@@ -330,7 +330,8 @@ async function bootParentDashboard() {
 describe('parent dashboard calendar day modal RSVP flow', () => {
     it('submits both child ids from the shared-game modal and refreshes the open modal state', async () => {
         const { elements, hooks, submitRecorder } = await bootParentDashboard();
-        const eventDate = new Date('2026-04-15T18:00:00.000Z');
+        const eventDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        eventDate.setUTCHours(18, 0, 0, 0);
         const initialSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 };
 
         hooks.setCurrentUser({
