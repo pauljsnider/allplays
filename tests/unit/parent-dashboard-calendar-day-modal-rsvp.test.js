@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as parentDashboardRsvp from '../../js/parent-dashboard-rsvp.js';
 import * as parentDashboardRsvpControls from '../../js/parent-dashboard-rsvp-controls.js';
@@ -329,79 +329,86 @@ async function bootParentDashboard() {
 
 describe('parent dashboard calendar day modal RSVP flow', () => {
     it('submits both child ids from the shared-game modal and refreshes the open modal state', async () => {
-        const { elements, hooks, submitRecorder } = await bootParentDashboard();
-        const eventDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
-        eventDate.setUTCHours(18, 0, 0, 0);
-        const initialSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 };
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-04-14T12:00:00Z'));
 
-        hooks.setCurrentUser({
-            uid: 'parent-1',
-            displayName: 'Parent One',
-            email: 'parent@example.com'
-        });
-        hooks.setAllScheduleEvents([
-            {
-                teamId: 'team-1',
-                id: 'game-1',
-                type: 'game',
-                isDbGame: true,
-                date: eventDate,
-                opponent: 'Lions',
-                location: 'North Field',
-                childId: 'child-a',
-                childName: 'Avery',
-                myRsvp: null,
-                rsvpSummary: initialSummary
-            },
-            {
-                teamId: 'team-1',
-                id: 'game-1',
-                type: 'game',
-                isDbGame: true,
-                date: eventDate,
-                opponent: 'Lions',
-                location: 'North Field',
-                childId: 'child-b',
-                childName: 'Blake',
-                myRsvp: null,
-                rsvpSummary: initialSummary
-            }
-        ]);
-        hooks.setScheduleCalendar(eventDate.getFullYear(), eventDate.getMonth());
-        hooks.setScheduleViewMode('calendar');
-        hooks.renderScheduleFromControls();
-        hooks.openScheduleDayModal(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+        try {
+            const { elements, hooks, submitRecorder } = await bootParentDashboard();
+            const eventDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            eventDate.setUTCHours(18, 0, 0, 0);
+            const initialSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 };
 
-        const beforeHtml = elements.get('schedule-day-modal-content').innerHTML;
-        expect(beforeHtml).toContain('data-child-ids="child-a,child-b"');
-        expect(beforeHtml).toContain("bg-white text-green-700 border-green-300 hover:bg-green-50");
-        expect(beforeHtml).toContain(`${initialSummary.going} going · ${initialSummary.maybe} maybe · ${initialSummary.notGoing} can't go · ${initialSummary.notResponded} no response`);
-
-        await hooks.submitGameRsvpFromButton({
-            dataset: {
-                teamId: 'team-1',
-                gameId: 'game-1',
-                childIds: 'child-a,child-b'
-            }
-        }, 'going');
-
-        expect(submitRecorder.calls).toEqual([
-            {
-                teamId: 'team-1',
-                gameId: 'game-1',
-                currentUserId: 'parent-1',
-                payload: {
-                    displayName: 'Parent One',
-                    playerIds: ['child-a', 'child-b'],
-                    response: 'going'
+            hooks.setCurrentUser({
+                uid: 'parent-1',
+                displayName: 'Parent One',
+                email: 'parent@example.com'
+            });
+            hooks.setAllScheduleEvents([
+                {
+                    teamId: 'team-1',
+                    id: 'game-1',
+                    type: 'game',
+                    isDbGame: true,
+                    date: eventDate,
+                    opponent: 'Lions',
+                    location: 'North Field',
+                    childId: 'child-a',
+                    childName: 'Avery',
+                    myRsvp: null,
+                    rsvpSummary: initialSummary
+                },
+                {
+                    teamId: 'team-1',
+                    id: 'game-1',
+                    type: 'game',
+                    isDbGame: true,
+                    date: eventDate,
+                    opponent: 'Lions',
+                    location: 'North Field',
+                    childId: 'child-b',
+                    childName: 'Blake',
+                    myRsvp: null,
+                    rsvpSummary: initialSummary
                 }
-            }
-        ]);
+            ]);
+            hooks.setScheduleCalendar(eventDate.getFullYear(), eventDate.getMonth());
+            hooks.setScheduleViewMode('calendar');
+            hooks.renderScheduleFromControls();
+            hooks.openScheduleDayModal(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
 
-        const afterHtml = elements.get('schedule-day-modal-content').innerHTML;
-        expect(elements.get('schedule-day-modal').classList.contains('hidden')).toBe(false);
-        expect(afterHtml).toContain("bg-green-600 text-white border-green-600");
-        expect(afterHtml).toContain(`${submitRecorder.updatedSummary.going} going · ${submitRecorder.updatedSummary.maybe} maybe · ${submitRecorder.updatedSummary.notGoing} can't go · ${submitRecorder.updatedSummary.notResponded} no response`);
-        expect(afterHtml).toContain('For Avery, Blake');
+            const beforeHtml = elements.get('schedule-day-modal-content').innerHTML;
+            expect(beforeHtml).toContain('data-child-ids="child-a,child-b"');
+            expect(beforeHtml).toContain("bg-white text-green-700 border-green-300 hover:bg-green-50");
+            expect(beforeHtml).toContain(`${initialSummary.going} going · ${initialSummary.maybe} maybe · ${initialSummary.notGoing} can't go · ${initialSummary.notResponded} no response`);
+
+            await hooks.submitGameRsvpFromButton({
+                dataset: {
+                    teamId: 'team-1',
+                    gameId: 'game-1',
+                    childIds: 'child-a,child-b'
+                }
+            }, 'going');
+
+            expect(submitRecorder.calls).toEqual([
+                {
+                    teamId: 'team-1',
+                    gameId: 'game-1',
+                    currentUserId: 'parent-1',
+                    payload: {
+                        displayName: 'Parent One',
+                        playerIds: ['child-a', 'child-b'],
+                        response: 'going'
+                    }
+                }
+            ]);
+
+            const afterHtml = elements.get('schedule-day-modal-content').innerHTML;
+            expect(elements.get('schedule-day-modal').classList.contains('hidden')).toBe(false);
+            expect(afterHtml).toContain("bg-green-600 text-white border-green-600");
+            expect(afterHtml).toContain(`${submitRecorder.updatedSummary.going} going · ${submitRecorder.updatedSummary.maybe} maybe · ${submitRecorder.updatedSummary.notGoing} can't go · ${submitRecorder.updatedSummary.notResponded} no response`);
+            expect(afterHtml).toContain('For Avery, Blake');
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

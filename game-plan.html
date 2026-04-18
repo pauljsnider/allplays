@@ -872,7 +872,7 @@
             // Count intervals each player is in
             const intervalsPerPeriod = Math.max(1, gamePlan.subTimes.length || 0);
             const minutesPerInterval = gamePlan.periodDuration / intervalsPerPeriod;
-            const intervalTimes = intervalsPerPeriod === 1 ? ['full'] : gamePlan.subTimes;
+            const intervalTimes = gamePlan.subTimes.length > 0 ? gamePlan.subTimes : ['full'];
 
             for (let period = 1; period <= gamePlan.numPeriods; period++) {
                 intervalTimes.forEach(time => {
