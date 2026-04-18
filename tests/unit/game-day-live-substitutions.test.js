@@ -44,14 +44,17 @@ describe('game day live substitutions', () => {
         });
 
         expect(subResult.rotationPlan.H1).toEqual({ keeper: 'p1', striker: 'p3' });
-        expect(subResult.rotationActual.H1['sub-1776194700000']).toEqual([
-            {
-                position: 'striker',
-                out: 'Blake',
-                in: 'Casey',
-                appliedAt: '2026-04-14T19:25:00.000Z'
-            }
-        ]);
+        expect(subResult.rotationActual.H1['sub-1776194700000']).toHaveLength(1);
+        expect(subResult.rotationActual.H1['sub-1776194700000'][0]).toMatchObject({
+            position: 'striker',
+            out: 'Blake',
+            outId: 'p2',
+            outPlayerId: 'p2',
+            in: 'Casey',
+            inId: 'p3',
+            inPlayerId: 'p3',
+            appliedAt: '2026-04-14T19:25:00.000Z'
+        });
 
         const reloadedRotationPlan = buildRotationPlanFromGamePlan(createSavedGamePlan());
         expect(buildOnFieldMap({
@@ -95,14 +98,17 @@ describe('game day live substitutions', () => {
 
         expect(secondSub.position).toBe('striker');
         expect(secondSub.rotationPlan.H1).toEqual({ keeper: 'p1', striker: 'p2' });
-        expect(secondSub.rotationActual.H1['sub-1776194760000']).toEqual([
-            {
-                position: 'striker',
-                out: 'Casey',
-                in: 'Blake',
-                appliedAt: '2026-04-14T19:26:00.000Z'
-            }
-        ]);
+        expect(secondSub.rotationActual.H1['sub-1776194760000']).toHaveLength(1);
+        expect(secondSub.rotationActual.H1['sub-1776194760000'][0]).toMatchObject({
+            position: 'striker',
+            out: 'Casey',
+            outId: 'p3',
+            outPlayerId: 'p3',
+            in: 'Blake',
+            inId: 'p2',
+            inPlayerId: 'p2',
+            appliedAt: '2026-04-14T19:26:00.000Z'
+        });
     });
 });
 
