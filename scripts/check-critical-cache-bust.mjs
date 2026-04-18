@@ -32,12 +32,27 @@ function execGit(args) {
     return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
+function isShallowRepository() {
+    return execGit(['rev-parse', '--is-shallow-repository']) === 'true';
+}
+
+function refreshBaseRef(baseRef) {
+    const baseRefspec = `${baseRef}:refs/remotes/origin/${baseRef}`;
+
+    if (isShallowRepository()) {
+        execGit(['fetch', '--unshallow', 'origin', baseRefspec]);
+        return;
+    }
+
+    execGit(['fetch', 'origin', baseRefspec]);
+}
+
 function getDiffBase() {
     const eventName = process.env.GITHUB_EVENT_NAME;
     const baseRef = process.env.GITHUB_BASE_REF;
 
     if (eventName === 'pull_request' && baseRef) {
-        execGit(['fetch', 'origin', baseRef, '--depth=1']);
+        refreshBaseRef(baseRef);
         return `origin/${baseRef}...HEAD`;
     }
 
