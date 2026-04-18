@@ -1,5 +1,23 @@
 import { hasFullTeamAccess } from './team-access.js?v=1';
 
+function normalizeEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function assertInviteEmailMatches(validation, authEmail) {
+    const invitedEmail = normalizeEmail(validation?.data?.email);
+    if (!invitedEmail) {
+        return;
+    }
+
+    const signedInEmail = normalizeEmail(authEmail);
+    if (signedInEmail === invitedEmail) {
+        return;
+    }
+
+    throw new Error(`This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+}
+
 export function createInviteProcessor(deps) {
     return async function processInvite(userId, code, authEmail = null) {
         return processInviteCode(userId, code, deps, authEmail);
@@ -22,6 +40,8 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
     if (!validation.valid) {
         throw new Error(validation.message || 'Invalid or expired invite code');
     }
+
+    assertInviteEmailMatches(validation, authEmail);
 
     if (validation.type === 'parent_invite') {
         await redeemParentInvite(userId, code);
