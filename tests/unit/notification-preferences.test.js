@@ -38,6 +38,24 @@ describe('game notification category detection', () => {
     )).toBe('schedule');
   });
 
+  it('compares object-valued schedule fields by value', () => {
+    expect(getNotificationCategoryForGameChange(
+      {
+        date: { seconds: 1712345678, nanoseconds: 0 },
+        scoutingNotes: 'Old notes'
+      },
+      {
+        date: { seconds: 1712345678, nanoseconds: 0 },
+        scoutingNotes: 'New notes'
+      }
+    )).toBe(null);
+
+    expect(getNotificationCategoryForGameChange(
+      { date: { seconds: 1712345678, nanoseconds: 0 } },
+      { date: { seconds: 1712432078, nanoseconds: 0 } }
+    )).toBe('schedule');
+  });
+
   it('returns null when no relevant fields changed', () => {
     expect(getNotificationCategoryForGameChange(
       { date: '2026-03-01', notes: 'A' },

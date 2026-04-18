@@ -505,8 +505,16 @@
             intervalsCache = [];
             lastSelectedPlayerId = null;
             dragSourceCellKey = null;
-            document.getElementById('save-plan-btn').disabled = !!game.isCalendar;
-            document.getElementById('save-plan-btn').title = game.isCalendar ? 'Create this as a scheduled game to save the plan' : '';
+            const savePlanButton = document.getElementById('save-plan-btn');
+            const isReadOnlyGame = !!game.isCalendar || !!game.isSharedGame;
+            savePlanButton.disabled = isReadOnlyGame;
+            if (game.isCalendar) {
+                savePlanButton.title = 'Create this as a scheduled game to save the plan';
+            } else if (game.isSharedGame) {
+                savePlanButton.title = 'Shared tournament games are read-only in Game Plan right now';
+            } else {
+                savePlanButton.title = '';
+            }
 
             // Update UI with game plan data
             document.getElementById('num-periods').value = gamePlan.numPeriods;
@@ -864,7 +872,7 @@
             // Count intervals each player is in
             const intervalsPerPeriod = Math.max(1, gamePlan.subTimes.length || 0);
             const minutesPerInterval = gamePlan.periodDuration / intervalsPerPeriod;
-            const intervalTimes = intervalsPerPeriod === 1 ? ['full'] : gamePlan.subTimes;
+            const intervalTimes = gamePlan.subTimes.length > 0 ? gamePlan.subTimes : ['full'];
 
             for (let period = 1; period <= gamePlan.numPeriods; period++) {
                 intervalTimes.forEach(time => {

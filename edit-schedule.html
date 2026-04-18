@@ -1574,13 +1574,14 @@
             const isCancelled = event.isCancelled;
             const borderColor = isCancelled ? 'border-gray-400' : (isPractice ? 'border-yellow-500' : 'border-blue-500');
             const calendarPracticeEventId = event.calendarEvent?.id || event.calendarEvent?.uid || `calendar_${event.date?.toISOString?.() || Date.now()}`;
+            const practiceTitle = event.title || event.opponent || 'Practice';
             const planSummary = isPractice ? renderPracticePlanSummary(calendarPracticeEventId) : '';
             const calendarPlanHref = buildPracticePlanHref({
                 eventId: calendarPracticeEventId,
                 date: event.date,
                 end: event.end,
                 location: event.location,
-                title: event.opponent || 'Practice'
+                title: practiceTitle
             });
             return `
                 <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-l-4 ${borderColor} ${isCancelled ? 'opacity-60' : ''}">
@@ -1591,7 +1592,7 @@
                             ${isPractice ? '<span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-semibold">Practice</span>' : ''}
                         </div>
                         <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1 ${isCancelled ? 'line-through' : ''}">${formatDate(event.date)} • ${formatTime(event.date)}</div>
-                        <div class="text-lg font-bold text-gray-900 ${isCancelled ? 'line-through' : ''}">${isPractice ? event.opponent : `vs. ${event.opponent}`}</div>
+                        <div class="text-lg font-bold text-gray-900 ${isCancelled ? 'line-through' : ''}">${isPractice ? practiceTitle : `vs. ${event.opponent}`}</div>
                         <div class="text-sm text-gray-600">
                             ${mapLink(event.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(event.location)}">${event.location || 'TBD'}</a>` : (event.location || 'TBD')}
                         </div>

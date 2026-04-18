@@ -85,6 +85,7 @@ describe('edit schedule calendar import helpers', () => {
                 eventType: 'practice',
                 isPractice: true,
                 opponent: 'Team Practice',
+                title: 'Team Practice',
                 location: 'Gym',
                 end: importedPractice.dtend,
                 calendarEvent: importedPractice
@@ -117,7 +118,8 @@ describe('edit schedule calendar import helpers', () => {
                 eventType: 'practice',
                 isPractice: true,
                 isCancelled: true,
-                opponent: 'Team Session'
+                opponent: 'Team Session',
+                title: 'Team Session'
             })
         ]);
     });
@@ -136,6 +138,7 @@ describe('edit schedule calendar import wiring', () => {
         const source = readEditSchedule();
 
         expect(source).toContain('Plan Practice');
+        expect(source).toContain("const practiceTitle = event.title || event.opponent || 'Practice';");
         expect(source).toContain('window.trackCalendarEvent');
     });
 });
