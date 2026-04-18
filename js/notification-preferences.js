@@ -22,8 +22,42 @@ function asNumber(value) {
     return Number.isFinite(n) ? n : 0;
 }
 
+function normalizeComparableValue(value) {
+    if (value == null) {
+        return null;
+    }
+
+    if (typeof value?.toMillis === 'function') {
+        const millis = value.toMillis();
+        if (Number.isFinite(millis)) {
+            return { __type: 'timestamp', value: millis };
+        }
+    }
+
+    if (value instanceof Date) {
+        return { __type: 'date', value: value.getTime() };
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((entry) => normalizeComparableValue(entry));
+    }
+
+    if (typeof value === 'object') {
+        return Object.keys(value)
+            .sort()
+            .reduce((normalized, key) => {
+                normalized[key] = normalizeComparableValue(value[key]);
+                return normalized;
+            }, {});
+    }
+
+    return value;
+}
+
 function changed(before, after, key) {
-    return (before?.[key] ?? null) !== (after?.[key] ?? null);
+    const beforeValue = normalizeComparableValue(before?.[key] ?? null);
+    const afterValue = normalizeComparableValue(after?.[key] ?? null);
+    return JSON.stringify(beforeValue) !== JSON.stringify(afterValue);
 }
 
 export function getNotificationCategoryForGameChange(beforeGame, afterGame) {

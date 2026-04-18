@@ -230,4 +230,19 @@ describe('game plan game switching', () => {
         });
         expect(deps.updateGame.mock.calls[0][2].gamePlan.lineups).not.toHaveProperty('1-7-keeper');
     });
+
+    it('disables saving for shared projected games', async () => {
+        const { harness, document } = buildHarness();
+
+        await harness.loadGame({
+            id: 'shared_games%2Fabc123',
+            opponent: 'Wolves',
+            date: '2026-04-06T19:00:00.000Z',
+            isSharedGame: true
+        });
+
+        const saveButton = document.getElementById('save-plan-btn');
+        expect(saveButton.disabled).toBe(true);
+        expect(saveButton.title).toBe('Shared tournament games are read-only in Game Plan right now');
+    });
 });

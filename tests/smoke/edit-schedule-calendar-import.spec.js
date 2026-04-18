@@ -407,8 +407,13 @@ test.describe('edit schedule imported calendar rows', () => {
         const scheduleList = page.locator('#schedule-list');
         await expect(scheduleList).toContainText('Calendar');
         await expect(scheduleList).toContainText('Practice');
+        await expect(scheduleList).toContainText('Evening Practice');
+        await expect(scheduleList).toContainText('Training Field');
         await expect(scheduleList).toContainText('Plan Practice');
         await expect(scheduleList).not.toContainText('Track');
+
+        const importedPracticeRow = scheduleList.locator('div').filter({ hasText: 'Evening Practice' }).first();
+        await expect(importedPracticeRow).toContainText('Training Field');
 
         const planLink = scheduleList.getByRole('link', { name: 'Plan Practice' });
         await expect(planLink).toHaveAttribute('href', /drills\.html#/);
