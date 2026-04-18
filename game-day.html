@@ -510,6 +510,11 @@
         } from './js/game-day-wrapup.js?v=1';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
+        import {
+            buildOnFieldMap as buildLiveOnFieldMap,
+            getSubstitutionOptions,
+            applyLiveSubstitution
+        } from './js/game-day-live-substitutions.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1969,6 +1974,7 @@ Respond ONLY with valid JSON.`;
                     ? 'px-2 py-0.5 rounded text-xs font-semibold bg-primary-100 text-primary-700'
                     : 'px-2 py-0.5 rounded text-xs font-semibold text-gray-500 hover:bg-gray-100';
             renderOnFieldList();
+            populateSubDropdowns();
         };
 
         window.setGameViewTab = function(tab) {
@@ -1998,16 +2004,12 @@ Respond ONLY with valid JSON.`;
         // Build the current on-field map { posId: playerId } for a given period,
         // merging planned lineup with any actual subs applied
         function buildOnFieldMap(period) {
-            const actual = state.rotationActual?.[period] || {};
-            const plan = state.rotationPlan?.[period] || {};
-            const onField = { ...plan };
-            Object.values(actual).flat().forEach(sub => {
-                if (sub && sub.position && sub.in) {
-                    const player = state.players.find(p => p.name === sub.in);
-                    if (player) onField[sub.position] = player.id;
-                }
+            return buildLiveOnFieldMap({
+                period,
+                rotationPlan: state.rotationPlan,
+                rotationActual: state.rotationActual,
+                players: state.players
             });
-            return onField;
         }
 
         function renderOnFieldList() {
@@ -2119,11 +2121,14 @@ Respond ONLY with valid JSON.`;
         function populateSubDropdowns() {
             const outSel = document.getElementById('sub-out-select');
             const inSel = document.getElementById('sub-in-select');
+            if (!outSel || !inSel) return;
             const period = state.activePeriodGD;
-            const planForPeriod = state.rotationPlan?.[period] || {};
-            const onFieldIds = new Set(Object.values(planForPeriod).filter(Boolean));
-            const offFieldPlayers = state.players.filter(p => !onFieldIds.has(p.id));
-            const onFieldPlayers = state.players.filter(p => onFieldIds.has(p.id));
+            const { onFieldPlayers, offFieldPlayers } = getSubstitutionOptions({
+                period,
+                rotationPlan: state.rotationPlan,
+                rotationActual: state.rotationActual,
+                players: state.players
+            });
 
             const toOption = p => `<option value="${p.id}">${p.number ? '#' + p.number + ' ' : ''}${escapeHtml(p.name)}</option>`;
             outSel.innerHTML = '<option value="">— Select player —</option>' + onFieldPlayers.map(toOption).join('');
@@ -2136,29 +2141,22 @@ Respond ONLY with valid JSON.`;
             if (!outId || !inId) { alert('Select both OUT and IN players.'); return; }
 
             const period = state.activePeriodGD;
-            const outPlayer = state.players.find(p => p.id === outId);
-            const inPlayer = state.players.find(p => p.id === inId);
-            if (!outPlayer || !inPlayer) return;
-
-            // Find position of outPlayer
-            const planForPeriod = state.rotationPlan?.[period] || {};
-            const position = Object.entries(planForPeriod).find(([_, pid]) => pid === outId)?.[0] || 'unknown';
-
-            // Update rotationPlan
-            if (!state.rotationPlan[period]) state.rotationPlan[period] = {};
-            state.rotationPlan[period][position] = inId;
-
-            // Log to rotationActual
-            if (!state.rotationActual[period]) state.rotationActual[period] = {};
-            const subKey = `sub-${Date.now()}`;
-            if (!state.rotationActual[period][subKey]) state.rotationActual[period][subKey] = [];
-            state.rotationActual[period][subKey].push({
-                position, out: outPlayer.name, in: inPlayer.name, appliedAt: new Date().toISOString()
+            const subResult = applyLiveSubstitution({
+                period,
+                outId,
+                inId,
+                rotationPlan: state.rotationPlan,
+                rotationActual: state.rotationActual,
+                players: state.players
             });
+            if (!subResult) return;
+
+            state.rotationPlan = subResult.rotationPlan;
+            state.rotationActual = subResult.rotationActual;
 
             try {
                 await updateGame(state.teamId, state.gameId, { rotationActual: state.rotationActual });
-                await logCoachEvent(`Sub: ${outPlayer.name} → ${inPlayer.name}`, 'substitution');
+                await logCoachEvent(`Sub: ${subResult.outPlayer.name} → ${subResult.inPlayer.name}`, 'substitution');
             } catch (err) {
                 console.error('applySub error', err);
             }
