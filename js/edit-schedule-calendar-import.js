@@ -54,7 +54,8 @@ export function mergeCalendarImportEvents({
 
         const summary = typeof event?.summary === 'string' ? event.summary.trim() : '';
         const isPractice = typeof event?.isPractice === 'boolean' ? event.isPractice : isPracticeEvent(summary);
-        const cleanSummary = summary.replace(/\[(?:CANCELED|CANCELLED)\]\s*/gi, '');
+        const cleanSummary = summary.replace(/\[(?:CANCELED|CANCELLED)\]\s*/gi, '').trim();
+        const practiceTitle = cleanSummary || 'Practice';
 
         importedEvents.push({
             source: 'calendar',
@@ -62,6 +63,7 @@ export function mergeCalendarImportEvents({
             date: eventDate,
             end: toDate(event?.dtend),
             opponent: extractOpponent(cleanSummary, currentTeamName),
+            title: isPractice ? practiceTitle : null,
             location: event.location || 'TBD',
             isPractice,
             isCancelled: getCalendarEventStatus(event) === 'cancelled',
