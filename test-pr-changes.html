@@ -234,6 +234,51 @@
         });
 
         // ============================================
+        // TEST SUITE 4: Athlete Profile Auth Readiness
+        // ============================================
+
+        function initializeAthleteProfilePage(onAuthResolved, loadProfile) {
+            let hasStartedProfileLoad = false;
+
+            onAuthResolved(() => {
+                if (!hasStartedProfileLoad) {
+                    hasStartedProfileLoad = true;
+                    loadProfile();
+                }
+            });
+        }
+
+        test('Athlete profile waits for auth before loading once', () => {
+            let loadCount = 0;
+            let authCallback = null;
+
+            initializeAthleteProfilePage((callback) => {
+                authCallback = callback;
+            }, () => {
+                loadCount += 1;
+            });
+
+            assertEquals(loadCount, 0, 'Profile should not load before auth callback runs');
+            authCallback({ uid: 'parent-1' });
+            assertEquals(loadCount, 1, 'Profile should load after auth callback runs');
+        });
+
+        test('Athlete profile does not reload on later auth updates', () => {
+            let loadCount = 0;
+            let authCallback = null;
+
+            initializeAthleteProfilePage((callback) => {
+                authCallback = callback;
+            }, () => {
+                loadCount += 1;
+            });
+
+            authCallback(null);
+            authCallback({ uid: 'parent-1' });
+            assertEquals(loadCount, 1, 'Profile should load only once even if auth changes again');
+        });
+
+        // ============================================
         // Display Results
         // ============================================
 
@@ -252,13 +297,15 @@
         const grouped = {
             'Basketball Detection': [],
             'Session Storage': [],
-            'Edge Cases': []
+            'Edge Cases': [],
+            'Athlete Profile Auth': []
         };
 
         results.forEach((result, idx) => {
             if (idx < 10) grouped['Basketball Detection'].push(result);
             else if (idx < 13) grouped['Session Storage'].push(result);
-            else grouped['Edge Cases'].push(result);
+            else if (idx < 18) grouped['Edge Cases'].push(result);
+            else grouped['Athlete Profile Auth'].push(result);
         });
 
         Object.entries(grouped).forEach(([section, tests]) => {
