@@ -181,6 +181,52 @@ describe('accept invite flow', () => {
         expect(deps.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 
+    it('rejects parent invite redemption when the signed-in email does not match the invited email', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                type: 'parent_invite',
+                data: {
+                    teamId: 'team-1',
+                    playerNum: '12',
+                    email: 'invited@example.com'
+                }
+            })),
+            redeemParentInvite: vi.fn(),
+            getTeam: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-9', 'ABCD1234', 'other@example.com')).rejects.toThrow(
+            'This invite was sent to invited@example.com. Sign in with that email to accept it.'
+        );
+        expect(deps.redeemParentInvite).not.toHaveBeenCalled();
+    });
+
+    it('rejects admin invite redemption when the signed-in email does not match the invited email', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                codeId: 'code-999',
+                type: 'admin_invite',
+                data: {
+                    teamId: 'team-9',
+                    email: 'invited@example.com'
+                }
+            })),
+            redeemParentInvite: vi.fn(),
+            redeemAdminInviteAtomically: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-9', 'ABCD9999', 'other@example.com')).rejects.toThrow(
+            'This invite was sent to invited@example.com. Sign in with that email to accept it.'
+        );
+        expect(deps.redeemAdminInviteAtomically).not.toHaveBeenCalled();
+    });
+
     it('does not mark code when validation fails', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({ valid: false, message: 'Code already used' })),
