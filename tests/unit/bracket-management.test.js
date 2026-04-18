@@ -72,6 +72,19 @@ describe('bracket management helpers', () => {
         expect(final.awaySlot.teamId).toBe('t2');
     });
 
+    it('rejects explicit seeds that exceed the bracket size', () => {
+        expect(() => createSingleEliminationBracket({
+            teamId: 'team-1',
+            name: 'Sparse Seed Cup',
+            seeds: [
+                { seed: 1, teamId: 't1', teamName: 'Seed 1' },
+                { seed: 2, teamId: 't2', teamName: 'Seed 2' },
+                { seed: 7, teamId: 't7', teamName: 'Seed 7' },
+                { seed: 8, teamId: 't8', teamName: 'Seed 8' }
+            ]
+        })).toThrow('seed numbers must be between 1 and 4 for a 4-team bracket');
+    });
+
     it('auto-advances BYE teams during bracket creation', () => {
         const bracket = createSingleEliminationBracket({
             teamId: 'team-1',
