@@ -123,6 +123,11 @@ export function createSingleEliminationBracket({ teamId, name, seeds = [], brack
     }
 
     const slotCount = nextPowerOfTwo(normalizedSeeds.length);
+    const maxSeedNumber = normalizedSeeds.reduce((maxSeed, entry) => Math.max(maxSeed, entry.seed), 0);
+    if (maxSeedNumber > slotCount) {
+        throw new Error(`seed numbers must be between 1 and ${slotCount} for a ${normalizedSeeds.length}-team bracket`);
+    }
+
     const roundCount = Math.log2(slotCount);
     const seedOrder = buildSeedOrder(slotCount);
     const seedsByNumber = new Map(normalizedSeeds.map((entry) => [entry.seed, entry]));
