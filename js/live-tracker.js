@@ -2356,11 +2356,13 @@ async function init() {
       }
 
       if (!shouldResume) {
-        const [eventsSnapshot, statsSnapshot] = await Promise.all([
+        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
-          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats')
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
+          safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents')
         ]);
         const resetAt = Date.now();
+        const resetLineup = { onCourt: [], bench: roster.map(r => r.id) };
         try {
           await updateGame(teamId, gameId, {
             homeScore: 0,
@@ -2373,7 +2375,7 @@ async function init() {
             liveClockRunning: false,
             liveClockPeriod: 'Q1',
             liveClockUpdatedAt: resetAt,
-            liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
+            liveLineup: resetLineup,
             // Preserve opponent fields
             opponent: game.opponent,
             opponentTeamId: game.opponentTeamId,
@@ -2382,6 +2384,10 @@ async function init() {
           });
           currentGame.liveStatus = 'scheduled';
           currentGame.liveHasData = false;
+          currentGame.homeScore = 0;
+          currentGame.awayScore = 0;
+          currentGame.opponentStats = {};
+          currentGame.liveLineup = resetLineup;
         } catch (error) {
           console.warn('Failed to reset game metadata:', error);
         }
@@ -2391,7 +2397,8 @@ async function init() {
         currentGame.liveClockUpdatedAt = resetAt;
         const deletions = [
           ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),
-          ...statsSnapshot.docs.map(d => deleteDoc(d.ref))
+          ...statsSnapshot.docs.map(d => deleteDoc(d.ref)),
+          ...liveEventsSnapshot.docs.map(d => deleteDoc(d.ref))
         ];
         const results = await Promise.allSettled(deletions);
         const failedDeletes = results.filter(r => r.status === 'rejected');
@@ -2400,6 +2407,9 @@ async function init() {
         }
         state.home = 0;
         state.away = 0;
+        state.opp = [];
+        state.onCourt = [];
+        state.bench = [...resetLineup.bench];
         await broadcastResetEvent('Tracker restarted from zero. Live viewer state cleared.');
       }
 
