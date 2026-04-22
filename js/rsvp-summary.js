@@ -6,6 +6,46 @@ function toMillis(value) {
     return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
 }
 
+export function selectLatestRsvpByPlayer({
+    rsvps,
+    fallbackByUser,
+    normalizeResponse,
+    resolvePlayerIds,
+    includePlayerId
+}) {
+    const latestByPlayer = new Map();
+    if (!Array.isArray(rsvps)) return latestByPlayer;
+
+    const shouldIncludePlayerId = typeof includePlayerId === 'function'
+        ? includePlayerId
+        : () => true;
+
+    rsvps.forEach((rsvp) => {
+        const responseKey = normalizeResponse(rsvp?.response);
+        const nextMillis = toMillis(rsvp?.respondedAt);
+        const playerIds = Array.from(new Set(
+            (resolvePlayerIds(rsvp, fallbackByUser) || [])
+                .filter((id) => shouldIncludePlayerId(id))
+        ));
+        if (!playerIds.length) return;
+
+        playerIds.forEach((playerId) => {
+            const existing = latestByPlayer.get(playerId);
+            if (existing && nextMillis < existing.respondedAtMillis) return;
+            latestByPlayer.set(playerId, {
+                playerId,
+                responseKey,
+                respondedAt: rsvp?.respondedAt || null,
+                respondedAtMillis: nextMillis,
+                note: rsvp?.note || null,
+                responderUserId: rsvp?.userId || null
+            });
+        });
+    });
+
+    return latestByPlayer;
+}
+
 export function computeEffectiveRsvpSummary({
     rsvps,
     activeRosterIds,
@@ -20,25 +60,12 @@ export function computeEffectiveRsvpSummary({
         return summary;
     }
 
-    const latestByPlayer = new Map();
-
-    rsvps.forEach((rsvp) => {
-        const responseKey = normalizeResponse(rsvp?.response);
-        const nextMillis = toMillis(rsvp?.respondedAt);
-        const playerIds = Array.from(new Set(
-            (resolvePlayerIds(rsvp, fallbackByUser) || [])
-                .filter((id) => activeRosterIds.has(id))
-        ));
-        if (!playerIds.length) return;
-
-        playerIds.forEach((playerId) => {
-            const existing = latestByPlayer.get(playerId);
-            if (existing && nextMillis < existing.respondedAtMillis) return;
-            latestByPlayer.set(playerId, {
-                responseKey,
-                respondedAtMillis: nextMillis
-            });
-        });
+    const latestByPlayer = selectLatestRsvpByPlayer({
+        rsvps,
+        fallbackByUser,
+        normalizeResponse,
+        resolvePlayerIds,
+        includePlayerId: (playerId) => activeRosterIds.has(playerId)
     });
 
     latestByPlayer.forEach((entry) => {
