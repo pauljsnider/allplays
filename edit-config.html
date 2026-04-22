@@ -50,12 +50,21 @@
             <!-- Add Config Form -->
             <div class="lg:col-span-1">
                 <div class="bg-white rounded-lg shadow-md p-6 sticky top-8">
-                    <h2 class="text-xl font-bold mb-4">Create Config</h2>
-                    <form id="add-config-form" class="space-y-4">
+                    <div class="flex items-start justify-between gap-4 mb-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700">Config Name</label>
-                            <input type="text" id="configName" placeholder="e.g. Basketball Standard" required
-                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            <h2 id="config-form-heading" class="text-xl font-bold">Create Config</h2>
+                            <p id="config-form-subtitle" class="text-sm text-gray-500 mt-1">Create a new schema, apply a reusable preset, or import one from another team you own.</p>
+                        </div>
+                        <button type="button" id="cancel-edit-btn" class="hidden px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50">Cancel</button>
+                    </div>
+                    <form id="add-config-form" class="space-y-4">
+                        <div class="rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+                            <label class="block text-sm font-medium text-gray-700">Preset Library</label>
+                            <div class="flex gap-2 mt-1">
+                                <select id="preset-select" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"></select>
+                                <button type="button" id="apply-preset-btn" class="px-3 py-2 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700">Apply Preset</button>
+                            </div>
+                            <p id="preset-description" class="text-xs text-gray-600 mt-2"></p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Quick Templates</label>
@@ -64,12 +73,30 @@
                                 <button type="button" id="soccer-template" class="flex-1 px-3 py-2 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Soccer</button>
                             </div>
                         </div>
+                        <div class="rounded-lg border border-gray-200 p-3">
+                            <label class="block text-sm font-medium text-gray-700">Import Existing Schema</label>
+                            <div class="flex gap-2 mt-1">
+                                <select id="import-config-select" class="flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                    <option value="">No reusable schemas available</option>
+                                </select>
+                                <button type="button" id="load-import-config-btn" class="px-3 py-2 bg-white border border-gray-300 rounded-md text-sm hover:bg-gray-50">Load Into Form</button>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Load a schema from another team or season you own, then adjust it before saving.</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Config Name</label>
+                            <input type="text" id="configName" placeholder="e.g. Basketball Standard" required
+                                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Base Sport</label>
                             <select id="baseType"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                                 <option value="Basketball">Basketball</option>
                                 <option value="Soccer">Soccer</option>
+                                <option value="Baseball">Baseball</option>
+                                <option value="Football">Football</option>
+                                <option value="Volleyball">Volleyball</option>
                                 <option value="Custom">Custom</option>
                             </select>
                         </div>
@@ -77,17 +104,19 @@
                             <label class="block text-sm font-medium text-gray-700">Columns (comma separated)</label>
                             <input type="text" id="columns" placeholder="PTS, REB, AST, STL, BLK" required
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
-                            <p class="text-xs text-gray-500 mt-1">Max 5 columns recommended for mobile.</p>
+                            <p class="text-xs text-gray-500 mt-1">Enter the primary stat columns in the order you want them tracked.</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Advanced Stat Definitions (optional)</label>
-                            <textarea id="advancedStatDefinitions" rows="5" placeholder="FG%=fieldGoalPct|formula=(FGM/FGA)*100|group=Offense|format=percentage|precision=1|topStat=true"
+                            <textarea id="advancedStatDefinitions" rows="7" placeholder="FG%=fieldGoalPct|formula=(FGM/FGA)*100|group=Offense|format=percentage|precision=1|topStat=true"
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 font-mono text-sm"></textarea>
-                            <p class="text-xs text-gray-500 mt-1">One stat per line. Format: Label=statId|formula=...|group=...|scope=player|visibility=public|format=number|precision=2|rankingOrder=desc|topStat=true</p>
+                            <p class="text-xs text-gray-500 mt-1">Use this area to review and adjust stat groups, top stats, privacy, formulas, precision, and ranking direction before saving.</p>
                         </div>
-                        <button type="submit"
-                            class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Create
-                            Config</button>
+                        <div class="flex gap-2">
+                            <button type="submit" id="save-config-btn"
+                                class="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Create Config</button>
+                            <button type="button" id="reset-configs-btn" class="px-4 py-2 border border-red-200 text-red-600 rounded-md hover:bg-red-50">Reset Stats Setup</button>
+                        </div>
                     </form>
                 </div>
             </div>
@@ -95,9 +124,12 @@
             <!-- Config List -->
             <div class="lg:col-span-2">
                 <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                    <div class="p-6 border-b border-gray-200 flex justify-between items-center">
-                        <h2 class="text-xl font-bold">Stat Configurations</h2>
-                        <span id="team-name-display" class="text-gray-500"></span>
+                    <div class="p-6 border-b border-gray-200 flex justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold">Stat Configurations</h2>
+                            <p class="text-sm text-gray-500 mt-1">Edit, reuse, import, or reset your team stat schemas here.</p>
+                        </div>
+                        <span id="team-name-display" class="text-gray-500 text-right"></span>
                     </div>
                     <div id="config-list" class="divide-y divide-gray-200">
                         <!-- Configs -->
@@ -110,8 +142,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getConfigs, createConfig, deleteConfig, getUnreadChatCount } from './js/db.js?v=16';
+        import { getTeam, getUserTeams, getConfigs, createConfig, updateConfig, deleteConfig, resetTeamStatConfigs, getUnreadChatCount } from './js/db.js?v=16';
         import { parseAdvancedStatDefinitions } from './js/stat-leaderboards.js?v=1';
+        import { getStatConfigPresetOptions, getStatConfigPresetById, serializeAdvancedStatDefinitions } from './js/stat-config-presets.js?v=1';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=10';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -121,6 +154,10 @@
 
         let currentTeamId = null;
         let currentUser = null;
+        let editingConfigId = null;
+        let currentConfigs = [];
+        let importConfigLookup = new Map();
+
         checkAuth((user) => {
             if (!user) {
                 window.location.href = 'login.html';
@@ -130,6 +167,102 @@
             renderHeader(document.getElementById('header-container'), user);
             init();
         });
+
+        function escapeHtml(value = '') {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getFormPayload() {
+            const name = document.getElementById('configName').value.trim();
+            const baseType = document.getElementById('baseType').value;
+            const columnsStr = document.getElementById('columns').value;
+            const advancedStatDefinitionsStr = document.getElementById('advancedStatDefinitions').value;
+            const columns = columnsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
+            const statDefinitions = parseAdvancedStatDefinitions(advancedStatDefinitionsStr);
+            return { name, baseType, columns, statDefinitions };
+        }
+
+        function resetFormState() {
+            editingConfigId = null;
+            document.getElementById('add-config-form').reset();
+            document.getElementById('config-form-heading').textContent = 'Create Config';
+            document.getElementById('config-form-subtitle').textContent = 'Create a new schema, apply a reusable preset, or import one from another team you own.';
+            document.getElementById('save-config-btn').textContent = 'Create Config';
+            document.getElementById('cancel-edit-btn').classList.add('hidden');
+            updatePresetDescription();
+        }
+
+        function populateFormFromConfig(config, options = {}) {
+            if (!config) return;
+            const clonedConfig = JSON.parse(JSON.stringify(config));
+            const isEditingCurrentConfig = options.editing === true;
+            editingConfigId = isEditingCurrentConfig ? clonedConfig.id : null;
+            document.getElementById('configName').value = clonedConfig.name || '';
+            document.getElementById('baseType').value = clonedConfig.baseType || 'Custom';
+            document.getElementById('columns').value = Array.isArray(clonedConfig.columns) ? clonedConfig.columns.join(', ') : '';
+            document.getElementById('advancedStatDefinitions').value = serializeAdvancedStatDefinitions(clonedConfig);
+            document.getElementById('config-form-heading').textContent = isEditingCurrentConfig ? 'Edit Config' : 'Create Config';
+            document.getElementById('config-form-subtitle').textContent = isEditingCurrentConfig
+                ? 'Adjust stat order, privacy, formulas, or top-stat flags and save your changes.'
+                : 'Review the imported or preset schema, then save it as a new team config.';
+            document.getElementById('save-config-btn').textContent = isEditingCurrentConfig ? 'Save Changes' : 'Create Config';
+            document.getElementById('cancel-edit-btn').classList.toggle('hidden', !isEditingCurrentConfig);
+        }
+
+        function updatePresetDescription() {
+            const selectedPreset = getStatConfigPresetOptions().find((preset) => preset.id === document.getElementById('preset-select').value);
+            document.getElementById('preset-description').textContent = selectedPreset?.description || '';
+        }
+
+        function renderPresetOptions() {
+            const presetSelect = document.getElementById('preset-select');
+            const options = getStatConfigPresetOptions();
+            presetSelect.innerHTML = options.map((preset) => `<option value="${preset.id}">${escapeHtml(preset.label)}</option>`).join('');
+            presetSelect.value = 'basketball';
+            updatePresetDescription();
+        }
+
+        async function loadImportConfigs() {
+            const importSelect = document.getElementById('import-config-select');
+            importConfigLookup = new Map();
+
+            try {
+                const teams = await getUserTeams(currentUser.uid);
+                const teamConfigs = await Promise.all(teams.map(async (team) => ({
+                    team,
+                    configs: await getConfigs(team.id)
+                })));
+
+                const options = [];
+                teamConfigs.forEach(({ team, configs }) => {
+                    configs.forEach((config) => {
+                        const optionKey = `${team.id}::${config.id}`;
+                        importConfigLookup.set(optionKey, { ...config, sourceTeamId: team.id, sourceTeamName: team.name });
+                        options.push({
+                            key: optionKey,
+                            label: `${team.name} • ${config.name}`
+                        });
+                    });
+                });
+
+                if (!options.length) {
+                    importSelect.innerHTML = '<option value="">No reusable schemas available</option>';
+                    return;
+                }
+
+                importSelect.innerHTML = ['<option value="">Select a schema to load</option>']
+                    .concat(options.map((option) => `<option value="${escapeHtml(option.key)}">${escapeHtml(option.label)}</option>`))
+                    .join('');
+            } catch (error) {
+                console.warn('Failed to load importable configs:', error);
+                importSelect.innerHTML = '<option value="">Unable to load reusable schemas</option>';
+            }
+        }
 
         async function init() {
             const { teamId } = getUrlParams();
@@ -141,13 +274,12 @@
 
             const accessDecision = getEditConfigAccessDecision(currentUser, await getTeam(teamId), teamId);
             if (!accessDecision.allowed) {
-                alert("Team not found or access denied.");
+                alert('Team not found or access denied.');
                 window.location.href = accessDecision.exitUrl || 'dashboard.html';
                 return;
             }
             const team = accessDecision.team;
 
-            // Fetch unread count and render banner
             let unreadCount = 0;
             try {
                 unreadCount = await getUnreadChatCount(currentUser.uid, teamId);
@@ -156,65 +288,107 @@
             }
             renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId, active: 'stats', unreadCount });
             document.getElementById('team-name-display').textContent = team.name;
-            loadConfigs();
 
-            // Template buttons
+            renderPresetOptions();
+            resetFormState();
+            await loadConfigs();
+            await loadImportConfigs();
+
+            document.getElementById('preset-select').addEventListener('change', updatePresetDescription);
+            document.getElementById('apply-preset-btn').addEventListener('click', () => {
+                const preset = getStatConfigPresetById(document.getElementById('preset-select').value);
+                populateFormFromConfig(preset, { editing: false });
+            });
+
             document.getElementById('basketball-template').addEventListener('click', () => {
-                document.getElementById('configName').value = 'Basketball Standard';
-                document.getElementById('baseType').value = 'Basketball';
-                document.getElementById('columns').value = 'PTS, REB, AST, FGM, FGA, TO';
-                document.getElementById('advancedStatDefinitions').value = [
-                    'FG%=fieldGoalPct|formula=(FGM/FGA)*100|group=Offense|format=percentage|precision=1|topStat=true',
-                    'AST/TO=assistTurnoverRatio|formula=AST/TO|group=Offense|precision=2|topStat=true'
-                ].join('\n');
+                populateFormFromConfig(getStatConfigPresetById('basketball'), { editing: false });
             });
 
             document.getElementById('soccer-template').addEventListener('click', () => {
-                document.getElementById('configName').value = 'Soccer Standard';
-                document.getElementById('baseType').value = 'Soccer';
-                document.getElementById('columns').value = 'GOALS, SHOTS, SHOTS_ON_TARGET, ASSISTS, SAVES';
-                document.getElementById('advancedStatDefinitions').value = [
-                    'Shot%=shotPct|formula=(SHOTS_ON_TARGET/SHOTS)*100|group=Attack|format=percentage|precision=1|topStat=true',
-                    'Goal Rate=goalRate|formula=(GOALS/SHOTS)*100|group=Attack|format=percentage|precision=1|topStat=true'
-                ].join('\n');
+                populateFormFromConfig(getStatConfigPresetById('soccer'), { editing: false });
+            });
+
+            document.getElementById('load-import-config-btn').addEventListener('click', () => {
+                const selectedKey = document.getElementById('import-config-select').value;
+                if (!selectedKey || !importConfigLookup.has(selectedKey)) {
+                    alert('Choose a schema to load into the form first.');
+                    return;
+                }
+                populateFormFromConfig(importConfigLookup.get(selectedKey), { editing: false });
+            });
+
+            document.getElementById('cancel-edit-btn').addEventListener('click', () => {
+                resetFormState();
+            });
+
+            document.getElementById('reset-configs-btn').addEventListener('click', async () => {
+                if (!confirm('Reset Stats Setup? This deletes all team stat schemas that are not assigned to games and returns you to the initial setup state.')) {
+                    return;
+                }
+                try {
+                    await resetTeamStatConfigs(currentTeamId);
+                    resetFormState();
+                    await loadConfigs();
+                    await loadImportConfigs();
+                } catch (error) {
+                    console.error(error);
+                    alert(error?.message || 'Error resetting stats setup.');
+                }
             });
         }
 
         async function loadConfigs() {
-            const configs = await getConfigs(currentTeamId);
+            currentConfigs = await getConfigs(currentTeamId);
             const container = document.getElementById('config-list');
+            document.getElementById('reset-configs-btn').disabled = currentConfigs.length === 0;
+            document.getElementById('reset-configs-btn').classList.toggle('opacity-50', currentConfigs.length === 0);
+            document.getElementById('reset-configs-btn').classList.toggle('cursor-not-allowed', currentConfigs.length === 0);
 
-            if (configs.length === 0) {
-                container.innerHTML = '<div class="p-6 text-center text-gray-500">No configurations found. Create one to track stats.</div>';
+            if (currentConfigs.length === 0) {
+                container.innerHTML = '<div class="p-6 text-center text-gray-500">No configurations found. Apply a preset, import a reusable schema, or create one manually to start tracking stats.</div>';
                 return;
             }
 
-            container.innerHTML = configs.map(config => `
-                <div class="p-6 hover:bg-gray-50 flex justify-between items-center">
+            container.innerHTML = currentConfigs.map(config => `
+                <div class="p-6 hover:bg-gray-50 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                     <div>
-                        <h3 class="text-lg font-bold text-gray-900">${config.name}</h3>
-                        <p class="text-sm text-gray-600">Type: ${config.baseType}</p>
-                        <div class="flex gap-2 mt-2">
-                            ${config.columns.map(col => `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">${col}</span>`).join('')}
+                        <h3 class="text-lg font-bold text-gray-900">${escapeHtml(config.name)}</h3>
+                        <p class="text-sm text-gray-600">Type: ${escapeHtml(config.baseType || 'Custom')}</p>
+                        <div class="flex flex-wrap gap-2 mt-2">
+                            ${(config.columns || []).map(col => `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">${escapeHtml(col)}</span>`).join('')}
                         </div>
-                        ${Array.isArray(config.statDefinitions) && config.statDefinitions.length > config.columns.length ? `
+                        ${Array.isArray(config.statDefinitions) && config.statDefinitions.length > (config.columns || []).length ? `
                             <div class="flex flex-wrap gap-2 mt-3">
                                 ${config.statDefinitions
                                     .filter(def => def.type === 'derived' || def.topStat)
-                                    .map(def => `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${def.topStat ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">${def.label}${def.group ? ` • ${def.group}` : ''}${def.visibility === 'private' ? ' • Private' : ''}</span>`).join('')}
+                                    .map(def => `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${def.topStat ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}">${escapeHtml(def.label || def.id)}${def.group ? ` • ${escapeHtml(def.group)}` : ''}${def.visibility === 'private' ? ' • Private' : ''}</span>`).join('')}
                             </div>
                         ` : ''}
                     </div>
-                    <button data-id="${config.id}" class="text-red-600 hover:text-red-900 delete-btn px-3 py-1 border border-red-200 rounded hover:bg-red-50">Delete</button>
+                    <div class="flex gap-2 self-start md:self-center">
+                        <button data-id="${config.id}" class="text-indigo-600 hover:text-indigo-900 edit-btn px-3 py-1 border border-indigo-200 rounded hover:bg-indigo-50">Edit</button>
+                        <button data-id="${config.id}" class="text-red-600 hover:text-red-900 delete-btn px-3 py-1 border border-red-200 rounded hover:bg-red-50">Delete</button>
+                    </div>
                 </div>
             `).join('');
+
+            document.querySelectorAll('.edit-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const config = currentConfigs.find((entry) => entry.id === e.target.dataset.id);
+                    populateFormFromConfig(config, { editing: true });
+                });
+            });
 
             document.querySelectorAll('.delete-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     if (confirm('Are you sure you want to delete this config?')) {
                         try {
                             await deleteConfig(currentTeamId, e.target.dataset.id);
-                            loadConfigs();
+                            if (editingConfigId === e.target.dataset.id) {
+                                resetFormState();
+                            }
+                            await loadConfigs();
+                            await loadImportConfigs();
                         } catch (error) {
                             console.error(error);
                             alert(error?.message || 'Error deleting config.');
@@ -226,31 +400,40 @@
 
         document.getElementById('add-config-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const name = document.getElementById('configName').value;
-            const baseType = document.getElementById('baseType').value;
-            const columnsStr = document.getElementById('columns').value;
-            const advancedStatDefinitionsStr = document.getElementById('advancedStatDefinitions').value;
+            const { name, baseType, columns, statDefinitions } = getFormPayload();
 
-            const columns = columnsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
-            const statDefinitions = parseAdvancedStatDefinitions(advancedStatDefinitionsStr);
+            if (!name) {
+                alert('Please add a config name.');
+                return;
+            }
 
             if (columns.length === 0) {
-                alert("Please add at least one column.");
+                alert('Please add at least one column.');
                 return;
             }
 
             try {
-                await createConfig(currentTeamId, {
-                    name,
-                    baseType,
-                    columns,
-                    statDefinitions
-                });
-                document.getElementById('add-config-form').reset();
-                loadConfigs();
+                if (editingConfigId) {
+                    await updateConfig(currentTeamId, editingConfigId, {
+                        name,
+                        baseType,
+                        columns,
+                        statDefinitions
+                    });
+                } else {
+                    await createConfig(currentTeamId, {
+                        name,
+                        baseType,
+                        columns,
+                        statDefinitions
+                    });
+                }
+                resetFormState();
+                await loadConfigs();
+                await loadImportConfigs();
             } catch (error) {
                 console.error(error);
-                alert('Error creating config.');
+                alert(editingConfigId ? 'Error updating config.' : 'Error creating config.');
             }
         });
     </script>
