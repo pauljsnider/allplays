@@ -81,6 +81,62 @@ describe('schedule CSV import helpers', () => {
         });
     });
 
+    it('accepts times with optional seconds in split and combined datetime mappings', () => {
+        const splitParsed = parseCsvText([
+            'Type,Date,Start,End,Arrival,Opponent',
+            'Game,4/2/2026,18:30:00,20:00:00,17:45:00,Tigers',
+            'Game,4/3/2026,6:30:00 PM,8:00:00 PM,5:45:00 PM,Lions'
+        ].join('\n'));
+
+        const splitPreview = buildScheduleImportPreview({
+            rows: splitParsed.rows,
+            mapping: {
+                eventType: 'Type',
+                date: 'Date',
+                startTime: 'Start',
+                endTime: 'End',
+                arrivalTime: 'Arrival',
+                opponent: 'Opponent'
+            }
+        });
+
+        expect(splitPreview.rows[0].errors).toEqual([]);
+        expect(splitPreview.rows[0].normalized).toMatchObject({
+            startsAt: '2026-04-02T18:30',
+            endsAt: '2026-04-02T20:00',
+            arrivalTime: '2026-04-02T17:45'
+        });
+        expect(splitPreview.rows[1].errors).toEqual([]);
+        expect(splitPreview.rows[1].normalized).toMatchObject({
+            startsAt: '2026-04-03T18:30',
+            endsAt: '2026-04-03T20:00',
+            arrivalTime: '2026-04-03T17:45'
+        });
+
+        const combinedParsed = parseCsvText([
+            'Type,Start Date & Time,End Time,Arrival Time,Opponent',
+            'Game,2026-04-04 18:30:00,20:00:00,17:45:00,Bears'
+        ].join('\n'));
+
+        const combinedPreview = buildScheduleImportPreview({
+            rows: combinedParsed.rows,
+            mapping: {
+                eventType: 'Type',
+                startDateTime: 'Start Date & Time',
+                endTime: 'End Time',
+                arrivalTime: 'Arrival Time',
+                opponent: 'Opponent'
+            }
+        });
+
+        expect(combinedPreview.rows[0].errors).toEqual([]);
+        expect(combinedPreview.rows[0].normalized).toMatchObject({
+            startsAt: '2026-04-04T18:30',
+            endsAt: '2026-04-04T20:00',
+            arrivalTime: '2026-04-04T17:45'
+        });
+    });
+
     it('flags missing mapping requirements and invalid game rows before import', () => {
         expect(validateScheduleCsvMapping({
             eventType: 'Type',
