@@ -1,0 +1,818 @@
+unit-tests	Set up job	﻿2026-04-23T16:09:06.4930268Z Current runner version: '2.333.1'
+unit-tests	Set up job	2026-04-23T16:09:06.4957246Z ##[group]Runner Image Provisioner
+unit-tests	Set up job	2026-04-23T16:09:06.4958479Z Hosted Compute Agent
+unit-tests	Set up job	2026-04-23T16:09:06.4959124Z Version: 20260415.520
+unit-tests	Set up job	2026-04-23T16:09:06.4959694Z Commit: af089020f5f67b61ccc91db6c07980876c02bf7b
+unit-tests	Set up job	2026-04-23T16:09:06.4960416Z Build Date: 2026-04-15T18:07:08Z
+unit-tests	Set up job	2026-04-23T16:09:06.4961084Z Worker ID: {d92f9672-737b-493c-b6b8-615b369ee91b}
+unit-tests	Set up job	2026-04-23T16:09:06.4961776Z Azure Region: eastus
+unit-tests	Set up job	2026-04-23T16:09:06.4962272Z ##[endgroup]
+unit-tests	Set up job	2026-04-23T16:09:06.4964450Z ##[group]Operating System
+unit-tests	Set up job	2026-04-23T16:09:06.4965076Z Ubuntu
+unit-tests	Set up job	2026-04-23T16:09:06.4965574Z 24.04.4
+unit-tests	Set up job	2026-04-23T16:09:06.4966119Z LTS
+unit-tests	Set up job	2026-04-23T16:09:06.4966533Z ##[endgroup]
+unit-tests	Set up job	2026-04-23T16:09:06.4967073Z ##[group]Runner Image
+unit-tests	Set up job	2026-04-23T16:09:06.4967617Z Image: ubuntu-24.04
+unit-tests	Set up job	2026-04-23T16:09:06.4968142Z Version: 20260420.95.1
+unit-tests	Set up job	2026-04-23T16:09:06.4969141Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260420.95/images/ubuntu/Ubuntu2404-Readme.md
+unit-tests	Set up job	2026-04-23T16:09:06.4970798Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260420.95
+unit-tests	Set up job	2026-04-23T16:09:06.4971696Z ##[endgroup]
+unit-tests	Set up job	2026-04-23T16:09:06.4972986Z ##[group]GITHUB_TOKEN Permissions
+unit-tests	Set up job	2026-04-23T16:09:06.4975136Z Contents: read
+unit-tests	Set up job	2026-04-23T16:09:06.4975786Z Metadata: read
+unit-tests	Set up job	2026-04-23T16:09:06.4976265Z Packages: read
+unit-tests	Set up job	2026-04-23T16:09:06.4976754Z ##[endgroup]
+unit-tests	Set up job	2026-04-23T16:09:06.4978748Z Secret source: Actions
+unit-tests	Set up job	2026-04-23T16:09:06.4979567Z Prepare workflow directory
+unit-tests	Set up job	2026-04-23T16:09:06.5309323Z Prepare all required actions
+unit-tests	Set up job	2026-04-23T16:09:06.5348658Z Getting action download info
+unit-tests	Set up job	2026-04-23T16:09:06.8706999Z Download action repository 'actions/checkout@v5' (SHA:93cb6efe18208431cddfb8368fd83d5badbf9bfd)
+unit-tests	Set up job	2026-04-23T16:09:06.9932197Z Download action repository 'actions/setup-node@v5' (SHA:a0853c24544627f65ddf259abe73b1d18a591444)
+unit-tests	Set up job	2026-04-23T16:09:07.2339180Z Complete job name: unit-tests
+unit-tests	Checkout	﻿2026-04-23T16:09:07.3086564Z ##[group]Run actions/checkout@v5
+unit-tests	Checkout	2026-04-23T16:09:07.3087517Z with:
+unit-tests	Checkout	2026-04-23T16:09:07.3088007Z   repository: pauljsnider/allplays
+unit-tests	Checkout	2026-04-23T16:09:07.3088755Z   token: ***
+unit-tests	Checkout	2026-04-23T16:09:07.3089181Z   ssh-strict: true
+unit-tests	Checkout	2026-04-23T16:09:07.3089600Z   ssh-user: git
+unit-tests	Checkout	2026-04-23T16:09:07.3090030Z   persist-credentials: true
+unit-tests	Checkout	2026-04-23T16:09:07.3090503Z   clean: true
+unit-tests	Checkout	2026-04-23T16:09:07.3090944Z   sparse-checkout-cone-mode: true
+unit-tests	Checkout	2026-04-23T16:09:07.3091454Z   fetch-depth: 1
+unit-tests	Checkout	2026-04-23T16:09:07.3091894Z   fetch-tags: false
+unit-tests	Checkout	2026-04-23T16:09:07.3092541Z   show-progress: true
+unit-tests	Checkout	2026-04-23T16:09:07.3093022Z   lfs: false
+unit-tests	Checkout	2026-04-23T16:09:07.3093413Z   submodules: false
+unit-tests	Checkout	2026-04-23T16:09:07.3093874Z   set-safe-directory: true
+unit-tests	Checkout	2026-04-23T16:09:07.3094620Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:07.4123655Z Syncing repository: pauljsnider/allplays
+unit-tests	Checkout	2026-04-23T16:09:07.4125875Z ##[group]Getting Git version info
+unit-tests	Checkout	2026-04-23T16:09:07.4126730Z Working directory is '/home/runner/work/allplays/allplays'
+unit-tests	Checkout	2026-04-23T16:09:07.4127763Z [command]/usr/bin/git version
+unit-tests	Checkout	2026-04-23T16:09:07.4164931Z git version 2.53.0
+unit-tests	Checkout	2026-04-23T16:09:07.4186770Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:07.4203713Z Temporarily overriding HOME='/home/runner/work/_temp/edce11d6-367c-4fea-b038-bac99c0acd39' before making global git config changes
+unit-tests	Checkout	2026-04-23T16:09:07.4206396Z Adding repository directory to the temporary git global config as a safe directory
+unit-tests	Checkout	2026-04-23T16:09:07.4209426Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/allplays/allplays
+unit-tests	Checkout	2026-04-23T16:09:07.4263920Z Deleting the contents of '/home/runner/work/allplays/allplays'
+unit-tests	Checkout	2026-04-23T16:09:07.4268827Z ##[group]Initializing the repository
+unit-tests	Checkout	2026-04-23T16:09:07.4273864Z [command]/usr/bin/git init /home/runner/work/allplays/allplays
+unit-tests	Checkout	2026-04-23T16:09:07.4373892Z hint: Using 'master' as the name for the initial branch. This default branch name
+unit-tests	Checkout	2026-04-23T16:09:07.4375913Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+unit-tests	Checkout	2026-04-23T16:09:07.4377917Z hint: to use in all of your new repositories, which will suppress this warning,
+unit-tests	Checkout	2026-04-23T16:09:07.4379896Z hint: call:
+unit-tests	Checkout	2026-04-23T16:09:07.4381024Z hint:
+unit-tests	Checkout	2026-04-23T16:09:07.4382084Z hint: 	git config --global init.defaultBranch <name>
+unit-tests	Checkout	2026-04-23T16:09:07.4383595Z hint:
+unit-tests	Checkout	2026-04-23T16:09:07.4384724Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+unit-tests	Checkout	2026-04-23T16:09:07.4386565Z hint: 'development'. The just-created branch can be renamed via this command:
+unit-tests	Checkout	2026-04-23T16:09:07.4388132Z hint:
+unit-tests	Checkout	2026-04-23T16:09:07.4388946Z hint: 	git branch -m <name>
+unit-tests	Checkout	2026-04-23T16:09:07.4389823Z hint:
+unit-tests	Checkout	2026-04-23T16:09:07.4390978Z hint: Disable this message with "git config set advice.defaultBranchName false"
+unit-tests	Checkout	2026-04-23T16:09:07.4393043Z Initialized empty Git repository in /home/runner/work/allplays/allplays/.git/
+unit-tests	Checkout	2026-04-23T16:09:07.4395974Z [command]/usr/bin/git remote add origin https://github.com/pauljsnider/allplays
+unit-tests	Checkout	2026-04-23T16:09:07.4442590Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:07.4444058Z ##[group]Disabling automatic garbage collection
+unit-tests	Checkout	2026-04-23T16:09:07.4449835Z [command]/usr/bin/git config --local gc.auto 0
+unit-tests	Checkout	2026-04-23T16:09:07.4483781Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:07.4485218Z ##[group]Setting up auth
+unit-tests	Checkout	2026-04-23T16:09:07.4491684Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+unit-tests	Checkout	2026-04-23T16:09:07.4526084Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+unit-tests	Checkout	2026-04-23T16:09:07.4893710Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+unit-tests	Checkout	2026-04-23T16:09:07.4924922Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+unit-tests	Checkout	2026-04-23T16:09:07.5174353Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+unit-tests	Checkout	2026-04-23T16:09:07.5210141Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+unit-tests	Checkout	2026-04-23T16:09:07.5458877Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+unit-tests	Checkout	2026-04-23T16:09:07.5503355Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:07.5505256Z ##[group]Fetching the repository
+unit-tests	Checkout	2026-04-23T16:09:07.5514248Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +89112ebe6eb25afa1a03c4e0cc06b6fff5b05851:refs/remotes/pull/590/merge
+unit-tests	Checkout	2026-04-23T16:09:08.1946481Z From https://github.com/pauljsnider/allplays
+unit-tests	Checkout	2026-04-23T16:09:08.1948516Z  * [new ref]         89112ebe6eb25afa1a03c4e0cc06b6fff5b05851 -> pull/590/merge
+unit-tests	Checkout	2026-04-23T16:09:08.1982096Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:08.1983617Z ##[group]Determining the checkout info
+unit-tests	Checkout	2026-04-23T16:09:08.1985304Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:08.1990249Z [command]/usr/bin/git sparse-checkout disable
+unit-tests	Checkout	2026-04-23T16:09:08.2040928Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+unit-tests	Checkout	2026-04-23T16:09:08.2067339Z ##[group]Checking out the ref
+unit-tests	Checkout	2026-04-23T16:09:08.2071328Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/590/merge
+unit-tests	Checkout	2026-04-23T16:09:08.3334138Z Note: switching to 'refs/remotes/pull/590/merge'.
+unit-tests	Checkout	2026-04-23T16:09:08.3335610Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3336451Z You are in 'detached HEAD' state. You can look around, make experimental
+unit-tests	Checkout	2026-04-23T16:09:08.3338928Z changes and commit them, and you can discard any commits you make in this
+unit-tests	Checkout	2026-04-23T16:09:08.3341833Z state without impacting any branches by switching back to a branch.
+unit-tests	Checkout	2026-04-23T16:09:08.3343830Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3344756Z If you want to create a new branch to retain commits you create, you may
+unit-tests	Checkout	2026-04-23T16:09:08.3347071Z do so (now or later) by using -c with the switch command. Example:
+unit-tests	Checkout	2026-04-23T16:09:08.3348522Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3349103Z   git switch -c <new-branch-name>
+unit-tests	Checkout	2026-04-23T16:09:08.3350045Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3350587Z Or undo this operation with:
+unit-tests	Checkout	2026-04-23T16:09:08.3351594Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3352836Z   git switch -
+unit-tests	Checkout	2026-04-23T16:09:08.3353567Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3354750Z Turn off this advice by setting config variable advice.detachedHead to false
+unit-tests	Checkout	2026-04-23T16:09:08.3356531Z 
+unit-tests	Checkout	2026-04-23T16:09:08.3358496Z HEAD is now at 89112eb Merge 12411d14a76703adc029797a50d6350b5651b51f into 43a8d6395341094e38ce4d2e2a787dba4b2ee8fb
+unit-tests	Checkout	2026-04-23T16:09:08.3365050Z ##[endgroup]
+unit-tests	Checkout	2026-04-23T16:09:08.3403483Z [command]/usr/bin/git log -1 --format=%H
+unit-tests	Checkout	2026-04-23T16:09:08.3428607Z 89112ebe6eb25afa1a03c4e0cc06b6fff5b05851
+unit-tests	Setup Node	﻿2026-04-23T16:09:08.3804442Z ##[group]Run actions/setup-node@v5
+unit-tests	Setup Node	2026-04-23T16:09:08.3805688Z with:
+unit-tests	Setup Node	2026-04-23T16:09:08.3806511Z   node-version: 24
+unit-tests	Setup Node	2026-04-23T16:09:08.3807463Z   cache: npm
+unit-tests	Setup Node	2026-04-23T16:09:08.3808313Z   always-auth: false
+unit-tests	Setup Node	2026-04-23T16:09:08.3809246Z   check-latest: false
+unit-tests	Setup Node	2026-04-23T16:09:08.3810467Z   token: ***
+unit-tests	Setup Node	2026-04-23T16:09:08.3811324Z   package-manager-cache: true
+unit-tests	Setup Node	2026-04-23T16:09:08.3812595Z ##[endgroup]
+unit-tests	Setup Node	2026-04-23T16:09:08.5343075Z Found in cache @ /opt/hostedtoolcache/node/24.15.0/x64
+unit-tests	Setup Node	2026-04-23T16:09:08.5347514Z (node:2356) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+unit-tests	Setup Node	2026-04-23T16:09:08.5352692Z (Use `node --trace-deprecation ...` to show where the warning was created)
+unit-tests	Setup Node	2026-04-23T16:09:08.5356299Z ##[group]Environment details
+unit-tests	Setup Node	2026-04-23T16:09:08.9243610Z node: v24.15.0
+unit-tests	Setup Node	2026-04-23T16:09:08.9245491Z npm: 11.12.1
+unit-tests	Setup Node	2026-04-23T16:09:08.9247076Z yarn: 1.22.22
+unit-tests	Setup Node	2026-04-23T16:09:08.9249942Z ##[endgroup]
+unit-tests	Setup Node	2026-04-23T16:09:08.9273189Z [command]/opt/hostedtoolcache/node/24.15.0/x64/bin/npm config get cache
+unit-tests	Setup Node	2026-04-23T16:09:09.0426837Z /home/runner/.npm
+unit-tests	Setup Node	2026-04-23T16:09:09.1304137Z Cache hit for: node-cache-Linux-x64-npm-3028c5155df07260347b55933cde4e12f2a256ef3f3a55c85d9aae3e98e77a82
+unit-tests	Setup Node	2026-04-23T16:09:09.1425506Z (node:2356) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+unit-tests	Setup Node	2026-04-23T16:09:09.3838513Z Received 8887324 of 8887324 (100.0%), 42.2 MBs/sec
+unit-tests	Setup Node	2026-04-23T16:09:09.3839303Z Cache Size: ~8 MB (8887324 B)
+unit-tests	Setup Node	2026-04-23T16:09:09.3873017Z [command]/usr/bin/tar -xf /home/runner/work/_temp/f0280587-c32b-48f8-896e-88355fd8a941/cache.tzst -P -C /home/runner/work/allplays/allplays --use-compress-program unzstd
+unit-tests	Setup Node	2026-04-23T16:09:09.4226689Z Cache restored successfully
+unit-tests	Setup Node	2026-04-23T16:09:09.4236761Z Cache restored from key: node-cache-Linux-x64-npm-3028c5155df07260347b55933cde4e12f2a256ef3f3a55c85d9aae3e98e77a82
+unit-tests	Install dependencies	﻿2026-04-23T16:09:09.4473796Z ##[group]Run npm ci
+unit-tests	Install dependencies	2026-04-23T16:09:09.4474155Z [36;1mnpm ci[0m
+unit-tests	Install dependencies	2026-04-23T16:09:09.4595406Z shell: /usr/bin/bash -e {0}
+unit-tests	Install dependencies	2026-04-23T16:09:09.4595833Z ##[endgroup]
+unit-tests	Install dependencies	2026-04-23T16:09:11.2649676Z 
+unit-tests	Install dependencies	2026-04-23T16:09:11.2659790Z added 41 packages, and audited 42 packages in 2s
+unit-tests	Install dependencies	2026-04-23T16:09:11.2660704Z 
+unit-tests	Install dependencies	2026-04-23T16:09:11.2661082Z 14 packages are looking for funding
+unit-tests	Install dependencies	2026-04-23T16:09:11.2661646Z   run `npm fund` for details
+unit-tests	Install dependencies	2026-04-23T16:09:11.2721546Z 
+unit-tests	Install dependencies	2026-04-23T16:09:11.2722172Z 2 high severity vulnerabilities
+unit-tests	Install dependencies	2026-04-23T16:09:11.2722918Z 
+unit-tests	Install dependencies	2026-04-23T16:09:11.2723224Z To address all issues, run:
+unit-tests	Install dependencies	2026-04-23T16:09:11.2723688Z   npm audit fix
+unit-tests	Install dependencies	2026-04-23T16:09:11.2723870Z 
+unit-tests	Install dependencies	2026-04-23T16:09:11.2724045Z Run `npm audit` for details.
+unit-tests	Run unit tests	﻿2026-04-23T16:09:11.3179241Z ##[group]Run npm run test:unit:ci
+unit-tests	Run unit tests	2026-04-23T16:09:11.3179625Z [36;1mnpm run test:unit:ci[0m
+unit-tests	Run unit tests	2026-04-23T16:09:11.3236124Z shell: /usr/bin/bash -e {0}
+unit-tests	Run unit tests	2026-04-23T16:09:11.3236430Z ##[endgroup]
+unit-tests	Run unit tests	2026-04-23T16:09:11.5075412Z 
+unit-tests	Run unit tests	2026-04-23T16:09:11.5076076Z > test:unit:ci
+unit-tests	Run unit tests	2026-04-23T16:09:11.5076606Z > vitest run tests/unit --reporter=dot
+unit-tests	Run unit tests	2026-04-23T16:09:11.5077038Z 
+unit-tests	Run unit tests	2026-04-23T16:09:12.2023255Z 
+unit-tests	Run unit tests	2026-04-23T16:09:12.2028082Z [1m[46m RUN [49m[22m [36mv4.0.18 [39m[90m/home/runner/work/allplays/allplays[39m
+unit-tests	Run unit tests	2026-04-23T16:09:12.2029177Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2006381Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mrejects signup when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2033661Z [22m[39mError linking parent: Error: Team or Player not found
+unit-tests	Run unit tests	2026-04-23T16:09:13.2045258Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail signup when parent invite profile finalization fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2053992Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:76:54
+unit-tests	Run unit tests	2026-04-23T16:09:13.2055397Z [22m[39mSIGNUP: Sending verification email to: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2063179Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2065042Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2066857Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2067908Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2069449Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2071282Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2073434Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2075428Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2077305Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2078178Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2080030Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail signup when parent invite profile finalization fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2112195Z [22m[39mError creating user profile after parent invite redeem: Error: profile write failed
+unit-tests	Run unit tests	2026-04-23T16:09:13.2114349Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:103:53
+unit-tests	Run unit tests	2026-04-23T16:09:13.2116202Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2118026Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2119827Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2121379Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2123519Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2125539Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2127518Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2129480Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2131330Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2132263Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2132320Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2134680Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail signup when parent invite profile finalization fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2136617Z [22m[39mSIGNUP: Verification email sent successfully
+unit-tests	Run unit tests	2026-04-23T16:09:13.2137064Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2205927Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not trigger auth-user cleanup when profile write fails after parent invite redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2211843Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not trigger auth-user cleanup when profile write fails after parent invite redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2217805Z [22m[39mError creating user profile after parent invite redeem: Error: profile write failed
+unit-tests	Run unit tests	2026-04-23T16:09:13.2219412Z [22m[39mSIGNUP: Sending verification email to: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2243933Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:140:53
+unit-tests	Run unit tests	2026-04-23T16:09:13.2245983Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2251885Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2258762Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not trigger auth-user cleanup when profile write fails after parent invite redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2261459Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2264152Z [22m[39mSIGNUP: Verification email sent successfully
+unit-tests	Run unit tests	2026-04-23T16:09:13.2265821Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2268193Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2268521Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2270427Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mrejects google signup when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2274132Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2277299Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2278518Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2279482Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2281078Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2283647Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2284928Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2299480Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2302093Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mrejects google signup when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2304441Z [22m[39m[Google Auth] Popup succeeded for: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2305598Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2306110Z [Google Auth] Processing result for user: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2308510Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mrejects google signup when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2310167Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2312149Z [22m[39mError linking parent: Error: Team or Player not found
+unit-tests	Run unit tests	2026-04-23T16:09:13.2313124Z [Google Auth] Activation code: PARENT1
+unit-tests	Run unit tests	2026-04-23T16:09:13.2314580Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:168:54
+unit-tests	Run unit tests	2026-04-23T16:09:13.2315344Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2317259Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2319889Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mrejects google signup when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2322042Z [22m[39m[Google Auth] Popup error: [90mundefined[39m Team or Player not found
+unit-tests	Run unit tests	2026-04-23T16:09:13.2323421Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2324492Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2326152Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2327120Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2328540Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2330419Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2332354Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2334707Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2335852Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2336367Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2337359Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail signup when parent invite profile write fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2338535Z [22m[39mError creating user profile after parent invite redeem: Error: Firestore unavailable
+unit-tests	Run unit tests	2026-04-23T16:09:13.2339594Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:189:53
+unit-tests	Run unit tests	2026-04-23T16:09:13.2340460Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2341340Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2342198Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2343321Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2345006Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2347903Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2349964Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2352008Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2354328Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2355199Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2357155Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail google signup when parent invite profile write fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2359438Z [22m[39mError creating user profile after parent invite redeem: Error: Firestore unavailable
+unit-tests	Run unit tests	2026-04-23T16:09:13.2360922Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:219:53
+unit-tests	Run unit tests	2026-04-23T16:09:13.2362796Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2364435Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2366090Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2367058Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2368417Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2370329Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2372181Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2374433Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2376310Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2377240Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2379215Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when Google popup signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2381291Z [22m[39mError marking code as used: Error: Code already used
+unit-tests	Run unit tests	2026-04-23T16:09:13.2383239Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:248:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.2384945Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2386675Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2388771Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2389833Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2391336Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2393887Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2395920Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2398351Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2400306Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2401160Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2403294Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mstill signs out and rethrows the redemption error when popup cleanup delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2405236Z [22m[39mError marking code as used: Error: Code already used
+unit-tests	Run unit tests	2026-04-23T16:09:13.2406495Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:281:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.2408177Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2409931Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2411703Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2412977Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2414476Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2416468Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2418468Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2420610Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2422898Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2423917Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2425943Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mstill signs out and rethrows the redemption error when popup cleanup delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2428358Z [22m[39mError deleting user after standard access code claim failure: Error: delete failed
+unit-tests	Run unit tests	2026-04-23T16:09:13.2429931Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:280:54
+unit-tests	Run unit tests	2026-04-23T16:09:13.2431498Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2433205Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2434737Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2435646Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2436979Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2438959Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2440753Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2442765Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2444649Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2445708Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2448422Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail google signup when parent invite profile write fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2451072Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2451955Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2452618Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2454372Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail google signup when parent invite profile write fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2456193Z [22m[39m[Google Auth] Popup succeeded for: parent2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2457050Z [Google Auth] Processing result for user: parent2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2457802Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2458392Z [Google Auth] Activation code: PARENT1
+unit-tests	Run unit tests	2026-04-23T16:09:13.2458714Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2460580Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mdoes not fail google signup when parent invite profile write fails after redeem
+unit-tests	Run unit tests	2026-04-23T16:09:13.2462293Z [22m[39m[Google Auth] New user setup complete
+unit-tests	Run unit tests	2026-04-23T16:09:13.2463283Z [Google Auth] Returning result for user: parent2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2463719Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2465662Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when Google popup signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2467559Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2468233Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2468589Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2470445Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when Google popup signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2472227Z [22m[39m[Google Auth] Popup succeeded for: coach@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2473307Z [Google Auth] Processing result for user: coach@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2474070Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2474663Z [Google Auth] Activation code: COACH1
+unit-tests	Run unit tests	2026-04-23T16:09:13.2474997Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2476862Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when Google popup signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2478795Z [22m[39m[Google Auth] Popup error: [90mundefined[39m Code already used
+unit-tests	Run unit tests	2026-04-23T16:09:13.2479298Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2481750Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mstill signs out and rethrows the redemption error when popup cleanup delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2483998Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2484649Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2485227Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2487070Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mstill signs out and rethrows the redemption error when popup cleanup delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2488889Z [22m[39m[Google Auth] Popup succeeded for: coach3@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2489730Z [Google Auth] Processing result for user: coach3@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2490502Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2491041Z [Google Auth] Activation code: COACH1
+unit-tests	Run unit tests	2026-04-23T16:09:13.2491332Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2493478Z [90mstderr[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when redirect Google signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2495644Z [22m[39mError marking code as used: Error: Code already used
+unit-tests	Run unit tests	2026-04-23T16:09:13.2496789Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-signup-parent-invite.test.js:314:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.2498294Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.2499804Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.2501326Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.2502245Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.2503732Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2505460Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.2507264Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2509200Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2511012Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2511824Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2514185Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mstill signs out and rethrows the redemption error when popup cleanup delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.2516158Z [22m[39m[Google Auth] Popup error: [90mundefined[39m Code already used
+unit-tests	Run unit tests	2026-04-23T16:09:13.2516654Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2518515Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when redirect Google signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2520498Z [22m[39m[Google Auth] Checking for redirect result...
+unit-tests	Run unit tests	2026-04-23T16:09:13.2520947Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.2523255Z [90mstdout[2m | tests/unit/auth-signup-parent-invite.test.js[2m > [22m[2mauth signup parent invite failure handling[2m > [22m[2mfails closed when redirect Google signup cannot claim a standard activation code
+unit-tests	Run unit tests	2026-04-23T16:09:13.2525332Z [22m[39m[Google Auth] Redirect result: Found coach2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2526214Z [Google Auth] Processing result for user: coach2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.2527026Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.2527619Z [Google Auth] Activation code: COACH1
+unit-tests	Run unit tests	2026-04-23T16:09:13.2527958Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.4964302Z [90mstderr[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mthrows when parent invite linking fails so signup does not report success
+unit-tests	Run unit tests	2026-04-23T16:09:13.4976906Z [22m[39mError linking parent: Error: temporary backend failure
+unit-tests	Run unit tests	2026-04-23T16:09:13.4978891Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/signup-flow.test.js:32:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.4980693Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.4982940Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.4984829Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.4986001Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.4987567Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.4990028Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.4992135Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.4994748Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.4996987Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.4998144Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5024858Z [90mstderr[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mstill signs out and rethrows original invite error when auth user delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.5026886Z [22m[39mError linking parent: Error: temporary backend failure
+unit-tests	Run unit tests	2026-04-23T16:09:13.5028189Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/signup-flow.test.js:66:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.5029963Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.5031807Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.5034149Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.5035286Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.5036783Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5038736Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.5040745Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5043055Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5045429Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5046491Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5048685Z [90mstderr[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mstill signs out and rethrows original invite error when auth user delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.5050542Z [22m[39mError deleting failed signup auth user: Error: delete failed
+unit-tests	Run unit tests	2026-04-23T16:09:13.5051805Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/signup-flow.test.js:67:29
+unit-tests	Run unit tests	2026-04-23T16:09:13.5053613Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.5063597Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mcompletes parent invite signup and sends verification when linking succeeds
+unit-tests	Run unit tests	2026-04-23T16:09:13.5072041Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.5074207Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.5075537Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.5077115Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5079112Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.5081145Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5083566Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5085173Z [22m[39mSIGNUP: Sending verification email to: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.5086932Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5088087Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5092947Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5094820Z [90mstdout[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mcompletes parent invite signup and sends verification when linking succeeds
+unit-tests	Run unit tests	2026-04-23T16:09:13.5096674Z [22m[39mSIGNUP: Verification email sent successfully
+unit-tests	Run unit tests	2026-04-23T16:09:13.5097260Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5099182Z [90mstdout[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mroutes admin invite signup through admin persistence and not generic code consumption
+unit-tests	Run unit tests	2026-04-23T16:09:13.5101268Z [22m[39mSIGNUP: Sending verification email to: newadmin@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:13.5101951Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5104159Z [90mstdout[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mroutes admin invite signup through admin persistence and not generic code consumption
+unit-tests	Run unit tests	2026-04-23T16:09:13.5106253Z [22m[39mSIGNUP: Verification email sent successfully
+unit-tests	Run unit tests	2026-04-23T16:09:13.5106910Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5135221Z [90mstderr[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mrolls back auth account and rethrows when admin invite redemption fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.5137576Z [22m[39mError redeeming admin invite: Error: admin redemption failed
+unit-tests	Run unit tests	2026-04-23T16:09:13.5139228Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/signup-flow.test.js:168:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.5141220Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.5143613Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.5146034Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.5147838Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.5149693Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5152016Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.5154700Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5157476Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5160108Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5161362Z 
+unit-tests	Run unit tests	2026-04-23T16:09:13.5163785Z [90mstderr[2m | tests/unit/signup-flow.test.js[2m > [22m[2mexecuteEmailPasswordSignup[2m > [22m[2mfails closed and cleans up when standard access code claim fails
+unit-tests	Run unit tests	2026-04-23T16:09:13.5165829Z [22m[39mError marking code as used: Error: Code already used
+unit-tests	Run unit tests	2026-04-23T16:09:13.5167939Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/signup-flow.test.js:207:31
+unit-tests	Run unit tests	2026-04-23T16:09:13.5170038Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:13.5172675Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:13.5174753Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:13.5176162Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:13.5177975Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5180222Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:13.5183127Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5185686Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5188062Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:13.5189189Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0025477Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdeletes auth user, signs out, and rethrows when popup admin invite redemption fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0032705Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:14.0033720Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:14.0035286Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0037625Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdeletes auth user, signs out, and rethrows when popup admin invite redemption fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0039987Z [22m[39m[Google Auth] Popup succeeded for: coach@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0041509Z [Google Auth] Processing result for user: coach@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0042944Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0043873Z [Google Auth] Activation code: ADMINCODE
+unit-tests	Run unit tests	2026-04-23T16:09:14.0044438Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0121171Z [90mstderr[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdeletes auth user, signs out, and rethrows when popup admin invite redemption fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0125244Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdeletes auth user, signs out, and rethrows when popup admin invite redemption fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0153899Z [22m[39mError linking admin invite: Error: admin invite redemption failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.0155298Z [22m[39m[Google Auth] Popup error: [90mundefined[39m admin invite redemption failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.0184325Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-admin-invite-cleanup.test.js:69:31
+unit-tests	Run unit tests	2026-04-23T16:09:14.0185249Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0186256Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.0188056Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.0189822Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.0191148Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.0194323Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0196181Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.0198084Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0200166Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0202738Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0203670Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0239758Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mapplies the same fail-closed cleanup behavior for redirect admin invite auth
+unit-tests	Run unit tests	2026-04-23T16:09:14.0241854Z [22m[39m[Google Auth] Checking for redirect result...
+unit-tests	Run unit tests	2026-04-23T16:09:14.0265252Z [90mstderr[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mapplies the same fail-closed cleanup behavior for redirect admin invite auth
+unit-tests	Run unit tests	2026-04-23T16:09:14.0266789Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0283651Z [22m[39mError linking admin invite: Error: admin invite redemption failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.0295176Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mapplies the same fail-closed cleanup behavior for redirect admin invite auth
+unit-tests	Run unit tests	2026-04-23T16:09:14.0310205Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-admin-invite-cleanup.test.js:115:31
+unit-tests	Run unit tests	2026-04-23T16:09:14.0323649Z [22m[39m[Google Auth] Redirect result: Found coach@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0327588Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.0329619Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.0331633Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.0333915Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.0335777Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0339068Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.0341210Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0343805Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0346121Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0347297Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0349684Z [90mstderr[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdoes not clean up after successful admin redemption when profile finalization fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0354492Z [Google Auth] Processing result for user: coach@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0355992Z [22m[39mError creating user profile after admin invite redeem: Error: profile write failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.0357768Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-admin-invite-cleanup.test.js:184:49
+unit-tests	Run unit tests	2026-04-23T16:09:14.0359754Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.0361733Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.0363948Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.0364974Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.0366458Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0368479Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.0370563Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0373299Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0375577Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0376735Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0383751Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0384856Z [Google Auth] Activation code: ADMINCODE
+unit-tests	Run unit tests	2026-04-23T16:09:14.0388130Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0390490Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdoes not clean up after successful admin redemption when profile finalization fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0393328Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:14.0394256Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:14.0394865Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0397239Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdoes not clean up after successful admin redemption when profile finalization fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0401971Z [22m[39m[Google Auth] Popup succeeded for: coach2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0403551Z [Google Auth] Processing result for user: coach2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0404630Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.0405484Z [Google Auth] Activation code: ADMINCODE
+unit-tests	Run unit tests	2026-04-23T16:09:14.0406075Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.0408439Z [90mstdout[2m | tests/unit/auth-google-admin-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle admin invite failure handling[2m > [22m[2mdoes not clean up after successful admin redemption when profile finalization fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.0411067Z [22m[39m[Google Auth] New user setup complete
+unit-tests	Run unit tests	2026-04-23T16:09:14.0412089Z [Google Auth] Returning result for user: coach2@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.0413005Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5178444Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mdeletes auth user, signs out, and rethrows when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5186592Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:14.5187318Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:14.5187939Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5214985Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mdeletes auth user, signs out, and rethrows when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5220100Z [22m[39m[Google Auth] Popup succeeded for: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.5221259Z [Google Auth] Processing result for user: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.5223660Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5224647Z [Google Auth] Activation code: PARENTCODE
+unit-tests	Run unit tests	2026-04-23T16:09:14.5225334Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5245707Z [90mstderr[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mdeletes auth user, signs out, and rethrows when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5249602Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mdeletes auth user, signs out, and rethrows when parent invite linking fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5251237Z [22m[39mError linking parent: Error: parent invite link failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.5252331Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-parent-invite-cleanup.test.js:63:31
+unit-tests	Run unit tests	2026-04-23T16:09:14.5254643Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.5255534Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.5256682Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.5257212Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.5257967Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5258925Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.5259908Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5261135Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5262158Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5262938Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5263329Z [22m[39m[Google Auth] Popup error: [90mundefined[39m parent invite link failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.5263660Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5297410Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2msigns out and rethrows original invite error when delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5299662Z [22m[39m[Google Auth] Starting hybrid auth flow...
+unit-tests	Run unit tests	2026-04-23T16:09:14.5300728Z [Google Auth] Attempting popup sign-in...
+unit-tests	Run unit tests	2026-04-23T16:09:14.5301417Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5303940Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2msigns out and rethrows original invite error when delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5306408Z [22m[39m[Google Auth] Popup succeeded for: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.5307595Z [Google Auth] Processing result for user: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.5310241Z [90mstderr[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2msigns out and rethrows original invite error when delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5312763Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5313715Z [Google Auth] Activation code: PARENTCODE
+unit-tests	Run unit tests	2026-04-23T16:09:14.5314322Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5323931Z [22m[39mError linking parent: Error: parent invite link failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.5326664Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2msigns out and rethrows original invite error when delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5329422Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-parent-invite-cleanup.test.js:101:31
+unit-tests	Run unit tests	2026-04-23T16:09:14.5331015Z [22m[39m[Google Auth] Popup error: [90mundefined[39m parent invite link failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.5333321Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.5334260Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5335867Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.5337964Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.5339285Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.5341920Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mapplies the same fail-closed cleanup behavior for redirect Google auth
+unit-tests	Run unit tests	2026-04-23T16:09:14.5345191Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5347029Z [22m[39m[Google Auth] Checking for redirect result...
+unit-tests	Run unit tests	2026-04-23T16:09:14.5349333Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.5350441Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5351819Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5356069Z [90mstdout[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mapplies the same fail-closed cleanup behavior for redirect Google auth
+unit-tests	Run unit tests	2026-04-23T16:09:14.5359000Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5362164Z [22m[39m[Google Auth] Redirect result: Found parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.5364274Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5365942Z [Google Auth] Processing result for user: parent@example.com
+unit-tests	Run unit tests	2026-04-23T16:09:14.5366641Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5367246Z [Google Auth] Is new user: [33mtrue[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5369731Z [90mstderr[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2msigns out and rethrows original invite error when delete fails
+unit-tests	Run unit tests	2026-04-23T16:09:14.5373070Z [Google Auth] Activation code: PARENTCODE
+unit-tests	Run unit tests	2026-04-23T16:09:14.5374586Z [22m[39mError deleting user after parent invite link failure: Error: delete failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.5376195Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-parent-invite-cleanup.test.js:102:31
+unit-tests	Run unit tests	2026-04-23T16:09:14.5377852Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.5379445Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.5381035Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.5381620Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.5382673Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5384677Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.5387764Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5390000Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5392090Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5393742Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5395986Z [90mstderr[2m | tests/unit/auth-google-parent-invite-cleanup.test.js[2m > [22m[2mloginWithGoogle parent invite failure cleanup[2m > [22m[2mapplies the same fail-closed cleanup behavior for redirect Google auth
+unit-tests	Run unit tests	2026-04-23T16:09:14.5399015Z [22m[39mError linking parent: Error: parent invite link failed
+unit-tests	Run unit tests	2026-04-23T16:09:14.5400464Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/auth-google-parent-invite-cleanup.test.js:137:31
+unit-tests	Run unit tests	2026-04-23T16:09:14.5402269Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:14.5404343Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:14.5406129Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:14.5407596Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:14.5409158Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5412606Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:14.5414598Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5416650Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5419033Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:14.5419992Z 
+unit-tests	Run unit tests	2026-04-23T16:09:14.5420021Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.1513944Z [90mstderr[2m | tests/unit/parent-invite-signup.test.js[2m > [22m[2mparent invite signup finalization[2m > [22m[2mattempts invite rollback but does not delete auth user when profile update fails
+unit-tests	Run unit tests	2026-04-23T16:09:16.1523004Z [22m[39mSkipping auth user rollback because invite redemption already succeeded.
+unit-tests	Run unit tests	2026-04-23T16:09:16.1524032Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.1589440Z [90mstderr[2m | tests/unit/parent-invite-signup.test.js[2m > [22m[2mparent invite signup finalization[2m > [22m[2mdoes not delete auth user when invite rollback fails after invite redemption
+unit-tests	Run unit tests	2026-04-23T16:09:16.1592770Z [22m[39mFailed to rollback invite redemption after parent invite error: Error: Rollback unavailable
+unit-tests	Run unit tests	2026-04-23T16:09:16.1594786Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/parent-invite-signup.test.js:71:70
+unit-tests	Run unit tests	2026-04-23T16:09:16.1596806Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:145:11
+unit-tests	Run unit tests	2026-04-23T16:09:16.1599094Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:26
+unit-tests	Run unit tests	2026-04-23T16:09:16.1602883Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1243:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.1604163Z     at new Promise (<anonymous>)
+unit-tests	Run unit tests	2026-04-23T16:09:16.1605772Z     at runWithTimeout [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1209:10[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.1607688Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:37
+unit-tests	Run unit tests	2026-04-23T16:09:16.1609582Z     at Traces.$ [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/traces.CCmnQaNT.js:142:27[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.1611660Z     at trace [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4mvitest[24m/dist/chunks/test.B8ej_ZHS.js:239:21[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.1614379Z     at runTest [90m(file:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:1653:12[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.1626406Z Skipping auth user rollback because invite redemption already succeeded.
+unit-tests	Run unit tests	2026-04-23T16:09:16.1627324Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.6775181Z [90mstderr[2m | tests/unit/utils-calendar-fetch.test.js[2m > [22m[2mfetchAndParseCalendar[2m > [22m[2mfalls back to direct fetch with normalized https URL when function fails
+unit-tests	Run unit tests	2026-04-23T16:09:16.6832887Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/utils-calendar-fetch.test.js[2m > [22m[2mfetchAndParseCalendar[2m > [22m[2muses cache-busted r.jina proxy when function and direct fetch fail
+unit-tests	Run unit tests	2026-04-23T16:09:16.6850812Z [22m[39mFunction calendar fetch failed, falling back to client fetch: Error: fail
+unit-tests	Run unit tests	2026-04-23T16:09:16.6852303Z     at fetchViaFunction [90m(/home/runner/work/allplays/allplays/[39mjs/utils.js:308:13[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6894516Z [90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6895950Z     at fetchAndParseCalendar [90m(/home/runner/work/allplays/allplays/[39mjs/utils.js:329:31[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6897313Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/utils-calendar-fetch.test.js:80:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.6898764Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.6899571Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.6901063Z [90mstderr[2m | tests/unit/utils-calendar-fetch.test.js[2m > [22m[2mfetchAndParseCalendar[2m > [22m[2muses cache-busted r.jina proxy when function and direct fetch fail
+unit-tests	Run unit tests	2026-04-23T16:09:16.6903711Z [22m[39mFunction calendar fetch failed, falling back to client fetch: Error: Function fetch failed: 404 Not Found
+unit-tests	Run unit tests	2026-04-23T16:09:16.6906690Z     at fetchViaFunction [90m(/home/runner/work/allplays/allplays/[39mjs/utils.js:304:13[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6908294Z [90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6909818Z     at fetchAndParseCalendar [90m(/home/runner/work/allplays/allplays/[39mjs/utils.js:329:31[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6911337Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/utils-calendar-fetch.test.js:108:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.6915323Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.6916474Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.6918182Z [90mstderr[2m | tests/unit/utils-calendar-fetch.test.js[2m > [22m[2mfetchAndParseCalendar[2m > [22m[2muses cache-busted r.jina proxy when function and direct fetch fail
+unit-tests	Run unit tests	2026-04-23T16:09:16.6921456Z [22m[39mProxy fetch attempt failed: Error: Proxy fetch failed: 403 Forbidden
+unit-tests	Run unit tests	2026-04-23T16:09:16.6923459Z     at fetchAndParseCalendar [90m(/home/runner/work/allplays/allplays/[39mjs/utils.js:355:19[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6925064Z [90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:16.6926546Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/utils-calendar-fetch.test.js:108:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.6928240Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:20
+unit-tests	Run unit tests	2026-04-23T16:09:16.6929079Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.6930415Z [22m[39mCalendar fetch failed, trying proxy: https://corsproxy.io/?https%3A%2F%2Fical-cdn.teamsnap.com%2Fteam_schedule%2Ftest.ics
+unit-tests	Run unit tests	2026-04-23T16:09:16.6931388Z 
+unit-tests	Run unit tests	2026-04-23T16:09:16.6935037Z [90mstdout[2m | tests/unit/utils-calendar-fetch.test.js[2m > [22m[2mfetchAndParseCalendar[2m > [22m[2muses cache-busted r.jina proxy when function and direct fetch fail
+unit-tests	Run unit tests	2026-04-23T16:09:16.6937736Z [22m[39mCalendar fetch failed, trying proxy: https://r.jina.ai/https://ical-cdn.teamsnap.com/team_schedule/test.ics?cachebust=1700000000000
+unit-tests	Run unit tests	2026-04-23T16:09:16.6938796Z 
+unit-tests	Run unit tests	2026-04-23T16:09:17.2769716Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[90mstdout[2m | tests/unit/auth-parent-membership-sync.test.js[2m > [22m[2mauth parent membership sync[2m > [22m[2mself-syncs approved parent membership requests into the signed-in user profile
+unit-tests	Run unit tests	2026-04-23T16:09:17.2776878Z [22m[39m[auth] Synced approved parent membership requests to user profile
+unit-tests	Run unit tests	2026-04-23T16:09:17.2777938Z 
+unit-tests	Run unit tests	2026-04-23T16:09:20.1599914Z [90mstderr[2m | tests/unit/firebase-runtime-config.test.js[2m > [22m[2mfirebase runtime config[2m > [22m[2mfalls back to the bundled primary firebase config when hosting init is unavailable
+unit-tests	Run unit tests	2026-04-23T16:09:20.1640580Z [22m[39mFalling back to bundled Firebase config. Error: Firebase config request failed (404)
+unit-tests	Run unit tests	2026-04-23T16:09:20.1644167Z     at fetchFirebaseConfigFromHosting [90m(/home/runner/work/allplays/allplays/[39mjs/firebase-runtime-config.js:50:15[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:20.1654716Z [90m    at processTicksAndRejections (node:internal/process/task_queues:104:5)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:20.1657213Z     at resolvePrimaryFirebaseConfig [90m(/home/runner/work/allplays/allplays/[39mjs/firebase-runtime-config.js:72:16[90m)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:20.1659343Z     at [90m/home/runner/work/allplays/allplays/[39mtests/unit/firebase-runtime-config.test.js:39:24
+unit-tests	Run unit tests	2026-04-23T16:09:20.1661214Z     at [90mfile:///home/runner/work/allplays/allplays/[39mnode_modules/[4m@vitest/runner[24m/dist/index.js:915:20
+unit-tests	Run unit tests	2026-04-23T16:09:20.1667064Z 
+unit-tests	Run unit tests	2026-04-23T16:09:22.7227729Z [33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m[33m[39m[32m·[39m
+unit-tests	Run unit tests	2026-04-23T16:09:22.7243471Z 
+unit-tests	Run unit tests	2026-04-23T16:09:22.7243999Z [2m Test Files [22m [1m[32m158 passed[39m[22m[90m (158)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:22.7244571Z [2m      Tests [22m [1m[32m694 passed[39m[22m[90m (694)[39m
+unit-tests	Run unit tests	2026-04-23T16:09:22.7244993Z [2m   Start at [22m 16:09:12
+unit-tests	Run unit tests	2026-04-23T16:09:22.7245642Z [2m   Duration [22m 10.48s[2m (transform 1.69s, setup 0ms, import 4.35s, tests 1.86s, environment 31ms)[22m
+unit-tests	Run unit tests	2026-04-23T16:09:22.7246035Z 
+unit-tests	Post Setup Node	﻿2026-04-23T16:09:22.7890653Z Post job cleanup.
+unit-tests	Post Setup Node	2026-04-23T16:09:22.9119103Z (node:3588) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+unit-tests	Post Setup Node	2026-04-23T16:09:22.9120492Z (Use `node --trace-deprecation ...` to show where the warning was created)
+unit-tests	Post Setup Node	2026-04-23T16:09:22.9124716Z Cache hit occurred on the primary key node-cache-Linux-x64-npm-3028c5155df07260347b55933cde4e12f2a256ef3f3a55c85d9aae3e98e77a82, not saving cache.
+unit-tests	Post Checkout	﻿2026-04-23T16:09:22.9287835Z Post job cleanup.
+unit-tests	Post Checkout	2026-04-23T16:09:23.0098655Z [command]/usr/bin/git version
+unit-tests	Post Checkout	2026-04-23T16:09:23.0142588Z git version 2.53.0
+unit-tests	Post Checkout	2026-04-23T16:09:23.0185253Z Temporarily overriding HOME='/home/runner/work/_temp/0fcdcb04-3cf3-42cd-a5ef-67e39b327f8d' before making global git config changes
+unit-tests	Post Checkout	2026-04-23T16:09:23.0186702Z Adding repository directory to the temporary git global config as a safe directory
+unit-tests	Post Checkout	2026-04-23T16:09:23.0191481Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/allplays/allplays
+unit-tests	Post Checkout	2026-04-23T16:09:23.0234329Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+unit-tests	Post Checkout	2026-04-23T16:09:23.0274741Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+unit-tests	Post Checkout	2026-04-23T16:09:23.0507530Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+unit-tests	Post Checkout	2026-04-23T16:09:23.0557038Z http.https://github.com/.extraheader
+unit-tests	Post Checkout	2026-04-23T16:09:23.0568129Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+unit-tests	Post Checkout	2026-04-23T16:09:23.0601293Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+unit-tests	Post Checkout	2026-04-23T16:09:23.0828535Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+unit-tests	Post Checkout	2026-04-23T16:09:23.0861367Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+unit-tests	Complete job	﻿2026-04-23T16:09:23.1244304Z Cleaning up orphan processes
+deploy	Set up job	﻿2026-04-23T16:09:29.1219233Z Current runner version: '2.333.1'
+deploy	Set up job	2026-04-23T16:09:29.1243865Z ##[group]Runner Image Provisioner
+deploy	Set up job	2026-04-23T16:09:29.1244802Z Hosted Compute Agent
+deploy	Set up job	2026-04-23T16:09:29.1245575Z Version: 20260213.493
+deploy	Set up job	2026-04-23T16:09:29.1246315Z Commit: 5c115507f6dd24b8de37d8bbe0bb4509d0cc0fa3
+deploy	Set up job	2026-04-23T16:09:29.1247134Z Build Date: 2026-02-13T00:28:41Z
+deploy	Set up job	2026-04-23T16:09:29.1247993Z Worker ID: ***10216419-03c0-45d9-98b9-dde66454abf3***
+deploy	Set up job	2026-04-23T16:09:29.1248843Z Azure Region: westcentralus
+deploy	Set up job	2026-04-23T16:09:29.1249522Z ##[endgroup]
+deploy	Set up job	2026-04-23T16:09:29.1251271Z ##[group]Operating System
+deploy	Set up job	2026-04-23T16:09:29.1251988Z Ubuntu
+deploy	Set up job	2026-04-23T16:09:29.1252628Z 24.04.4
+deploy	Set up job	2026-04-23T16:09:29.1253218Z LTS
+deploy	Set up job	2026-04-23T16:09:29.1253814Z ##[endgroup]
+deploy	Set up job	2026-04-23T16:09:29.1254421Z ##[group]Runner Image
+deploy	Set up job	2026-04-23T16:09:29.1255119Z Image: ubuntu-24.04
+deploy	Set up job	2026-04-23T16:09:29.1255755Z Version: 20260413.86.1
+deploy	Set up job	2026-04-23T16:09:29.1256848Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260413.86/images/ubuntu/Ubuntu2404-Readme.md
+deploy	Set up job	2026-04-23T16:09:29.1258544Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260413.86
+deploy	Set up job	2026-04-23T16:09:29.1259510Z ##[endgroup]
+deploy	Set up job	2026-04-23T16:09:29.1261080Z ##[group]GITHUB_TOKEN Permissions
+deploy	Set up job	2026-04-23T16:09:29.1263118Z Checks: write
+deploy	Set up job	2026-04-23T16:09:29.1263747Z Contents: read
+deploy	Set up job	2026-04-23T16:09:29.1264355Z Metadata: read
+deploy	Set up job	2026-04-23T16:09:29.1264957Z PullRequests: write
+deploy	Set up job	2026-04-23T16:09:29.1265597Z ##[endgroup]
+deploy	Set up job	2026-04-23T16:09:29.1267683Z Secret source: Actions
+deploy	Set up job	2026-04-23T16:09:29.1268516Z Prepare workflow directory
+deploy	Set up job	2026-04-23T16:09:29.1580847Z Prepare all required actions
+deploy	Set up job	2026-04-23T16:09:29.1619537Z Getting action download info
+deploy	Set up job	2026-04-23T16:09:29.6173395Z Download action repository 'actions/checkout@v5' (SHA:93cb6efe18208431cddfb8368fd83d5badbf9bfd)
+deploy	Set up job	2026-04-23T16:09:29.7055663Z Download action repository 'actions/setup-node@v5' (SHA:a0853c24544627f65ddf259abe73b1d18a591444)
+deploy	Set up job	2026-04-23T16:09:29.9490861Z Complete job name: deploy
+deploy	Checkout	﻿2026-04-23T16:09:30.0252265Z ##[group]Run actions/checkout@v5
+deploy	Checkout	2026-04-23T16:09:30.0253318Z with:
+deploy	Checkout	2026-04-23T16:09:30.0253912Z   repository: pauljsnider/allplays
+deploy	Checkout	2026-04-23T16:09:30.0254784Z   token: ***
+deploy	Checkout	2026-04-23T16:09:30.0255344Z   ssh-strict: true
+deploy	Checkout	2026-04-23T16:09:30.0255909Z   ssh-user: git
+deploy	Checkout	2026-04-23T16:09:30.0256498Z   persist-credentials: true
+deploy	Checkout	2026-04-23T16:09:30.0257130Z   clean: true
+deploy	Checkout	2026-04-23T16:09:30.0257726Z   sparse-checkout-cone-mode: true
+deploy	Checkout	2026-04-23T16:09:30.0258386Z   fetch-depth: 1
+deploy	Checkout	2026-04-23T16:09:30.0258952Z   fetch-tags: false
+deploy	Checkout	2026-04-23T16:09:30.0259518Z   show-progress: true
+deploy	Checkout	2026-04-23T16:09:30.0260256Z   lfs: false
+deploy	Checkout	2026-04-23T16:09:30.0260821Z   submodules: false
+deploy	Checkout	2026-04-23T16:09:30.0261410Z   set-safe-directory: true
+deploy	Checkout	2026-04-23T16:09:30.0262297Z ##[endgroup]
+deploy	Checkout	2026-04-23T16:09:30.1188170Z Syncing repository: pauljsnider/allplays
+deploy	Checkout	2026-04-23T16:09:30.1190670Z ##[group]Getting Git version info
+deploy	Checkout	2026-04-23T16:09:30.1191881Z Working directory is '/home/runner/work/allplays/allplays'
+deploy	Checkout	2026-04-23T16:09:30.1194121Z [command]/usr/bin/git version
+deploy	Checkout	2026-04-23T16:09:30.1197934Z git version 2.53.0
+deploy	Checkout	2026-04-23T16:09:30.1217112Z ##[endgroup]
+deploy	Checkout	2026-04-23T16:09:30.1233266Z Temporarily overriding HOME='/home/runner/work/_temp/8e3e6fd0-1413-4a21-a49e-171fb9416333' before making global git config changes
+deploy	Checkout	2026-04-23T16:09:30.1236199Z Adding repository directory to the temporary git global config as a safe directory
+deploy	Checkout	2026-04-23T16:09:30.1238844Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/allplays/allplays
+deploy	Checkout	2026-04-23T16:09:30.1271004Z Deleting the contents of '/home/runner/work/allplays/allplays'
+deploy	Checkout	2026-04-23T16:09:30.1274699Z ##[group]Initializing the repository
+deploy	Checkout	2026-04-23T16:09:30.1278786Z [command]/usr/bin/git init /home/runner/work/allplays/allplays
+deploy	Checkout	2026-04-23T16:09:30.1345317Z hint: Using 'master' as the name for the initial branch. This default branch name
+deploy	Checkout	2026-04-23T16:09:30.1347274Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+deploy	Checkout	2026-04-23T16:09:30.1348870Z hint: to use in all of your new repositories, which will suppress this warning,
+deploy	Checkout	2026-04-23T16:09:30.1350538Z hint: call:
+deploy	Checkout	2026-04-23T16:09:30.1351728Z hint:
+deploy	Checkout	2026-04-23T16:09:30.1352954Z hint: 	git config --global init.defaultBranch <name>
+deploy	Checkout	2026-04-23T16:09:30.1354059Z hint:
+deploy	Checkout	2026-04-23T16:09:30.1355367Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+deploy	Checkout	2026-04-23T16:09:30.1356929Z hint: 'development'. The just-created branch can be renamed via this command:
+deploy	Checkout	2026-04-23T16:09:30.1358150Z hint:
+deploy	Checkout	2026-04-23T16:09:30.1359409Z hint: 	git branch -m <name>
+deploy	Checkout	2026-04-23T16:09:30.1360638Z hint:
+deploy	Checkout	2026-04-23T16:09:30.1361888Z hint: Disable this message with "git config set advice.defaultBranchName false"
+deploy	Checkout	2026-04-23T16:09:30.1363051Z Initialized empty Git repository in /home/runner/work/allplays/allplays/.git/
+deploy	Checkout	2026-04-23T16:09:30.1365055Z [command]/usr/bin/git remote add origin https://github.com/pauljsnider/allplays
+deploy	Checkout	2026-04-23T16:09:30.1380549Z ##[endgroup]
+deploy	Checkout	2026-04-23T16:09:30.1381552Z ##[group]Disabling automatic garbage collection
+deploy	Checkout	2026-04-23T16:09:30.1383986Z [command]/usr/bin/git config --local gc.auto 0
+deploy	Checkout	2026-04-23T16:09:30.1406110Z ##[endgroup]
+deploy	Checkout	2026-04-23T16:09:30.1407111Z ##[group]Setting up auth
+deploy	Checkout	2026-04-23T16:09:30.1412550Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+deploy	Checkout	2026-04-23T16:09:30.1437571Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+deploy	Checkout	2026-04-23T16:09:30.1669056Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+deploy	Checkout	2026-04-23T16:09:30.1695846Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+deploy	Checkout	2026-04-23T16:09:30.1858704Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+deploy	Checkout	2026-04-23T16:09:30.1884341Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+deploy	Checkout	2026-04-23T16:09:30.2072225Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+deploy	Checkout	2026-04-23T16:09:30.2103647Z ##[endgroup]
+deploy	Checkout	2026-04-23T16:09:30.2105922Z ##[group]Fetching the repository
+deploy	Checkout	2026-04-23T16:09:30.2114875Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +89112ebe6eb25afa1a03c4e0cc06b6fff5b05851:refs/remotes/pull/590/merge
+deploy	Checkout	2026-04-23T16:09:33.2955435Z remote: Internal Server Error
+deploy	Checkout	2026-04-23T16:09:33.2979483Z ##[error]fatal: unable to access 'https://github.com/pauljsnider/allplays/': The requested URL returned error: 500
+deploy	Checkout	2026-04-23T16:09:33.2987167Z The process '/usr/bin/git' failed with exit code 128
+deploy	Checkout	2026-04-23T16:09:33.2987699Z Waiting 19 seconds before trying again
+deploy	Checkout	2026-04-23T16:09:52.3034629Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +89112ebe6eb25afa1a03c4e0cc06b6fff5b05851:refs/remotes/pull/590/merge
+deploy	Checkout	2026-04-23T16:09:57.5616715Z ##[error]error: RPC failed; HTTP 500 curl 22 The requested URL returned error: 500
+deploy	Checkout	2026-04-23T16:09:57.5619686Z ##[error]fatal: expected 'packfile'
+deploy	Checkout	2026-04-23T16:09:57.5647346Z The process '/usr/bin/git' failed with exit code 128
+deploy	Checkout	2026-04-23T16:09:57.5648316Z Waiting 10 seconds before trying again
+deploy	Checkout	2026-04-23T16:10:07.5669074Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +89112ebe6eb25afa1a03c4e0cc06b6fff5b05851:refs/remotes/pull/590/merge
+deploy	Checkout	2026-04-23T16:10:11.0023871Z remote: Internal Server Error
+deploy	Checkout	2026-04-23T16:10:11.0025655Z ##[error]fatal: unable to access 'https://github.com/pauljsnider/allplays/': The requested URL returned error: 500
+deploy	Checkout	2026-04-23T16:10:11.0074124Z ##[error]The process '/usr/bin/git' failed with exit code 128
+deploy	Post Checkout	﻿2026-04-23T16:10:11.0332337Z Post job cleanup.
+deploy	Post Checkout	2026-04-23T16:10:11.1054978Z [command]/usr/bin/git version
+deploy	Post Checkout	2026-04-23T16:10:11.1085453Z git version 2.53.0
+deploy	Post Checkout	2026-04-23T16:10:11.1119881Z Temporarily overriding HOME='/home/runner/work/_temp/6648f5be-0c44-48ff-8c88-94b2e0ccca50' before making global git config changes
+deploy	Post Checkout	2026-04-23T16:10:11.1121615Z Adding repository directory to the temporary git global config as a safe directory
+deploy	Post Checkout	2026-04-23T16:10:11.1125881Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/allplays/allplays
+deploy	Post Checkout	2026-04-23T16:10:11.1154808Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+deploy	Post Checkout	2026-04-23T16:10:11.1179370Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+deploy	Post Checkout	2026-04-23T16:10:11.1346754Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+deploy	Post Checkout	2026-04-23T16:10:11.1363177Z http.https://github.com/.extraheader
+deploy	Post Checkout	2026-04-23T16:10:11.1371678Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+deploy	Post Checkout	2026-04-23T16:10:11.1394777Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+deploy	Post Checkout	2026-04-23T16:10:11.1558578Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+deploy	Post Checkout	2026-04-23T16:10:11.1582983Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+deploy	Complete job	﻿2026-04-23T16:10:11.1849467Z Cleaning up orphan processes
