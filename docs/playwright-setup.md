@@ -1,0 +1,233 @@
+# Playwright Setup & CI Runbook
+
+## Overview
+
+This project uses [Playwright](https://playwright.dev/) for end-to-end and smoke testing.
+Tests run automatically in CI via GitHub Actions and can be run locally against the static dev server.
+
+---
+
+## Local Setup
+
+### 1. Node toolchain
+
+If your shell does not already have `npm`/`npx`, load Node via `nvm`:
+
+```bash
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+node -v   # should be 20+
+npm -v
+```
+
+### 2. Install dependencies and browser binary
+
+```bash
+npm install
+npx playwright install chromium
+```
+
+On Linux hosts without root access, Playwright may fail with missing shared library errors. Install them in user space:
+
+```bash
+mkdir -p ~/.cache/pw-debs ~/.local/pw-libs
+cd ~/.cache/pw-debs
+apt download \
+  libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 \
+  libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+  libgbm1 libasound2t64 libxi6 libxrender1
+for deb in ./*.deb; do dpkg-deb -x "$deb" ~/.local/pw-libs; done
+export LD_LIBRARY_PATH="$HOME/.local/pw-libs/usr/lib/x86_64-linux-gnu:$HOME/.local/pw-libs/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+```
+
+### 3. Run tests locally
+
+```bash
+# Unit tests (Vitest)
+npm run test:unit
+
+# Unit tests with coverage report
+npm run test:unit:coverage
+
+# Smoke suite only (< 2 min)
+npm run test:e2e:smoke
+
+# Critical suite
+npm run test:e2e:critical
+
+# Extended suite
+npm run test:e2e:extended
+
+# Extended suite sharded
+npm run test:e2e:extended:shard1
+npm run test:e2e:extended:shard2
+
+# All tests
+npm run test:e2e
+
+# Interactive UI mode
+npm run test:e2e:ui
+
+# Headed (watch the browser)
+npm run test:e2e:headed
+
+# View last HTML report
+npm run test:e2e:report
+```
+
+Unit coverage HTML output is written to `coverage/unit/index.html`.
+
+---
+
+## Suite Taxonomy
+
+Tests are tagged in the test title string. Use `--grep` to filter by tag.
+
+| Tag | Description | Runs in CI |
+|---|---|---|
+| `@smoke` | Fast structural checks — static HTML only, no Firebase required | Every PR |
+| `@critical` | Auth, access-control, and routing integration tests | Every PR (Week 2+) |
+| `@extended` | Practice, parent workflows, security/isolation | Nightly only |
+
+### Final shard strategy
+
+- `PLAYWRIGHT_SUITE` supports: `smoke`, `critical`, `extended`, `all`.
+- `PLAYWRIGHT_SHARD` uses `current/total` (example: `1/2`).
+- Nightly execution:
+  - Run `critical` in one job (no shard).
+  - Run `extended` in two shards (`1/2` and `2/2`).
+- PR smoke gate remains unsharded for quick feedback.
+
+### Tagging example
+
+```js
+test('login happy path @critical', async ({ page }) => { ... });
+```
+
+---
+
+## Selector Convention (`data-testid`)
+
+We use `data-testid` attributes as stable handles for Playwright. Rules:
+
+- **Format:** `data-testid="[component]-[element]"` — kebab-case, no abbreviations
+- **Examples:** `data-testid="nav-login-btn"`, `data-testid="game-card-title"`, `data-testid="tracker-score-home"`
+- **Never** use CSS classes or generated IDs as primary selectors in tests — they change
+- **Exception:** Static IDs explicitly intended as stable hooks (e.g., `id="hero-cta"`) are acceptable
+
+### Querying in tests
+
+```js
+// Preferred: data-testid
+page.locator('[data-testid="nav-login-btn"]')
+
+// Acceptable: stable explicit IDs in static HTML
+page.locator('#hero-cta')
+
+// Acceptable: semantic role + accessible name
+page.getByRole('button', { name: 'Sign in' })
+
+// Avoid: CSS class selectors
+page.locator('.bg-gradient-to-r')  // ❌
+```
+
+Add `data-testid` attributes to HTML as you write tests for new flows. The target is to never use a class-based selector in a Playwright spec.
+
+---
+
+## CI Workflows
+
+### `playwright-smoke.yml` — PR gate
+
+- **Trigger:** Every PR to `master`
+- **Suite:** `tests/smoke/` (`@smoke` tests)
+- **Runtime target:** < 2 minutes
+- **Runtime gate:** `scripts/check-playwright-runtime.cjs` enforces the budget from the Playwright JSON report
+- **On failure:** Uploads HTML report artifact (7-day retention)
+
+PRs are expected to stay green on this gate at all times. If the smoke suite is broken, it blocks merge.
+
+### `playwright-nightly.yml` — Full suite
+
+- **Trigger:** Daily at 03:00 UTC + manual dispatch from Actions tab
+- **Suite strategy:**
+  - `critical` in one job
+  - `extended` split into `1/2` and `2/2` shards
+- **Runtime targets:**
+  - `critical`: <= 10 minutes
+  - each `extended` shard: <= 15 minutes
+  - full nightly budget: <= 30 minutes total across the scheduled matrix
+- **Runtime gate:** `scripts/check-playwright-runtime.cjs` enforces each job budget from the Playwright JSON report
+- **Reliability gate:** Each shard exports a JSON report and fails if flaky tests exceed `2.00%` of executed tests
+- **Artifacts:** HTML report always uploaded (30-day retention); JSON report always uploaded (30-day retention); traces uploaded on failure (14-day)
+
+The nightly run produces the evidence log used to track pass/fail trends and flake rate.
+
+### `playwright-weekly-evidence.yml` — Weekly evidence publish
+
+- **Trigger:** Every Sunday at `09:00 UTC` + manual dispatch from Actions tab
+- **Suite strategy:** mirrors the nightly matrix so the weekly report uses the same shard boundaries and budgets
+- **Published output:** a markdown artifact named `playwright-weekly-evidence-<run_id>` plus the same content appended to the Actions step summary
+- **Inputs:** the workflow reads the Playwright JSON artifacts produced by the matrix jobs and builds a weekly snapshot with executed counts, failures, flaky specs, flake rate, runtime, and budget status
+
+Use this workflow when you need an auditable weekly checkpoint instead of browsing individual nightly runs by hand.
+
+---
+
+## Firebase Emulator (Week 2 — Days 3+)
+
+Auth and Firestore-dependent integration tests require the Firebase Emulator. This is **not yet wired** in CI — spike required by Day 2 (2026-02-24).
+
+### Planned CI step (to be added)
+
+```yaml
+- name: Start Firebase Emulator
+  run: npx firebase emulators:start --only auth,firestore &
+  env:
+    FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+
+- name: Wait for emulator
+  run: npx wait-on http://127.0.0.1:9099 http://127.0.0.1:8080 --timeout 30000
+```
+
+Seed script pattern: `_migration/seed-test-fixtures.js` (to be created on Day 2).
+
+---
+
+## Smoke Test: What Is and Isn't Tested
+
+The smoke suite (`tests/smoke/`) only asserts on **static HTML** content that is present before any JavaScript or Firebase code runs. It does **not** test:
+
+- Elements injected by `checkAuth()` or `renderHeader()` (these depend on Firebase Auth resolving)
+- Dynamic game lists loaded from Firestore
+- Any authenticated state
+
+The `@critical` suite (Week 1, Days 3-4) will cover auth and role-gated UI — against the Firebase Emulator.
+
+---
+
+## Flake Management
+
+- Flake rate target: < 2% per spec
+- Nightly CI computes flake rate from the Playwright JSON report and enforces a `2.00%` budget per shard
+- Flaky specs are tagged `@quarantine` and moved to a separate folder (`tests/quarantine/`) until fixed
+- Default Playwright runs do **not** run quarantine specs; set `PLAYWRIGHT_INCLUDE_QUARANTINE=1` to include them explicitly
+- Flake triage is Day 9 (2026-03-05) work
+
+---
+
+## Artifact Access
+
+All workflow runs store HTML reports as GitHub Actions artifacts:
+
+1. Go to **Actions** tab in the repo
+2. Select the workflow run
+3. Scroll to **Artifacts** — download `playwright-*-report-<run_id>`
+4. Open `index.html` in the downloaded folder
+
+Weekly evidence runs also publish a markdown summary artifact:
+
+1. Go to **Actions** tab in the repo
+2. Select **Playwright Weekly Evidence**
+3. Download `playwright-weekly-evidence-<run_id>`
+4. Review the markdown summary for pass/fail counts, flaky specs, and runtime budget status

@@ -1,35 +1,24 @@
-# Requirements Role Notes (Issue #53 Rideshare)
+# Requirements Role Notes
 
 ## Objective
-Ship an MVP rideshare workflow on `parent-dashboard.html` so parents can offer seats and request spots for scheduled games/practices.
+Resolve PR review feedback requiring a POSIX-compliant trailing newline in the affected text file.
 
-## Current State
-- Parent dashboard supports availability (RSVP), attendance, and take-home packets.
-- No rideshare data model, no rideshare UI, and no permissions for rideshare documents.
+## Current vs Proposed
+Current: `docs/pr-notes/playwright-coverage-3am-r2.md` lacked an EOF newline.
+Proposed: add a single trailing newline with no content changes.
 
-## Proposed State
-- Add event-level rideshare offers + nested requests under each `teams/{teamId}/games/{gameId}` event.
-- Surface rideshare controls on parent schedule list cards and day modal.
-- Allow parent drivers to manage request decisions with transaction-protected seat counts.
-
-## Acceptance Mapping
-- Parent creates offer: `createRideOffer` + dashboard offer form.
-- Another parent requests for linked child: `requestRideSpot` + request actions.
-- Driver confirms and seat counts update: `updateRideRequestStatus` transaction updates `seatCountConfirmed`.
-- Cannot exceed seat capacity: transaction throws if confirm would overbook.
-- Parent-child linkage enforced: Firestore rules require `isParentForPlayer(teamId, childId)` for request create.
-- Dashboard reflects state in-page: refresh rideshare for event + rerender without navigation.
+## Risk Surface and Blast Radius
+- Scope limited to one markdown note file.
+- No runtime, UX, or data-path behavior changes.
+- Blast radius is documentation formatting only.
 
 ## Assumptions
-- MVP scopes rideshare to Firestore-tracked DB events (`isDbGame=true`), not external ICS-only events.
-- A request ID is unique per parent+child per offer (`{parentUid}__{childId}`).
-- Offer owner (driver) is the primary manager; team owner/admin can also moderate via rules.
-
-## Risk Surface / Blast Radius
-- `parent-dashboard.html` (UI + interactions)
-- `js/db.js` (new Firestore helpers and transactions)
-- `firestore.rules` (new write/read paths)
-- New helper module + tests only (`js/rideshare-helpers.js`, `tests/unit/rideshare-helpers.test.js`)
+- The review comment targets `docs/pr-notes/playwright-coverage-3am-r2.md`.
+- No additional formatting policy changes are required in this PR.
 
 ## Recommendation
-Ship this as a contained parent-dashboard MVP with strict rules and transaction checks now; defer notifications/recurring-series rideshare to follow-up issues.
+Apply only the newline fix now. This preserves reviewer intent with minimal change and zero behavioral risk.
+
+## Success Criteria
+- File ends with `0x0a` newline.
+- Diff shows no textual content change beyond EOF newline handling.

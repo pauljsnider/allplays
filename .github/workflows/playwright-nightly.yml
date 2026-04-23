@@ -1,0 +1,90 @@
+name: Playwright Nightly
+
+on:
+  # Runs at 03:00 UTC every day
+  schedule:
+    - cron: '0 3 * * *'
+  # Allow manual trigger from Actions tab
+  workflow_dispatch:
+
+jobs:
+  full-suite:
+    name: Nightly ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: critical
+            suite: critical
+            shard: ""
+          - label: extended (shard 1/2)
+            suite: extended
+            shard: 1/2
+          - label: extended (shard 2/2)
+            suite: extended
+            shard: 2/2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run suite shard
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          PLAYWRIGHT_SHARD: ${{ matrix.shard }}
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard || 'full' }}.json
+        run: npm run test:e2e
+
+      - name: Enforce runtime budget
+        if: always()
+        env:
+          PLAYWRIGHT_SUITE: ${{ matrix.suite }}
+          PLAYWRIGHT_SHARD: ${{ matrix.shard }}
+          PLAYWRIGHT_RUNTIME_LABEL: Nightly ${{ matrix.label }}
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard || 'full' }}.json
+        run: node scripts/check-playwright-runtime.cjs
+
+      - name: Enforce flake budget
+        if: always()
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard || 'full' }}.json
+          PLAYWRIGHT_FLAKE_RATE_LIMIT: "0.02"
+        run: node scripts/check-playwright-flake-rate.cjs
+
+      # Always upload the HTML report so nightly evidence is available even on pass
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-nightly-report-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard || 'full' }}
+          path: playwright-report/
+          retention-days: 30
+
+      # Upload traces/videos separately for faster artifact browsing
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-nightly-traces-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard || 'full' }}
+          path: test-results/
+          retention-days: 14
+
+      - name: Upload JSON report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-nightly-json-${{ github.run_id }}-${{ matrix.suite }}-${{ matrix.shard || 'full' }}
+          path: test-results/playwright-${{ matrix.suite }}-${{ matrix.shard || 'full' }}.json
+          retention-days: 30

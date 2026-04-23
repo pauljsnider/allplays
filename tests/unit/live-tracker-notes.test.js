@@ -38,4 +38,8 @@ describe('live tracker note helpers', () => {
   it('formats voice note log entries', () => {
     expect(buildGameNoteLogText('Great closeout by 12', 'voice')).toBe('Voice note: Great closeout by 12');
   });
+
+  it('returns empty log text when note text is blank', () => {
+    expect(buildGameNoteLogText('   ', 'text')).toBe('');
+  });
 });
