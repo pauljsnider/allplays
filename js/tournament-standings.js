@@ -18,12 +18,14 @@ function buildPoolGame(teamName, game) {
     if (!teamName || !opponent) return null;
 
     const isHome = game?.isHome !== false;
+    const teamScore = Number(game.homeScore);
+    const opponentScore = Number(game.awayScore);
     return {
         poolName: normalizeString(game?.tournament?.poolName),
         homeTeam: isHome ? teamName : opponent,
         awayTeam: isHome ? opponent : teamName,
-        homeScore: Number(game.homeScore),
-        awayScore: Number(game.awayScore),
+        homeScore: isHome ? teamScore : opponentScore,
+        awayScore: isHome ? opponentScore : teamScore,
         status: String(game?.status || '')
     };
 }
