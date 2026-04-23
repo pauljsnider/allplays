@@ -63,7 +63,7 @@
 
     <div id="test-results"></div>
 
-    <div style="display: none;">
+    <div style="position: absolute; left: -9999px; top: 0; width: 375px;">
         <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
         <aside class="wf-sidebar wf-panel">
             <section class="wf-panel-section">
@@ -117,8 +117,27 @@
             }
         }
 
+        function mockHeadingPositions(positionById = {}) {
+            const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+            headings.forEach((heading, index) => {
+                const defaultTop = 100 + (index * 220);
+                Object.defineProperty(heading, 'getBoundingClientRect', {
+                    configurable: true,
+                    value: () => ({
+                        top: positionById[heading.id] ?? defaultTop,
+                        left: 0,
+                        bottom: 0,
+                        right: 0,
+                        width: 0,
+                        height: 0,
+                    })
+                });
+            });
+        }
+
         // Mock window.innerWidth for mobile view testing
         Object.defineProperty(window, 'innerWidth', { writable: true, value: 768 });
+        mockHeadingPositions();
 
         // Original script from workflow-live-watch-replay.html, slightly adapted for test environment
         (function() {
@@ -183,8 +202,7 @@
 
         // Helper to check if a link is active
         function isLinkActive(id) {
-            const link = document.querySelector(`a[href="#${id}"]`);
-            return link && link.classList.contains('is-active');
+            return !!document.querySelector(`a[href="#${id}"].is-active`);
         }
 
         // ============================================
@@ -208,11 +226,7 @@
         });
 
         test('Mobile TOC: Active state on scroll (section3)', () => {
-            // Simulate scrolling to section3
-            const section3 = document.getElementById('section3');
-            Object.defineProperty(section3, 'getBoundingClientRect', {
-                value: () => ({ top: 100, left: 0, bottom: 0, right: 0, width: 0, height: 0 })
-            });
+            mockHeadingPositions({ section1: -220, section2: -40, section3: 100, section4: 360 });
             window.dispatchEvent(new Event('scroll'));
 
             assertTrue(isLinkActive('section3'), 'Section 3 should be active after scroll');
@@ -221,9 +235,14 @@
 
         test('Desktop TOC: Active state on initial load', () => {
             Object.defineProperty(window, 'innerWidth', { writable: true, value: 1200 }); // Simulate desktop
+            window.location.hash = '';
             const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
             const toc = document.getElementById('workflow-toc');
-            if (toc) {
+            const mobileToc = document.getElementById('workflow-mobile-toc');
+            if (toc && mobileToc) {
+                 toc.innerHTML = '';
+                 mobileToc.innerHTML = '';
+                 mockHeadingPositions();
                  // Re-run the script initialization for desktop
                  (function() {
                     const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
@@ -273,11 +292,7 @@
 
         test('Desktop TOC: Active state on scroll (section2)', () => {
             Object.defineProperty(window, 'innerWidth', { writable: true, value: 1200 }); // Ensure desktop mode
-            // Simulate scrolling to section2
-            const section2 = document.getElementById('section2');
-            Object.defineProperty(section2, 'getBoundingClientRect', {
-                value: () => ({ top: 100, left: 0, bottom: 0, right: 0, width: 0, height: 0 })
-            });
+            mockHeadingPositions({ section1: -160, section2: 100, section3: 360, section4: 620 });
             window.dispatchEvent(new Event('scroll'));
 
             assertTrue(isLinkActive('section2'), 'Desktop: Section 2 should be active after scroll');

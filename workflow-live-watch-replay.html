@@ -499,7 +499,7 @@
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
-        setActive(window.window.location.hash.slice(1) || null);
+        setActive(window.location.hash.slice(1) || null);
       })();
     </script>
 </body>
