@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { hydrateOpponentStats } from '../../js/live-tracker-opponent-stats.js';
+import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from '../../js/live-tracker-queue.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -208,6 +209,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
+    './live-tracker-queue.js',
+    'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } = deps.liveTrackerQueue;'
+  );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
     './live-tracker-save-complete.js',
     'const { runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;'
   );
@@ -351,11 +357,18 @@ async function bootLiveTracker({ updateGame }) {
       buildFinishCompletionPlan: () => ({}),
       executeFinishNavigationPlan: () => {}
     },
+    liveTrackerQueue: {
+      readPersistedLiveTrackerQueue,
+      writePersistedLiveTrackerQueue
+    },
     liveTrackerSaveComplete: {
       runSaveAndCompleteWorkflow: async () => ({})
     }
   };
-  const window = { location: { href: '' } };
+  const window = {
+    location: { href: '' },
+    addEventListener: () => {}
+  };
   const setTimeoutStub = (callback) => {
     const timeoutId = nextTimeoutId++;
     scheduledTimeouts.set(timeoutId, callback);

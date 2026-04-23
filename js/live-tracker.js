@@ -1030,6 +1030,12 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
   }));
 }
 
+function removeQueuedEvent(eventToRemove) {
+  const queuedIndex = liveState.eventQueue.indexOf(eventToRemove);
+  if (queuedIndex === -1) return;
+  liveState.eventQueue.splice(queuedIndex, 1);
+}
+
 function scheduleRetry({ resetBackoff = false } = {}) {
   if (!currentTeamId || !currentGameId || liveState.eventQueue.length === 0) return;
   if (resetBackoff) {
@@ -1040,24 +1046,25 @@ function scheduleRetry({ resetBackoff = false } = {}) {
   liveState.retryTimeout = setTimeout(async () => {
     liveState.retryTimeout = null;
     const queue = [...liveState.eventQueue];
-    liveState.eventQueue = [];
-    persistPendingEventQueue();
 
     for (const event of queue) {
       try {
         await broadcastLiveEvent(currentTeamId, currentGameId, event);
+        removeQueuedEvent(event);
+        persistPendingEventQueue();
         liveState.retryAttempt = 0;
       } catch {
-        liveState.eventQueue.push(event);
+        break;
       }
     }
-
-    persistPendingEventQueue();
 
     if (liveState.eventQueue.length > 0) {
       liveState.retryAttempt += 1;
       scheduleRetry();
+      return;
     }
+
+    persistPendingEventQueue();
   }, delay);
 }
 
