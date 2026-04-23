@@ -17,6 +17,7 @@ import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=1';
+import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from './live-tracker-queue.js?v=1';
 import { runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
 
 let currentTeamId = null;
@@ -95,6 +96,25 @@ let liveSync = {
   opponentTimeout: null,
   liveFlagTimeout: null
 };
+
+function persistPendingEventQueue() {
+  writePersistedLiveTrackerQueue(window.localStorage, currentTeamId, currentGameId, liveState.eventQueue);
+}
+
+function restorePendingEventQueue() {
+  liveState.eventQueue = readPersistedLiveTrackerQueue(window.localStorage, currentTeamId, currentGameId);
+  liveState.retryAttempt = 0;
+}
+
+function clearPendingEventQueue() {
+  liveState.eventQueue = [];
+  liveState.retryAttempt = 0;
+  if (liveState.retryTimeout) {
+    clearTimeout(liveState.retryTimeout);
+    liveState.retryTimeout = null;
+  }
+  persistPendingEventQueue();
+}
 
 function scheduleScoreSync() {
   if (!liveState.isLive || !currentTeamId || !currentGameId) return;
@@ -989,6 +1009,7 @@ async function broadcastEvent(eventData) {
   } catch (error) {
     console.error('Broadcast failed (will retry):', error);
     liveState.eventQueue.push(eventData);
+    persistPendingEventQueue();
     scheduleRetry();
   }
 }
@@ -1009,13 +1030,18 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
   }));
 }
 
-function scheduleRetry() {
+function scheduleRetry({ resetBackoff = false } = {}) {
+  if (!currentTeamId || !currentGameId || liveState.eventQueue.length === 0) return;
+  if (resetBackoff) {
+    liveState.retryAttempt = 0;
+  }
   if (liveState.retryTimeout) return;
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
   liveState.retryTimeout = setTimeout(async () => {
     liveState.retryTimeout = null;
     const queue = [...liveState.eventQueue];
     liveState.eventQueue = [];
+    persistPendingEventQueue();
 
     for (const event of queue) {
       try {
@@ -1025,6 +1051,8 @@ function scheduleRetry() {
         liveState.eventQueue.push(event);
       }
     }
+
+    persistPendingEventQueue();
 
     if (liveState.eventQueue.length > 0) {
       liveState.retryAttempt += 1;
@@ -1218,6 +1246,9 @@ async function startLiveBroadcast() {
   initChat();
   initViewerCount();
   broadcastLineupUpdate('Lineup set');
+  if (liveState.eventQueue.length > 0 && window.navigator?.onLine !== false) {
+    scheduleRetry({ resetBackoff: true });
+  }
 }
 
 async function endLiveBroadcast() {
@@ -2236,6 +2267,7 @@ async function init() {
   }
   currentTeamId = teamId;
   currentGameId = gameId;
+  restorePendingEventQueue();
 
   try {
     const [team, game, playersList] = await Promise.all([
@@ -2356,6 +2388,7 @@ async function init() {
       }
 
       if (!shouldResume) {
+        clearPendingEventQueue();
         const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
@@ -2550,6 +2583,9 @@ async function init() {
     if (currentGame.liveStatus === 'live') {
       await startLiveBroadcast();
     }
+    if (liveState.eventQueue.length > 0 && window.navigator?.onLine !== false) {
+      scheduleRetry({ resetBackoff: true });
+    }
     setupNavigationWarning();
   } catch (error) {
     console.error(error);
@@ -2557,6 +2593,12 @@ async function init() {
     window.location.href = `edit-schedule.html#teamId=${teamId}`;
   }
 }
+
+window.addEventListener('online', () => {
+  if (liveState.eventQueue.length > 0) {
+    scheduleRetry({ resetBackoff: true });
+  }
+});
 
 function updateSubsButton() {
   if (!els.subOpen) return;
