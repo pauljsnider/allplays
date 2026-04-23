@@ -455,6 +455,8 @@
           toc.appendChild(a);
           return a;
         });
+        const allLinks = [...links];
+        let mobileWrapper = null;
 
         if (mobileToc && window.innerWidth < 1024) {
           const wrapper = document.createElement('details');
@@ -468,22 +470,36 @@
           summary.style.color = '#0f172a';
           const list = toc.cloneNode(true);
           list.style.marginTop = '0.6rem';
+          allLinks.push(...Array.from(list.querySelectorAll('a')));
           wrapper.appendChild(summary);
           wrapper.appendChild(list);
           mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
         }
 
         const sectionById = new Map(headings.map((h) => [h.id, h]));
-        const setActive = () => {
-          let active = headings[0];
-          for (const h of headings) {
-            if (h.getBoundingClientRect().top <= 140) active = h;
+        const setActive = (activeId) => {
+          let active = sectionById.get(activeId) || headings[0];
+          if (!sectionById.has(activeId)) {
+            for (const h of headings) {
+              if (h.getBoundingClientRect().top <= 140) active = h;
+            }
           }
-          links.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+          allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        window.addEventListener('scroll', setActive, { passive: true });
-        setActive();
+        allLinks.forEach((a) => {
+          a.addEventListener('click', () => {
+            setActive(a.getAttribute('href').slice(1));
+            if (mobileWrapper && mobileWrapper.contains(a)) {
+              mobileWrapper.open = false;
+            }
+          });
+        });
+
+        window.addEventListener('scroll', () => setActive(null), { passive: true });
+        window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        setActive(window.window.location.hash.slice(1) || null);
       })();
     </script>
 </body>
