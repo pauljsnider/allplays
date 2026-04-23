@@ -253,6 +253,22 @@
                     </div>
                 </div>
 
+                <div id="team-id-panel" class="hidden bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h3 class="font-semibold text-slate-900 text-sm">Team ID</h3>
+                            <p class="text-xs text-slate-600 mt-1">Use this Team ID in league registration forms and admin handoffs so families and staff can reference the exact team.</p>
+                        </div>
+                        <button id="copy-team-id-btn" type="button" class="shrink-0 px-3 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800 transition">
+                            Copy Team ID
+                        </button>
+                    </div>
+                    <div class="mt-3 flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
+                        <code id="team-id-text" class="text-sm font-semibold tracking-wide text-slate-800 break-all"></code>
+                        <span id="team-id-status" class="hidden text-xs font-medium text-emerald-600">Copied!</span>
+                    </div>
+                </div>
+
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Team Photo</label>
                     <div class="mt-1 flex items-center space-x-4">
@@ -298,6 +314,15 @@
         let pendingAdminInviteEmails = [];
         let isInitPending = true;
 
+        function buildTeamEditUrl(teamId, created = false) {
+            const params = new URLSearchParams();
+            params.set('teamId', teamId);
+            if (created) {
+                params.set('created', '1');
+            }
+            return `edit-team.html#${params.toString()}`;
+        }
+
         function parseStandingsNumber(value, fallback) {
             const parsed = Number.parseInt(String(value ?? ''), 10);
             return Number.isFinite(parsed) ? parsed : fallback;
@@ -308,6 +333,43 @@
                 .split(',')
                 .map((item) => item.trim())
                 .filter(Boolean);
+        }
+
+        async function copyTextToClipboard(value) {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(value);
+                return true;
+            }
+
+            const input = document.createElement('textarea');
+            input.value = value;
+            input.setAttribute('readonly', '');
+            input.style.position = 'absolute';
+            input.style.left = '-9999px';
+            document.body.appendChild(input);
+            input.select();
+            const copied = document.execCommand('copy');
+            document.body.removeChild(input);
+            if (!copied) {
+                throw new Error('Clipboard unavailable');
+            }
+            return true;
+        }
+
+        function updateTeamIdPanel(teamId) {
+            const panel = document.getElementById('team-id-panel');
+            const teamIdText = document.getElementById('team-id-text');
+            const status = document.getElementById('team-id-status');
+            if (!teamId) {
+                panel.classList.add('hidden');
+                teamIdText.textContent = '';
+                status.classList.add('hidden');
+                return;
+            }
+
+            teamIdText.textContent = teamId;
+            status.classList.add('hidden');
+            panel.classList.remove('hidden');
         }
 
         const saveBtn = document.getElementById('save-btn');
@@ -406,6 +468,7 @@
                 streamInput.dispatchEvent(new Event('input')); // trigger detection badge
                 adminEmails = normalizeAdminEmailList(team.adminEmails);
                 renderAdminList();
+                updateTeamIdPanel(initialTeamId);
 
                 if (team.photoUrl) {
                     currentPhotoUrl = team.photoUrl;
@@ -426,6 +489,25 @@
                 renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
             }
         }
+
+        document.getElementById('copy-team-id-btn').addEventListener('click', async () => {
+            if (!currentTeamId) return;
+            const btn = document.getElementById('copy-team-id-btn');
+            const status = document.getElementById('team-id-status');
+            const originalText = btn.textContent;
+            try {
+                await copyTextToClipboard(currentTeamId);
+                btn.textContent = 'Copied!';
+                status.classList.remove('hidden');
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    status.classList.add('hidden');
+                }, 2000);
+            } catch (error) {
+                console.error('Failed to copy Team ID:', error);
+                alert('Failed to copy Team ID. Please try again.');
+            }
+        });
 
         // Handle photo preview when file is selected
         document.getElementById('photo-upload').addEventListener('change', (e) => {
@@ -779,6 +861,9 @@
                     if (inviteFollowUp.unresolvedCount > 0) {
                         alert(`Team created. ${inviteFollowUp.unresolvedCount} admin invite(s) need manual follow-up. Open Edit Team to resend or share invite links.`);
                     }
+
+                    window.location.href = buildTeamEditUrl(newTeamId, true);
+                    return;
                 }
 
                 window.location.href = 'dashboard.html';

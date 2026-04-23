@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
-    <title>PR Test Suite - Basketball Detection & Auth Flow</title>
+    <title>PR Test Suite - Basketball Detection, Auth Flow, Live Sync, and Team ID</title>
     <style>
         body { font-family: monospace; padding: 20px; background: #f5f5f5; }
         .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; }
@@ -19,7 +19,7 @@
 </head>
 <body>
     <h1>🧪 PR Test Suite</h1>
-    <p>Testing changes from commits: 7a1dbf4, 399a507, 372018c, 1835b73</p>
+    <p>Testing changes from commits: 7a1dbf4, 399a507, 372018c, 1835b73, issue-433</p>
 
     <div id="test-results"></div>
 
@@ -340,7 +340,55 @@
         });
 
         // ============================================
-        // TEST SUITE 4: Athlete Profile Auth Readiness
+        // TEST SUITE 5: Team ID Workflow
+        // ============================================
+
+        function buildTeamEditUrl(teamId, created = false) {
+            const params = new URLSearchParams();
+            params.set('teamId', teamId);
+            if (created) {
+                params.set('created', '1');
+            }
+            return `edit-team.html#${params.toString()}`;
+        }
+
+        function getTeamIdPanelState(teamId) {
+            return {
+                visible: Boolean(teamId),
+                value: teamId || ''
+            };
+        }
+
+        test('buildTeamEditUrl should include the teamId hash param', () => {
+            assertEquals(
+                buildTeamEditUrl('team_123'),
+                'edit-team.html#teamId=team_123',
+                'Team edit URL should include the team ID'
+            );
+        });
+
+        test('buildTeamEditUrl should flag newly created teams', () => {
+            assertEquals(
+                buildTeamEditUrl('team_123', true),
+                'edit-team.html#teamId=team_123&created=1',
+                'New team redirect should include the created marker'
+            );
+        });
+
+        test('Team ID panel should stay hidden when no team ID exists', () => {
+            const state = getTeamIdPanelState('');
+            assertFalse(state.visible, 'Panel should be hidden without a team ID');
+            assertEquals(state.value, '', 'Panel value should be empty when hidden');
+        });
+
+        test('Team ID panel should expose the existing team ID', () => {
+            const state = getTeamIdPanelState('abc123team');
+            assertTrue(state.visible, 'Panel should be visible when a team ID exists');
+            assertEquals(state.value, 'abc123team', 'Panel should show the current team ID');
+        });
+
+        // ============================================
+        // TEST SUITE 6: Athlete Profile Auth Readiness
         // ============================================
 
         function initializeAthleteProfilePage(onAuthResolved, loadProfile) {
@@ -405,6 +453,7 @@
             'Session Storage': [],
             'Edge Cases': [],
             'Live Sync Status': [],
+            'Team ID Workflow': [],
             'Athlete Profile Auth': []
         };
 
@@ -413,6 +462,7 @@
             else if (idx < 16) grouped['Session Storage'].push(result);
             else if (idx < 21) grouped['Edge Cases'].push(result);
             else if (idx < 24) grouped['Live Sync Status'].push(result);
+            else if (idx < 28) grouped['Team ID Workflow'].push(result);
             else grouped['Athlete Profile Auth'].push(result);
         });
 
