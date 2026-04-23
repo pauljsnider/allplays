@@ -320,7 +320,7 @@
             if (created) {
                 params.set('created', '1');
             }
-            return `edit-team.html#${params.toString()}`;
+            return `edit-team.html?${params.toString()}`;
         }
 
         function parseStandingsNumber(value, fallback) {
