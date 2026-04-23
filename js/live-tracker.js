@@ -129,7 +129,9 @@ function restoreLiveEventQueue(teamId = currentTeamId, gameId = currentGameId) {
     liveState.eventQueue = restoredQueue.filter((event) => event && typeof event === 'object');
     if (!liveState.eventQueue.length) {
       window.localStorage.removeItem(storageKey);
+      return;
     }
+    scheduleRetry();
   } catch (error) {
     console.warn('Failed to restore live event queue:', error);
   }
@@ -1050,26 +1052,30 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
 }
 
 function scheduleRetry() {
-  if (liveState.retryTimeout) return;
+  if (liveState.retryTimeout || !liveState.eventQueue.length) return;
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
   liveState.retryTimeout = setTimeout(async () => {
     liveState.retryTimeout = null;
-    const queue = [...liveState.eventQueue];
-    liveState.eventQueue = [];
-    persistLiveEventQueue();
+    let failed = false;
 
-    for (const event of queue) {
+    while (liveState.eventQueue.length > 0) {
+      const event = liveState.eventQueue[0];
       try {
         await broadcastLiveEvent(currentTeamId, currentGameId, event);
         liveState.retryAttempt = 0;
-      } catch {
-        liveState.eventQueue.push(event);
+        liveState.eventQueue.shift();
         persistLiveEventQueue();
+      } catch {
+        failed = true;
+        persistLiveEventQueue();
+        break;
       }
     }
 
     if (liveState.eventQueue.length > 0) {
-      liveState.retryAttempt += 1;
+      if (failed) {
+        liveState.retryAttempt += 1;
+      }
       scheduleRetry();
     } else {
       persistLiveEventQueue();
