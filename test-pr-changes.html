@@ -54,6 +54,31 @@
             }
         }
 
+        function getLiveQueueStorageKey(teamId, gameId) {
+            if (!teamId || !gameId) return '';
+            return `allplays-live-event-queue:${teamId}:${gameId}`;
+        }
+
+        function persistLiveEventQueue(storage, teamId, gameId, eventQueue) {
+            const storageKey = getLiveQueueStorageKey(teamId, gameId);
+            if (!storageKey) return;
+            if (!eventQueue.length) {
+                delete storage[storageKey];
+                return;
+            }
+            storage[storageKey] = JSON.stringify({
+                savedAt: 123,
+                eventQueue
+            });
+        }
+
+        function restoreLiveEventQueue(storage, teamId, gameId) {
+            const storageKey = getLiveQueueStorageKey(teamId, gameId);
+            if (!storageKey || !storage[storageKey]) return [];
+            const parsed = JSON.parse(storage[storageKey]);
+            return Array.isArray(parsed?.eventQueue) ? parsed.eventQueue : [];
+        }
+
         // ============================================
         // TEST SUITE 1: Basketball Detection Logic
         // ============================================
@@ -189,6 +214,29 @@
                 null,
                 'Activation code should be cleared'
             );
+        });
+
+        test('Live queue storage key should be scoped by team and game', () => {
+            assertEquals(
+                getLiveQueueStorageKey('team-1', 'game-9'),
+                'allplays-live-event-queue:team-1:game-9',
+                'Queue storage key should include team and game'
+            );
+        });
+
+        test('Persisted live queue should round-trip through storage', () => {
+            const storage = {};
+            const queue = [{ type: 'score', delta: 2 }, { type: 'foul', playerId: 'p1' }];
+            persistLiveEventQueue(storage, 'team-1', 'game-9', queue);
+            const restored = restoreLiveEventQueue(storage, 'team-1', 'game-9');
+            assertEquals(JSON.stringify(restored), JSON.stringify(queue), 'Restored queue should match persisted queue');
+        });
+
+        test('Persisted live queue should stay scoped to a single game', () => {
+            const storage = {};
+            persistLiveEventQueue(storage, 'team-1', 'game-9', [{ type: 'score' }]);
+            const otherGame = restoreLiveEventQueue(storage, 'team-1', 'game-10');
+            assertEquals(JSON.stringify(otherGame), JSON.stringify([]), 'Other games should not restore this queue');
         });
 
         // ============================================

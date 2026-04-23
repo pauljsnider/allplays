@@ -96,6 +96,45 @@ let liveSync = {
   liveFlagTimeout: null
 };
 
+function getLiveQueueStorageKey(teamId = currentTeamId, gameId = currentGameId) {
+  if (!teamId || !gameId) return '';
+  return `allplays-live-event-queue:${teamId}:${gameId}`;
+}
+
+function persistLiveEventQueue() {
+  const storageKey = getLiveQueueStorageKey();
+  if (!storageKey || typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    if (!liveState.eventQueue.length) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      savedAt: Date.now(),
+      eventQueue: liveState.eventQueue
+    }));
+  } catch (error) {
+    console.warn('Failed to persist live event queue:', error);
+  }
+}
+
+function restoreLiveEventQueue(teamId = currentTeamId, gameId = currentGameId) {
+  const storageKey = getLiveQueueStorageKey(teamId, gameId);
+  if (!storageKey || typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const restoredQueue = Array.isArray(parsed?.eventQueue) ? parsed.eventQueue : [];
+    liveState.eventQueue = restoredQueue.filter((event) => event && typeof event === 'object');
+    if (!liveState.eventQueue.length) {
+      window.localStorage.removeItem(storageKey);
+    }
+  } catch (error) {
+    console.warn('Failed to restore live event queue:', error);
+  }
+}
+
 function scheduleScoreSync() {
   if (!liveState.isLive || !currentTeamId || !currentGameId) return;
   if (liveState.scoreSyncTimeout) return;
@@ -989,6 +1028,7 @@ async function broadcastEvent(eventData) {
   } catch (error) {
     console.error('Broadcast failed (will retry):', error);
     liveState.eventQueue.push(eventData);
+    persistLiveEventQueue();
     scheduleRetry();
   }
 }
@@ -1016,6 +1056,7 @@ function scheduleRetry() {
     liveState.retryTimeout = null;
     const queue = [...liveState.eventQueue];
     liveState.eventQueue = [];
+    persistLiveEventQueue();
 
     for (const event of queue) {
       try {
@@ -1023,12 +1064,15 @@ function scheduleRetry() {
         liveState.retryAttempt = 0;
       } catch {
         liveState.eventQueue.push(event);
+        persistLiveEventQueue();
       }
     }
 
     if (liveState.eventQueue.length > 0) {
       liveState.retryAttempt += 1;
       scheduleRetry();
+    } else {
+      persistLiveEventQueue();
     }
   }, delay);
 }
@@ -2236,6 +2280,7 @@ async function init() {
   }
   currentTeamId = teamId;
   currentGameId = gameId;
+  restoreLiveEventQueue(teamId, gameId);
 
   try {
     const [team, game, playersList] = await Promise.all([
