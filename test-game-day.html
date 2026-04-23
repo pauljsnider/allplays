@@ -155,17 +155,41 @@
             return playerColors[playerId];
         }
 
+        function getSubPlayerId(players, sub, direction) {
+            if (!sub) return null;
+            const directId = sub[`${direction}PlayerId`] || sub[`${direction}Id`] || null;
+            if (directId && players.some(p => p.id === directId)) return directId;
+            const directValue = sub[direction];
+            if (directValue && players.some(p => p.id === directValue)) return directValue;
+            const player = directValue ? players.find(p => p.name === directValue) : null;
+            return player?.id || null;
+        }
+
         function buildOnFieldMap(rotationPlan, rotationActual, players, period) {
             const actual = rotationActual?.[period] || {};
             const plan = rotationPlan?.[period] || {};
             const onField = { ...plan };
             Object.values(actual).flat().forEach(sub => {
-                if (sub && sub.position && sub.in) {
-                    const player = players.find(p => p.name === sub.in);
-                    if (player) onField[sub.position] = player.id;
+                if (sub && sub.position) {
+                    const inPlayerId = getSubPlayerId(players, sub, 'in');
+                    if (inPlayerId) onField[sub.position] = inPlayerId;
                 }
             });
             return onField;
+        }
+
+        function getSubDropdownPlayerIds(rotationPlan, rotationActual, players, period) {
+            const onField = buildOnFieldMap(rotationPlan, rotationActual, players, period);
+            const onFieldIds = new Set(Object.values(onField).filter(Boolean));
+            return {
+                outIds: players.filter(p => onFieldIds.has(p.id)).map(p => p.id),
+                inIds: players.filter(p => !onFieldIds.has(p.id)).map(p => p.id)
+            };
+        }
+
+        function findSubPosition(rotationPlan, rotationActual, players, period, outId) {
+            const onField = buildOnFieldMap(rotationPlan, rotationActual, players, period);
+            return Object.entries(onField).find(([_, playerId]) => playerId === outId)?.[0] || 'unknown';
         }
 
         function determineInitialMode(liveStatus, status) {
@@ -392,20 +416,29 @@
             assertEquals(map['striker'], 'p2', 'Striker should be p2 from plan');
         });
 
-        test('buildOnFieldMap applies actual sub over planned lineup', () => {
+        test('buildOnFieldMap applies actual sub over planned lineup using player ids', () => {
             const plan = { H1: { keeper: 'p1', striker: 'p2' } };
             const actual = {
-                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outId: 'p2', in: 'Carol', inId: 'p3', appliedAt: '2024-01-01' }] }
             };
             const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
             assertEquals(map['keeper'], 'p1', 'Keeper unchanged by sub');
             assertEquals(map['striker'], 'p3', 'Striker should be updated to Carol (p3) after sub');
         });
 
-        test('buildOnFieldMap ignores subs for unknown player names', () => {
+        test('buildOnFieldMap falls back to legacy name-based subs', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
+            assertEquals(map['striker'], 'p3', 'Legacy name-based substitutions should still resolve');
+        });
+
+        test('buildOnFieldMap ignores subs for unknown player ids and names', () => {
             const plan = { H1: { keeper: 'p1' } };
             const actual = {
-                H1: { 'sub-1': [{ position: 'keeper', out: 'p1', in: 'NoSuchPlayer', appliedAt: '2024-01-01' }] }
+                H1: { 'sub-1': [{ position: 'keeper', out: 'p1', outId: 'p1', in: 'NoSuchPlayer', inId: 'missing', appliedAt: '2024-01-01' }] }
             };
             const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
             assertEquals(map['keeper'], 'p1', 'Should keep original if sub player not found');
@@ -421,6 +454,79 @@
             const plan = { H1: { keeper: 'p1' } };
             const map = buildOnFieldMap(plan, {}, mockPlayers, 'H2');
             assertEquals(Object.keys(map).length, 0, 'H2 with no plan should return empty map');
+        });
+
+        test('sub dropdowns use merged on-field state after reopening live game', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outId: 'p2', in: 'Carol', inId: 'p3', appliedAt: '2024-01-01' }] }
+            };
+            const dropdowns = getSubDropdownPlayerIds(plan, actual, mockPlayers, 'H1');
+            assertDeepEquals(dropdowns.outIds, ['p1', 'p3'], 'OUT choices should reflect current on-field players');
+            assertDeepEquals(dropdowns.inIds, ['p2', 'p4'], 'IN choices should exclude players already subbed onto the field');
+        });
+
+        test('next substitution resolves position from current occupant after reload', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outPlayerId: 'p2', in: 'Carol', inPlayerId: 'p3', appliedAt: '2024-01-01' }] }
+            };
+            const position = findSubPosition(plan, actual, mockPlayers, 'H1', 'p3');
+            assertEquals(position, 'striker', 'Follow-up substitution should target Carol\'s current position, not stale plan data');
+        });
+
+        test('buildOnFieldMap prefers player ids when duplicate names exist', () => {
+            const players = [
+                { id: 'p1', name: 'Alex', number: '1' },
+                { id: 'p2', name: 'Jordan', number: '2' },
+                { id: 'p3', name: 'Sam', number: '3' },
+                { id: 'p4', name: 'Sam', number: '4' }
+            ];
+            const plan = { H1: { keeper: 'p1', striker: 'p3' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Sam', outId: 'p3', in: 'Sam', inId: 'p4', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, players, 'H1');
+            assertEquals(map['striker'], 'p4', 'Duplicate names should resolve using the stored player id');
+        });
+
+        test('buildOnFieldMap prefers substitution inPlayerId when roster names collide', () => {
+            const players = [
+                { id: 'p1', name: 'Alex' },
+                { id: 'p2', name: 'Jordan' },
+                { id: 'p3', name: 'Alex' },
+                { id: 'p4', name: 'Taylor' }
+            ];
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Jordan', outPlayerId: 'p2', in: 'Alex', inPlayerId: 'p3', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, players, 'H1');
+            assertEquals(map.striker, 'p3', 'Reloaded state should keep the substituted player by ID, not the first matching name');
+        });
+
+        test('buildOnFieldMap falls back to legacy name matching when inPlayerId is absent', () => {
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', in: 'Carol', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, mockPlayers, 'H1');
+            assertEquals(map.striker, 'p3', 'Legacy substitution records without IDs should still resolve by name');
+        });
+
+        test('buildOnFieldMap keeps substituted player after roster rename when inPlayerId exists', () => {
+            const players = [
+                { id: 'p1', name: 'Alice' },
+                { id: 'p2', name: 'Bob' },
+                { id: 'p3', name: 'Carolyn' },
+                { id: 'p4', name: 'Dana' }
+            ];
+            const plan = { H1: { keeper: 'p1', striker: 'p2' } };
+            const actual = {
+                H1: { 'sub-1': [{ position: 'striker', out: 'Bob', outPlayerId: 'p2', in: 'Carol', inPlayerId: 'p3', appliedAt: '2024-01-01' }] }
+            };
+            const map = buildOnFieldMap(plan, actual, players, 'H1');
+            assertEquals(map.striker, 'p3', 'Reloaded state should survive later player renames when IDs are stored');
         });
 
         // ============================================================
@@ -642,7 +748,7 @@
             { name: 'Suite 2: Rotation Plan — Flatten & Rebuild', count: 7 },
             { name: 'Suite 3: Mode State Machine', count: 6 },
             { name: 'Suite 4: Player Color System', count: 8 },
-            { name: 'Suite 5: On-Field Map / Sub Logic', count: 5 },
+            { name: 'Suite 5: On-Field Map / Sub Logic', count: 12 },
             { name: 'Suite 6: Balance Playing Time', count: 5 },
             { name: 'Suite 7: escapeHtml / XSS Prevention', count: 8 },
             { name: 'Suite 8: Access Control Logic', count: 7 },
