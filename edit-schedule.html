@@ -922,14 +922,14 @@
         }
 
         async function handleAdvanceTournamentPool(gameId) {
-            const game = gamesCache[gameId];
+            const game = gamesCache[gameId] || allTeamGamesCache[gameId];
             const poolName = (game?.tournament?.poolName || '').trim();
             if (!poolName) {
                 alert('This tournament game is missing a pool name, so advancement was skipped.');
                 return;
             }
 
-            const games = Object.values(gamesCache).filter((candidate) => candidate?.id);
+            const games = Object.values(allTeamGamesCache).filter((candidate) => candidate?.id);
             const requiredSeeds = collectTournamentPoolSeeds(games, poolName);
             const rankingInput = prompt(
                 `Enter the finalized ranking for ${poolName}, one team per line in seed order.${requiredSeeds.length ? ` Required seeds: ${requiredSeeds.map((seed) => `#${seed}`).join(', ')}.` : ''}`,
@@ -1229,6 +1229,7 @@
 
         async function loadSchedule() {
             gamesCache = {};
+            allTeamGamesCache = {};
 
             // Get all events (games and practices) from DB
             const dbEvents = await getEvents(currentTeamId);
@@ -1312,7 +1313,7 @@
                             resolved: tournamentPatchMap.get(event.id) || event.tournament?.resolved || null
                         }
                         : null;
-                    allEvents.push({
+                    const eventRecord = {
                         source: 'db',
                         eventType: eventType,
                         date: eventDate,
@@ -1343,7 +1344,11 @@
                         eventId: event.id,
                         isPractice: eventType === 'practice',
                         isRecurring: false
-                    });
+                    };
+                    allEvents.push(eventRecord);
+                    if (eventType !== 'practice') {
+                        allTeamGamesCache[event.id] = eventRecord;
+                    }
                 }
             });
 
@@ -1734,6 +1739,7 @@
 
         let editingGameId = null;
         let gamesCache = {};
+        let allTeamGamesCache = {};
         let pendingTrackGameId = null;
         let pendingTrackIsBasketball = false;
 
