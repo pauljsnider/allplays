@@ -771,7 +771,7 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
-        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=2';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
@@ -779,7 +779,7 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { collectTournamentAdvancementPatches, describeTournamentSource } from './js/tournament-brackets.js?v=1';
-        import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=2';
+        import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
@@ -1009,22 +1009,31 @@
                 counterpartTeamId,
                 counterpartTitle: counterpartEventTitle
             });
-            for (const target of targets) {
-                await postChatMessage(target.teamId, {
-                    text: buildScheduleChangeMessage({
-                        action,
-                        eventType,
-                        title: target.title,
-                        dateLabel: getEventDateLabel(eventDate),
-                        location,
-                        note
-                    }),
-                    senderId: currentUser.uid,
-                    senderName: currentUser.displayName || currentUser.email,
-                    senderEmail: currentUser.email
-                });
+            const notificationResult = await postScheduleNotificationTargets({
+                targets,
+                postChatMessage,
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || currentUser.email,
+                senderEmail: currentUser.email,
+                buildText: (target) => buildScheduleChangeMessage({
+                    action,
+                    eventType,
+                    title: target.title,
+                    dateLabel: getEventDateLabel(eventDate),
+                    location,
+                    note
+                })
+            });
+
+            if (!notificationResult.sent && notificationResult.failedCount > 0) {
+                throw new Error(notificationResult.errorMessage);
             }
-            return true;
+
+            if (notificationResult.sent && notificationResult.failedCount > 0) {
+                console.warn('Schedule notification partially failed:', notificationResult.failures);
+            }
+
+            return notificationResult.sent;
         }
 
         function alertNonFatalNotificationError(eventLabel, error) {
@@ -1983,10 +1992,7 @@
                     savedGameId = await addGame(currentTeamId, gameData);
                 }
 
-                const counterpartTeamId = selectedOpponentTeam?.id
-                    || gamesCache[editingGameId]?.opponentTeamId
-                    || gamesCache[editingGameId]?.sharedScheduleOpponentTeamId
-                    || null;
+                const counterpartTeamId = gameData.opponentTeamId || null;
                 const counterpartEventTitle = counterpartTeamId
                     ? getEventDisplayTitle({ eventType: 'game', opponent: currentTeam?.name || 'Opponent' })
                     : null;

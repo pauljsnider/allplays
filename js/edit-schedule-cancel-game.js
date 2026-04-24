@@ -1,4 +1,4 @@
-import { buildScheduleNotificationTargets } from './schedule-notifications.js?v=2';
+import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from './schedule-notifications.js?v=3';
 
 function formatCancelledGameDate(value) {
     const gameDate = value?.toDate ? value.toDate() : new Date(value);
@@ -39,23 +39,17 @@ export async function cancelScheduledGame({
         counterpartTeamId,
         counterpartTitle: counterpartOpponent ? `vs. ${counterpartOpponent}` : null
     });
-    const notificationErrors = [];
-
-    for (const target of targets) {
-        try {
-            await postChatMessage(target.teamId, {
-                text: buildCancelledGameText(target.title, game?.date),
-                senderId: user.uid,
-                senderName: user.displayName || user.email,
-                senderEmail: user.email
-            });
-        } catch (error) {
-            notificationErrors.push(error?.message || 'Unknown chat notification error');
-        }
-    }
+    const notificationResult = await postScheduleNotificationTargets({
+        targets,
+        postChatMessage,
+        senderId: user.uid,
+        senderName: user.displayName || user.email,
+        senderEmail: user.email,
+        buildText: (target) => buildCancelledGameText(target.title, game?.date)
+    });
 
     return {
         cancelled: true,
-        notificationError: notificationErrors.length > 0 ? notificationErrors.join('; ') : null
+        notificationError: notificationResult.failedCount > 0 ? notificationResult.errorMessage : null
     };
 }

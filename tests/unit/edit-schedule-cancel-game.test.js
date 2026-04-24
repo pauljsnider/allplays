@@ -10,7 +10,7 @@ describe('cancelScheduledGame', () => {
     it('wires edit schedule through the shared cancellation helper', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=2';");
+        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';");
         expect(source).toContain('const result = await cancelScheduledGame({');
         expect(source).toContain('await loadSchedule();');
         expect(source).toContain('Game cancelled, but team chat notification failed:');

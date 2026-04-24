@@ -88,6 +88,43 @@ export function buildScheduleNotificationTargets({
     return targets;
 }
 
+export async function postScheduleNotificationTargets({
+    targets = [],
+    postChatMessage,
+    senderId,
+    senderName,
+    senderEmail,
+    buildText
+} = {}) {
+    const failures = [];
+    let sentCount = 0;
+
+    for (const target of targets) {
+        try {
+            await postChatMessage(target.teamId, {
+                text: buildText(target),
+                senderId,
+                senderName,
+                senderEmail
+            });
+            sentCount += 1;
+        } catch (error) {
+            failures.push({
+                teamId: target.teamId,
+                message: error?.message || 'Unknown chat notification error'
+            });
+        }
+    }
+
+    return {
+        sent: sentCount > 0,
+        sentCount,
+        failedCount: failures.length,
+        failures,
+        errorMessage: failures.map(({ message }) => message).join('; ')
+    };
+}
+
 export function buildRsvpReminderMessage({
     eventType,
     title,
