@@ -51,10 +51,6 @@ import {
     buildSharedScheduleSourceUpdate,
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
-import {
-    validateOrganizationSharedGameSelection,
-    buildOrganizationSharedGamePayload
-} from './organization-shared-schedule.js?v=1';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import {
     decodeSharedGameSyntheticId,
@@ -325,37 +321,6 @@ export async function getTeam(teamId, options = {}) {
     } else {
         return null;
     }
-}
-
-export async function getOrganization(organizationId) {
-    const normalizedOrganizationId = String(organizationId || '').trim();
-    if (!normalizedOrganizationId) return null;
-
-    const organizationRef = doc(db, 'organizations', normalizedOrganizationId);
-    const organizationSnap = await getDoc(organizationRef);
-    if (!organizationSnap.exists()) return null;
-
-    return {
-        id: organizationSnap.id,
-        ...organizationSnap.data()
-    };
-}
-
-export async function getOrganizationTeams(organizationId, options = {}) {
-    const includeInactive = !!options.includeInactive;
-    const normalizedOrganizationId = String(organizationId || '').trim();
-    if (!normalizedOrganizationId) return [];
-
-    const snapshot = await getDocs(query(
-        collection(db, 'teams'),
-        where('organizationId', '==', normalizedOrganizationId)
-    ));
-
-    const teams = snapshot.docs
-        .map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() }))
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
-    return filterTeamsByActive(teams, includeInactive);
 }
 
 export async function getUserTeams(userId, options = {}) {
@@ -1072,68 +1037,6 @@ export async function addGame(teamId, gameData) {
         }
     }
     return docRef.id;
-}
-
-export async function createOrganizationSharedGame({
-    organizationId,
-    homeTeamId,
-    awayTeamId,
-    date,
-    location,
-    arrivalTime
-}) {
-    const normalizedOrganizationId = String(organizationId || '').trim();
-    const normalizedLocation = String(location || '').trim();
-    const normalizedDateInput = String(date || '').trim();
-    const normalizedArrivalInput = String(arrivalTime || '').trim();
-
-    if (!normalizedDateInput) {
-        throw new Error('Game date/time is required');
-    }
-
-    if (!normalizedLocation) {
-        throw new Error('Location is required');
-    }
-
-    if (!normalizedArrivalInput) {
-        throw new Error('Arrival time is required');
-    }
-
-    const gameDate = new Date(normalizedDateInput);
-    if (Number.isNaN(gameDate.getTime())) {
-        throw new Error('Valid game date/time is required');
-    }
-
-    const arrivalDate = new Date(normalizedArrivalInput);
-    if (Number.isNaN(arrivalDate.getTime())) {
-        throw new Error('Valid arrival time is required');
-    }
-
-    const [homeTeam, awayTeam] = await Promise.all([
-        getTeam(homeTeamId, { includeInactive: true }),
-        getTeam(awayTeamId, { includeInactive: true })
-    ]);
-
-    const validation = validateOrganizationSharedGameSelection({
-        organizationId: normalizedOrganizationId,
-        homeTeam,
-        awayTeam
-    });
-
-    if (!validation.valid) {
-        throw new Error(validation.error);
-    }
-
-    const payload = buildOrganizationSharedGamePayload({
-        organizationId: normalizedOrganizationId,
-        homeTeam,
-        awayTeam,
-        gameDate,
-        location: normalizedLocation,
-        arrivalTime: arrivalDate
-    });
-
-    return addGame(homeTeam.id, payload);
 }
 
 export async function updateGame(teamId, gameId, gameData) {
