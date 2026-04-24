@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     normalizeScheduleNotificationSettings,
     buildScheduleChangeMessage,
+    buildScheduleNotificationTargets,
     buildRsvpReminderMessage
 } from '../../js/schedule-notifications.js';
 
@@ -49,6 +50,27 @@ describe('schedule notification helpers', () => {
         expect(message).toContain('Tue, Mar 10 at 6:00 PM');
         expect(message).toContain('Main Gym');
         expect(message).toContain('Coach note: Warmups start 20 minutes early.');
+    });
+
+    it('builds notification targets for both teams without duplicates', () => {
+        expect(buildScheduleNotificationTargets({
+            teamId: 'team-alpha',
+            title: 'vs. Bravo FC',
+            counterpartTeamId: 'team-bravo',
+            counterpartTitle: 'vs. Alpha FC'
+        })).toEqual([
+            { teamId: 'team-alpha', title: 'vs. Bravo FC' },
+            { teamId: 'team-bravo', title: 'vs. Alpha FC' }
+        ]);
+
+        expect(buildScheduleNotificationTargets({
+            teamId: 'team-alpha',
+            title: 'vs. Bravo FC',
+            counterpartTeamId: 'team-alpha',
+            counterpartTitle: 'vs. Alpha FC'
+        })).toEqual([
+            { teamId: 'team-alpha', title: 'vs. Bravo FC' }
+        ]);
     });
 
     it('builds RSVP reminder messages for the no-response group', () => {

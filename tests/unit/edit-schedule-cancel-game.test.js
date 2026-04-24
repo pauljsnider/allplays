@@ -10,7 +10,7 @@ describe('cancelScheduledGame', () => {
     it('wires edit schedule through the shared cancellation helper', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';");
+        expect(source).toContain("import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=2';");
         expect(source).toContain('const result = await cancelScheduledGame({');
         expect(source).toContain('await loadSchedule();');
         expect(source).toContain('Game cancelled, but team chat notification failed:');
@@ -47,6 +47,46 @@ describe('cancelScheduledGame', () => {
         expect(result).toEqual({
             cancelled: true,
             notificationError: 'chat writes blocked'
+        });
+    });
+
+    it('notifies both team chats for shared matchups', async () => {
+        const cancelGame = vi.fn().mockResolvedValue(undefined);
+        const postChatMessage = vi.fn().mockResolvedValue(undefined);
+
+        const result = await cancelScheduledGame({
+            teamId: 'team-123',
+            gameId: 'game-456',
+            user: {
+                uid: 'user-789',
+                displayName: 'Coach Kelly',
+                email: 'coach@example.com'
+            },
+            game: {
+                opponent: 'Tigers',
+                date: '2026-03-10T18:00:00.000Z'
+            },
+            cancelGame,
+            postChatMessage,
+            counterpartTeamId: 'team-999',
+            counterpartOpponent: 'Falcons'
+        });
+
+        expect(postChatMessage).toHaveBeenNthCalledWith(1, 'team-123', {
+            text: '⚠️ Game cancelled: vs. Tigers on Tue, Mar 10',
+            senderId: 'user-789',
+            senderName: 'Coach Kelly',
+            senderEmail: 'coach@example.com'
+        });
+        expect(postChatMessage).toHaveBeenNthCalledWith(2, 'team-999', {
+            text: '⚠️ Game cancelled: vs. Falcons on Tue, Mar 10',
+            senderId: 'user-789',
+            senderName: 'Coach Kelly',
+            senderEmail: 'coach@example.com'
+        });
+        expect(result).toEqual({
+            cancelled: true,
+            notificationError: null
         });
     });
 

@@ -63,6 +63,31 @@ export function buildScheduleChangeMessage({
     return lines.join('\n');
 }
 
+export function buildScheduleNotificationTargets({
+    teamId,
+    title,
+    counterpartTeamId,
+    counterpartTitle
+} = {}) {
+    const targets = [];
+    const seen = new Set();
+
+    function addTarget(nextTeamId, nextTitle) {
+        const normalizedTeamId = String(nextTeamId || '').trim();
+        if (!normalizedTeamId || seen.has(normalizedTeamId)) return;
+        seen.add(normalizedTeamId);
+        targets.push({
+            teamId: normalizedTeamId,
+            title: nextTitle || title || 'Untitled event'
+        });
+    }
+
+    addTarget(teamId, title);
+    addTarget(counterpartTeamId, counterpartTitle || title);
+
+    return targets;
+}
+
 export function buildRsvpReminderMessage({
     eventType,
     title,
