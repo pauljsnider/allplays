@@ -152,20 +152,43 @@
 
         function renderSuccess(homeTeam, awayTeam) {
             successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
-            successAlert.innerHTML = `
-                <div class="font-semibold">Shared matchup published.</div>
-                <div class="mt-2">${homeTeam.name} now has the source game, and ${awayTeam.name} can view the mirrored entry from its normal team schedule.</div>
-                <div class="mt-3 flex flex-wrap gap-2">
-                    <a href="edit-schedule.html#teamId=${homeTeam.id}" class="inline-flex items-center rounded-md bg-white px-3 py-1.5 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100">Open ${homeTeam.name} schedule</a>
-                    <a href="edit-schedule.html#teamId=${awayTeam.id}" class="inline-flex items-center rounded-md bg-white px-3 py-1.5 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100">Open ${awayTeam.name} schedule</a>
-                </div>
-            `;
+            successAlert.replaceChildren();
+
+            const title = document.createElement('div');
+            title.className = 'font-semibold';
+            title.textContent = 'Shared matchup published.';
+
+            const detail = document.createElement('div');
+            detail.className = 'mt-2';
+            detail.textContent = `${homeTeam.name} now has the source game, and ${awayTeam.name} can view the mirrored entry from its normal team schedule.`;
+
+            const actions = document.createElement('div');
+            actions.className = 'mt-3 flex flex-wrap gap-2';
+
+            const homeLink = document.createElement('a');
+            homeLink.href = `edit-schedule.html#teamId=${encodeURIComponent(homeTeam.id)}`;
+            homeLink.className = 'inline-flex items-center rounded-md bg-white px-3 py-1.5 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100';
+            homeLink.textContent = `Open ${homeTeam.name} schedule`;
+
+            const awayLink = document.createElement('a');
+            awayLink.href = `edit-schedule.html#teamId=${encodeURIComponent(awayTeam.id)}`;
+            awayLink.className = 'inline-flex items-center rounded-md bg-white px-3 py-1.5 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100';
+            awayLink.textContent = `Open ${awayTeam.name} schedule`;
+
+            actions.append(homeLink, awayLink);
+            successAlert.append(title, detail, actions);
         }
 
         function renderTeamOptions(selectEl, teams, preferredTeamId = '') {
-            selectEl.innerHTML = teams.map((team) => `
-                <option value="${team.id}">${team.name}</option>
-            `).join('');
+            const options = teams.map((team) => {
+                const option = document.createElement('option');
+                option.value = team.id;
+                option.textContent = team.name;
+                return option;
+            });
+
+            selectEl.replaceChildren(...options);
+
             if (preferredTeamId && teams.some((team) => team.id === preferredTeamId)) {
                 selectEl.value = preferredTeamId;
             }

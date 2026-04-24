@@ -80,4 +80,20 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('id="organization-schedule-link"');
         expect(source).toContain('organization-schedule.html#teamId=${currentTeamId}');
     });
+
+    it('renders organization schedule team options without injecting HTML strings', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain("const option = document.createElement('option');");
+        expect(source).toContain('option.textContent = team.name;');
+        expect(source).not.toContain('selectEl.innerHTML = teams.map');
+    });
+
+    it('renders shared matchup success actions without using innerHTML', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('successAlert.replaceChildren();');
+        expect(source).toContain("const homeLink = document.createElement('a');");
+        expect(source).not.toContain('successAlert.innerHTML =');
+    });
 });
