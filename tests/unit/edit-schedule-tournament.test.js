@@ -29,4 +29,16 @@ describe('edit schedule tournament wiring', () => {
     expect(block).toContain('if (tournamentData) {');
     expect(block).toContain('gameData.tournament = tournamentData;');
   });
+
+  it('wires the pool advancement action through the tournament admin workflow', () => {
+    const source = readEditSchedule();
+
+    expect(source).toContain('applyTournamentAdvancementPatches');
+    expect(source).toContain('planTournamentPoolAdvancement');
+    expect(source).toContain('class="advance-tournament-pool-btn');
+    expect(source).toContain("document.querySelectorAll('.advance-tournament-pool-btn').forEach(btn => {");
+    expect(source).toContain('const plan = planTournamentPoolAdvancement(games, {');
+    expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);');
+    expect(source).toContain('Skipped advancement for ${poolName}. ${plan.reason}');
+  });
 });
