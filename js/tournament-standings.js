@@ -5,13 +5,29 @@ function normalizeString(value) {
     return text || null;
 }
 
-export function buildTournamentPoolOverrideKey(poolName) {
+function buildLegacyTournamentPoolOverrideKey(poolName) {
     const normalized = normalizeString(poolName);
     if (!normalized) return 'pool';
     return normalized
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '') || 'pool';
+}
+
+function hashTournamentPoolName(poolName) {
+    const normalized = normalizeString(poolName) || '';
+    let hash = 2166136261;
+    for (let index = 0; index < normalized.length; index += 1) {
+        hash ^= normalized.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function buildTournamentPoolOverrideKey(poolName) {
+    const normalized = normalizeString(poolName);
+    if (!normalized) return 'pool-00000000';
+    return `${buildLegacyTournamentPoolOverrideKey(normalized)}-${hashTournamentPoolName(normalized)}`;
 }
 
 function getSlotTeamName(slot = {}) {
@@ -95,7 +111,18 @@ export function applyTournamentStandingsOverride(rowsInput = [], override = null
 
 function getPoolOverride(poolOverrides = {}, poolName) {
     if (!poolOverrides || typeof poolOverrides !== 'object') return null;
-    return poolOverrides[buildTournamentPoolOverrideKey(poolName)] || null;
+    const normalizedPoolName = normalizeString(poolName);
+    if (!normalizedPoolName) return null;
+
+    const directOverride = poolOverrides[buildTournamentPoolOverrideKey(normalizedPoolName)] || null;
+    if (directOverride) return directOverride;
+
+    const legacyOverride = poolOverrides[buildLegacyTournamentPoolOverrideKey(normalizedPoolName)] || null;
+    if (normalizeString(legacyOverride?.poolName) === normalizedPoolName) {
+        return legacyOverride;
+    }
+
+    return Object.values(poolOverrides).find((override) => normalizeString(override?.poolName) === normalizedPoolName) || null;
 }
 
 export function buildTournamentPoolStandings(gamesInput = [], options = {}) {

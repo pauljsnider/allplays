@@ -471,8 +471,25 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
+function normalizeTournamentPoolOverrideName(poolName) {
+    return String(poolName || '').trim();
+}
+
+function collectTournamentPoolOverrideKeys(poolOverrides = {}, poolName) {
+    const normalizedPoolName = normalizeTournamentPoolOverrideName(poolName);
+    if (!normalizedPoolName) return [];
+
+    const keys = new Set([buildTournamentPoolOverrideKey(normalizedPoolName)]);
+    Object.entries(poolOverrides || {}).forEach(([key, override]) => {
+        if (normalizeTournamentPoolOverrideName(override?.poolName) === normalizedPoolName) {
+            keys.add(key);
+        }
+    });
+    return Array.from(keys);
+}
+
 export async function saveTournamentPoolOverride(teamId, override = {}) {
-    const poolName = String(override?.poolName || '').trim();
+    const poolName = normalizeTournamentPoolOverrideName(override?.poolName);
     if (!teamId || !poolName) {
         throw new Error('Missing teamId or poolName for tournament pool override');
     }
@@ -481,8 +498,11 @@ export async function saveTournamentPoolOverride(teamId, override = {}) {
         ? override.teamOrder.map((teamName) => String(teamName || '').trim()).filter(Boolean)
         : [];
 
+    const teamRef = doc(db, "teams", teamId);
+    const teamSnapshot = await getDoc(teamRef);
+    const existingOverrides = teamSnapshot.exists() ? (teamSnapshot.data()?.tournamentPoolOverrides || {}) : {};
     const key = buildTournamentPoolOverrideKey(poolName);
-    await updateTeam(teamId, {
+    const updatePayload = {
         [`tournamentPoolOverrides.${key}`]: {
             poolName,
             teamOrder,
@@ -493,19 +513,35 @@ export async function saveTournamentPoolOverride(teamId, override = {}) {
                 email: override?.finalizedBy?.email || null
             }
         }
-    });
+    };
+
+    collectTournamentPoolOverrideKeys(existingOverrides, poolName)
+        .filter((existingKey) => existingKey !== key)
+        .forEach((existingKey) => {
+            updatePayload[`tournamentPoolOverrides.${existingKey}`] = deleteField();
+        });
+
+    await updateTeam(teamId, updatePayload);
 }
 
 export async function clearTournamentPoolOverride(teamId, poolName) {
-    const normalizedPoolName = String(poolName || '').trim();
+    const normalizedPoolName = normalizeTournamentPoolOverrideName(poolName);
     if (!teamId || !normalizedPoolName) {
         throw new Error('Missing teamId or poolName for tournament pool override clear');
     }
 
-    const key = buildTournamentPoolOverrideKey(normalizedPoolName);
-    await updateTeam(teamId, {
-        [`tournamentPoolOverrides.${key}`]: deleteField()
+    const teamRef = doc(db, "teams", teamId);
+    const teamSnapshot = await getDoc(teamRef);
+    const existingOverrides = teamSnapshot.exists() ? (teamSnapshot.data()?.tournamentPoolOverrides || {}) : {};
+    const keysToDelete = collectTournamentPoolOverrideKeys(existingOverrides, normalizedPoolName);
+    if (!keysToDelete.length) return;
+
+    const updatePayload = {};
+    keysToDelete.forEach((key) => {
+        updatePayload[`tournamentPoolOverrides.${key}`] = deleteField();
     });
+
+    await updateTeam(teamId, updatePayload);
 }
 
 export async function addTeamAdminEmail(teamId, email) {
