@@ -79,6 +79,41 @@
             return Array.isArray(parsed?.eventQueue) ? parsed.eventQueue : [];
         }
 
+        function deriveLiveSyncStatus({ isOnline = true, pendingCount = 0, retryAttempt = 0, isRetryScheduled = false } = {}) {
+            const normalizedPendingCount = Math.max(0, Number(pendingCount || 0));
+            if (!isOnline) {
+                return {
+                    visible: true,
+                    tone: 'offline',
+                    label: 'Offline tracking',
+                    detail: normalizedPendingCount > 0
+                        ? 'Unsynced events are queued until connection returns.'
+                        : 'New live events will queue until connection returns.',
+                    pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+                };
+            }
+
+            if (normalizedPendingCount > 0 || isRetryScheduled) {
+                return {
+                    visible: true,
+                    tone: 'warning',
+                    label: retryAttempt > 0 ? 'Retrying live sync' : 'Syncing queued events',
+                    detail: normalizedPendingCount > 0
+                        ? 'Queued live events will continue syncing in the background.'
+                        : 'Waiting for the next retry window.',
+                    pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+                };
+            }
+
+            return {
+                visible: false,
+                tone: 'warning',
+                label: '',
+                detail: '',
+                pendingText: ''
+            };
+        }
+
         // ============================================
         // TEST SUITE 1: Basketball Detection Logic
         // ============================================
@@ -282,6 +317,29 @@
         });
 
         // ============================================
+        // TEST SUITE 4: Live Sync Status
+        // ============================================
+
+        test('Live sync status should hide when online with no pending queue', () => {
+            const status = deriveLiveSyncStatus({ isOnline: true, pendingCount: 0, retryAttempt: 0, isRetryScheduled: false });
+            assertFalse(status.visible, 'Status should hide when there is nothing pending');
+        });
+
+        test('Live sync status should show offline banner and pending count', () => {
+            const status = deriveLiveSyncStatus({ isOnline: false, pendingCount: 3, retryAttempt: 0, isRetryScheduled: false });
+            assertTrue(status.visible, 'Offline status should be visible');
+            assertEquals(status.tone, 'offline', 'Offline status should use offline tone');
+            assertEquals(status.pendingText, '3 pending', 'Offline status should include pending count');
+        });
+
+        test('Live sync status should show retrying state when queue is pending online', () => {
+            const status = deriveLiveSyncStatus({ isOnline: true, pendingCount: 2, retryAttempt: 1, isRetryScheduled: true });
+            assertTrue(status.visible, 'Retrying status should be visible');
+            assertEquals(status.tone, 'warning', 'Retrying status should use warning tone');
+            assertEquals(status.label, 'Retrying live sync', 'Retrying label should be shown');
+        });
+
+        // ============================================
         // TEST SUITE 4: Athlete Profile Auth Readiness
         // ============================================
 
@@ -346,13 +404,15 @@
             'Basketball Detection': [],
             'Session Storage': [],
             'Edge Cases': [],
+            'Live Sync Status': [],
             'Athlete Profile Auth': []
         };
 
         results.forEach((result, idx) => {
             if (idx < 10) grouped['Basketball Detection'].push(result);
-            else if (idx < 13) grouped['Session Storage'].push(result);
-            else if (idx < 18) grouped['Edge Cases'].push(result);
+            else if (idx < 16) grouped['Session Storage'].push(result);
+            else if (idx < 21) grouped['Edge Cases'].push(result);
+            else if (idx < 24) grouped['Live Sync Status'].push(result);
             else grouped['Athlete Profile Auth'].push(result);
         });
 
