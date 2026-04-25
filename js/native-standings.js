@@ -276,6 +276,34 @@ function resolveTieGroup(group, tiebreakers, allGames, config) {
     });
 }
 
+function resolveTieGroupWithMetadata(group, tiebreakers, allGames, config) {
+    if (group.length <= 1) return [{ rows: [...group], unresolved: false }];
+    if (!Array.isArray(tiebreakers) || tiebreakers.length === 0) {
+        return [{ rows: [...group].sort((a, b) => a.team.localeCompare(b.team)), unresolved: true }];
+    }
+
+    const [current, ...rest] = tiebreakers;
+    if (current === 'name') {
+        return [{ rows: [...group].sort((a, b) => a.team.localeCompare(b.team)), unresolved: true }];
+    }
+
+    const values = buildTiebreakerValues(current, group, allGames, config);
+    if (!values) {
+        return resolveTieGroupWithMetadata(group, rest, allGames, config);
+    }
+
+    const partitions = partitionTieGroup(group, current, values);
+    if (partitions.length === 1 && partitions[0].length === group.length) {
+        return resolveTieGroupWithMetadata(group, rest, allGames, config);
+    }
+
+    return partitions.flatMap((partition) => {
+        if (partition.length <= 1) return [{ rows: [...partition], unresolved: false }];
+        const nextTiebreakers = getApplicableTiebreakers(config, partition.length);
+        return resolveTieGroupWithMetadata(partition, nextTiebreakers, allGames, config);
+    });
+}
+
 function sortStandingsTable(table, allGames, config) {
     const primaryGroups = new Map();
     for (const row of table) {
@@ -297,6 +325,27 @@ function sortStandingsTable(table, allGames, config) {
     return resolved;
 }
 
+function sortStandingsTableWithMetadata(table, allGames, config) {
+    const primaryGroups = new Map();
+    for (const row of table) {
+        const key = String(getPrimaryMetric(row, config));
+        const existing = primaryGroups.get(key) || [];
+        existing.push(row);
+        primaryGroups.set(key, existing);
+    }
+
+    const sortedPrimaryKeys = Array.from(primaryGroups.keys()).sort((a, b) => compareNumbersDesc(Number(a), Number(b)));
+    const resolved = [];
+
+    for (const key of sortedPrimaryKeys) {
+        const group = primaryGroups.get(key) || [];
+        const tiebreakers = getApplicableTiebreakers(config, group.length);
+        resolved.push(...resolveTieGroupWithMetadata(group, tiebreakers, allGames, config));
+    }
+
+    return resolved;
+}
+
 export function computeNativeStandings(gamesInput, configInput = {}) {
     const games = Array.isArray(gamesInput) ? gamesInput : [];
     const completedGames = games.filter(isFinalGameStatus);
@@ -308,4 +357,33 @@ export function computeNativeStandings(gamesInput, configInput = {}) {
         ...row,
         rank: index + 1
     }));
+}
+
+export function computeNativeStandingsDetailed(gamesInput, configInput = {}) {
+    const games = Array.isArray(gamesInput) ? gamesInput : [];
+    const completedGames = games.filter(isFinalGameStatus);
+    const config = safeStandingsConfig(configInput);
+    const table = buildRawTable(completedGames, config);
+    const segments = sortStandingsTableWithMetadata(table, completedGames, config);
+    const rows = [];
+    let placementRank = 1;
+
+    for (const segment of segments) {
+        const unresolvedTie = !!(segment?.unresolved && Array.isArray(segment.rows) && segment.rows.length > 1);
+        const displayRank = unresolvedTie ? `T-${placementRank}` : null;
+
+        segment.rows.forEach((row, index) => {
+            rows.push({
+                ...row,
+                rank: rows.length + 1,
+                placementRank,
+                displayRank: displayRank || String(placementRank + index),
+                unresolvedTie
+            });
+        });
+
+        placementRank += segment.rows.length;
+    }
+
+    return rows;
 }

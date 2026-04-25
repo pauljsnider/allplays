@@ -1,4 +1,4 @@
-import { computeNativeStandings } from './native-standings.js';
+import { computeNativeStandings, computeNativeStandingsDetailed } from './native-standings.js';
 
 function normalizeString(value) {
     const text = String(value || '').trim();
@@ -56,8 +56,18 @@ function getTournamentGameTeams(game = {}, currentTeamName = null) {
     if (currentTeam && opponent) {
         const isHome = game?.isHome !== false;
         return isHome
-            ? { homeTeam: currentTeam, awayTeam: opponent }
-            : { homeTeam: opponent, awayTeam: currentTeam };
+            ? {
+                homeTeam: currentTeam,
+                awayTeam: opponent,
+                homeScore: Number(game.homeScore),
+                awayScore: Number(game.awayScore)
+            }
+            : {
+                homeTeam: opponent,
+                awayTeam: currentTeam,
+                homeScore: Number(game.awayScore),
+                awayScore: Number(game.homeScore)
+            };
     }
 
     return {
@@ -127,7 +137,7 @@ function getPoolOverride(poolOverrides = {}, poolName) {
 
 export function buildTournamentPoolStandings(gamesInput = [], options = {}) {
     const games = Array.isArray(gamesInput) ? gamesInput : [];
-    const currentTeamName = normalizeString(options?.currentTeamName);
+    const currentTeamName = normalizeString(options?.currentTeamName || options?.teamName);
     const standingsConfig = options?.standingsConfig || {};
     const poolOverrides = options?.poolOverrides || {};
     const poolGames = new Map();
@@ -135,15 +145,15 @@ export function buildTournamentPoolStandings(gamesInput = [], options = {}) {
     games.forEach((game) => {
         if (!isCompletedTournamentPoolGame(game)) return;
         const poolName = normalizeString(game?.tournament?.poolName);
-        const { homeTeam, awayTeam } = getTournamentGameTeams(game, currentTeamName);
+        const { homeTeam, awayTeam, homeScore, awayScore } = getTournamentGameTeams(game, currentTeamName);
         if (!poolName || !homeTeam || !awayTeam) return;
         if (homeTeam === awayTeam) return;
 
         const normalizedGame = {
             homeTeam,
             awayTeam,
-            homeScore: Number(game.homeScore),
-            awayScore: Number(game.awayScore),
+            homeScore: Number(homeScore ?? game.homeScore),
+            awayScore: Number(awayScore ?? game.awayScore),
             status: 'completed'
         };
         const existing = poolGames.get(poolName) || [];
@@ -170,4 +180,45 @@ export function buildTournamentPoolStandings(gamesInput = [], options = {}) {
             };
             return acc;
         }, {});
+}
+
+export function computeTournamentPoolStandings(gamesInput, options = {}) {
+    const games = Array.isArray(gamesInput) ? gamesInput : [];
+    const currentTeamName = normalizeString(options?.teamName || options?.currentTeamName);
+    if (!currentTeamName) return [];
+
+    const poolGames = new Map();
+    games.forEach((game) => {
+        if (!isCompletedTournamentPoolGame(game)) return;
+        const poolName = normalizeString(game?.tournament?.poolName);
+        const { homeTeam, awayTeam, homeScore, awayScore } = getTournamentGameTeams(game, currentTeamName);
+        if (!poolName || !homeTeam || !awayTeam) return;
+        if (homeTeam === awayTeam) return;
+
+        const normalizedGame = {
+            homeTeam,
+            awayTeam,
+            homeScore: Number(homeScore ?? game.homeScore),
+            awayScore: Number(awayScore ?? game.awayScore),
+            status: 'completed'
+        };
+        const existing = poolGames.get(poolName) || [];
+        existing.push(normalizedGame);
+        poolGames.set(poolName, existing);
+    });
+
+    return Array.from(poolGames.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([poolName, poolGameList]) => {
+            const rows = computeNativeStandingsDetailed(poolGameList, options?.standingsConfig || {}).map((row) => ({
+                ...row,
+                teamName: row.team
+            }));
+            return {
+                poolName,
+                rows,
+                unresolvedTie: rows.some((row) => row.unresolvedTie)
+            };
+        })
+        .filter((pool) => pool.rows.length > 0);
 }
