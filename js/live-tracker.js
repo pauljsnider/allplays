@@ -17,6 +17,7 @@ import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=1';
+import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from './live-tracker-queue.js?v=1';
 import { runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
 
 let currentTeamId = null;
@@ -96,45 +97,26 @@ let liveSync = {
   liveFlagTimeout: null
 };
 
-function getLiveQueueStorageKey(teamId = currentTeamId, gameId = currentGameId) {
-  if (!teamId || !gameId) return '';
-  return `allplays-live-event-queue:${teamId}:${gameId}`;
+function persistPendingEventQueue() {
+  writePersistedLiveTrackerQueue(window.localStorage, currentTeamId, currentGameId, liveState.eventQueue);
 }
 
-function persistLiveEventQueue() {
-  const storageKey = getLiveQueueStorageKey();
-  if (!storageKey || typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    if (!liveState.eventQueue.length) {
-      window.localStorage.removeItem(storageKey);
-      return;
-    }
-    window.localStorage.setItem(storageKey, JSON.stringify({
-      savedAt: Date.now(),
-      eventQueue: liveState.eventQueue
-    }));
-  } catch (error) {
-    console.warn('Failed to persist live event queue:', error);
-  }
-}
-
-function restoreLiveEventQueue(teamId = currentTeamId, gameId = currentGameId) {
-  const storageKey = getLiveQueueStorageKey(teamId, gameId);
-  if (!storageKey || typeof window === 'undefined' || !window.localStorage) return;
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    const restoredQueue = Array.isArray(parsed?.eventQueue) ? parsed.eventQueue : [];
-    liveState.eventQueue = restoredQueue.filter((event) => event && typeof event === 'object');
-    if (!liveState.eventQueue.length) {
-      window.localStorage.removeItem(storageKey);
-      return;
-    }
+function restorePendingEventQueue() {
+  liveState.eventQueue = readPersistedLiveTrackerQueue(window.localStorage, currentTeamId, currentGameId);
+  liveState.retryAttempt = 0;
+  if (liveState.eventQueue.length > 0) {
     scheduleRetry();
-  } catch (error) {
-    console.warn('Failed to restore live event queue:', error);
   }
+}
+
+function clearPendingEventQueue() {
+  liveState.eventQueue = [];
+  liveState.retryAttempt = 0;
+  if (liveState.retryTimeout) {
+    clearTimeout(liveState.retryTimeout);
+    liveState.retryTimeout = null;
+  }
+  persistPendingEventQueue();
 }
 
 let connectivityListenersBound = false;
@@ -1111,7 +1093,7 @@ async function broadcastEvent(eventData) {
   } catch (error) {
     console.error('Broadcast failed (will retry):', error);
     liveState.eventQueue.push(eventData);
-    persistLiveEventQueue();
+    persistPendingEventQueue();
     renderLiveSyncStatus();
     scheduleRetry();
   }
@@ -1133,8 +1115,12 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
   }));
 }
 
-function scheduleRetry() {
-  if (liveState.retryTimeout || !liveState.eventQueue.length) return;
+function scheduleRetry({ resetBackoff = false } = {}) {
+  if (!currentTeamId || !currentGameId || liveState.eventQueue.length === 0) return;
+  if (resetBackoff) {
+    liveState.retryAttempt = 0;
+  }
+  if (liveState.retryTimeout) return;
   renderLiveSyncStatus();
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
   liveState.retryTimeout = setTimeout(async () => {
@@ -1146,12 +1132,12 @@ function scheduleRetry() {
       const event = liveState.eventQueue[0];
       try {
         await broadcastLiveEvent(currentTeamId, currentGameId, event);
-        liveState.retryAttempt = 0;
         liveState.eventQueue.shift();
-        persistLiveEventQueue();
+        liveState.retryAttempt = 0;
+        persistPendingEventQueue();
       } catch {
         failed = true;
-        persistLiveEventQueue();
+        persistPendingEventQueue();
         break;
       }
       renderLiveSyncStatus();
@@ -1162,8 +1148,9 @@ function scheduleRetry() {
         liveState.retryAttempt += 1;
       }
       scheduleRetry();
+      return;
     } else {
-      persistLiveEventQueue();
+      persistPendingEventQueue();
       renderLiveSyncStatus();
     }
   }, delay);
@@ -1354,6 +1341,9 @@ async function startLiveBroadcast() {
   initChat();
   initViewerCount();
   broadcastLineupUpdate('Lineup set');
+  if (liveState.eventQueue.length > 0 && window.navigator?.onLine !== false) {
+    scheduleRetry({ resetBackoff: true });
+  }
 }
 
 async function endLiveBroadcast() {
@@ -2372,7 +2362,7 @@ async function init() {
   }
   currentTeamId = teamId;
   currentGameId = gameId;
-  restoreLiveEventQueue(teamId, gameId);
+  restorePendingEventQueue();
   bindConnectivityListeners();
 
   try {
@@ -2494,6 +2484,7 @@ async function init() {
       }
 
       if (!shouldResume) {
+        clearPendingEventQueue();
         const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
@@ -2688,6 +2679,9 @@ async function init() {
     if (currentGame.liveStatus === 'live') {
       await startLiveBroadcast();
     }
+    if (liveState.eventQueue.length > 0 && window.navigator?.onLine !== false) {
+      scheduleRetry({ resetBackoff: true });
+    }
     setupNavigationWarning();
   } catch (error) {
     console.error(error);
@@ -2695,6 +2689,12 @@ async function init() {
     window.location.href = `edit-schedule.html#teamId=${teamId}`;
   }
 }
+
+window.addEventListener('online', () => {
+  if (liveState.eventQueue.length > 0) {
+    scheduleRetry({ resetBackoff: true });
+  }
+});
 
 function updateSubsButton() {
   if (!els.subOpen) return;
