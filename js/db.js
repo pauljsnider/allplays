@@ -1135,6 +1135,30 @@ export async function updateGame(teamId, gameId, gameData) {
     }
 }
 
+export async function applyTournamentAdvancementPatches(teamId, patches = [], existingGames = []) {
+    const safePatches = Array.isArray(patches) ? patches.filter((patch) => patch?.gameId && patch?.tournament) : [];
+    if (!safePatches.length) return 0;
+
+    const existingGamesById = new Map((existingGames || []).filter((game) => game?.id).map((game) => [game.id, game]));
+    const maxBatchOperations = 450;
+
+    for (let i = 0; i < safePatches.length; i += maxBatchOperations) {
+        const batch = writeBatch(db);
+        safePatches.slice(i, i + maxBatchOperations).forEach(({ gameId, tournament }) => {
+            const existingGame = existingGamesById.get(gameId);
+            batch.update(getGameDocRef(teamId, gameId), {
+                tournament: {
+                    ...(existingGame?.tournament || {}),
+                    ...tournament
+                }
+            });
+        });
+        await batch.commit();
+    }
+
+    return safePatches.length;
+}
+
 export async function deleteGame(teamId, gameId) {
     const existingGame = await getGame(teamId, gameId);
     await deleteDoc(getGameDocRef(teamId, gameId));

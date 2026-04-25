@@ -37,6 +37,7 @@ export async function getPracticeSessions() { return []; }
 export async function cancelGame() { return { cancelled: false }; }
 export async function getLatestGameAssignments() { return {}; }
 export async function postChatMessage() {}
+export async function applyTournamentAdvancementPatches() {}
 export async function getRsvpBreakdownByPlayer() { return {}; }
 export async function saveTournamentPoolOverride() {}
 export async function clearTournamentPoolOverride() {}
@@ -218,11 +219,20 @@ export function getGenerativeModel() {
 `;
 
 const TOURNAMENT_STUB = `
+export function buildPoolStandingsIndex() {
+    return new Map();
+}
 export function collectTournamentAdvancementPatches() {
+    return [];
+}
+export function collectTournamentPoolSeeds() {
     return [];
 }
 export function describeTournamentSource() {
     return '';
+}
+export function planTournamentPoolAdvancement() {
+    return { patches: [], warnings: [] };
 }
 `;
 

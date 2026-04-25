@@ -14,6 +14,22 @@ function isCompletedTournamentGame(game) {
         && Number.isFinite(Number(game?.awayScore));
 }
 
+function normalizePoolRanking(ranking = []) {
+    return (Array.isArray(ranking) ? ranking : [])
+        .map((row) => normalizeString(row?.teamName || row?.team || row?.name || row))
+        .map((teamName) => (teamName ? { teamName } : null));
+}
+
+function upsertPoolStanding(poolStandings = {}, poolName, seed, teamName) {
+    if (!poolName || !seed || !teamName) return;
+    if (!Array.isArray(poolStandings[poolName])) {
+        poolStandings[poolName] = [];
+    }
+    if (!poolStandings[poolName][seed - 1]) {
+        poolStandings[poolName][seed - 1] = { teamName };
+    }
+}
+
 export function describeTournamentSource(source = {}) {
     const sourceType = normalizeString(source.sourceType) || 'team';
     if (sourceType === 'pool_seed') {
@@ -146,6 +162,47 @@ function resolvedStatesEqual(current = {}, next = {}) {
         && current.ready === next.ready;
 }
 
+export function buildPoolStandingsIndex(games = []) {
+    const poolStandings = {};
+
+    (games || []).forEach((game) => {
+        const slotAssignments = game?.tournament?.slotAssignments || {};
+        const resolved = game?.tournament?.resolved || {};
+
+        [
+            { slot: slotAssignments.home || {}, teamName: resolved.homeTeamName },
+            { slot: slotAssignments.away || {}, teamName: resolved.awayTeamName }
+        ].forEach(({ slot, teamName }) => {
+            if ((normalizeString(slot.sourceType) || 'team') !== 'pool_seed') return;
+            upsertPoolStanding(
+                poolStandings,
+                normalizeString(slot.poolName),
+                normalizeSeed(slot.seed),
+                normalizeString(teamName)
+            );
+        });
+    });
+
+    return poolStandings;
+}
+
+export function collectTournamentPoolSeeds(games = [], poolNameInput) {
+    const poolName = normalizeString(poolNameInput);
+    const seeds = new Set();
+
+    (games || []).forEach((game) => {
+        const slotAssignments = game?.tournament?.slotAssignments || {};
+        [slotAssignments.home || {}, slotAssignments.away || {}].forEach((slot) => {
+            if ((normalizeString(slot.sourceType) || 'team') !== 'pool_seed') return;
+            if (normalizeString(slot.poolName) !== poolName) return;
+            const seed = normalizeSeed(slot.seed);
+            if (seed) seeds.add(seed);
+        });
+    });
+
+    return Array.from(seeds).sort((a, b) => a - b);
+}
+
 export function collectTournamentAdvancementPatches(games = [], options = {}) {
     const poolStandings = options?.poolStandings || {};
     const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
@@ -164,4 +221,63 @@ export function collectTournamentAdvancementPatches(games = [], options = {}) {
             };
         })
         .filter(Boolean);
+}
+
+export function planTournamentPoolAdvancement(games = [], options = {}) {
+    const poolName = normalizeString(options?.poolName);
+    const requiredSeeds = collectTournamentPoolSeeds(games, poolName);
+    const ranking = normalizePoolRanking(options?.ranking || []);
+
+    if (!poolName) {
+        return {
+            skipped: true,
+            reason: 'Pool name is required to advance bracket slots.',
+            poolName: null,
+            requiredSeeds,
+            missingSeeds: [],
+            patches: []
+        };
+    }
+
+    if (!ranking.length) {
+        return {
+            skipped: true,
+            reason: 'No finalized ranking was provided for this pool.',
+            poolName,
+            requiredSeeds,
+            missingSeeds: requiredSeeds,
+            patches: []
+        };
+    }
+
+    const missingSeeds = requiredSeeds.filter((seed) => !ranking[seed - 1]?.teamName);
+    if (missingSeeds.length) {
+        return {
+            skipped: true,
+            reason: `Missing finalized team name for seed${missingSeeds.length === 1 ? '' : 's'} ${missingSeeds.map((seed) => `#${seed}`).join(', ')}.`,
+            poolName,
+            requiredSeeds,
+            missingSeeds,
+            patches: []
+        };
+    }
+
+    const basePoolStandings = {
+        ...buildPoolStandingsIndex(games),
+        ...(options?.poolStandings || {})
+    };
+    const poolStandings = {
+        ...basePoolStandings,
+        [poolName]: ranking
+    };
+
+    return {
+        skipped: false,
+        reason: null,
+        poolName,
+        requiredSeeds,
+        missingSeeds: [],
+        patches: collectTournamentAdvancementPatches(games, { poolStandings }),
+        poolStandings
+    };
 }
