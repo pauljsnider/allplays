@@ -22,6 +22,10 @@ function buildCancelGameHandler(overrides = {}) {
             }
         },
         currentTeamId: 'team-1',
+        currentTeam: {
+            id: 'team-1',
+            name: 'Team Alpha'
+        },
         currentUser: {
             uid: 'user-1',
             displayName: 'Coach Carter',
@@ -41,7 +45,7 @@ function buildCancelGameHandler(overrides = {}) {
     };
 
     const createHandler = new Function('deps', `
-        const { gamesCache, currentTeamId, currentUser, confirm, cancelGame, cancelScheduledGame, postChatMessage, getTeamScheduleNotificationSettings, buildScheduleNotificationMetadata, updateGame, loadSchedule, console, alert } = deps;
+        const { gamesCache, currentTeamId, currentUser, confirm, cancelGame, cancelScheduledGame, postChatMessage, getTeamScheduleNotificationSettings, buildScheduleNotificationMetadata, updateGame, loadSchedule, console, alert, currentTeam } = deps;
         return async function(e) {
 ${body}
         };

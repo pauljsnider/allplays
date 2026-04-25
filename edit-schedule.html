@@ -802,7 +802,7 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
-        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=1';
+        import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
@@ -810,8 +810,8 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { collectTournamentAdvancementPatches, describeTournamentSource } from './js/tournament-brackets.js?v=1';
+        import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=3';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=1';
-        import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=1';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
@@ -1246,23 +1246,42 @@
             location,
             note,
             action,
-            shouldNotify
+            shouldNotify,
+            counterpartTeamId,
+            counterpartEventTitle
         }) {
             if (!shouldNotify) return false;
-            await postChatMessage(currentTeamId, {
-                text: buildScheduleChangeMessage({
+            const targets = buildScheduleNotificationTargets({
+                teamId: currentTeamId,
+                title: eventTitle,
+                counterpartTeamId,
+                counterpartTitle: counterpartEventTitle
+            });
+            const notificationResult = await postScheduleNotificationTargets({
+                targets,
+                postChatMessage,
+                senderId: currentUser.uid,
+                senderName: currentUser.displayName || currentUser.email,
+                senderEmail: currentUser.email,
+                buildText: (target) => buildScheduleChangeMessage({
                     action,
                     eventType,
-                    title: eventTitle,
+                    title: target.title,
                     dateLabel: getEventDateLabel(eventDate),
                     location,
                     note
-                }),
-                senderId: currentUser.uid,
-                senderName: currentUser.displayName || currentUser.email,
-                senderEmail: currentUser.email
+                })
             });
-            return true;
+
+            if (!notificationResult.sent && notificationResult.failedCount > 0) {
+                throw new Error(notificationResult.errorMessage);
+            }
+
+            if (notificationResult.sent && notificationResult.failedCount > 0) {
+                console.warn('Schedule notification partially failed:', notificationResult.failures);
+            }
+
+            return notificationResult.sent;
         }
 
         function alertNonFatalNotificationError(eventLabel, error) {
@@ -1657,7 +1676,9 @@
                         user: currentUser,
                         game,
                         cancelGame,
-                        postChatMessage
+                        postChatMessage,
+                        counterpartTeamId: game.opponentTeamId || game.sharedScheduleOpponentTeamId || null,
+                        counterpartOpponent: currentTeam?.name || null
                     });
                     if (result.cancelled) {
                         try {
@@ -2249,6 +2270,11 @@
                     savedGameId = await addGame(currentTeamId, gameData);
                 }
 
+                const counterpartTeamId = gameData.opponentTeamId || null;
+                const counterpartEventTitle = counterpartTeamId
+                    ? getEventDisplayTitle({ eventType: 'game', opponent: currentTeam?.name || 'Opponent' })
+                    : null;
+
                 try {
                     const sent = await maybeNotifyScheduleChange({
                         eventType: 'game',
@@ -2257,7 +2283,9 @@
                         location,
                         note: notifyNote,
                         action: editingGameId ? 'updated' : 'created',
-                        shouldNotify: shouldNotifyTeam
+                        shouldNotify: shouldNotifyTeam,
+                        counterpartTeamId,
+                        counterpartEventTitle
                     });
 
                     if (sent && savedGameId) {
