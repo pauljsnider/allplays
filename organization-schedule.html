@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Organization Schedule - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8">
+        <div class="max-w-4xl mx-auto space-y-6">
+            <div class="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-white p-6 shadow-sm">
+                <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-wide text-indigo-700">Organization Schedule</p>
+                        <h1 class="mt-1 text-3xl font-bold text-gray-900">Create a shared head-to-head matchup</h1>
+                        <p class="mt-3 max-w-2xl text-sm text-gray-600">
+                            Use one form to publish a game onto both team schedules. The selected home team gets the source game, and the away team receives the mirrored shared schedule entry automatically.
+                        </p>
+                    </div>
+                    <a id="back-to-team-schedule"
+                        href="dashboard.html"
+                        class="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                        Back to Team Schedule
+                    </a>
+                </div>
+            </div>
+
+            <div id="organization-access-alert" class="hidden rounded-xl border px-4 py-3 text-sm"></div>
+            <div id="organization-success" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800"></div>
+
+            <div class="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+                <section class="rounded-2xl bg-white p-6 shadow-md">
+                    <h2 class="text-xl font-bold text-gray-900">New Shared Matchup</h2>
+                    <p class="mt-2 text-sm text-gray-600">Both teams must belong to the same organization grouping you opened this screen from.</p>
+
+                    <form id="organization-game-form" class="mt-6 space-y-4">
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label for="homeTeamId" class="block text-sm font-medium text-gray-700">Home Team</label>
+                                <select id="homeTeamId" required
+                                    class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
+                            </div>
+                            <div>
+                                <label for="awayTeamId" class="block text-sm font-medium text-gray-700">Away Team</label>
+                                <select id="awayTeamId" required
+                                    class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
+                            </div>
+                        </div>
+
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div>
+                                <label for="gameDate" class="block text-sm font-medium text-gray-700">Game Date & Time</label>
+                                <input type="datetime-local" id="gameDate" required
+                                    class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="arrivalTime" class="block text-sm font-medium text-gray-700">Arrival Time</label>
+                                <input type="datetime-local" id="arrivalTime"
+                                    class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label for="location" class="block text-sm font-medium text-gray-700">Location</label>
+                            <input type="text" id="location" required placeholder="Main Field"
+                                class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+
+                        <div>
+                            <label for="gameNotes" class="block text-sm font-medium text-gray-700">Notes</label>
+                            <textarea id="gameNotes" rows="3" placeholder="Optional notes for both teams"
+                                class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></textarea>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
+                            <p class="text-xs text-gray-500">Publishing creates one shared game and mirrors it to the away team schedule.</p>
+                            <button id="publish-shared-matchup-btn" type="submit"
+                                class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                                Publish Shared Matchup
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <aside class="rounded-2xl bg-white p-6 shadow-md">
+                    <h2 class="text-lg font-bold text-gray-900">How it works</h2>
+                    <ul class="mt-4 space-y-3 text-sm text-gray-600">
+                        <li>Choose two different teams from the same organization grouping.</li>
+                        <li>The selected home team owns the source game entry.</li>
+                        <li>The away team receives the synced counterpart automatically through the existing shared schedule mirror flow.</li>
+                        <li>Coaches still manage and view the matchup from each team’s normal schedule page.</li>
+                    </ul>
+                    <div class="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Current Organization</p>
+                        <p id="organization-context-name" class="mt-2 text-sm font-semibold text-gray-900">Loading…</p>
+                        <p id="organization-context-detail" class="mt-1 text-sm text-gray-600"></p>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { addGame, getTeam, getUserTeamsWithAccess } from './js/db.js?v=20';
+        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=10';
+        import { checkAuth } from './js/auth.js?v=10';
+        import { getTeamAccessInfo } from './js/team-access.js';
+        import { Timestamp } from './js/firebase.js?v=10';
+        import {
+            buildOrganizationSharedGamePayload,
+            getOrganizationTeams,
+            validateOrganizationMatchup
+        } from './js/organization-schedule.js?v=1';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        const accessAlert = document.getElementById('organization-access-alert');
+        const successAlert = document.getElementById('organization-success');
+        const form = document.getElementById('organization-game-form');
+        const homeTeamSelect = document.getElementById('homeTeamId');
+        const awayTeamSelect = document.getElementById('awayTeamId');
+        const publishButton = document.getElementById('publish-shared-matchup-btn');
+        const backLink = document.getElementById('back-to-team-schedule');
+        const organizationNameEl = document.getElementById('organization-context-name');
+        const organizationDetailEl = document.getElementById('organization-context-detail');
+
+        let currentUser = null;
+        let anchorTeam = null;
+        let organizationTeams = [];
+
+        function setAlert(message, variant = 'error') {
+            if (!message) {
+                accessAlert.className = 'hidden rounded-xl border px-4 py-3 text-sm';
+                accessAlert.textContent = '';
+                return;
+            }
+
+            const palette = variant === 'warning'
+                ? 'rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800'
+                : 'rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800';
+            accessAlert.className = palette;
+            accessAlert.textContent = message;
+        }
+
+        function renderSuccess(homeTeam, awayTeam) {
+            successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+            successAlert.replaceChildren();
+
+            const title = document.createElement('div');
+            title.className = 'font-semibold';
+            title.textContent = 'Shared matchup published.';
+
+            const detail = document.createElement('div');
+            detail.className = 'mt-2';
+            detail.textContent = `${homeTeam.name} now has the source game, and ${awayTeam.name} can view the mirrored entry from its normal team schedule.`;
+
+            const actions = document.createElement('div');
+            actions.className = 'mt-3 flex flex-wrap gap-2';
+
+            const homeLink = document.createElement('a');
+            homeLink.href = `edit-schedule.html#teamId=${encodeURIComponent(homeTeam.id)}`;
+            homeLink.className = 'inline-flex items-center rounded-md bg-white px-3 py-1.5 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100';
+            homeLink.textContent = `Open ${homeTeam.name} schedule`;
+
+            const awayLink = document.createElement('a');
+            awayLink.href = `edit-schedule.html#teamId=${encodeURIComponent(awayTeam.id)}`;
+            awayLink.className = 'inline-flex items-center rounded-md bg-white px-3 py-1.5 font-medium text-emerald-800 border border-emerald-200 hover:bg-emerald-100';
+            awayLink.textContent = `Open ${awayTeam.name} schedule`;
+
+            actions.append(homeLink, awayLink);
+            successAlert.append(title, detail, actions);
+        }
+
+        function renderTeamOptions(selectEl, teams, preferredTeamId = '') {
+            const options = teams.map((team) => {
+                const option = document.createElement('option');
+                option.value = team.id;
+                option.textContent = team.name;
+                return option;
+            });
+
+            selectEl.replaceChildren(...options);
+
+            if (preferredTeamId && teams.some((team) => team.id === preferredTeamId)) {
+                selectEl.value = preferredTeamId;
+            }
+        }
+
+        async function init() {
+            const { teamId } = getUrlParams();
+            if (!teamId) {
+                window.location.href = 'dashboard.html';
+                return;
+            }
+
+            backLink.href = `edit-schedule.html#teamId=${teamId}`;
+            anchorTeam = await getTeam(teamId);
+            if (!anchorTeam) {
+                setAlert('That team could not be loaded.');
+                form.classList.add('hidden');
+                return;
+            }
+
+            const accessInfo = getTeamAccessInfo(currentUser, anchorTeam);
+            if (!accessInfo.hasAccess || accessInfo.accessLevel !== 'full') {
+                setAlert('You do not have organization schedule access for this team.');
+                form.classList.add('hidden');
+                return;
+            }
+
+            const accessibleTeams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
+            organizationTeams = getOrganizationTeams({
+                accessibleTeams,
+                organizationOwnerId: anchorTeam.ownerId
+            });
+
+            organizationNameEl.textContent = anchorTeam.name;
+            organizationDetailEl.textContent = `${organizationTeams.length} team${organizationTeams.length === 1 ? '' : 's'} available in this organization grouping.`;
+
+            if (organizationTeams.length < 2) {
+                setAlert('You need at least two teams in the same organization to create a shared matchup.', 'warning');
+                form.classList.add('hidden');
+                return;
+            }
+
+            renderTeamOptions(homeTeamSelect, organizationTeams, anchorTeam.id);
+            renderTeamOptions(awayTeamSelect, organizationTeams, organizationTeams.find((team) => team.id !== anchorTeam.id)?.id || organizationTeams[0]?.id);
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setAlert('');
+            successAlert.className = 'hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+            successAlert.textContent = '';
+
+            const validation = validateOrganizationMatchup({
+                homeTeamId: homeTeamSelect.value,
+                awayTeamId: awayTeamSelect.value,
+                organizationTeams,
+                organizationOwnerId: anchorTeam?.ownerId
+            });
+
+            if (!validation.ok) {
+                setAlert(validation.error);
+                return;
+            }
+
+            try {
+                publishButton.disabled = true;
+                publishButton.textContent = 'Publishing…';
+
+                const gameData = buildOrganizationSharedGamePayload({
+                    awayTeam: validation.awayTeam,
+                    gameDate: document.getElementById('gameDate').value,
+                    location: document.getElementById('location').value,
+                    arrivalTime: document.getElementById('arrivalTime').value,
+                    notes: document.getElementById('gameNotes').value,
+                    Timestamp
+                });
+
+                await addGame(validation.homeTeam.id, gameData);
+                form.reset();
+                homeTeamSelect.value = validation.homeTeam.id;
+                awayTeamSelect.value = validation.awayTeam.id;
+                renderSuccess(validation.homeTeam, validation.awayTeam);
+            } catch (error) {
+                console.error(error);
+                setAlert(`Error saving shared matchup: ${error.message}`);
+            } finally {
+                publishButton.disabled = false;
+                publishButton.textContent = 'Publish Shared Matchup';
+            }
+        });
+
+        checkAuth((user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+            init();
+        }, { skipEmailVerificationCheck: true });
+    </script>
+</body>
+</html>
