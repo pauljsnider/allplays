@@ -261,7 +261,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: SEASON_RECORD_STUB
     }));
-    await page.route('**/js/auth.js?v=10', (route) => route.fulfill({
+    await page.route('**/js/auth.js?v=12', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: AUTH_STUB

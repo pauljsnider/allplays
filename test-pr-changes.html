@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow">
-    <title>PR Test Suite - Basketball Detection & Auth Flow</title>
+    <title>PR Test Suite - Basketball Detection, Auth Flow, Live Sync, and Team ID</title>
     <style>
         body { font-family: monospace; padding: 20px; background: #f5f5f5; }
         .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; }
@@ -19,7 +19,7 @@
 </head>
 <body>
     <h1>🧪 PR Test Suite</h1>
-    <p>Testing changes from commits: 7a1dbf4, 399a507, 372018c, 1835b73</p>
+    <p>Testing changes from commits: 7a1dbf4, 399a507, 372018c, 1835b73, issue-433</p>
 
     <div id="test-results"></div>
 
@@ -52,6 +52,66 @@
             if (value) {
                 throw new Error(message);
             }
+        }
+
+        function getLiveQueueStorageKey(teamId, gameId) {
+            if (!teamId || !gameId) return '';
+            return `allplays-live-event-queue:${teamId}:${gameId}`;
+        }
+
+        function persistLiveEventQueue(storage, teamId, gameId, eventQueue) {
+            const storageKey = getLiveQueueStorageKey(teamId, gameId);
+            if (!storageKey) return;
+            if (!eventQueue.length) {
+                delete storage[storageKey];
+                return;
+            }
+            storage[storageKey] = JSON.stringify({
+                savedAt: 123,
+                eventQueue
+            });
+        }
+
+        function restoreLiveEventQueue(storage, teamId, gameId) {
+            const storageKey = getLiveQueueStorageKey(teamId, gameId);
+            if (!storageKey || !storage[storageKey]) return [];
+            const parsed = JSON.parse(storage[storageKey]);
+            return Array.isArray(parsed?.eventQueue) ? parsed.eventQueue : [];
+        }
+
+        function deriveLiveSyncStatus({ isOnline = true, pendingCount = 0, retryAttempt = 0, isRetryScheduled = false } = {}) {
+            const normalizedPendingCount = Math.max(0, Number(pendingCount || 0));
+            if (!isOnline) {
+                return {
+                    visible: true,
+                    tone: 'offline',
+                    label: 'Offline tracking',
+                    detail: normalizedPendingCount > 0
+                        ? 'Unsynced events are queued until connection returns.'
+                        : 'New live events will queue until connection returns.',
+                    pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+                };
+            }
+
+            if (normalizedPendingCount > 0 || isRetryScheduled) {
+                return {
+                    visible: true,
+                    tone: 'warning',
+                    label: retryAttempt > 0 ? 'Retrying live sync' : 'Syncing queued events',
+                    detail: normalizedPendingCount > 0
+                        ? 'Queued live events will continue syncing in the background.'
+                        : 'Waiting for the next retry window.',
+                    pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+                };
+            }
+
+            return {
+                visible: false,
+                tone: 'warning',
+                label: '',
+                detail: '',
+                pendingText: ''
+            };
         }
 
         // ============================================
@@ -191,6 +251,29 @@
             );
         });
 
+        test('Live queue storage key should be scoped by team and game', () => {
+            assertEquals(
+                getLiveQueueStorageKey('team-1', 'game-9'),
+                'allplays-live-event-queue:team-1:game-9',
+                'Queue storage key should include team and game'
+            );
+        });
+
+        test('Persisted live queue should round-trip through storage', () => {
+            const storage = {};
+            const queue = [{ type: 'score', delta: 2 }, { type: 'foul', playerId: 'p1' }];
+            persistLiveEventQueue(storage, 'team-1', 'game-9', queue);
+            const restored = restoreLiveEventQueue(storage, 'team-1', 'game-9');
+            assertEquals(JSON.stringify(restored), JSON.stringify(queue), 'Restored queue should match persisted queue');
+        });
+
+        test('Persisted live queue should stay scoped to a single game', () => {
+            const storage = {};
+            persistLiveEventQueue(storage, 'team-1', 'game-9', [{ type: 'score' }]);
+            const otherGame = restoreLiveEventQueue(storage, 'team-1', 'game-10');
+            assertEquals(JSON.stringify(otherGame), JSON.stringify([]), 'Other games should not restore this queue');
+        });
+
         // ============================================
         // TEST SUITE 3: Edge Cases
         // ============================================
@@ -234,7 +317,78 @@
         });
 
         // ============================================
-        // TEST SUITE 4: Athlete Profile Auth Readiness
+        // TEST SUITE 4: Live Sync Status
+        // ============================================
+
+        test('Live sync status should hide when online with no pending queue', () => {
+            const status = deriveLiveSyncStatus({ isOnline: true, pendingCount: 0, retryAttempt: 0, isRetryScheduled: false });
+            assertFalse(status.visible, 'Status should hide when there is nothing pending');
+        });
+
+        test('Live sync status should show offline banner and pending count', () => {
+            const status = deriveLiveSyncStatus({ isOnline: false, pendingCount: 3, retryAttempt: 0, isRetryScheduled: false });
+            assertTrue(status.visible, 'Offline status should be visible');
+            assertEquals(status.tone, 'offline', 'Offline status should use offline tone');
+            assertEquals(status.pendingText, '3 pending', 'Offline status should include pending count');
+        });
+
+        test('Live sync status should show retrying state when queue is pending online', () => {
+            const status = deriveLiveSyncStatus({ isOnline: true, pendingCount: 2, retryAttempt: 1, isRetryScheduled: true });
+            assertTrue(status.visible, 'Retrying status should be visible');
+            assertEquals(status.tone, 'warning', 'Retrying status should use warning tone');
+            assertEquals(status.label, 'Retrying live sync', 'Retrying label should be shown');
+        });
+
+        // ============================================
+        // TEST SUITE 5: Team ID Workflow
+        // ============================================
+
+        function buildTeamEditUrl(teamId, created = false) {
+            const params = new URLSearchParams();
+            params.set('teamId', teamId);
+            if (created) {
+                params.set('created', '1');
+            }
+            return `edit-team.html#${params.toString()}`;
+        }
+
+        function getTeamIdPanelState(teamId) {
+            return {
+                visible: Boolean(teamId),
+                value: teamId || ''
+            };
+        }
+
+        test('buildTeamEditUrl should include the teamId hash param', () => {
+            assertEquals(
+                buildTeamEditUrl('team_123'),
+                'edit-team.html#teamId=team_123',
+                'Team edit URL should include the team ID'
+            );
+        });
+
+        test('buildTeamEditUrl should flag newly created teams', () => {
+            assertEquals(
+                buildTeamEditUrl('team_123', true),
+                'edit-team.html#teamId=team_123&created=1',
+                'New team redirect should include the created marker'
+            );
+        });
+
+        test('Team ID panel should stay hidden when no team ID exists', () => {
+            const state = getTeamIdPanelState('');
+            assertFalse(state.visible, 'Panel should be hidden without a team ID');
+            assertEquals(state.value, '', 'Panel value should be empty when hidden');
+        });
+
+        test('Team ID panel should expose the existing team ID', () => {
+            const state = getTeamIdPanelState('abc123team');
+            assertTrue(state.visible, 'Panel should be visible when a team ID exists');
+            assertEquals(state.value, 'abc123team', 'Panel should show the current team ID');
+        });
+
+        // ============================================
+        // TEST SUITE 6: Athlete Profile Auth Readiness
         // ============================================
 
         function initializeAthleteProfilePage(onAuthResolved, loadProfile) {
@@ -298,13 +452,17 @@
             'Basketball Detection': [],
             'Session Storage': [],
             'Edge Cases': [],
+            'Live Sync Status': [],
+            'Team ID Workflow': [],
             'Athlete Profile Auth': []
         };
 
         results.forEach((result, idx) => {
             if (idx < 10) grouped['Basketball Detection'].push(result);
-            else if (idx < 13) grouped['Session Storage'].push(result);
-            else if (idx < 18) grouped['Edge Cases'].push(result);
+            else if (idx < 16) grouped['Session Storage'].push(result);
+            else if (idx < 21) grouped['Edge Cases'].push(result);
+            else if (idx < 24) grouped['Live Sync Status'].push(result);
+            else if (idx < 28) grouped['Team ID Workflow'].push(result);
             else grouped['Athlete Profile Auth'].push(result);
         });
 

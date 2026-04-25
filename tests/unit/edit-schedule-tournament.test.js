@@ -16,6 +16,16 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('id="tournamentAwaySourceType"');
   });
 
+  it('renders admin-only tournament standings editor controls in the schedule flow', () => {
+    const source = readEditSchedule();
+
+    expect(source).toContain('id="tournament-standings-admin-panel"');
+    expect(source).toContain('id="tournament-standings-modal"');
+    expect(source).toContain('renderTournamentStandingsAdminPanel(');
+    expect(source).toContain('openTournamentStandingsEditor(');
+    expect(source).toContain('if (!canManageTournamentStandings() || pools.length === 0)');
+  });
+
   it('persists tournament metadata into saved game data', () => {
     const source = readEditSchedule();
     const submitIndex = source.indexOf("document.getElementById('add-game-form').addEventListener('submit', async (e) => {");
@@ -44,5 +54,14 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('const plan = planTournamentPoolAdvancement(games, {');
     expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);');
     expect(source).toContain('Skipped advancement for ${poolName}. ${plan.reason}');
+  });
+
+  it('wires persistence helpers for saving and clearing pool ranking overrides', () => {
+    const source = readEditSchedule();
+
+    expect(source).toContain('saveTournamentPoolOverride');
+    expect(source).toContain('clearTournamentPoolOverride');
+    expect(source).toContain('persistTournamentStandingsOverride');
+    expect(source).toContain('handleClearTournamentStandingsOverride');
   });
 });

@@ -217,6 +217,9 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 await markAccessCodeAsUsed(validation.codeId, userId);
             } catch (error) {
                 console.error('Error marking code as used:', error);
+                clearPendingActivationCode();
+                await cleanupFailedNewUser(result.user, 'standard access code claim failure');
+                throw error;
             }
 
             try {

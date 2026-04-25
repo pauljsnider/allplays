@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Mobile TOC Active State Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-result { font-size: 0.9em; color: #666; }
+        h2 { color: #4338ca; }
+        pre { background: #f8f8f8; padding: 10px; overflow-x: auto; }
+
+        /* Mimic styles from workflow-live-watch-replay.html */
+        .wf-toc a.is-active {
+          color: #1d4ed8; /* blue-700 */
+          font-weight: 700;
+          position: relative;
+        }
+        .wf-toc a.is-active::before {
+          content: "";
+          position: absolute;
+          left: -1rem;
+          top: 50%;
+          transform: translateY(-50%);
+          height: 8px;
+          width: 2px;
+          background-color: #1d4ed8; /* blue-700 */
+        }
+        .wf-toc {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          margin-left: 1rem;
+        }
+        .wf-mobile-toc {
+          margin-top: 0.95rem;
+        }
+        .wf-panel-section {
+            border: 1px solid #e2e8f0; /* gray-200 */
+            border-radius: 0.5rem;
+            background-color: #fff;
+            padding: 1.5rem 1.5rem;
+        }
+        .wf-content { padding: 1rem; }
+
+        /* For testing scroll behavior */
+        .help-workflow-body {
+            height: 1000px; /* Make content scrollable */
+            padding-top: 100px; /* Offset for active section detection */
+        }
+        h2 { margin-top: 150px; } /* Ensure headings are far apart for scroll test */
+
+    </style>
+</head>
+<body>
+    <h1>🧪 Mobile TOC Active State Test</h1>
+
+    <div id="test-results"></div>
+
+    <div style="position: absolute; left: -9999px; top: 0; width: 375px;">
+        <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+        <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+        </aside>
+
+        <article class="wf-panel wf-content">
+            <div class="help-workflow-body">
+                <h2 id="section1">Section 1</h2>
+                <p>Content for section 1.</p>
+                <h2 id="section2">Section 2</h2>
+                <p>Content for section 2.</p>
+                <h2 id="section3">Section 3</h2>
+                <p>Content for section 3.</p>
+                <h2 id="section4">Section 4</h2>
+                <p>Content for section 4.</p>
+            </div>
+        </article>
+    </div>
+
+    <script>
+        // Test harness
+        const results = [];
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.push({ name, pass: true, error: null });
+            } catch (e) {
+                results.push({ name, pass: false, error: e.message });
+            }
+        }
+
+        function assertEquals(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message}\nExpected: ${expected}\nActual: ${actual}`);
+            }
+        }
+
+        function assertTrue(value, message) {
+            if (!value) {
+                throw new Error(message);
+            }
+        }
+
+        function assertFalse(value, message) {
+            if (value) {
+                throw new Error(message);
+            }
+        }
+
+        function mockHeadingPositions(positionById = {}) {
+            const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+            headings.forEach((heading, index) => {
+                const defaultTop = 100 + (index * 220);
+                Object.defineProperty(heading, 'getBoundingClientRect', {
+                    configurable: true,
+                    value: () => ({
+                        top: positionById[heading.id] ?? defaultTop,
+                        left: 0,
+                        bottom: 0,
+                        right: 0,
+                        width: 0,
+                        height: 0,
+                    })
+                });
+            });
+        }
+
+        // Mock window.innerWidth for mobile view testing
+        Object.defineProperty(window, 'innerWidth', { writable: true, value: 768 });
+        mockHeadingPositions();
+
+        // Original script from workflow-live-watch-replay.html, slightly adapted for test environment
+        (function() {
+            const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+            const toc = document.getElementById('workflow-toc');
+            const mobileToc = document.getElementById('workflow-mobile-toc');
+            if (!toc || !headings.length) return;
+
+            const links = headings.map((h) => {
+              const a = document.createElement('a');
+              a.href = '#' + h.id;
+              a.textContent = h.textContent || h.id;
+              toc.appendChild(a);
+              return a;
+            });
+            const allLinks = [...links];
+            let mobileWrapper = null;
+
+            if (mobileToc && window.innerWidth < 1024) {
+              const wrapper = document.createElement('details');
+              wrapper.className = 'wf-panel-section wf-panel';
+              wrapper.style.marginBottom = '0.95rem';
+              wrapper.style.padding = '0.8rem 1rem';
+              const summary = document.createElement('summary');
+              summary.textContent = 'Jump to section';
+              summary.style.cursor = 'pointer';
+              summary.style.fontWeight = '700';
+              summary.style.color = '#0f172a';
+              const list = toc.cloneNode(true);
+              list.style.marginTop = '0.6rem';
+              allLinks.push(...Array.from(list.querySelectorAll('a')));
+              wrapper.appendChild(summary);
+              wrapper.appendChild(list);
+              mobileToc.appendChild(wrapper);
+              mobileWrapper = wrapper;
+            }
+
+            const sectionById = new Map(headings.map((h) => [h.id, h]));
+            const setActive = (activeId) => {
+              let active = sectionById.get(activeId) || headings[0];
+              if (!sectionById.has(activeId)) {
+                for (const h of headings) {
+                  if (h.getBoundingClientRect().top <= 140) active = h;
+                }
+              }
+              allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+            };
+
+            allLinks.forEach((a) => {
+              a.addEventListener('click', () => {
+                setActive(a.getAttribute('href').slice(1));
+                if (mobileWrapper && mobileWrapper.contains(a)) {
+                  mobileWrapper.open = false;
+                }
+              });
+            });
+
+            window.addEventListener('scroll', () => setActive(null), { passive: true });
+            window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+            setActive(window.location.hash.slice(1) || null);
+        })();
+
+        // Helper to check if a link is active
+        function isLinkActive(id) {
+            return !!document.querySelector(`a[href="#${id}"].is-active`);
+        }
+
+        // ============================================
+
+        // TEST SUITE: Mobile TOC Active State
+
+        // ============================================
+
+
+        test('Mobile TOC: Initial active state (section1) on page load', () => {
+            assertTrue(isLinkActive('section1'), 'Section 1 should be active initially');
+            assertFalse(isLinkActive('section2'), 'Section 2 should not be active initially');
+        });
+
+        test('Mobile TOC: Active state on clicking a link (section2)', () => {
+            const link2 = document.querySelector('details .wf-toc a[href="#section2"]');
+            assertTrue(link2 !== null, 'Mobile link for section 2 should exist');
+            link2.click(); // Simulate click
+            assertTrue(isLinkActive('section2'), 'Section 2 should be active after click');
+            assertFalse(isLinkActive('section1'), 'Section 1 should not be active after click');
+        });
+
+        test('Mobile TOC: Active state on scroll (section3)', () => {
+            mockHeadingPositions({ section1: -220, section2: -40, section3: 100, section4: 360 });
+            window.dispatchEvent(new Event('scroll'));
+
+            assertTrue(isLinkActive('section3'), 'Section 3 should be active after scroll');
+            assertFalse(isLinkActive('section2'), 'Section 2 should not be active after scroll');
+        });
+
+        test('Desktop TOC: Active state on initial load', () => {
+            Object.defineProperty(window, 'innerWidth', { writable: true, value: 1200 }); // Simulate desktop
+            window.location.hash = '';
+            const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+            const toc = document.getElementById('workflow-toc');
+            const mobileToc = document.getElementById('workflow-mobile-toc');
+            if (toc && mobileToc) {
+                 toc.innerHTML = '';
+                 mobileToc.innerHTML = '';
+                 mockHeadingPositions();
+                 // Re-run the script initialization for desktop
+                 (function() {
+                    const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+                    const toc = document.getElementById('workflow-toc');
+                    const mobileToc = document.getElementById('workflow-mobile-toc'); // Should be ignored on desktop
+                    if (!toc || !headings.length) return;
+
+                    const links = headings.map((h) => {
+                      const a = document.createElement('a');
+                      a.href = '#' + h.id;
+                      a.textContent = h.textContent || h.id;
+                      toc.appendChild(a);
+                      return a;
+                    });
+                    const allLinks = [...links];
+                    let mobileWrapper = null; // Will not be created on desktop
+
+                    const sectionById = new Map(headings.map((h) => [h.id, h]));
+                    const setActive = (activeId) => {
+                      let active = sectionById.get(activeId) || headings[0];
+                      if (!sectionById.has(activeId)) {
+                        for (const h of headings) {
+                          if (h.getBoundingClientRect().top <= 140) active = h;
+                        }
+                      }
+                      allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+                    };
+
+                    allLinks.forEach((a) => {
+                      a.addEventListener('click', () => {
+                        setActive(a.getAttribute('href').slice(1));
+                        if (mobileWrapper && mobileWrapper.contains(a)) {
+                          mobileWrapper.open = false;
+                        }
+                      });
+                    });
+
+                    window.addEventListener('scroll', () => setActive(null), { passive: true });
+                    window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+                    setActive(window.location.hash.slice(1) || null);
+                })();
+            }
+
+            assertTrue(isLinkActive('section1'), 'Desktop: Section 1 should be active initially');
+            assertFalse(isLinkActive('section2'), 'Desktop: Section 2 should not be active initially');
+        });
+
+        test('Desktop TOC: Active state on scroll (section2)', () => {
+            Object.defineProperty(window, 'innerWidth', { writable: true, value: 1200 }); // Ensure desktop mode
+            mockHeadingPositions({ section1: -160, section2: 100, section3: 360, section4: 620 });
+            window.dispatchEvent(new Event('scroll'));
+
+            assertTrue(isLinkActive('section2'), 'Desktop: Section 2 should be active after scroll');
+            assertFalse(isLinkActive('section1'), 'Desktop: Section 1 should not be active after scroll');
+        });
+
+
+        // ============================================
+
+        // Display Results
+
+        // ============================================
+
+
+        const container = document.getElementById('test-results');
+
+        const passCount = results.filter(r => r.pass).length;
+        const failCount = results.filter(r => !r.pass).length;
+
+        let html = `
+            <div class="test-section">
+                <h2>Test Summary</h2>
+                <p>✅ Passed: ${passCount} | ❌ Failed: ${failCount} | Total: ${results.length}</p>
+            </div>
+        `;
+
+        results.forEach((result) => {
+            const className = result.pass ? 'pass' : 'fail';
+            const icon = result.pass ? '✅' : '❌';
+            html += `
+                <div class="test-case ${className}">
+                    <div class="test-name">${icon} ${result.name}</div>
+                    ${result.error ? `<div class="test-result">Error: ${result.error}</div>` : ''}
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+    </script>
+</body>
+</html>
