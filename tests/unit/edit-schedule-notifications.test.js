@@ -26,9 +26,17 @@ describe('edit schedule notification wiring', () => {
     it('wires the schedule notification helper and RSVP reminder action', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("from './js/schedule-notifications.js?v=1'");
+        expect(source).toContain("from './js/schedule-notifications.js?v=3'");
+        expect(source).toContain('await postScheduleNotificationTargets({');
         expect(source).toContain('id="send-rsvp-reminder-btn"');
         expect(source).toContain('await sendRsvpReminder(');
         expect(source).toContain('await maybeNotifyScheduleChange(');
+    });
+
+    it('uses the submitted linked-opponent state for counterpart notifications', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain("const counterpartTeamId = gameData.opponentTeamId || null;");
+        expect(source).not.toContain('gamesCache[editingGameId]?.sharedScheduleOpponentTeamId');
     });
 });
