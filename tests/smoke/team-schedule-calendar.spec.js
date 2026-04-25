@@ -22,6 +22,22 @@ function monthDelta(fromDate, toDate) {
         + (toDate.getUTCMonth() - fromDate.getUTCMonth());
 }
 
+function parseCalendarMonthLabel(label) {
+    const trimmed = String(label || '').trim();
+    const match = trimmed.match(/^([A-Za-z]+)\s+(\d{4})$/);
+    if (!match) {
+        throw new Error(`Unexpected calendar month label: ${trimmed}`);
+    }
+
+    const [, monthName, yearText] = match;
+    const monthIndex = new Date(`${monthName} 1, 2000`).getMonth();
+    if (Number.isNaN(monthIndex)) {
+        throw new Error(`Unable to parse calendar month label: ${trimmed}`);
+    }
+
+    return new Date(Date.UTC(Number(yearText), monthIndex, 1));
+}
+
 function buildDbStub({ team, games, trackedUids }) {
     return `
 const team = ${JSON.stringify(team)};
@@ -279,16 +295,21 @@ async function mockTeamPageModules(page, scenario) {
 }
 
 async function gotoCalendarMonth(page, fromDate, targetDate) {
-    const delta = monthDelta(fromDate, targetDate);
-    if (delta > 0) {
-        for (let index = 0; index < delta; index += 1) {
-            await page.locator('#schedule-calendar-next').click();
+    void fromDate;
+
+    for (let index = 0; index < 24; index += 1) {
+        const currentLabel = await page.locator('#schedule-calendar-month-label').textContent();
+        const visibleMonth = parseCalendarMonthLabel(currentLabel);
+        const delta = monthDelta(visibleMonth, targetDate);
+
+        if (delta === 0) {
+            return;
         }
-    } else if (delta < 0) {
-        for (let index = 0; index < Math.abs(delta); index += 1) {
-            await page.locator('#schedule-calendar-prev').click();
-        }
+
+        await page.locator(delta > 0 ? '#schedule-calendar-next' : '#schedule-calendar-prev').click();
     }
+
+    throw new Error(`Unable to navigate calendar to ${targetDate.toISOString()}`);
 }
 
 test('team schedule calendar shows only practices in the dedicated practice filter and modal', async ({ page, baseURL }) => {

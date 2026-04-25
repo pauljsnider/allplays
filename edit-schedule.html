@@ -45,6 +45,13 @@
 
     <main class="container mx-auto px-4 py-8">
         <div id="team-admin-banner" class="mb-6"></div>
+        <div class="mb-6 flex justify-end">
+            <a id="organization-schedule-link"
+                href="dashboard.html"
+                class="inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">
+                Create Shared Matchup
+            </a>
+        </div>
 
         <!-- Calendar Management -->
         <div class="mb-6 bg-indigo-50 border border-indigo-200 rounded-lg p-4">
@@ -1317,6 +1324,7 @@
             renderTeamScheduleNotificationSettings(team);
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
+            document.getElementById('organization-schedule-link').href = `organization-schedule.html#teamId=${currentTeamId}`;
 
             // Fetch unread count and render banner
             let unreadCount = 0;
