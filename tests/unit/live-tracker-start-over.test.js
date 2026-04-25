@@ -5,6 +5,7 @@ import { buildPersistedResumeClockState, deriveResumeClockState } from '../../js
 import { restoreLiveLineup } from '../../js/live-tracker-lineup.js';
 import { buildLiveResetEvent } from '../../js/live-tracker-reset.js';
 import { getDefaultLivePeriod, getSportPeriodLabels } from '../../js/live-sport-config.js';
+import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from '../../js/live-tracker-queue.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -266,6 +267,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
+    './live-tracker-queue.js',
+    'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } = deps.liveTrackerQueue;'
+  );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
     './live-tracker-save-complete.js',
     'const { runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;'
   );
@@ -438,6 +444,10 @@ async function bootLiveTracker({ game, snapshots }) {
     },
     liveTrackerFinish: {
       buildOpponentStatsSnapshotFromEntries: () => ({})
+    },
+    liveTrackerQueue: {
+      readPersistedLiveTrackerQueue,
+      writePersistedLiveTrackerQueue
     },
     liveTrackerSaveComplete: {
       runSaveAndCompleteWorkflow: async () => ({})
