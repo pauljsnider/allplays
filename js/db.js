@@ -71,6 +71,7 @@ import {
 } from './team-visibility.js?v=1';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
+import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
@@ -468,6 +469,79 @@ export async function updateTeam(teamId, teamData) {
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, teamData);
+}
+
+function normalizeTournamentPoolOverrideName(poolName) {
+    return String(poolName || '').trim();
+}
+
+function collectTournamentPoolOverrideKeys(poolOverrides = {}, poolName) {
+    const normalizedPoolName = normalizeTournamentPoolOverrideName(poolName);
+    if (!normalizedPoolName) return [];
+
+    const keys = new Set([buildTournamentPoolOverrideKey(normalizedPoolName)]);
+    Object.entries(poolOverrides || {}).forEach(([key, override]) => {
+        if (normalizeTournamentPoolOverrideName(override?.poolName) === normalizedPoolName) {
+            keys.add(key);
+        }
+    });
+    return Array.from(keys);
+}
+
+export async function saveTournamentPoolOverride(teamId, override = {}) {
+    const poolName = normalizeTournamentPoolOverrideName(override?.poolName);
+    if (!teamId || !poolName) {
+        throw new Error('Missing teamId or poolName for tournament pool override');
+    }
+
+    const teamOrder = Array.isArray(override?.teamOrder)
+        ? override.teamOrder.map((teamName) => String(teamName || '').trim()).filter(Boolean)
+        : [];
+
+    const teamRef = doc(db, "teams", teamId);
+    const teamSnapshot = await getDoc(teamRef);
+    const existingOverrides = teamSnapshot.exists() ? (teamSnapshot.data()?.tournamentPoolOverrides || {}) : {};
+    const key = buildTournamentPoolOverrideKey(poolName);
+    const updatePayload = {
+        [`tournamentPoolOverrides.${key}`]: {
+            poolName,
+            teamOrder,
+            finalizedAt: override?.finalizedAt || Timestamp.now(),
+            finalizedBy: {
+                userId: override?.finalizedBy?.userId || null,
+                name: override?.finalizedBy?.name || null,
+                email: override?.finalizedBy?.email || null
+            }
+        }
+    };
+
+    collectTournamentPoolOverrideKeys(existingOverrides, poolName)
+        .filter((existingKey) => existingKey !== key)
+        .forEach((existingKey) => {
+            updatePayload[`tournamentPoolOverrides.${existingKey}`] = deleteField();
+        });
+
+    await updateTeam(teamId, updatePayload);
+}
+
+export async function clearTournamentPoolOverride(teamId, poolName) {
+    const normalizedPoolName = normalizeTournamentPoolOverrideName(poolName);
+    if (!teamId || !normalizedPoolName) {
+        throw new Error('Missing teamId or poolName for tournament pool override clear');
+    }
+
+    const teamRef = doc(db, "teams", teamId);
+    const teamSnapshot = await getDoc(teamRef);
+    const existingOverrides = teamSnapshot.exists() ? (teamSnapshot.data()?.tournamentPoolOverrides || {}) : {};
+    const keysToDelete = collectTournamentPoolOverrideKeys(existingOverrides, normalizedPoolName);
+    if (!keysToDelete.length) return;
+
+    const updatePayload = {};
+    keysToDelete.forEach((key) => {
+        updatePayload[`tournamentPoolOverrides.${key}`] = deleteField();
+    });
+
+    await updateTeam(teamId, updatePayload);
 }
 
 export async function addTeamAdminEmail(teamId, email) {
