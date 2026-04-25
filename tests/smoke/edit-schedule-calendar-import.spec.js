@@ -256,6 +256,10 @@ export function buildScheduleChangeMessage() {
     return '';
 }
 
+export function buildScheduleNotificationTargets() {
+    return [];
+}
+
 export async function postScheduleNotificationTargets() {
     return { sent: false, sentCount: 0, failedCount: 0, failures: [], errorMessage: '' };
 }
