@@ -56,6 +56,7 @@ export async function getPracticeSessions() { return state().practiceSessions ||
 export async function cancelGame() {}
 export async function getLatestGameAssignments() { return []; }
 export async function postChatMessage() {}
+export async function applyTournamentAdvancementPatches() {}
 export async function getRsvpBreakdownByPlayer() {
     return {
         grouped: { going: [], maybe: [], not_going: [], not_responded: [] },
@@ -237,12 +238,24 @@ export const GoogleAIBackend = {};
 export const Schema = {};
 `,
     '/js/tournament-brackets.js': `
+export function buildPoolStandingsIndex() {
+    return new Map();
+}
+
 export function collectTournamentAdvancementPatches() {
+    return [];
+}
+
+export function collectTournamentPoolSeeds() {
     return [];
 }
 
 export function describeTournamentSource() {
     return '';
+}
+
+export function planTournamentPoolAdvancement() {
+    return { patches: [], warnings: [] };
 }
 `,
     '/js/tournament-standings.js': `
