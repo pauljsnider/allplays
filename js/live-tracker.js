@@ -2,7 +2,7 @@
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=15';
 import { db } from './firebase.js?v=10';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
-import { checkAuth } from './auth.js?v=11';
+import { checkAuth } from './auth.js?v=12';
 import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=10';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -104,6 +104,9 @@ function persistPendingEventQueue() {
 function restorePendingEventQueue() {
   liveState.eventQueue = readPersistedLiveTrackerQueue(window.localStorage, currentTeamId, currentGameId);
   liveState.retryAttempt = 0;
+  if (liveState.eventQueue.length > 0) {
+    scheduleRetry();
+  }
 }
 
 function clearPendingEventQueue() {
@@ -115,6 +118,8 @@ function clearPendingEventQueue() {
   }
   persistPendingEventQueue();
 }
+
+let connectivityListenersBound = false;
 
 function scheduleScoreSync() {
   if (!liveState.isLive || !currentTeamId || !currentGameId) return;
@@ -203,6 +208,10 @@ const els = {
   periodChip: q('#period-chip'),
   clock: q('#clock-mobile'),
   fairness: q('#fairness-mobile'),
+  liveSyncBanner: q('#live-sync-banner'),
+  liveSyncStatusLabel: q('#live-sync-status-label'),
+  liveSyncStatusDetail: q('#live-sync-status-detail'),
+  liveSyncPendingPill: q('#live-sync-pending-pill'),
   onCourtCount: q('#on-court-count-mobile'),
   startStop: q('#start-stop'),
   undoMini: q('#undo-mini'),
@@ -322,6 +331,80 @@ function setTab(tab) {
 function renderHeader() {
   els.scoreLine.textContent = `${state.home} — ${state.away}`;
   updateClockUI();
+  renderLiveSyncStatus();
+}
+
+function deriveLiveSyncStatus({ isOnline = true, pendingCount = 0, retryAttempt = 0, isRetryScheduled = false } = {}) {
+  const normalizedPendingCount = Math.max(0, Number(pendingCount || 0));
+  if (!isOnline) {
+    return {
+      visible: true,
+      tone: 'offline',
+      label: 'Offline tracking',
+      detail: normalizedPendingCount > 0
+        ? 'Unsynced events are queued until connection returns.'
+        : 'New live events will queue until connection returns.',
+      pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+    };
+  }
+
+  if (normalizedPendingCount > 0 || isRetryScheduled) {
+    return {
+      visible: true,
+      tone: 'warning',
+      label: retryAttempt > 0 ? 'Retrying live sync' : 'Syncing queued events',
+      detail: normalizedPendingCount > 0
+        ? 'Queued live events will continue syncing in the background.'
+        : 'Waiting for the next retry window.',
+      pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+    };
+  }
+
+  return {
+    visible: false,
+    tone: 'warning',
+    label: '',
+    detail: '',
+    pendingText: ''
+  };
+}
+
+function renderLiveSyncStatus() {
+  if (!els.liveSyncBanner || !els.liveSyncStatusLabel || !els.liveSyncStatusDetail || !els.liveSyncPendingPill) return;
+
+  const status = deriveLiveSyncStatus({
+    isOnline: typeof navigator === 'undefined' ? true : navigator.onLine !== false,
+    pendingCount: liveState.eventQueue.length,
+    retryAttempt: liveState.retryAttempt,
+    isRetryScheduled: Boolean(liveState.retryTimeout)
+  });
+
+  els.liveSyncBanner.classList.remove('hidden', 'sync-status--offline', 'sync-status--warning');
+  els.liveSyncPendingPill.classList.remove('hidden', 'sync-pill--offline', 'sync-pill--warning');
+
+  if (!status.visible) {
+    els.liveSyncBanner.classList.add('hidden');
+    els.liveSyncPendingPill.classList.add('hidden');
+    return;
+  }
+
+  els.liveSyncBanner.classList.add(status.tone === 'offline' ? 'sync-status--offline' : 'sync-status--warning');
+  els.liveSyncStatusLabel.textContent = status.label;
+  els.liveSyncStatusDetail.textContent = status.detail;
+
+  if (status.pendingText) {
+    els.liveSyncPendingPill.textContent = status.pendingText;
+    els.liveSyncPendingPill.classList.add(status.tone === 'offline' ? 'sync-pill--offline' : 'sync-pill--warning');
+  } else {
+    els.liveSyncPendingPill.classList.add('hidden');
+  }
+}
+
+function bindConnectivityListeners() {
+  if (connectivityListenersBound || typeof window === 'undefined') return;
+  connectivityListenersBound = true;
+  window.addEventListener('online', renderLiveSyncStatus);
+  window.addEventListener('offline', renderLiveSyncStatus);
 }
 
 function updateClockUI() {
@@ -1006,10 +1089,12 @@ function startVoiceNote() {
 async function broadcastEvent(eventData) {
   try {
     await broadcastLiveEvent(currentTeamId, currentGameId, eventData);
+    renderLiveSyncStatus();
   } catch (error) {
     console.error('Broadcast failed (will retry):', error);
     liveState.eventQueue.push(eventData);
     persistPendingEventQueue();
+    renderLiveSyncStatus();
     scheduleRetry();
   }
 }
@@ -1030,41 +1115,44 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
   }));
 }
 
-function removeQueuedEvent(eventToRemove) {
-  const queuedIndex = liveState.eventQueue.indexOf(eventToRemove);
-  if (queuedIndex === -1) return;
-  liveState.eventQueue.splice(queuedIndex, 1);
-}
-
 function scheduleRetry({ resetBackoff = false } = {}) {
   if (!currentTeamId || !currentGameId || liveState.eventQueue.length === 0) return;
   if (resetBackoff) {
     liveState.retryAttempt = 0;
   }
   if (liveState.retryTimeout) return;
+  renderLiveSyncStatus();
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
   liveState.retryTimeout = setTimeout(async () => {
     liveState.retryTimeout = null;
-    const queue = [...liveState.eventQueue];
+    let failed = false;
+    renderLiveSyncStatus();
 
-    for (const event of queue) {
+    while (liveState.eventQueue.length > 0) {
+      const event = liveState.eventQueue[0];
       try {
         await broadcastLiveEvent(currentTeamId, currentGameId, event);
-        removeQueuedEvent(event);
-        persistPendingEventQueue();
+        liveState.eventQueue.shift();
         liveState.retryAttempt = 0;
+        persistPendingEventQueue();
       } catch {
+        failed = true;
+        persistPendingEventQueue();
         break;
       }
+      renderLiveSyncStatus();
     }
 
     if (liveState.eventQueue.length > 0) {
-      liveState.retryAttempt += 1;
+      if (failed) {
+        liveState.retryAttempt += 1;
+      }
       scheduleRetry();
       return;
+    } else {
+      persistPendingEventQueue();
+      renderLiveSyncStatus();
     }
-
-    persistPendingEventQueue();
   }, delay);
 }
 
@@ -2275,6 +2363,7 @@ async function init() {
   currentTeamId = teamId;
   currentGameId = gameId;
   restorePendingEventQueue();
+  bindConnectivityListeners();
 
   try {
     const [team, game, playersList] = await Promise.all([
