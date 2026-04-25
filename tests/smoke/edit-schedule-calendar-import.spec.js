@@ -62,6 +62,8 @@ export async function getRsvpBreakdownByPlayer() {
         counts: { going: 0, maybe: 0, notGoing: 0, notResponded: 0 }
     };
 }
+export async function saveTournamentPoolOverride() {}
+export async function clearTournamentPoolOverride() {}
 `,
     '/js/utils.js': `
 const state = () => window.__editScheduleTestState || {};
@@ -241,6 +243,15 @@ export function collectTournamentAdvancementPatches() {
 
 export function describeTournamentSource() {
     return '';
+}
+`,
+    '/js/tournament-standings.js': `
+export function buildTournamentPoolStandings() {
+    return {};
+}
+
+export function buildTournamentPoolOverrideKey(poolName = '') {
+    return String(poolName || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pool';
 }
 `,
     '/js/schedule-notifications.js': `
