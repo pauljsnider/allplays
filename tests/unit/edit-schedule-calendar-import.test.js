@@ -9,6 +9,10 @@ function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 }
 
+function readSmokeSpec(name) {
+    return readFileSync(new URL(`../smoke/${name}`, import.meta.url), 'utf8');
+}
+
 describe('edit schedule calendar import helpers', () => {
     it('accepts valid .ics urls and rejects missing or non-ics values', () => {
         expect(validateCalendarImportUrl('')).toEqual({
@@ -140,5 +144,13 @@ describe('edit schedule calendar import wiring', () => {
         expect(source).toContain('Plan Practice');
         expect(source).toContain("const practiceTitle = event.title || event.opponent || 'Practice';");
         expect(source).toContain('window.trackCalendarEvent');
+    });
+
+    it('keeps schedule notification smoke stubs aligned with edit-schedule imports', () => {
+        const importSpec = readSmokeSpec('edit-schedule-calendar-import.spec.js');
+        const cancelledSpec = readSmokeSpec('edit-schedule-calendar-cancelled-import.spec.js');
+
+        expect(importSpec).toContain('export function buildScheduleNotificationTargets()');
+        expect(cancelledSpec).toContain('export function buildScheduleNotificationTargets()');
     });
 });

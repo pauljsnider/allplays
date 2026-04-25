@@ -1,3 +1,5 @@
+import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from './schedule-notifications.js?v=3';
+
 function formatCancelledGameDate(value) {
     const gameDate = value?.toDate ? value.toDate() : new Date(value);
     return gameDate.toLocaleDateString('en-US', {
@@ -7,13 +9,20 @@ function formatCancelledGameDate(value) {
     });
 }
 
+function buildCancelledGameText(opponentLabel, dateValue) {
+    const label = String(opponentLabel || '').trim() || 'Game';
+    return `⚠️ Game cancelled: ${label} on ${formatCancelledGameDate(dateValue)}`;
+}
+
 export async function cancelScheduledGame({
     teamId,
     gameId,
     user,
     game,
     cancelGame,
-    postChatMessage
+    postChatMessage,
+    counterpartTeamId = null,
+    counterpartOpponent = null
 }) {
     try {
         await cancelGame(teamId, gameId, user.uid);
@@ -24,22 +33,23 @@ export async function cancelScheduledGame({
         };
     }
 
-    try {
-        await postChatMessage(teamId, {
-            text: `⚠️ Game cancelled: vs. ${game.opponent} on ${formatCancelledGameDate(game.date)}`,
-            senderId: user.uid,
-            senderName: user.displayName || user.email,
-            senderEmail: user.email
-        });
+    const targets = buildScheduleNotificationTargets({
+        teamId,
+        title: `vs. ${game?.opponent || 'Opponent'}`,
+        counterpartTeamId,
+        counterpartTitle: counterpartOpponent ? `vs. ${counterpartOpponent}` : null
+    });
+    const notificationResult = await postScheduleNotificationTargets({
+        targets,
+        postChatMessage,
+        senderId: user.uid,
+        senderName: user.displayName || user.email,
+        senderEmail: user.email,
+        buildText: (target) => buildCancelledGameText(target.title, game?.date)
+    });
 
-        return {
-            cancelled: true,
-            notificationError: null
-        };
-    } catch (error) {
-        return {
-            cancelled: true,
-            notificationError: error?.message || 'Unknown chat notification error'
-        };
-    }
+    return {
+        cancelled: true,
+        notificationError: notificationResult.failedCount > 0 ? notificationResult.errorMessage : null
+    };
 }

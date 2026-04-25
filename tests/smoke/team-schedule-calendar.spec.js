@@ -367,8 +367,8 @@ test('team schedule calendar shows only practices in the dedicated practice filt
 test('team schedule keeps tracked duplicates and cancelled items out of the wrong filter buckets', async ({ page, baseURL }) => {
     const now = new Date();
     const completedDate = addDays(now, -5, 18);
-    const upcomingDate = addDays(now, 5, 18);
-    const cancelledDate = addDays(now, 6, 18);
+    const upcomingDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 10, 18, 0, 0, 0));
+    const cancelledDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 11, 18, 0, 0, 0));
     const scenario = {
         team: {
             name: 'Team A',
@@ -428,7 +428,6 @@ test('team schedule keeps tracked duplicates and cancelled items out of the wron
     await expect(page.locator('#schedule-list')).not.toContainText('Falcons');
 
     await page.locator('#schedule-view-calendar').click();
-    await gotoCalendarMonth(page, now, upcomingDate);
     await expect(page.locator('#schedule-calendar-grid')).toContainText('vs Meteors');
     await expect(page.locator('#schedule-calendar-grid')).not.toContainText('Storm');
     await expect(page.locator('#schedule-calendar-grid')).not.toContainText('Duplicate FC');
@@ -441,7 +440,6 @@ test('team schedule keeps tracked duplicates and cancelled items out of the wron
     await expect(page.locator('#schedule-list')).not.toContainText('Duplicate FC');
 
     await page.locator('#schedule-view-calendar').click();
-    await gotoCalendarMonth(page, upcomingDate, cancelledDate);
     await expect(page.locator('#schedule-calendar-grid')).toContainText('vs Storm');
     await expect(page.locator('#schedule-calendar-grid')).not.toContainText('Duplicate FC');
 });
