@@ -38,7 +38,7 @@ const dbMocks = vi.hoisted(() => ({
 vi.mock('../../js/firebase.js?v=10', () => firebaseMocks);
 vi.mock('../../js/db.js?v=16', () => dbMocks);
 
-const { signup, loginWithGoogle } = await import('../../js/auth.js');
+const { signup, loginWithGoogle, handleGoogleRedirectResult } = await import('../../js/auth.js');
 
 describe('auth signup parent invite failure handling', () => {
     beforeEach(() => {
@@ -241,5 +241,105 @@ describe('auth signup parent invite failure handling', () => {
             user: { uid: 'user-2' }
         });
         expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('code-1', 'user-2');
+    });
+
+    it('fails closed when Google popup signup cannot claim a standard activation code', async () => {
+        const deleteMock = vi.fn().mockResolvedValue(undefined);
+        const expectedError = new Error('Code already used');
+
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'coach',
+            codeId: 'code-race-1'
+        });
+        firebaseMocks.signInWithPopup.mockResolvedValue({
+            user: {
+                uid: 'google-user-3',
+                email: 'coach@example.com',
+                displayName: 'Coach User',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-04-23T15:00:00.000Z',
+                    lastSignInTime: '2026-04-23T15:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+        dbMocks.markAccessCodeAsUsed.mockRejectedValue(expectedError);
+
+        await expect(loginWithGoogle('COACH1')).rejects.toThrow('Code already used');
+
+        expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('code-race-1', 'google-user-3');
+        expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
+        expect(window.sessionStorage.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
+    it('still signs out and rethrows the redemption error when popup cleanup delete fails', async () => {
+        const deleteMock = vi.fn().mockRejectedValue(new Error('delete failed'));
+        const expectedError = new Error('Code already used');
+
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'coach',
+            codeId: 'code-race-1b'
+        });
+        firebaseMocks.signInWithPopup.mockResolvedValue({
+            user: {
+                uid: 'google-user-3b',
+                email: 'coach3@example.com',
+                displayName: 'Coach User Three',
+                photoURL: 'https://example.com/photo3.png',
+                metadata: {
+                    creationTime: '2026-04-23T15:00:00.000Z',
+                    lastSignInTime: '2026-04-23T15:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+        dbMocks.markAccessCodeAsUsed.mockRejectedValue(expectedError);
+
+        await expect(loginWithGoogle('COACH1')).rejects.toThrow('Code already used');
+
+        expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('code-race-1b', 'google-user-3b');
+        expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
+        expect(window.sessionStorage.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
+    it('fails closed when redirect Google signup cannot claim a standard activation code', async () => {
+        const deleteMock = vi.fn().mockResolvedValue(undefined);
+        const expectedError = new Error('Code already used');
+
+        window.sessionStorage.setItem('pendingActivationCode', 'COACH1');
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'coach',
+            codeId: 'code-race-2'
+        });
+        firebaseMocks.getRedirectResult.mockResolvedValue({
+            user: {
+                uid: 'google-user-4',
+                email: 'coach2@example.com',
+                displayName: 'Coach User Two',
+                photoURL: 'https://example.com/photo2.png',
+                metadata: {
+                    creationTime: '2026-04-23T15:00:00.000Z',
+                    lastSignInTime: '2026-04-23T15:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+        dbMocks.markAccessCodeAsUsed.mockRejectedValue(expectedError);
+
+        await expect(handleGoogleRedirectResult()).rejects.toThrow('Code already used');
+
+        expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('code-race-2', 'google-user-4');
+        expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
+        expect(window.sessionStorage.removeItem).toHaveBeenCalledWith('pendingActivationCode');
     });
 });

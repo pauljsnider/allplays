@@ -47,6 +47,10 @@
     .grid-cols-auto { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
     @keyframes pulse-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     .live-pulse { animation: pulse-live 1.5s ease-in-out infinite; }
+    .sync-status--offline { background: rgba(220, 38, 38, 0.1); border-color: rgba(220, 38, 38, 0.35); color: #991b1b; }
+    .sync-status--warning { background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.35); color: #92400e; }
+    .sync-pill--offline { background: #dc2626; color: #fff; }
+    .sync-pill--warning { background: #f59e0b; color: #fff; }
   </style>
 </head>
 <body class="min-h-screen text-ink font-body">
@@ -100,6 +104,15 @@
         <div class="flex items-center justify-between gap-2">
           <span class="text-xs text-teal font-semibold">Ready to apply <span id="queue-count-main">0</span> queued swap(s)</span>
           <button id="apply-queue-now" class="pill px-3 py-2 bg-teal text-ink font-bold text-xs">Apply Now</button>
+        </div>
+      </div>
+      <div id="live-sync-banner" class="hidden rounded-xl border px-3 py-2">
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <p id="live-sync-status-label" class="text-xs font-semibold">Offline tracking</p>
+            <p id="live-sync-status-detail" class="text-[11px] opacity-80">Events will sync when connection returns.</p>
+          </div>
+          <span id="live-sync-pending-pill" class="hidden pill px-2 py-1 text-[10px] font-bold">0 pending</span>
         </div>
       </div>
       <div class="flex items-center justify-between text-xs text-white bg-slate rounded-xl px-3 py-2">
