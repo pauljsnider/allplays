@@ -245,7 +245,7 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
-        import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=1';
+        import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=2';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=12';
@@ -400,57 +400,75 @@
 
             const metricLabel = team?.standingsConfig?.rankingMode === 'win_pct' ? 'PCT' : 'PTS';
             const currentTeamName = String(team?.name || '').trim();
-            content.innerHTML = pools.map((pool) => `
-                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
-                    <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
-                        <div>
-                            <h3 class="text-lg font-bold text-gray-900">${escapeHtml(pool.poolName)}</h3>
-                            <p class="text-sm text-gray-500">${pool.rows.length} team${pool.rows.length === 1 ? '' : 's'} in standings</p>
+            content.innerHTML = pools.map((pool) => {
+                const rows = Array.isArray(pool.rows) ? pool.rows : [];
+                const scheduledGameCount = Number(pool.scheduledGameCount) || 0;
+                const completedGameCount = Number(pool.gameCount) || 0;
+                const summaryText = rows.length > 0
+                    ? `${rows.length} team${rows.length === 1 ? '' : 's'} in standings`
+                    : (scheduledGameCount > 0
+                        ? `${scheduledGameCount} tournament game${scheduledGameCount === 1 ? '' : 's'}, no completed scored results yet`
+                        : 'No games scheduled yet');
+                const emptyMessage = scheduledGameCount > 0
+                    ? 'No completed tournament games with scores yet. Final scores will populate this standings table.'
+                    : 'No games are scheduled in this division or pool yet.';
+
+                return `
+                    <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
+                            <div>
+                                <h3 class="text-lg font-bold text-gray-900">${escapeHtml(pool.poolName)}</h3>
+                                <p class="text-sm text-gray-500">${escapeHtml(summaryText)}</p>
+                                ${completedGameCount > 0 && rows.length === 0 ? '<p class="text-xs text-amber-700 mt-1">Completed games need valid teams before standings can be calculated.</p>' : ''}
+                            </div>
+                            ${pool.unresolvedTie ? '<span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">Tie unresolved after configured tiebreakers</span>' : ''}
                         </div>
-                        ${pool.unresolvedTie ? '<span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">Tie unresolved after configured tiebreakers</span>' : ''}
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-white">
-                                <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    <th class="px-4 py-3">Place</th>
-                                    <th class="px-4 py-3">Team</th>
-                                    <th class="px-4 py-3">GP</th>
-                                    <th class="px-4 py-3">W</th>
-                                    <th class="px-4 py-3">L</th>
-                                    <th class="px-4 py-3">T</th>
-                                    <th class="px-4 py-3">${metricLabel}</th>
-                                    <th class="px-4 py-3">PF</th>
-                                    <th class="px-4 py-3">PA</th>
-                                    <th class="px-4 py-3">PD</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-100">
-                                ${pool.rows.map((row) => {
-                                    const isCurrentTeam = row.teamName === currentTeamName;
-                                    return `
-                                        <tr class="${isCurrentTeam ? 'bg-primary-50/70' : 'bg-white'}">
-                                            <td class="px-4 py-3 text-sm font-semibold text-gray-900">
-                                                ${escapeHtml(row.displayRank)}
-                                                ${row.unresolvedTie ? '<span class="ml-1 text-xs font-medium text-amber-700">(unresolved)</span>' : ''}
-                                            </td>
-                                            <td class="px-4 py-3 text-sm ${isCurrentTeam ? 'font-bold text-primary-800' : 'font-medium text-gray-900'}">${escapeHtml(row.teamName)}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.gp) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.w) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.l) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.t) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${metricLabel === 'PCT' ? (Number(row.winPct) || 0).toFixed(3) : Number(row.points) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.pf) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.pa) || 0}</td>
-                                            <td class="px-4 py-3 text-sm text-gray-700">${Number(row.pd) || 0}</td>
+                        ${rows.length === 0
+                            ? `<div class="px-6 py-8 text-sm text-gray-500 bg-white">${emptyMessage}</div>`
+                            : `<div class="overflow-x-auto">
+                                <table class="min-w-full divide-y divide-gray-200">
+                                    <thead class="bg-white">
+                                        <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                            <th class="px-4 py-3">Place</th>
+                                            <th class="px-4 py-3">Team</th>
+                                            <th class="px-4 py-3">GP</th>
+                                            <th class="px-4 py-3">W</th>
+                                            <th class="px-4 py-3">L</th>
+                                            <th class="px-4 py-3">T</th>
+                                            <th class="px-4 py-3">${metricLabel}</th>
+                                            <th class="px-4 py-3">PF</th>
+                                            <th class="px-4 py-3">PA</th>
+                                            <th class="px-4 py-3">PD</th>
                                         </tr>
-                                    `;
-                                }).join('')}
-                            </tbody>
-                        </table>
+                                    </thead>
+                                    <tbody class="divide-y divide-gray-100">
+                                        ${rows.map((row) => {
+                                            const isCurrentTeam = row.teamName === currentTeamName;
+                                            return `
+                                                <tr class="${isCurrentTeam ? 'bg-primary-50/70' : 'bg-white'}">
+                                                    <td class="px-4 py-3 text-sm font-semibold text-gray-900">
+                                                        ${escapeHtml(row.displayRank)}
+                                                        ${row.unresolvedTie ? '<span class="ml-1 text-xs font-medium text-amber-700">(unresolved)</span>' : ''}
+                                                    </td>
+                                                    <td class="px-4 py-3 text-sm ${isCurrentTeam ? 'font-bold text-primary-800' : 'font-medium text-gray-900'}">${escapeHtml(row.teamName)}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.gp) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.w) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.l) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.t) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${metricLabel === 'PCT' ? (Number(row.winPct) || 0).toFixed(3) : Number(row.points) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.pf) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.pa) || 0}</td>
+                                                    <td class="px-4 py-3 text-sm text-gray-700">${Number(row.pd) || 0}</td>
+                                                </tr>
+                                            `;
+                                        }).join('')}
+                                    </tbody>
+                                </table>
+                            </div>`
+                        }
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
 
             section.classList.remove('hidden');
         }
@@ -931,7 +949,9 @@
                 const nativeStandingsSnapshot = buildNativeStandingsSnapshot(team, dbGames);
                 const tournamentStandings = computeTournamentPoolStandings(dbGames, {
                     teamName: team?.name,
-                    standingsConfig: team?.standingsConfig || {}
+                    standingsConfig: team?.standingsConfig || {},
+                    tournamentDivisions: team?.tournamentDivisions || team?.tournament?.divisions,
+                    tournamentPools: team?.tournamentPools || team?.tournament?.pools
                 });
                 const leagueSnapshot = (nativeStandingsSnapshot && nativeStandingsSnapshot.ok)
                     ? null
