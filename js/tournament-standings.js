@@ -159,21 +159,26 @@ export function applyTournamentStandingsOverride(rowsInput = [], override = null
     const remaining = [...rows];
     const ordered = [];
     teamOrder.forEach((teamName) => {
-        const matchIndex = remaining.findIndex((row) => normalizeString(row?.team) === teamName);
+        const matchIndex = remaining.findIndex((row) => normalizeString(row?.teamName || row?.team) === teamName);
         if (matchIndex >= 0) {
             ordered.push(remaining.splice(matchIndex, 1)[0]);
         }
     });
 
+    const isApplied = ordered.length > 0;
     const finalRows = [...ordered, ...remaining].map((row, index) => ({
         ...row,
-        rank: index + 1
+        rank: index + 1,
+        ...(isApplied ? {
+            displayRank: String(index + 1),
+            unresolvedTie: false
+        } : {})
     }));
 
     return {
         rows: finalRows,
-        isOverridden: ordered.length > 0,
-        override: ordered.length > 0 ? override : null
+        isOverridden: isApplied,
+        override: isApplied ? override : null
     };
 }
 
@@ -296,14 +301,19 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
                 ...row,
                 teamName: row.team
             }));
+            const override = getPoolOverride(options?.poolOverrides || {}, poolName);
+            const applied = applyTournamentStandingsOverride(rows, override);
             return {
                 poolName,
                 groupName: poolName,
                 gameCount: poolGameList.length,
                 scheduledGameCount: pool.scheduledGameCount,
                 noScoreGameCount: pool.noScoreGameCount,
-                rows,
-                unresolvedTie: rows.some((row) => row.unresolvedTie)
+                computedRows: rows,
+                rows: applied.rows,
+                isOverridden: applied.isOverridden,
+                override: applied.override,
+                unresolvedTie: applied.isOverridden ? false : rows.some((row) => row.unresolvedTie)
             };
         });
 }
