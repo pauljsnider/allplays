@@ -138,7 +138,7 @@ function getTournamentGameTeams(game = {}, currentTeamName = null) {
 
 function isCompletedTournamentPoolGame(game = {}) {
     return isTournamentGame(game)
-        && getTournamentPoolName(game)
+        && getTournamentStandingsGroupName(game)
         && hasCompletedTournamentScore(game);
 }
 
@@ -202,7 +202,7 @@ export function buildTournamentPoolStandings(gamesInput = [], options = {}) {
 
     games.forEach((game) => {
         if (!isCompletedTournamentPoolGame(game)) return;
-        const poolName = normalizeString(game?.tournament?.poolName);
+        const poolName = getTournamentStandingsGroupName(game);
         const { homeTeam, awayTeam, homeScore, awayScore } = getTournamentGameTeams(game, currentTeamName);
         if (!poolName || !homeTeam || !awayTeam) return;
         if (homeTeam === awayTeam) return;

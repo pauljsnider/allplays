@@ -46,13 +46,19 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('applyTournamentAdvancementPatches');
     expect(source).toContain('planTournamentPoolAdvancement');
     expect(source).toContain('class="advance-tournament-pool-btn');
+    expect(source).toContain('data-advance-tournament-pool');
+    expect(source).toContain('formatTournamentAdvancementPreviewMessage');
+    expect(source).toContain('buildFinalizedTournamentAdvancementPlan');
     expect(source).toContain("document.querySelectorAll('.advance-tournament-pool-btn').forEach(btn => {");
     expect(source).toContain('let allTeamGamesCache = {};');
+    expect(source).toContain('let tournamentAdvancementGames = [];');
     expect(source).toContain('allTeamGamesCache = {};');
+    expect(source).toContain('tournamentAdvancementGames = resolvedDbEvents.filter');
     expect(source).toContain('allTeamGamesCache[event.id] = eventRecord;');
     expect(source).toContain('const games = Object.values(allTeamGamesCache).filter((candidate) => candidate?.id);');
     expect(source).toContain('const plan = planTournamentPoolAdvancement(games, {');
     expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);');
+    expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, plan.patches, tournamentAdvancementGames);');
     expect(source).toContain('Skipped advancement for ${poolName}. ${plan.reason}');
   });
 

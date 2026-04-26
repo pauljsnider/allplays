@@ -832,6 +832,7 @@
         let currentTournamentPoolStandings = {};
         let activeTournamentStandingsPoolKey = null;
         let tournamentStandingsDraft = [];
+        let tournamentAdvancementGames = [];
 
         const opponentInput = document.getElementById('opponent');
         const opponentResults = document.getElementById('opponent-search-results');
@@ -945,6 +946,13 @@
                 .filter(Boolean);
         }
 
+        function getTournamentStandingPoolName(tournament = {}) {
+            const divisionName = String(tournament?.divisionName || tournament?.division || '').trim();
+            const poolName = String(tournament?.poolName || '').trim();
+            if (divisionName && poolName) return `${divisionName} • ${poolName}`;
+            return poolName || divisionName;
+        }
+
         function buildTournamentRankingPromptDefault(poolName, games = []) {
             const currentPoolStandings = buildPoolStandingsIndex(games);
             const poolRows = Array.isArray(currentPoolStandings?.[poolName]) ? currentPoolStandings[poolName] : [];
@@ -958,7 +966,7 @@
 
         async function handleAdvanceTournamentPool(gameId) {
             const game = gamesCache[gameId] || allTeamGamesCache[gameId];
-            const poolName = (game?.tournament?.poolName || '').trim();
+            const poolName = getTournamentStandingPoolName(game?.tournament || {});
             if (!poolName) {
                 alert('This tournament game is missing a pool name, so advancement was skipped.');
                 return;
@@ -985,6 +993,8 @@
                 alert(`No bracket updates were needed for ${poolName}.`);
                 return;
             }
+
+            if (!confirm(formatTournamentAdvancementPreviewMessage({ poolName }, plan))) return;
 
             await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);
             await loadSchedule();
@@ -1074,6 +1084,56 @@
             const finalizedAt = toDateValue(override?.finalizedAt);
             if (!finalizedAt) return `Finalized by ${finalizedBy}`;
             return `Finalized by ${finalizedBy} on ${formatDate(finalizedAt)} at ${formatTime(finalizedAt)}`;
+        }
+
+        function getFinalizedTournamentRanking(pool = {}) {
+            if (!pool?.override) return [];
+            return (pool.rows || [])
+                .map((row) => String(row?.teamName || row?.team || '').trim())
+                .filter(Boolean);
+        }
+
+        function buildFinalizedTournamentAdvancementPlan(pool = {}) {
+            if (!pool?.override) {
+                return {
+                    skipped: true,
+                    reason: `Save a final ranking for ${pool?.poolName || 'this pool'} before advancing bracket slots.`,
+                    patches: [],
+                    previewRows: [],
+                    requiresOverwriteConfirmation: false
+                };
+            }
+
+            return planTournamentPoolAdvancement(tournamentAdvancementGames, {
+                poolName: pool.poolName,
+                ranking: getFinalizedTournamentRanking(pool)
+            });
+        }
+
+        function formatTournamentAdvancementStatus(plan = {}) {
+            if (plan.skipped) return plan.reason || 'Bracket advancement is not ready.';
+            if (!plan.patches?.length) return 'Bracket slots already match this final ranking.';
+            const slotCount = plan.previewRows?.length || plan.patches.length;
+            const overwriteText = plan.requiresOverwriteConfirmation ? ' Existing assignments will require confirmation.' : '';
+            return `${slotCount} bracket slot update${slotCount === 1 ? '' : 's'} ready for preview.${overwriteText}`;
+        }
+
+        function formatTournamentAdvancementPreviewMessage(pool = {}, plan = {}) {
+            const previewRows = Array.isArray(plan.previewRows) ? plan.previewRows : [];
+            const previewLines = previewRows.slice(0, 20).map((row) => {
+                const overwriteText = row.overwritesExistingTeam ? ' (overwrites existing team)' : '';
+                return `• ${row.gameId} ${row.slotLabel}: ${row.currentLabel || 'TBD'} => ${row.nextLabel || 'TBD'}${overwriteText}`;
+            });
+            const overflowText = previewRows.length > previewLines.length
+                ? `\n• ${previewRows.length - previewLines.length} more slot update${previewRows.length - previewLines.length === 1 ? '' : 's'}`
+                : '';
+            const fallbackLines = !previewLines.length
+                ? (plan.patches || []).map((patch) => `• ${patch.gameId}`)
+                : [];
+            const warning = plan.requiresOverwriteConfirmation
+                ? 'Existing bracket assignments will be overwritten.\n\n'
+                : '';
+            return `${warning}Preview bracket advancement for ${pool.poolName || plan.poolName}:\n\n${[...previewLines, ...fallbackLines].join('\n')}${overflowText}\n\nSave ${plan.patches?.length || 0} tournament game update${(plan.patches?.length || 0) === 1 ? '' : 's'}?`;
         }
 
         function closeTournamentStandingsModal() {
@@ -1199,6 +1259,27 @@
             await loadSchedule();
         }
 
+        async function handleAdvanceFinalizedTournamentPool(poolKey) {
+            const pool = getTournamentPoolStandingByKey(poolKey);
+            if (!pool) return;
+
+            const plan = buildFinalizedTournamentAdvancementPlan(pool);
+            if (plan.skipped) {
+                alert(plan.reason || `Skipped bracket advancement for ${pool.poolName}.`);
+                return;
+            }
+            if (!plan.patches.length) {
+                alert(`No bracket updates were needed for ${pool.poolName}.`);
+                return;
+            }
+
+            if (!confirm(formatTournamentAdvancementPreviewMessage(pool, plan))) return;
+
+            await applyTournamentAdvancementPatches(currentTeamId, plan.patches, tournamentAdvancementGames);
+            await loadSchedule();
+            alert(`Advanced ${pool.poolName} into ${plan.patches.length} tournament game${plan.patches.length === 1 ? '' : 's'}.`);
+        }
+
         function renderTournamentStandingsAdminPanel(poolStandings = {}) {
             currentTournamentPoolStandings = poolStandings || {};
             const panel = document.getElementById('tournament-standings-admin-panel');
@@ -1223,6 +1304,7 @@
                     <div class="grid gap-4 lg:grid-cols-2">
                         ${pools.map((pool) => {
                             const poolKey = buildTournamentPoolOverrideKey(pool.poolName);
+                            const advancementPlan = buildFinalizedTournamentAdvancementPlan(pool);
                             return `
                                 <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                                     <div class="flex items-start justify-between gap-3 mb-3">
@@ -1230,8 +1312,12 @@
                                             <div class="text-sm font-semibold text-gray-900">${escapeHtml(pool.poolName)}</div>
                                             <div class="text-xs text-gray-500">${pool.gameCount} completed pool game${pool.gameCount === 1 ? '' : 's'}</div>
                                             ${pool.isOverridden && pool.override ? `<div class="text-xs text-amber-700 mt-1">${escapeHtml(formatTournamentOverrideAudit(pool.override))}</div>` : '<div class="text-xs text-gray-500 mt-1">Using computed standings</div>'}
+                                            <div class="text-xs ${advancementPlan.skipped ? 'text-slate-500' : (advancementPlan.requiresOverwriteConfirmation ? 'text-amber-700' : 'text-emerald-700')} mt-1">${escapeHtml(formatTournamentAdvancementStatus(advancementPlan))}</div>
                                         </div>
-                                        <button type="button" data-edit-tournament-pool="${escapeHtml(poolKey)}" class="px-3 py-1.5 rounded bg-indigo-100 text-indigo-700 text-sm font-medium hover:bg-indigo-200">Edit final ranking</button>
+                                        <div class="flex flex-col gap-2">
+                                            <button type="button" data-edit-tournament-pool="${escapeHtml(poolKey)}" class="px-3 py-1.5 rounded bg-indigo-100 text-indigo-700 text-sm font-medium hover:bg-indigo-200">Edit final ranking</button>
+                                            <button type="button" data-advance-tournament-pool="${escapeHtml(poolKey)}" class="px-3 py-1.5 rounded bg-violet-100 text-violet-700 text-sm font-medium hover:bg-violet-200">Advance bracket slots</button>
+                                        </div>
                                     </div>
                                     <div class="overflow-x-auto">
                                         <table class="min-w-full text-sm">
@@ -1264,6 +1350,16 @@
 
             panel.querySelectorAll('[data-edit-tournament-pool]').forEach((button) => {
                 button.addEventListener('click', () => openTournamentStandingsEditor(button.dataset.editTournamentPool));
+            });
+            panel.querySelectorAll('[data-advance-tournament-pool]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    try {
+                        await handleAdvanceFinalizedTournamentPool(button.dataset.advanceTournamentPool);
+                    } catch (error) {
+                        console.error('Failed to advance finalized tournament pool:', error);
+                        alert(`Could not advance bracket slots: ${error.message}`);
+                    }
+                });
             });
         }
 
@@ -1513,6 +1609,7 @@
                     }
                 }
                 : event);
+            tournamentAdvancementGames = resolvedDbEvents.filter((event) => event?.id && (event?.type || 'game') !== 'practice');
             const tournamentPoolStandings = buildTournamentPoolStandings(resolvedDbEvents, {
                 currentTeamName: currentTeam?.name || null,
                 standingsConfig: currentTeam?.standingsConfig || {},
