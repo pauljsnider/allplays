@@ -200,6 +200,38 @@ describe('tournament standings helpers', () => {
     expect(standings['Pool A'].override).toEqual(legacyOverride);
   });
 
+  it('builds division-scoped admin standings and applies final ranking overrides', () => {
+    const override = {
+      poolName: '10U Gold',
+      teamOrder: ['Lions', 'Tigers']
+    };
+
+    const standings = buildTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        homeScore: 2,
+        awayScore: 1,
+        tournament: {
+          divisionName: '10U Gold',
+          slotAssignments: {
+            home: { sourceType: 'team', teamName: 'Tigers' },
+            away: { sourceType: 'team', teamName: 'Lions' }
+          }
+        }
+      }
+    ], {
+      poolOverrides: {
+        [buildTournamentPoolOverrideKey('10U Gold')]: override
+      }
+    });
+
+    expect(Object.keys(standings)).toEqual(['10U Gold']);
+    expect(standings['10U Gold'].computedRows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
+    expect(standings['10U Gold'].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(standings['10U Gold'].isOverridden).toBe(true);
+  });
+
   it('falls back to computed ranks when an override is cleared', () => {
     const applied = applyTournamentStandingsOverride([
       { team: 'Bears', rank: 2 },
@@ -211,6 +243,28 @@ describe('tournament standings helpers', () => {
       { team: 'Bears', rank: 1 },
       { team: 'Lions', rank: 2 }
     ]);
+  });
+
+  it('ignores malformed overrides and safely applies non-stale teams from stale overrides', () => {
+    const computedRows = [
+      { team: 'Tigers', teamName: 'Tigers', rank: 1 },
+      { team: 'Lions', teamName: 'Lions', rank: 2 }
+    ];
+
+    const malformed = applyTournamentStandingsOverride(computedRows, {
+      poolName: 'Pool A',
+      teamOrder: 'Lions,Tigers'
+    });
+    expect(malformed.isOverridden).toBe(false);
+    expect(malformed.rows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
+
+    const stale = applyTournamentStandingsOverride(computedRows, {
+      poolName: 'Pool A',
+      teamOrder: ['Ghosts', 'Lions']
+    });
+    expect(stale.isOverridden).toBe(true);
+    expect(stale.rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(stale.rows.map((row) => row.rank)).toEqual([1, 2]);
   });
 
   it('groups completed tournament games by pool for team pages', () => {
@@ -430,5 +484,40 @@ describe('tournament standings helpers', () => {
     expect(pools[0].unresolvedTie).toBe(true);
     expect(pools[0].rows.map((row) => row.displayRank)).toEqual(['T-1', 'T-1']);
     expect(pools[0].rows.every((row) => row.unresolvedTie)).toBe(true);
+  });
+
+  it('uses saved overrides for rendered team-page standings and clears unresolved tie labels', () => {
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 1,
+        awayScore: 1,
+        tournament: { poolName: 'Pool C' }
+      }
+    ], {
+      teamName: 'Tigers',
+      standingsConfig: {
+        rankingMode: 'points',
+        points: { win: 3, tie: 1, loss: 0 },
+        tiebreakers: ['name']
+      },
+      poolOverrides: {
+        [buildTournamentPoolOverrideKey('Pool C')]: {
+          poolName: 'Pool C',
+          teamOrder: ['Lions', 'Tigers'],
+          finalizedBy: { name: 'Coach Kim' },
+          finalizedAt: '2026-04-23T22:00:00.000Z'
+        }
+      }
+    });
+
+    expect(pools[0].isOverridden).toBe(true);
+    expect(pools[0].unresolvedTie).toBe(false);
+    expect(pools[0].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(pools[0].rows.map((row) => row.displayRank)).toEqual(['1', '2']);
+    expect(pools[0].rows.every((row) => row.unresolvedTie)).toBe(false);
   });
 });

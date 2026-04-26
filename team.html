@@ -245,7 +245,7 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
-        import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=2';
+        import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=12';
@@ -387,6 +387,20 @@
             `;
         }
 
+        function getTournamentOverrideDate(value) {
+            if (!value) return null;
+            if (typeof value.toDate === 'function') return value.toDate();
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        function formatTournamentOverrideAudit(override = {}) {
+            const finalizedBy = override?.finalizedBy?.name || override?.finalizedBy?.email || 'an admin';
+            const finalizedAt = getTournamentOverrideDate(override?.finalizedAt);
+            if (!finalizedAt) return `Finalized by ${finalizedBy}`;
+            return `Finalized by ${finalizedBy} on ${formatDate(finalizedAt)} at ${formatTime(finalizedAt)}`;
+        }
+
         function renderTournamentStandingsSection(pools, team) {
             const section = document.getElementById('tournament-standings-section');
             const content = document.getElementById('tournament-standings-content');
@@ -420,7 +434,9 @@
                                 <h3 class="text-lg font-bold text-gray-900">${escapeHtml(pool.poolName)}</h3>
                                 <p class="text-sm text-gray-500">${escapeHtml(summaryText)}</p>
                                 ${completedGameCount > 0 && rows.length === 0 ? '<p class="text-xs text-amber-700 mt-1">Completed games need valid teams before standings can be calculated.</p>' : ''}
+                                ${pool.isOverridden && pool.override ? `<p class="text-xs text-amber-700 mt-1">${escapeHtml(formatTournamentOverrideAudit(pool.override))}</p>` : ''}
                             </div>
+                            ${pool.isOverridden ? '<span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">Final ranking override</span>' : ''}
                             ${pool.unresolvedTie ? '<span class="inline-flex items-center rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800 border border-amber-200">Tie unresolved after configured tiebreakers</span>' : ''}
                         </div>
                         ${rows.length === 0
@@ -951,7 +967,8 @@
                     teamName: team?.name,
                     standingsConfig: team?.standingsConfig || {},
                     tournamentDivisions: team?.tournamentDivisions || team?.tournament?.divisions,
-                    tournamentPools: team?.tournamentPools || team?.tournament?.pools
+                    tournamentPools: team?.tournamentPools || team?.tournament?.pools,
+                    poolOverrides: team?.tournamentPoolOverrides || {}
                 });
                 const leagueSnapshot = (nativeStandingsSnapshot && nativeStandingsSnapshot.ok)
                     ? null
