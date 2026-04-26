@@ -17,4 +17,20 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('description: `Undo stat: ${entry.text}`');
     expect(source).toContain('description: `Corrected stat: ${statKey.toUpperCase()} adjusted`');
   });
+
+  it('wires bounded goal-sport controls into track-live', () => {
+    const source = readTrackLive();
+
+    expect(source).toContain('id="goal-sport-controls"');
+    expect(source).toContain('id="goal-scorer-input"');
+    expect(source).toContain('id="goal-note-input"');
+    expect(source).toContain("getGoalSportProfile({ game: currentGame, team: currentTeam, config: currentConfig })");
+    expect(source).toContain('hasExplicitStatTrackerConfig');
+    expect(source).toContain("recordGoalSportGoal('home')");
+    expect(source).toContain("recordGoalSportGoal('away')");
+    expect(source).toContain("type: 'goal'");
+    expect(source).toContain('statKey: event.statKey');
+    expect(source).toContain('isOpponent: event.isOpponent');
+    expect(source).toContain('buildGoalSportEvent({');
+  });
 });

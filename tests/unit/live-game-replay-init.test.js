@@ -256,7 +256,7 @@ function buildModuleSource() {
             (_, imports) => `const { ${imports.replace(/\s+/g, ' ').trim()} } = deps.liveGameState;`
         )
         .replace(
-            "import { getDefaultLivePeriod } from './live-sport-config.js?v=1';",
+            /import\s+\{\s*getDefaultLivePeriod\s*\}\s+from\s+'\.\/live-sport-config\.js\?v=\d+';/,
             'const { getDefaultLivePeriod } = deps.liveSportConfig;'
         )
         .replace(
