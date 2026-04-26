@@ -8,8 +8,10 @@ import { getDefaultLivePeriod, getSportPeriodLabels } from '../../js/live-sport-
 import {
   readPersistedLiveTrackerPendingFinish,
   readPersistedLiveTrackerQueue,
+  readPersistedLiveTrackerState,
   writePersistedLiveTrackerPendingFinish,
-  writePersistedLiveTrackerQueue
+  writePersistedLiveTrackerQueue,
+  writePersistedLiveTrackerState
 } from '../../js/live-tracker-queue.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -273,7 +275,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   rewritten = replaceNamedImportByModulePath(
     rewritten,
     './live-tracker-queue.js',
-    'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish } = deps.liveTrackerQueue;'
+    'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish, readPersistedLiveTrackerState, writePersistedLiveTrackerState } = deps.liveTrackerQueue;'
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -454,7 +456,9 @@ async function bootLiveTracker({ game, snapshots }) {
       readPersistedLiveTrackerQueue,
       writePersistedLiveTrackerQueue,
       readPersistedLiveTrackerPendingFinish,
-      writePersistedLiveTrackerPendingFinish
+      writePersistedLiveTrackerPendingFinish,
+      readPersistedLiveTrackerState,
+      writePersistedLiveTrackerState
     },
     liveTrackerSaveComplete: {
       commitFinishPlan: async () => {},
