@@ -273,6 +273,115 @@ describe('tournament standings helpers', () => {
     });
   });
 
+  it('computes division-scoped standings when tournament games use division names', () => {
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 7,
+        awayScore: 3,
+        tournament: { divisionName: '10U Gold' }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Bears',
+        isHome: true,
+        homeScore: 2,
+        awayScore: 2,
+        tournament: { divisionName: '10U Gold' }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Hawks',
+        isHome: false,
+        homeScore: 5,
+        awayScore: 1,
+        tournament: { divisionName: '12U Silver' }
+      }
+    ], {
+      teamName: 'Tigers',
+      standingsConfig: {
+        rankingMode: 'points',
+        points: { win: 3, tie: 1, loss: 0 }
+      }
+    });
+
+    expect(pools.map((pool) => pool.poolName)).toEqual(['10U Gold', '12U Silver']);
+    expect(pools[0].rows.map((row) => row.teamName)).toEqual(['Tigers', 'Bears', 'Lions']);
+    expect(pools[0].rows[0]).toMatchObject({
+      teamName: 'Tigers',
+      w: 1,
+      l: 0,
+      t: 1,
+      points: 4,
+      pf: 9,
+      pa: 5,
+      displayRank: '1'
+    });
+    expect(pools[1].rows[0]).toMatchObject({
+      teamName: 'Tigers',
+      points: 3,
+      displayRank: '1'
+    });
+  });
+
+  it('keeps empty and unscored tournament groups visible with empty rows', () => {
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'scheduled',
+        opponent: 'Lions',
+        isHome: true,
+        tournament: { poolName: 'Pool A' }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Bears',
+        isHome: true,
+        homeScore: '',
+        awayScore: '',
+        tournament: { poolName: 'Pool A' }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Hawks',
+        isHome: true,
+        homeScore: null,
+        awayScore: 1,
+        tournament: { divisionName: '10U Gold' }
+      }
+    ], {
+      teamName: 'Tigers',
+      divisionNames: ['8U Bronze']
+    });
+
+    expect(pools.map((pool) => pool.poolName)).toEqual(['10U Gold', '8U Bronze', 'Pool A']);
+    expect(pools.find((pool) => pool.poolName === 'Pool A')).toMatchObject({
+      gameCount: 0,
+      scheduledGameCount: 2,
+      noScoreGameCount: 2,
+      rows: []
+    });
+    expect(pools.find((pool) => pool.poolName === '10U Gold')).toMatchObject({
+      gameCount: 0,
+      scheduledGameCount: 1,
+      noScoreGameCount: 1,
+      rows: []
+    });
+    expect(pools.find((pool) => pool.poolName === '8U Bronze')).toMatchObject({
+      gameCount: 0,
+      scheduledGameCount: 0,
+      noScoreGameCount: 0,
+      rows: []
+    });
+  });
+
   it('swaps team-relative scores for away tournament games before computing team-page standings', () => {
     const pools = computeTournamentPoolStandings([
       {

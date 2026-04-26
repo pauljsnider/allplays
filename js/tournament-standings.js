@@ -35,6 +35,66 @@ function getSlotTeamName(slot = {}) {
     return normalizeString(slot?.teamName);
 }
 
+function isTournamentGame(game = {}) {
+    return String(game?.competitionType || '').toLowerCase() === 'tournament';
+}
+
+function hasFiniteScore(value) {
+    if (value === '' || value == null) return false;
+    if (typeof value === 'string' && value.trim() === '') return false;
+    return Number.isFinite(Number(value));
+}
+
+function hasCompletedTournamentScore(game = {}) {
+    return ['completed', 'final'].includes(String(game?.status || '').toLowerCase())
+        && hasFiniteScore(game?.homeScore)
+        && hasFiniteScore(game?.awayScore);
+}
+
+function getTournamentPoolName(game = {}) {
+    return normalizeString(game?.tournament?.poolName);
+}
+
+function getTournamentDivisionName(game = {}) {
+    return normalizeString(game?.tournament?.divisionName)
+        || normalizeString(game?.tournament?.division);
+}
+
+function getTournamentStandingsGroupName(game = {}) {
+    const divisionName = getTournamentDivisionName(game);
+    const poolName = getTournamentPoolName(game);
+    if (divisionName && poolName) return `${divisionName} • ${poolName}`;
+    return poolName || divisionName;
+}
+
+function normalizeTournamentGroupOption(value) {
+    if (typeof value === 'string') return normalizeString(value);
+    if (!value || typeof value !== 'object') return null;
+    const divisionName = normalizeString(value.divisionName) || normalizeString(value.division);
+    const poolName = normalizeString(value.poolName);
+    if (divisionName && poolName) return `${divisionName} • ${poolName}`;
+    return normalizeString(value.name)
+        || normalizeString(value.label)
+        || poolName
+        || divisionName;
+}
+
+function getConfiguredTournamentGroupNames(options = {}) {
+    const sources = [
+        options.groupNames,
+        options.poolNames,
+        options.divisionNames,
+        options.tournamentGroups,
+        options.tournamentPools,
+        options.tournamentDivisions
+    ];
+
+    return sources
+        .flatMap((source) => Array.isArray(source) ? source : [])
+        .map(normalizeTournamentGroupOption)
+        .filter(Boolean);
+}
+
 function getTournamentGameTeams(game = {}, currentTeamName = null) {
     const resolved = game?.tournament?.resolved || {};
     const slotAssignments = game?.tournament?.slotAssignments || {};
@@ -77,11 +137,9 @@ function getTournamentGameTeams(game = {}, currentTeamName = null) {
 }
 
 function isCompletedTournamentPoolGame(game = {}) {
-    return String(game?.competitionType || '').toLowerCase() === 'tournament'
-        && normalizeString(game?.tournament?.poolName)
-        && ['completed', 'final'].includes(String(game?.status || '').toLowerCase())
-        && Number.isFinite(Number(game?.homeScore))
-        && Number.isFinite(Number(game?.awayScore));
+    return isTournamentGame(game)
+        && getTournamentPoolName(game)
+        && hasCompletedTournamentScore(game);
 }
 
 export function applyTournamentStandingsOverride(rowsInput = [], override = null) {
@@ -187,10 +245,35 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
     const currentTeamName = normalizeString(options?.teamName || options?.currentTeamName);
     if (!currentTeamName) return [];
 
-    const poolGames = new Map();
+    const groupGames = new Map();
+    const ensureGroup = (groupName) => {
+        const normalizedGroupName = normalizeString(groupName);
+        if (!normalizedGroupName) return null;
+        if (!groupGames.has(normalizedGroupName)) {
+            groupGames.set(normalizedGroupName, {
+                games: [],
+                scheduledGameCount: 0,
+                noScoreGameCount: 0
+            });
+        }
+        return groupGames.get(normalizedGroupName);
+    };
+
+    getConfiguredTournamentGroupNames(options).forEach(ensureGroup);
+
     games.forEach((game) => {
-        if (!isCompletedTournamentPoolGame(game)) return;
-        const poolName = normalizeString(game?.tournament?.poolName);
+        if (!isTournamentGame(game)) return;
+        const poolName = getTournamentStandingsGroupName(game);
+        const group = ensureGroup(poolName);
+        if (!group) return;
+
+        group.scheduledGameCount += 1;
+
+        if (!hasCompletedTournamentScore(game)) {
+            group.noScoreGameCount += 1;
+            return;
+        }
+
         const { homeTeam, awayTeam, homeScore, awayScore } = getTournamentGameTeams(game, currentTeamName);
         if (!poolName || !homeTeam || !awayTeam) return;
         if (homeTeam === awayTeam) return;
@@ -202,23 +285,25 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
             awayScore: Number(awayScore ?? game.awayScore),
             status: 'completed'
         };
-        const existing = poolGames.get(poolName) || [];
-        existing.push(normalizedGame);
-        poolGames.set(poolName, existing);
+        group.games.push(normalizedGame);
     });
 
-    return Array.from(poolGames.entries())
+    return Array.from(groupGames.entries())
         .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([poolName, poolGameList]) => {
+        .map(([poolName, pool]) => {
+            const poolGameList = pool.games;
             const rows = computeNativeStandingsDetailed(poolGameList, options?.standingsConfig || {}).map((row) => ({
                 ...row,
                 teamName: row.team
             }));
             return {
                 poolName,
+                groupName: poolName,
+                gameCount: poolGameList.length,
+                scheduledGameCount: pool.scheduledGameCount,
+                noScoreGameCount: pool.noScoreGameCount,
                 rows,
                 unresolvedTie: rows.some((row) => row.unresolvedTie)
             };
-        })
-        .filter((pool) => pool.rows.length > 0);
+        });
 }
