@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import {
     readPersistedLiveTrackerPendingFinish,
     readPersistedLiveTrackerQueue,
+    readPersistedLiveTrackerState,
     writePersistedLiveTrackerPendingFinish,
-    writePersistedLiveTrackerQueue
+    writePersistedLiveTrackerQueue,
+    writePersistedLiveTrackerState
 } from '../../js/live-tracker-queue.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -140,18 +142,21 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     rewritten = replaceNamedImportByModulePath(rewritten, './live-game-state.js', 'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-sport-config.js', 'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-finish.js', 'const { buildOpponentStatsSnapshotFromEntries } = deps.liveTrackerFinish;');
-    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-queue.js', 'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish } = deps.liveTrackerQueue;');
+    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-queue.js', 'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish, readPersistedLiveTrackerState, writePersistedLiveTrackerState } = deps.liveTrackerQueue;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-save-complete.js', 'const { commitFinishPlan, runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;');
 
     return rewritten
         .replace(authHook, '')
         .concat(`
 return {
+  state,
   liveState,
   scheduleRetry,
   retryPendingFinalizationNow,
   persistPendingEventQueue,
   persistPendingFinalization,
+  persistLocalTrackerState,
+  restoreLocalTrackerState,
   broadcastEvent,
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
@@ -172,9 +177,8 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGameLiveStatusImpl = async () => {}, randomUUID = vi.fn() }) {
+async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGameLiveStatusImpl = async () => {}, randomUUID = vi.fn(), storage = createStorage() }) {
     const { document } = createEnvironment();
-    const storage = createStorage();
     const scheduledTimeouts = new Map();
     let nextTimeoutId = 1;
     const deps = {
@@ -261,7 +265,9 @@ async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGame
             readPersistedLiveTrackerQueue,
             writePersistedLiveTrackerQueue,
             readPersistedLiveTrackerPendingFinish,
-            writePersistedLiveTrackerPendingFinish
+            writePersistedLiveTrackerPendingFinish,
+            readPersistedLiveTrackerState,
+            writePersistedLiveTrackerState
         },
         liveTrackerSaveComplete: {
             commitFinishPlan: commitImpl,
@@ -385,6 +391,49 @@ describe('live tracker retry queue persistence', () => {
         expect(randomUUID).toHaveBeenCalledTimes(2);
         expect(page.liveState.eventQueue).toEqual([]);
         expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([]);
+    });
+
+    it('restores local score, clock, period, queue, and undo history after refresh', async () => {
+        const storage = createStorage();
+        const firstPage = await bootHarness({
+            storage,
+            broadcastImpl: async () => {}
+        });
+
+        firstPage.setContext({ teamId: 'team-1', gameId: 'game-9' });
+        firstPage.state.period = 'Q3';
+        firstPage.state.clock = 185000;
+        firstPage.state.running = true;
+        firstPage.state.home = 21;
+        firstPage.state.away = 19;
+        firstPage.state.stats = { p1: { pts: 8, fouls: 1, time: 120000 } };
+        firstPage.state.log = [{ text: '#1 PTS +2', period: 'Q3', clock: '03:05' }];
+        firstPage.state.history = [{ action: '#1 PTS +2', home: 19, away: 19 }];
+        firstPage.liveState.eventQueue = [{ type: 'stat', statKey: 'pts', value: 2, eventId: 'live-event-1' }];
+        firstPage.persistPendingEventQueue();
+        firstPage.persistLocalTrackerState();
+
+        const refreshedPage = await bootHarness({
+            storage,
+            broadcastImpl: async () => {}
+        });
+
+        refreshedPage.setContext({ teamId: 'team-1', gameId: 'game-9' });
+        refreshedPage.restoreLocalTrackerState();
+        expect(readPersistedLiveTrackerQueue(storage, 'team-1', 'game-9')).toEqual([
+            { type: 'stat', statKey: 'pts', value: 2, eventId: 'live-event-1' }
+        ]);
+        expect(refreshedPage.state).toMatchObject({
+            period: 'Q3',
+            clock: 185000,
+            running: false,
+            home: 21,
+            away: 19,
+            stats: { p1: { pts: 8, fouls: 1, time: 120000 } },
+            log: [{ text: '#1 PTS +2', period: 'Q3', clock: '03:05' }],
+            history: [{ action: '#1 PTS +2', home: 19, away: 19 }]
+        });
+        expect(refreshedPage.liveState.restoredLocalTrackerState).toBe(true);
     });
 
     it('drains queued scoring events before replaying a pending finalization', async () => {

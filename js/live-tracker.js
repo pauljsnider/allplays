@@ -21,7 +21,9 @@ import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
   readPersistedLiveTrackerPendingFinish,
-  writePersistedLiveTrackerPendingFinish
+  writePersistedLiveTrackerPendingFinish,
+  readPersistedLiveTrackerState,
+  writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
 import { commitFinishPlan, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
 
@@ -94,7 +96,9 @@ let liveState = {
   scoreSyncTimeout: null,
   lastSyncedHome: null,
   lastSyncedAway: null,
-  lastClockSyncAt: 0
+  lastClockSyncAt: 0,
+  restoredLocalTrackerState: false,
+  restoredLocalTrackerStateAt: null
 };
 
 const LIVE_CLOCK_SYNC_INTERVAL_MS = 5000;
@@ -146,6 +150,103 @@ function clearPendingEventQueue() {
     liveState.retryTimeout = null;
   }
   persistPendingEventQueue();
+}
+
+function buildLocalTrackerStateSnapshot() {
+  return {
+    version: 1,
+    savedAt: Date.now(),
+    state: {
+      period: state.period,
+      clock: state.clock,
+      running: state.running,
+      home: state.home,
+      away: state.away,
+      starters: [...state.starters],
+      bench: [...state.bench],
+      onCourt: [...state.onCourt],
+      stats: JSON.parse(JSON.stringify(state.stats || {})),
+      log: [...state.log],
+      subs: [...state.subs],
+      opp: JSON.parse(JSON.stringify(state.opp || [])),
+      pendingOut: state.pendingOut,
+      pendingIn: state.pendingIn,
+      subQueue: [...state.subQueue],
+      queueMode: state.queueMode,
+      history: JSON.parse(JSON.stringify(state.history || [])),
+      scoreLogIsComplete: state.scoreLogIsComplete !== false
+    }
+  };
+}
+
+function hasLocalTrackerStateToPersist() {
+  return (
+    state.clock > 0 ||
+    state.home > 0 ||
+    state.away > 0 ||
+    state.onCourt.length > 0 ||
+    state.log.length > 0 ||
+    state.subs.length > 0 ||
+    state.subQueue.length > 0 ||
+    state.history.length > 0 ||
+    liveState.eventQueue.length > 0 ||
+    Boolean(liveState.pendingFinish)
+  );
+}
+
+function persistLocalTrackerState() {
+  if (!currentTeamId || !currentGameId) return;
+  if (!hasLocalTrackerStateToPersist()) {
+    writePersistedLiveTrackerState(window.localStorage, currentTeamId, currentGameId, null);
+    return;
+  }
+  writePersistedLiveTrackerState(window.localStorage, currentTeamId, currentGameId, buildLocalTrackerStateSnapshot());
+}
+
+function applyPersistedLocalTrackerState(persisted) {
+  if (!persisted?.state) return false;
+
+  const saved = persisted.state;
+  state.period = saved.period || state.period;
+  state.clock = Math.max(0, Number(saved.clock || 0));
+  state.running = false;
+  state.lastTick = null;
+  if (state.tick) {
+    clearInterval(state.tick);
+    state.tick = null;
+  }
+  state.home = Math.max(0, Number(saved.home || 0));
+  state.away = Math.max(0, Number(saved.away || 0));
+  state.starters = Array.isArray(saved.starters) ? [...saved.starters] : [];
+  state.bench = Array.isArray(saved.bench) ? [...saved.bench] : state.bench;
+  state.onCourt = Array.isArray(saved.onCourt) ? [...saved.onCourt] : state.onCourt;
+  state.stats = {
+    ...state.stats,
+    ...(saved.stats && typeof saved.stats === 'object' ? JSON.parse(JSON.stringify(saved.stats)) : {})
+  };
+  state.log = Array.isArray(saved.log) ? [...saved.log] : [];
+  state.subs = Array.isArray(saved.subs) ? [...saved.subs] : [];
+  state.opp = Array.isArray(saved.opp) ? JSON.parse(JSON.stringify(saved.opp)) : state.opp;
+  state.pendingOut = saved.pendingOut ?? null;
+  state.pendingIn = saved.pendingIn ?? null;
+  state.subQueue = Array.isArray(saved.subQueue) ? [...saved.subQueue] : [];
+  state.queueMode = Boolean(saved.queueMode);
+  state.history = Array.isArray(saved.history) ? JSON.parse(JSON.stringify(saved.history)) : [];
+  state.scoreLogIsComplete = saved.scoreLogIsComplete !== false;
+  liveState.restoredLocalTrackerState = true;
+  liveState.restoredLocalTrackerStateAt = persisted.savedAt || Date.now();
+  return true;
+}
+
+function restoreLocalTrackerState() {
+  const persisted = readPersistedLiveTrackerState(window.localStorage, currentTeamId, currentGameId);
+  return applyPersistedLocalTrackerState(persisted);
+}
+
+function clearLocalTrackerState() {
+  writePersistedLiveTrackerState(window.localStorage, currentTeamId, currentGameId, null);
+  liveState.restoredLocalTrackerState = false;
+  liveState.restoredLocalTrackerStateAt = null;
 }
 
 function persistPendingFinalization() {
@@ -403,6 +504,7 @@ function renderHeader() {
   els.scoreLine.textContent = `${state.home} — ${state.away}`;
   updateClockUI();
   renderLiveSyncStatus();
+  persistLocalTrackerState();
 }
 
 function deriveLiveSyncStatus({
@@ -412,7 +514,8 @@ function deriveLiveSyncStatus({
   isRetryScheduled = false,
   hasPendingFinalization = false,
   finishRetryAttempt = 0,
-  isFinishRetryScheduled = false
+  isFinishRetryScheduled = false,
+  hasRestoredLocalState = false
 } = {}) {
   const normalizedPendingCount = Math.max(0, Number(pendingCount || 0));
   const pendingText = hasPendingFinalization
@@ -441,6 +544,18 @@ function deriveLiveSyncStatus({
       detail: normalizedPendingCount > 0
         ? 'Queued live events will sync before the final score is finalized.'
         : (isFinishRetryScheduled ? 'Final score will retry in the background.' : 'Tap retry or wait for the next sync attempt.'),
+      pendingText
+    };
+  }
+
+  if (hasRestoredLocalState) {
+    return {
+      visible: true,
+      tone: 'warning',
+      label: 'Resumed saved tracker state',
+      detail: normalizedPendingCount > 0
+        ? 'Local score, clock, period, and undo history were restored. Queued events will sync in the background.'
+        : 'Local score, clock, period, and undo history were restored on this device.',
       pendingText
     };
   }
@@ -476,7 +591,8 @@ function renderLiveSyncStatus() {
     isRetryScheduled: Boolean(liveState.retryTimeout),
     hasPendingFinalization: Boolean(liveState.pendingFinish),
     finishRetryAttempt: liveState.finishRetryAttempt,
-    isFinishRetryScheduled: Boolean(liveState.finishRetryTimeout)
+    isFinishRetryScheduled: Boolean(liveState.finishRetryTimeout),
+    hasRestoredLocalState: Boolean(liveState.restoredLocalTrackerState)
   });
   renderFinishSyncControls();
 
@@ -1022,6 +1138,7 @@ function saveHistory(action) {
   state.history.push(snapshot);
   // Keep only last 50 actions
   if (state.history.length > 50) state.history.shift();
+  persistLocalTrackerState();
 }
 
 function undo() {
@@ -1046,6 +1163,7 @@ function undo() {
   if (lastLog?.undoData?.type === 'stat' && isPointsColumn(lastLog.undoData.statKey)) {
     scheduleScoreSync();
   }
+  persistLocalTrackerState();
 
   if (liveState.isLive) {
     const undoText = lastLog?.text ? `Undo: ${lastLog.text}` : `Undo: ${prev.action}`;
@@ -1098,6 +1216,7 @@ function safeDecrement(currentValue, delta) {
 function addLog(text, undoData = null) {
   state.log.unshift({ text, ts: Date.now(), period: state.period, clock: formatClock(state.clock), undoData });
   renderLog();
+  persistLocalTrackerState();
 }
 
 function setVoiceNoteButtonLabel(isListening) {
@@ -1304,6 +1423,7 @@ async function syncPendingFinalizationNow() {
   });
   await endLiveBroadcast();
   clearPendingFinalization();
+  clearLocalTrackerState();
   isFinishing = true;
   if (els.finishSave) {
     els.finishSave.textContent = 'Finalization Synced';
@@ -1761,7 +1881,7 @@ async function saveAndComplete() {
     return;
   }
 
-  await runSaveAndCompleteWorkflow({
+  const result = await runSaveAndCompleteWorkflow({
     finishSubmissionLock,
     finishButton: els.finishSave,
     homeFinalInput: els.homeFinal,
@@ -1796,6 +1916,10 @@ async function saveAndComplete() {
       return { pending: true };
     }
   });
+  if (!result?.pending && !result?.error && !result?.skipped) {
+    clearLocalTrackerState();
+  }
+  return result;
 }
 
 function copyEmailToClipboard() {
@@ -1881,6 +2005,7 @@ async function startStop() {
     state.lastTick = performance.now();
     state.tick = setInterval(tick, 500);
   }
+  persistLocalTrackerState();
 }
 
 function tick() {
@@ -1893,6 +2018,7 @@ function tick() {
   updateClockUI();
   updatePlayerTimes();
   renderFairness();
+  persistLocalTrackerState();
 
   const wallNow = Date.now();
   if (
@@ -2046,6 +2172,7 @@ function attachEvents() {
     state.bench = roster.map(r => r.id);
     renderLineup();
     renderLive();
+    persistLocalTrackerState();
     broadcastLineupUpdate('Lineup cleared');
   });
   document.querySelectorAll('.period-btn').forEach(b => b.addEventListener('click', () => setPeriod(b.dataset.period)));
@@ -2244,6 +2371,7 @@ function attachEvents() {
     state.log = [];
     state.scoreLogIsComplete = false;
     renderLog();
+    persistLocalTrackerState();
   });
   if (els.voiceNoteBtn) {
     els.voiceNoteBtn.addEventListener('click', startVoiceNote);
@@ -2515,6 +2643,7 @@ function subIn(id) {
   renderLineup();
   renderLive();
   updateSubsButton();
+  persistLocalTrackerState();
   broadcastLineupUpdate();
 }
 
@@ -2542,6 +2671,7 @@ function renderQueue() {
   }
 
   updateSubsButton();
+  persistLocalTrackerState();
 }
 
 function autoFillStarters() {
@@ -2687,13 +2817,15 @@ async function init() {
     setVoiceNoteHint(false);
     applyPeriodButtons();
 
+    const persistedLocalTrackerState = readPersistedLiveTrackerState(window.localStorage, teamId, gameId);
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
 
     try {
       const hasScores = (game.homeScore || 0) > 0 || (game.awayScore || 0) > 0;
       const hasLiveFlag = !!game.liveHasData || game.liveStatus === 'live';
-      const shouldPromptResume = hasLiveFlag || hasScores || hasOpponentStats;
+      const hasSavedLocalState = Boolean(persistedLocalTrackerState);
+      const shouldPromptResume = hasLiveFlag || hasScores || hasOpponentStats || hasSavedLocalState;
 
       if (shouldPromptResume) {
         shouldResume = confirm('This game already has tracked data. Continue where you left off?\n\nClick Cancel to start over and clear previous stats.');
@@ -2702,6 +2834,7 @@ async function init() {
       if (!shouldResume) {
         clearPendingEventQueue();
         clearPendingFinalization();
+        clearLocalTrackerState();
         const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
@@ -2847,6 +2980,7 @@ async function init() {
             }
           }
         }
+
       }
     } catch (error) {
       console.warn('Resume/reset flow failed:', error);
@@ -2865,6 +2999,10 @@ async function init() {
           stats
         };
       });
+    }
+
+    if (shouldResume && persistedLocalTrackerState) {
+      applyPersistedLocalTrackerState(persistedLocalTrackerState);
     }
 
     if (!state.opp.length) {
