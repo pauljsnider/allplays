@@ -320,44 +320,70 @@
             </div>
         </div>
 
-        <!-- Team Stats Table -->
-        <div class="track-panel overflow-hidden mb-3">
-            <div class="track-panel-title p-3 font-bold text-center">Team Stats</div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-center text-xs" id="statsTable">
-                    <thead>
-                        <tr class="bg-slate/60 border-b-2 border-teal/40">
-                            <th class="player-name text-left p-1">Player</th>
-                            <!-- Column headers will be injected -->
-                        </tr>
-                    </thead>
-                    <tbody id="statsTableBody">
-                        <!-- Rows will be injected -->
-                    </tbody>
-                </table>
+        <!-- Goal Sport Controls -->
+        <div id="goal-sport-controls" class="track-panel p-3 mb-3 hidden">
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <div>
+                    <h2 id="goal-sport-title" class="font-display font-bold text-teal">Goal Tracking</h2>
+                    <p id="goal-sport-help" class="text-xs text-sand/60">Choose the period above, add an optional scorer and note, then record the goal.</p>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                <label class="text-xs text-sand/70">
+                    Scorer (optional)
+                    <input id="goal-scorer-input" class="mt-1 w-full px-3 py-2 rounded border border-teal/30 bg-ink/40 text-sm text-sand" placeholder="Name or #">
+                </label>
+                <label class="text-xs text-sand/70">
+                    Play note (optional)
+                    <input id="goal-note-input" class="mt-1 w-full px-3 py-2 rounded border border-teal/30 bg-ink/40 text-sm text-sand" placeholder="Assist, set piece, power play...">
+                </label>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <button id="record-home-goal" class="bg-teal text-ink px-3 py-3 rounded font-bold text-sm hover:bg-teal/80">Home Goal</button>
+                <button id="record-away-goal" class="bg-coral text-white px-3 py-3 rounded font-bold text-sm hover:bg-coral/80">Away Goal</button>
             </div>
         </div>
 
-        <!-- Opponent Stats Table -->
-        <div class="track-panel overflow-hidden mb-3">
-            <div class="track-panel-title away p-3 font-bold text-center flex justify-between items-center">
-                <span>Opponent Stats</span>
-                <button id="addOpponentBtn" class="bg-coral text-white px-2 py-1 rounded text-xs hover:bg-coral/80">Add
-                    Player</button>
+        <div id="generic-stat-tracking">
+            <!-- Team Stats Table -->
+            <div class="track-panel overflow-hidden mb-3">
+                <div class="track-panel-title p-3 font-bold text-center">Team Stats</div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-center text-xs" id="statsTable">
+                        <thead>
+                            <tr class="bg-slate/60 border-b-2 border-teal/40">
+                                <th class="player-name text-left p-1">Player</th>
+                                <!-- Column headers will be injected -->
+                            </tr>
+                        </thead>
+                        <tbody id="statsTableBody">
+                            <!-- Rows will be injected -->
+                        </tbody>
+                    </table>
+                </div>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-center text-xs" id="opponentTable">
-                    <thead>
-                        <tr class="bg-slate/60 border-b-2 border-coral/50">
-                            <th class="player-name text-left p-1">Player</th>
-                            <th class="stat-cell-wide p-1">Status</th>
-                            <!-- Column headers will be injected -->
-                        </tr>
-                    </thead>
-                    <tbody id="opponentTableBody">
-                        <!-- Rows will be injected -->
-                    </tbody>
-                </table>
+
+            <!-- Opponent Stats Table -->
+            <div class="track-panel overflow-hidden mb-3">
+                <div class="track-panel-title away p-3 font-bold text-center flex justify-between items-center">
+                    <span>Opponent Stats</span>
+                    <button id="addOpponentBtn" class="bg-coral text-white px-2 py-1 rounded text-xs hover:bg-coral/80">Add
+                        Player</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-center text-xs" id="opponentTable">
+                        <thead>
+                            <tr class="bg-slate/60 border-b-2 border-coral/50">
+                                <th class="player-name text-left p-1">Player</th>
+                                <th class="stat-cell-wide p-1">Status</th>
+                                <!-- Column headers will be injected -->
+                            </tr>
+                        </thead>
+                        <tbody id="opponentTableBody">
+                            <!-- Rows will be injected -->
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
@@ -492,10 +518,11 @@
         import { db } from './js/firebase.js?v=10';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=10';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=3';
+        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=6';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
-        import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
+        import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels } from './js/live-sport-config.js?v=2';
+        import { applyGoalSportScore, buildGoalSportEvent } from './js/live-scorekeeping-goal-sports.js?v=1';
         import { checkAuth } from './js/auth.js?v=12';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
@@ -514,6 +541,7 @@
         let currentConfig = null;
         let currentTeam = null;
         let currentGame = null;
+        let currentGoalSportProfile = null;
         let homeScore = 0;
         let awayScore = 0;
         let players = [];
@@ -699,6 +727,7 @@
                         })
                     };
                 }
+                currentGoalSportProfile = getGoalSportProfile({ game: currentGame, team: currentTeam, config: currentConfig });
 
                 const periodLabels = getSportPeriodLabels({ team: currentTeam, config: currentConfig }).slice(0, 5);
                 const periodButtons = document.querySelectorAll('.period-btn');
@@ -708,6 +737,7 @@
                     btn.textContent = label;
                 });
                 gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ team: currentTeam, config: currentConfig });
+                configureGoalSportControls();
 
                 // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
@@ -774,6 +804,75 @@
         function updateScoreDisplay() {
             document.getElementById('home-score').textContent = homeScore;
             document.getElementById('away-score').textContent = awayScore;
+        }
+
+        function configureGoalSportControls() {
+            const isGoalSportMode = !!currentGoalSportProfile;
+            const goalPanel = document.getElementById('goal-sport-controls');
+            const genericPanels = document.getElementById('generic-stat-tracking');
+            goalPanel?.classList.toggle('hidden', !isGoalSportMode);
+            genericPanels?.classList.toggle('hidden', isGoalSportMode);
+            if (!isGoalSportMode) return;
+
+            const title = document.getElementById('goal-sport-title');
+            const help = document.getElementById('goal-sport-help');
+            const homeButton = document.getElementById('record-home-goal');
+            const awayButton = document.getElementById('record-away-goal');
+            const sportLabel = currentGoalSportProfile.label || 'Goal sport';
+            if (title) title.textContent = `${sportLabel} Goal Tracking`;
+            if (help) help.textContent = `Choose a period, add an optional scorer and note, then record a ${sportLabel.toLowerCase()} goal.`;
+            if (homeButton) homeButton.textContent = `${currentTeam?.name || 'Home'} Goal`;
+            if (homeButton) homeButton.setAttribute('aria-label', `Record goal for ${currentTeam?.name || 'home'}`);
+            if (awayButton) {
+                const awayName = resolveOpponentDisplayName(currentGame);
+                awayButton.textContent = `${awayName} Goal`;
+                awayButton.setAttribute('aria-label', `Record goal for ${awayName}`);
+            }
+        }
+
+        async function recordGoalSportGoal(teamSide) {
+            if (!currentGoalSportProfile) return;
+            if (!gameState.isRunning && gameState.elapsed === 0) {
+                alert('Please start the game timer before recording goals.');
+                return;
+            }
+
+            const scorerInput = document.getElementById('goal-scorer-input');
+            const noteInput = document.getElementById('goal-note-input');
+            const scorer = scorerInput?.value || '';
+            const note = noteInput?.value || '';
+            const nextScore = applyGoalSportScore({ homeScore, awayScore }, teamSide);
+            homeScore = nextScore.homeScore;
+            awayScore = nextScore.awayScore;
+            if (currentGame) {
+                currentGame.homeScore = homeScore;
+                currentGame.awayScore = awayScore;
+            }
+            updateScoreDisplay();
+            scheduleScoreSync();
+
+            const event = buildGoalSportEvent({
+                teamSide,
+                period: gameState.currentPeriod,
+                scorer,
+                note,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                createdBy: currentUser?.uid || null
+            });
+            await addLogEntry(event.description, {
+                type: 'goal',
+                teamSide: event.teamSide,
+                value: 1,
+                scorer: event.scorer,
+                note: event.note
+            });
+            broadcastLiveEvent(currentTeamId, currentGameId, event).catch(console.warn);
+            scheduleLiveHasData();
+
+            if (scorerInput) scorerInput.value = '';
+            if (noteInput) noteInput.value = '';
         }
 
         function formatFieldTime(ms) {
@@ -1863,6 +1962,31 @@
                 });
             }
 
+            if (undoData && undoData.type === 'goal') {
+                const goalValue = Number(undoData.value) || 1;
+                if (undoData.teamSide === 'away') {
+                    awayScore = Math.max(0, awayScore - goalValue);
+                } else {
+                    homeScore = Math.max(0, homeScore - goalValue);
+                }
+                if (currentGame) {
+                    currentGame.homeScore = homeScore;
+                    currentGame.awayScore = awayScore;
+                }
+                updateScoreDisplay();
+                scheduleScoreSync();
+                scheduleLiveHasData();
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'undo',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    description: `Undo: ${entry.text}`,
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
+            }
+
             gameState.gameLog.splice(index, 1);
             renderGameLog();
         };
@@ -2334,6 +2458,8 @@ Write the match report now:`;
         document.getElementById('cancelBtn').addEventListener('click', cancelGame);
         document.getElementById('live-note-add')?.addEventListener('click', addManualGameNote);
         document.getElementById('voice-note-btn')?.addEventListener('click', startVoiceNote);
+        document.getElementById('record-home-goal')?.addEventListener('click', () => recordGoalSportGoal('home'));
+        document.getElementById('record-away-goal')?.addEventListener('click', () => recordGoalSportGoal('away'));
         document.getElementById('live-note-input')?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 event.preventDefault();

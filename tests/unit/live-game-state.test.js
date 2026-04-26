@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, renderOpponentStatsCards, applyResetEventState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -39,6 +39,20 @@ describe('live game state helpers', () => {
       ],
       team: { sport: 'Unknown' }
     })).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('uses goal columns for supported goal sports without a custom config', () => {
+    expect(resolveLiveStatColumns({
+      configs: [],
+      team: { sport: 'Soccer' }
+    })).toEqual(['GOALS']);
+  });
+
+  it('keeps basketball stat fallback for unsupported sports without a custom config', () => {
+    expect(resolveLiveStatColumns({
+      configs: [],
+      team: { sport: 'Volleyball' }
+    })).toEqual(['PTS', 'REB', 'AST', 'STL', 'TO']);
   });
 
   it('returns the matched config object for sport fallback', () => {
@@ -225,5 +239,38 @@ describe('live game state helpers', () => {
       events[0],
       events[2]
     ]);
+  });
+
+  it('applies goal events to live viewer state without requiring basketball stat labels', () => {
+    const goalEvent = {
+      id: 'goal-1',
+      type: 'goal',
+      statKey: 'goals',
+      value: 1,
+      teamSide: 'home',
+      isOpponent: false,
+      period: 'H1',
+      gameClockMs: 45000,
+      homeScore: 1,
+      awayScore: 0,
+      description: 'Home goal by Alex (H1)'
+    };
+    const result = applyViewerEventToState({
+      events: [],
+      stats: {},
+      opponentStats: {},
+      homeScore: 0,
+      awayScore: 0,
+      period: 'H1',
+      gameClockMs: 0
+    }, goalEvent);
+
+    expect(result.state.homeScore).toBe(1);
+    expect(result.state.awayScore).toBe(0);
+    expect(result.state.period).toBe('H1');
+    expect(result.state.events).toEqual([goalEvent]);
+    expect(result.state.stats).toEqual({});
+    expect(result.shouldRenderPlayByPlay).toBe(true);
+    expect(result.shouldCelebrateScore).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getDefaultLivePeriod, getSportPeriodLabels } from '../../js/live-sport-config.js';
+import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels, isGoalSport } from '../../js/live-sport-config.js';
 
 describe('live sport config helpers', () => {
   it('returns basketball defaults when sport is missing', () => {
@@ -10,6 +10,23 @@ describe('live sport config helpers', () => {
   it('returns soccer half labels by sport', () => {
     expect(getDefaultLivePeriod({ sport: 'Soccer' })).toBe('H1');
     expect(getSportPeriodLabels({ sport: 'Soccer' })).toEqual(['H1', 'H2', 'ET1', 'ET2', 'PK']);
+  });
+
+  it('maps supported goal sports to goal scorekeeper profiles', () => {
+    expect(getGoalSportProfile({ sport: 'Soccer' })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+    expect(getGoalSportProfile({ sport: 'Field Hockey' })).toMatchObject({ sport: 'field hockey', periodLabels: ['Q1', 'Q2', 'Q3', 'Q4', 'OT'] });
+    expect(getGoalSportProfile({ sport: 'Hockey' })).toMatchObject({ sport: 'hockey', periodLabels: ['P1', 'P2', 'P3', 'OT', 'SO'] });
+    expect(getGoalSportProfile({ sport: 'Lacrosse' })).toMatchObject({ sport: 'lacrosse', statColumns: ['GOALS'] });
+    expect(getGoalSportProfile({ sport: 'Water Polo' })).toMatchObject({ sport: 'water polo', statColumns: ['GOALS'] });
+    expect(getGoalSportProfile({ team: { sport: 'Custom' }, config: { baseType: 'Hockey' } })).toMatchObject({ sport: 'hockey' });
+    expect(isGoalSport({ sport: 'Baseball' })).toBe(false);
+  });
+
+  it('uses goal sport period defaults beyond soccer', () => {
+    expect(getDefaultLivePeriod({ sport: 'Field Hockey' })).toBe('Q1');
+    expect(getDefaultLivePeriod({ sport: 'Hockey' })).toBe('P1');
+    expect(getDefaultLivePeriod({ sport: 'Lacrosse' })).toBe('Q1');
+    expect(getDefaultLivePeriod({ sport: 'Water Polo' })).toBe('Q1');
   });
 
   it('returns inning labels for baseball and softball', () => {
