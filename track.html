@@ -280,6 +280,7 @@
         import { checkAuth } from './js/auth.js?v=12';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
+        import { commitStandardTrackerFinishData } from './js/track-finish.js?v=1';
         import { getApp } from './js/vendor/firebase-app.js';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
@@ -1214,31 +1215,6 @@ Write the match report now:`;
             document.getElementById('emailPreview').textContent = emailBody;
         }
 
-        function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
-            const playerStatsByLowerKey = {};
-            const normalizedStats = {};
-
-            Object.entries(playerStats).forEach(([statKey, value]) => {
-                playerStatsByLowerKey[String(statKey).toLowerCase()] = Number(value) || 0;
-            });
-
-            columns.forEach((col) => {
-                const key = String(col || '').toLowerCase();
-                normalizedStats[key] = Object.prototype.hasOwnProperty.call(playerStatsByLowerKey, key)
-                    ? playerStatsByLowerKey[key]
-                    : 0;
-            });
-
-            Object.entries(playerStats).forEach(([statKey, value]) => {
-                const normalizedKey = String(statKey).toLowerCase();
-                if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
-                    normalizedStats[statKey] = Number(value) || 0;
-                }
-            });
-
-            return normalizedStats;
-        }
-
         cancelBtn.addEventListener('click', () => {
             modal.classList.add('hidden');
         });
@@ -1251,66 +1227,23 @@ Write the match report now:`;
             const sendEmail = document.getElementById('sendEmailCheckbox').checked;
 
             try {
-                const MAX_PRIMARY_BATCH_WRITES = 500;
-                const MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
-                const primaryBatchWriteCount = gameState.gameLog.length + 1;
-
-                if (primaryBatchWriteCount > MAX_PRIMARY_BATCH_WRITES) {
-                    throw new Error(`Game has ${gameState.gameLog.length} logged events. Finish requires chunked event persistence before it can safely exceed Firestore's ${MAX_PRIMARY_BATCH_WRITES}-write batch limit.`);
-                }
-
-                const primaryBatch = writeBatch(db);
-                const aggregatedStatsWrites = players.map((player) => {
-                    const playerStats = gameState.playerStats[player.id] || {};
-
-                    return {
-                        playerId: player.id,
-                        data: {
-                            playerName: player.name,
-                            playerNumber: player.number,
-                            stats: buildNormalizedPlayerStats(playerStats, currentConfig.columns)
-                        }
-                    };
-                });
-
-                // 1. Keep the primary batch at its historical size: events + final game update.
-                gameState.gameLog.forEach(entry => {
-                    const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-                    primaryBatch.set(eventRef, {
-                        text: entry.text,
-                        gameTime: entry.time,
-                        period: entry.period,
-                        timestamp: entry.timestamp || Date.now(),
-                        type: entry.undoData?.type || 'game_log',
-                        playerId: entry.undoData?.playerId || null,
-                        statKey: entry.undoData?.statKey || null,
-                        value: entry.undoData?.value || null,
-                        isOpponent: entry.undoData?.isOpponent || false,
-                        createdBy: currentUser.uid
-                    });
-                });
-
-                const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
-                primaryBatch.update(gameRef, {
-                    homeScore: finalHome,
-                    awayScore: finalAway,
-                    summary: summary,
-                    status: 'completed',
+                await commitStandardTrackerFinishData({
+                    db,
+                    writeBatch,
+                    doc,
+                    collection,
+                    teamId: currentTeamId,
+                    gameId: currentGameId,
+                    currentUserUid: currentUser.uid,
+                    gameLog: gameState.gameLog,
+                    players,
+                    playerStatsByPlayerId: gameState.playerStats,
+                    columns: currentConfig.columns,
+                    finalHome,
+                    finalAway,
+                    summary,
                     opponentStats: gameState.opponentStats
                 });
-
-                // 2. Commit the historical finish data first so completion data lands even if a later stats batch fails.
-                await primaryBatch.commit();
-
-                // 3. Chunk roster-wide aggregated stats writes into secondary batches to avoid Firestore's 500-write limit.
-                for (let i = 0; i < aggregatedStatsWrites.length; i += MAX_AGGREGATED_STATS_BATCH_WRITES) {
-                    const statsBatch = writeBatch(db);
-                    aggregatedStatsWrites.slice(i, i + MAX_AGGREGATED_STATS_BATCH_WRITES).forEach(({ playerId, data }) => {
-                        const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-                        statsBatch.set(statsRef, data);
-                    });
-                    await statsBatch.commit();
-                }
 
                 console.log('Game data saved successfully');
 
