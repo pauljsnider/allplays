@@ -14,6 +14,9 @@ describe('track-live baseball scorekeeping wiring', () => {
         expect(source).toContain('id="teamStatsPanel"');
         expect(source).toContain('id="opponentStatsPanel"');
         expect(source).toContain('isBaseballScorekeepingSport(liveSport)');
+        expect(source).toContain('const allPeriodLabels = getSportPeriodLabels');
+        expect(source).toContain('? allPeriodLabels');
+        expect(source).not.toContain('.slice(0, gameState.isBaseballScorekeeping ? 8 : 5)');
         expect(source).toContain("teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping)");
         expect(source).toContain('data-baseball-action="ball"');
         expect(source).toContain('data-baseball-action="homeRun"');
@@ -23,6 +26,9 @@ describe('track-live baseball scorekeeping wiring', () => {
         const source = readTrackLive();
 
         expect(source).toContain("type: 'baseball'");
+        expect(source).toContain("type: 'period_change'");
+        expect(source).toContain("document.getElementById('period-selector')?.addEventListener('click'");
+        expect(source).toContain('handlePeriodSelection(periodButton)');
         expect(source).toContain('baseballState: result.state');
         expect(source).toContain('situation: getBaseballSituationSummary(result.state)');
         expect(source).toContain('await addLogEntry(result.description');

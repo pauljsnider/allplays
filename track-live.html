@@ -783,8 +783,10 @@
                     awayScore
                 });
 
-                const periodLabels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig })
-                    .slice(0, gameState.isBaseballScorekeeping ? 8 : 5);
+                const allPeriodLabels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig });
+                const periodLabels = gameState.isBaseballScorekeeping
+                    ? allPeriodLabels
+                    : allPeriodLabels.slice(0, 5);
                 const periodSelector = document.getElementById('period-selector');
                 if (periodSelector) {
                     periodSelector.innerHTML = periodLabels.map((label, index) => `
@@ -848,24 +850,6 @@
                 // Add initial history state for back button handling
                 history.pushState({ trackingPage: true }, '', window.location.href);
 
-                // Add period button listeners
-                document.querySelectorAll('.period-btn').forEach(btn => {
-                    btn.addEventListener('click', () => {
-                        // Update UI
-                        document.querySelectorAll('.period-btn').forEach(b => {
-                            b.classList.remove('period-active');
-                            b.classList.add('period-inactive');
-                        });
-                        btn.classList.remove('period-inactive');
-                        btn.classList.add('period-active');
-
-                        // Update state
-                        gameState.currentPeriod = btn.dataset.period;
-                        updateBaseballPeriodFromLabel(gameState.currentPeriod);
-                        addLogEntry(`Period changed to ${gameState.currentPeriod}`);
-                    });
-                });
-
             } catch (error) {
                 console.error(error);
                 alert("Error loading game data.");
@@ -901,6 +885,27 @@
             });
             renderBaseballScorekeeping();
             scheduleBaseballStateSync();
+        }
+
+        function handlePeriodSelection(periodButton) {
+            const period = periodButton?.getAttribute('data-period') || periodButton?.dataset.period;
+            if (!period) return;
+            gameState.currentPeriod = period;
+            updateBaseballPeriodFromLabel(period);
+            updateActivePeriodButtons();
+            addLogEntry(`Period changed to ${period}`);
+
+            if (gameState.isRunning) {
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'period_change',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    description: `Period changed to ${gameState.currentPeriod}`,
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
+            }
         }
 
         function applyLiveScorekeepingMode() {
@@ -2659,35 +2664,10 @@ Write the match report now:`;
             }
         });
 
-        // Period selector
-        document.querySelectorAll('.period-btn').forEach(btn => {
-            btn.addEventListener('click', function () {
-                const period = this.getAttribute('data-period');
-                gameState.currentPeriod = period;
-                updateBaseballPeriodFromLabel(period);
-
-                // Update button styles
-                document.querySelectorAll('.period-btn').forEach(b => {
-                    b.classList.remove('period-active');
-                    b.classList.add('period-inactive');
-                });
-                this.classList.remove('period-inactive');
-                this.classList.add('period-active');
-
-                addLogEntry(`Period changed to ${period}`);
-
-                if (gameState.isRunning) {
-                    broadcastLiveEvent(currentTeamId, currentGameId, {
-                        type: 'period_change',
-                        period: gameState.currentPeriod,
-                        gameClockMs: gameState.elapsed,
-                        homeScore,
-                        awayScore,
-                        description: `Period changed to ${gameState.currentPeriod}`,
-                        createdBy: currentUser?.uid || null
-                    }).catch(console.warn);
-                }
-            });
+        document.getElementById('period-selector')?.addEventListener('click', (event) => {
+            const periodButton = event.target?.closest?.('.period-btn');
+            if (!periodButton) return;
+            handlePeriodSelection(periodButton);
         });
 
         // Navigation warning for unsaved changes
