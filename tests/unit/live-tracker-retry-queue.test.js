@@ -145,6 +145,7 @@ return {
   liveState,
   scheduleRetry,
   persistPendingEventQueue,
+  broadcastEvent,
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
     currentGameId = context.gameId || null;
@@ -164,7 +165,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootHarness({ broadcastImpl }) {
+async function bootHarness({ broadcastImpl, randomUUID = vi.fn() }) {
     const { document } = createEnvironment();
     const storage = createStorage();
     const scheduledTimeouts = new Map();
@@ -260,6 +261,7 @@ async function bootHarness({ broadcastImpl }) {
     const window = {
         location: { href: '' },
         localStorage: storage,
+        crypto: { randomUUID },
         navigator: { onLine: true },
         addEventListener: () => {}
     };
@@ -299,16 +301,47 @@ async function bootHarness({ broadcastImpl }) {
 }
 
 describe('live tracker retry queue persistence', () => {
+    it('queues failed live events with stable client event IDs', async () => {
+        const randomUUID = vi.fn(() => 'event-1');
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const attempts = [];
+        const page = await bootHarness({
+            randomUUID,
+            broadcastImpl: async (_teamId, _gameId, event) => {
+                attempts.push(event);
+                throw new Error('offline');
+            }
+        });
+
+        page.setContext({ teamId: 'team-1', gameId: 'game-9' });
+        await page.broadcastEvent({ type: 'stat', statKey: 'pts', value: 2 });
+
+        const queuedEvent = {
+            type: 'stat',
+            statKey: 'pts',
+            value: 2,
+            eventId: 'live-event-1'
+        };
+        expect(attempts).toEqual([queuedEvent]);
+        expect(page.liveState.eventQueue).toEqual([queuedEvent]);
+        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([queuedEvent]);
+        errorSpy.mockRestore();
+    });
+
     it('keeps remaining pending events persisted until each replay succeeds', async () => {
         const firstEvent = { type: 'stat', statKey: 'pts', value: 2 };
         const secondEvent = { type: 'lineup', onCourt: ['p1', 'p2', 'p3', 'p4', 'p5'] };
+        const randomUUID = vi.fn()
+            .mockReturnValueOnce('event-1')
+            .mockReturnValueOnce('event-2');
         const attempts = [];
         let secondEventAttempt = 0;
 
         const page = await bootHarness({
+            randomUUID,
             broadcastImpl: async (_teamId, _gameId, event) => {
                 attempts.push(event);
-                if (event === secondEvent && secondEventAttempt++ === 0) {
+                if (event.type === 'lineup' && secondEventAttempt++ === 0) {
                     throw new Error('temporary network failure');
                 }
             }
@@ -321,13 +354,25 @@ describe('live tracker retry queue persistence', () => {
         page.scheduleRetry({ resetBackoff: true });
         await page.flushOneTimer();
 
-        expect(attempts).toEqual([firstEvent, secondEvent]);
-        expect(page.liveState.eventQueue).toEqual([secondEvent]);
-        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([secondEvent]);
+        const queuedSecondEvent = {
+            ...secondEvent,
+            eventId: 'live-event-2'
+        };
+        expect(attempts).toEqual([
+            { ...firstEvent, eventId: 'live-event-1' },
+            queuedSecondEvent
+        ]);
+        expect(page.liveState.eventQueue).toEqual([queuedSecondEvent]);
+        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([queuedSecondEvent]);
 
         await page.flushOneTimer();
 
-        expect(attempts).toEqual([firstEvent, secondEvent, secondEvent]);
+        expect(attempts).toEqual([
+            { ...firstEvent, eventId: 'live-event-1' },
+            queuedSecondEvent,
+            queuedSecondEvent
+        ]);
+        expect(randomUUID).toHaveBeenCalledTimes(2);
         expect(page.liveState.eventQueue).toEqual([]);
         expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([]);
     });

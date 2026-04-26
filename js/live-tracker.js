@@ -90,6 +90,27 @@ let liveState = {
 };
 
 const LIVE_CLOCK_SYNC_INTERVAL_MS = 5000;
+let liveEventIdCounter = 0;
+
+function createLiveEventId() {
+  const randomId = window.crypto?.randomUUID?.();
+  if (randomId) return `live-${randomId}`;
+
+  liveEventIdCounter += 1;
+  return `live-${Date.now().toString(36)}-${liveEventIdCounter}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function withStableLiveEventId(eventData) {
+  const event = (eventData && typeof eventData === 'object') ? eventData : {};
+  const existingId = typeof event.eventId === 'string' ? event.eventId.trim() : '';
+  if (existingId) {
+    return existingId === event.eventId ? event : { ...event, eventId: existingId };
+  }
+  return {
+    ...event,
+    eventId: createLiveEventId()
+  };
+}
 
 let liveSync = {
   playerTimeouts: new Map(),
@@ -1087,12 +1108,13 @@ function startVoiceNote() {
 }
 
 async function broadcastEvent(eventData) {
+  const eventWithId = withStableLiveEventId(eventData);
   try {
-    await broadcastLiveEvent(currentTeamId, currentGameId, eventData);
+    await broadcastLiveEvent(currentTeamId, currentGameId, eventWithId);
     renderLiveSyncStatus();
   } catch (error) {
     console.error('Broadcast failed (will retry):', error);
-    liveState.eventQueue.push(eventData);
+    liveState.eventQueue.push(eventWithId);
     persistPendingEventQueue();
     renderLiveSyncStatus();
     scheduleRetry();
@@ -1129,7 +1151,11 @@ function scheduleRetry({ resetBackoff = false } = {}) {
     renderLiveSyncStatus();
 
     while (liveState.eventQueue.length > 0) {
-      const event = liveState.eventQueue[0];
+      const event = withStableLiveEventId(liveState.eventQueue[0]);
+      if (event !== liveState.eventQueue[0]) {
+        liveState.eventQueue[0] = event;
+        persistPendingEventQueue();
+      }
       try {
         await broadcastLiveEvent(currentTeamId, currentGameId, event);
         liveState.eventQueue.shift();
