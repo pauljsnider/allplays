@@ -291,7 +291,7 @@
             </div>
 
             <!-- Period Selector -->
-            <div class="flex justify-center gap-1 mb-2">
+            <div id="period-selector" class="flex justify-center gap-1 mb-2 flex-wrap">
                 <button
                     class="period-btn period-active px-3 py-1 rounded text-xs"
                     data-period="Q1">Q1</button>
@@ -320,8 +320,79 @@
             </div>
         </div>
 
+        <!-- Baseball / Softball Count-Based Scorekeeping -->
+        <div id="baseballScorekeepingPanel" class="track-panel p-3 mb-3 hidden">
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <div>
+                    <h2 class="font-display font-bold text-teal text-base">Baseball / Softball Scorekeeper</h2>
+                    <p id="baseball-situation-summary" class="text-xs text-sand/60">T1 0-0, 0 outs, bases empty</p>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-center text-xs">
+                    <div class="bg-ink/45 rounded px-3 py-2 border border-teal/20">
+                        <div class="text-sand/50">Home</div>
+                        <div id="baseball-home-score" class="text-xl font-display font-bold text-teal">0</div>
+                    </div>
+                    <div class="bg-ink/45 rounded px-3 py-2 border border-coral/30">
+                        <div class="text-sand/50">Away</div>
+                        <div id="baseball-away-score" class="text-xl font-display font-bold text-coral">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3 text-center">
+                <div class="bg-slate/60 rounded p-2 border border-teal/20">
+                    <div class="text-[10px] uppercase tracking-wide text-sand/50">Inning</div>
+                    <div id="baseball-inning-half" class="text-lg font-bold text-teal">T1</div>
+                </div>
+                <div class="bg-slate/60 rounded p-2 border border-teal/20">
+                    <div class="text-[10px] uppercase tracking-wide text-sand/50">Count</div>
+                    <div id="baseball-count" class="text-lg font-bold text-gold">0-0</div>
+                </div>
+                <div class="bg-slate/60 rounded p-2 border border-teal/20">
+                    <div class="text-[10px] uppercase tracking-wide text-sand/50">Outs</div>
+                    <div id="baseball-outs" class="text-lg font-bold text-coral">0</div>
+                </div>
+                <div class="bg-slate/60 rounded p-2 border border-teal/20">
+                    <div class="text-[10px] uppercase tracking-wide text-sand/50">Batting</div>
+                    <div id="baseball-batting-side" class="text-lg font-bold text-sand">Away</div>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <div class="text-[10px] uppercase tracking-wide text-sand/50 mb-1">Base runners</div>
+                <div id="baseball-bases" class="grid grid-cols-3 gap-2 text-xs text-center">
+                    <div class="rounded bg-ink/50 border border-teal/20 px-2 py-2">1B empty</div>
+                    <div class="rounded bg-ink/50 border border-teal/20 px-2 py-2">2B empty</div>
+                    <div class="rounded bg-ink/50 border border-teal/20 px-2 py-2">3B empty</div>
+                </div>
+            </div>
+
+            <div class="grid sm:grid-cols-2 gap-3">
+                <div>
+                    <div class="text-[10px] uppercase tracking-wide text-sand/50 mb-1">Pitch</div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button class="stat-btn bg-teal text-ink rounded px-3 py-2 text-sm font-bold" data-baseball-action="ball">Ball</button>
+                        <button class="stat-btn bg-gold text-ink rounded px-3 py-2 text-sm font-bold" data-baseball-action="strike">Strike</button>
+                        <button class="stat-btn bg-slate border border-teal/30 text-sand rounded px-3 py-2 text-sm font-bold" data-baseball-action="foul">Foul</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-[10px] uppercase tracking-wide text-sand/50 mb-1">Plate appearance</div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button class="stat-btn bg-slate border border-teal/30 text-sand rounded px-3 py-2 text-sm font-bold" data-baseball-action="walk">Walk</button>
+                        <button class="stat-btn bg-teal/20 border border-teal/40 text-teal rounded px-3 py-2 text-sm font-bold" data-baseball-action="single">1B</button>
+                        <button class="stat-btn bg-teal/20 border border-teal/40 text-teal rounded px-3 py-2 text-sm font-bold" data-baseball-action="double">2B</button>
+                        <button class="stat-btn bg-teal/20 border border-teal/40 text-teal rounded px-3 py-2 text-sm font-bold" data-baseball-action="triple">3B</button>
+                        <button class="stat-btn bg-gold text-ink rounded px-3 py-2 text-sm font-bold" data-baseball-action="homeRun">HR</button>
+                        <button class="stat-btn bg-coral text-white rounded px-3 py-2 text-sm font-bold" data-baseball-action="out">Out</button>
+                    </div>
+                </div>
+            </div>
+            <button class="mt-3 text-xs bg-slate border border-teal/30 text-sand px-3 py-1 rounded" data-baseball-action="clearBases">Clear Bases</button>
+        </div>
+
         <!-- Team Stats Table -->
-        <div class="track-panel overflow-hidden mb-3">
+        <div id="teamStatsPanel" class="track-panel overflow-hidden mb-3">
             <div class="track-panel-title p-3 font-bold text-center">Team Stats</div>
             <div class="overflow-x-auto">
                 <table class="w-full text-center text-xs" id="statsTable">
@@ -339,7 +410,7 @@
         </div>
 
         <!-- Opponent Stats Table -->
-        <div class="track-panel overflow-hidden mb-3">
+        <div id="opponentStatsPanel" class="track-panel overflow-hidden mb-3">
             <div class="track-panel-title away p-3 font-bold text-center flex justify-between items-center">
                 <span>Opponent Stats</span>
                 <button id="addOpponentBtn" class="bg-coral text-white px-2 py-1 rounded text-xs hover:bg-coral/80">Add
@@ -495,7 +566,8 @@
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=3';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
-        import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
+        import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport } from './js/live-sport-config.js?v=1';
+        import { applyBaseballScorekeepingAction, createBaseballLiveState, getBaseballPeriodLabel, getBaseballSituationSummary, isBaseballScorekeepingSport, parseBaseballPeriodLabel } from './js/live-scorekeeping-baseball.js?v=1';
         import { checkAuth } from './js/auth.js?v=12';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
@@ -541,6 +613,7 @@
             lastSyncedAway: null,
             playerTimeouts: new Map(),
             opponentTimeout: null,
+            baseballTimeout: null,
             liveFlagTimeout: null
         };
         let gameState = {
@@ -553,7 +626,9 @@
             playerStats: {}, // In-memory player stats (replaces real-time DB writes)
             opponentStats: {},
             currentPeriod: getDefaultLivePeriod(),
-            playerFieldStatus: {}
+            playerFieldStatus: {},
+            isBaseballScorekeeping: false,
+            baseballState: createBaseballLiveState()
         };
 
         const chatEls = {
@@ -700,14 +775,27 @@
                     };
                 }
 
-                const periodLabels = getSportPeriodLabels({ team: currentTeam, config: currentConfig }).slice(0, 5);
-                const periodButtons = document.querySelectorAll('.period-btn');
-                periodButtons.forEach((btn, index) => {
-                    const label = periodLabels[index] || periodLabels[0];
-                    btn.dataset.period = label;
-                    btn.textContent = label;
+                const liveSport = resolveLiveSport({ game: currentGame, team: currentTeam, config: currentConfig });
+                gameState.isBaseballScorekeeping = isBaseballScorekeepingSport(liveSport);
+                gameState.baseballState = createBaseballLiveState({
+                    ...(game.liveBaseballState || {}),
+                    homeScore,
+                    awayScore
                 });
-                gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ team: currentTeam, config: currentConfig });
+
+                const periodLabels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig })
+                    .slice(0, gameState.isBaseballScorekeeping ? 8 : 5);
+                const periodSelector = document.getElementById('period-selector');
+                if (periodSelector) {
+                    periodSelector.innerHTML = periodLabels.map((label, index) => `
+                        <button class="period-btn ${index === 0 ? 'period-active' : 'period-inactive'} px-3 py-1 rounded text-xs"
+                            data-period="${escapeHtml(label)}">${escapeHtml(label)}</button>
+                    `).join('');
+                }
+                gameState.currentPeriod = gameState.isBaseballScorekeeping
+                    ? getBaseballPeriodLabel(gameState.baseballState)
+                    : periodLabels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+                updateActivePeriodButtons();
 
                 // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
@@ -728,6 +816,15 @@
                     homeScore = totalHomePoints;
                     updateScoreDisplay();
                 }
+                if (gameState.isBaseballScorekeeping) {
+                    gameState.baseballState = createBaseballLiveState({
+                        ...gameState.baseballState,
+                        homeScore,
+                        awayScore
+                    });
+                    gameState.currentPeriod = getBaseballPeriodLabel(gameState.baseballState);
+                    updateActivePeriodButtons();
+                }
 
                 // Initialize opponent stats with config columns
                 opponentPlayers.forEach(p => {
@@ -739,8 +836,11 @@
                     });
                 });
 
-                renderStatsTable();
-                renderOpponentTable();
+                applyLiveScorekeepingMode();
+                if (!gameState.isBaseballScorekeeping) {
+                    renderStatsTable();
+                    renderOpponentTable();
+                }
                 setInterval(updateTimer, 1000);
                 initLiveChat();
                 watchViewerCount();
@@ -761,6 +861,7 @@
 
                         // Update state
                         gameState.currentPeriod = btn.dataset.period;
+                        updateBaseballPeriodFromLabel(gameState.currentPeriod);
                         addLogEntry(`Period changed to ${gameState.currentPeriod}`);
                     });
                 });
@@ -774,6 +875,145 @@
         function updateScoreDisplay() {
             document.getElementById('home-score').textContent = homeScore;
             document.getElementById('away-score').textContent = awayScore;
+            const baseballHomeScore = document.getElementById('baseball-home-score');
+            const baseballAwayScore = document.getElementById('baseball-away-score');
+            if (baseballHomeScore) baseballHomeScore.textContent = homeScore;
+            if (baseballAwayScore) baseballAwayScore.textContent = awayScore;
+        }
+
+        function updateActivePeriodButtons() {
+            document.querySelectorAll('.period-btn').forEach((button) => {
+                const isActive = button.dataset.period === gameState.currentPeriod;
+                button.classList.toggle('period-active', isActive);
+                button.classList.toggle('period-inactive', !isActive);
+            });
+        }
+
+        function updateBaseballPeriodFromLabel(period) {
+            if (!gameState.isBaseballScorekeeping) return;
+            const parsed = parseBaseballPeriodLabel(period);
+            if (!parsed) return;
+            gameState.baseballState = createBaseballLiveState({
+                ...gameState.baseballState,
+                ...parsed,
+                homeScore,
+                awayScore
+            });
+            renderBaseballScorekeeping();
+            scheduleBaseballStateSync();
+        }
+
+        function applyLiveScorekeepingMode() {
+            const baseballPanel = document.getElementById('baseballScorekeepingPanel');
+            const teamStatsPanel = document.getElementById('teamStatsPanel');
+            const opponentStatsPanel = document.getElementById('opponentStatsPanel');
+            if (baseballPanel) baseballPanel.classList.toggle('hidden', !gameState.isBaseballScorekeeping);
+            if (teamStatsPanel) teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping);
+            if (opponentStatsPanel) opponentStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping);
+            if (gameState.isBaseballScorekeeping) {
+                renderBaseballScorekeeping();
+            }
+        }
+
+        function renderBaseballScorekeeping() {
+            if (!gameState.isBaseballScorekeeping) return;
+            const state = createBaseballLiveState({
+                ...gameState.baseballState,
+                homeScore,
+                awayScore
+            });
+            gameState.baseballState = state;
+            const inningHalf = getBaseballPeriodLabel(state);
+            const battingSide = state.half === 'top' ? 'Away' : 'Home';
+            const baseLabels = [
+                ['first', '1B'],
+                ['second', '2B'],
+                ['third', '3B']
+            ];
+
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value;
+            };
+
+            setText('baseball-inning-half', inningHalf);
+            setText('baseball-count', `${state.balls}-${state.strikes}`);
+            setText('baseball-outs', `${state.outs}`);
+            setText('baseball-batting-side', battingSide);
+            setText('baseball-situation-summary', getBaseballSituationSummary(state));
+
+            const basesEl = document.getElementById('baseball-bases');
+            if (basesEl) {
+                basesEl.innerHTML = baseLabels.map(([key, label]) => {
+                    const occupied = state.bases[key];
+                    const classes = occupied
+                        ? 'rounded bg-gold text-ink border border-gold px-2 py-2 font-bold'
+                        : 'rounded bg-ink/50 border border-teal/20 px-2 py-2 text-sand/60';
+                    return `<div class="${classes}">${label} ${occupied ? 'occupied' : 'empty'}</div>`;
+                }).join('');
+            }
+
+            updateScoreDisplay();
+        }
+
+        function resetBaseballScorekeepingState() {
+            gameState.baseballState = createBaseballLiveState({ homeScore: 0, awayScore: 0 });
+            if (gameState.isBaseballScorekeeping) {
+                gameState.currentPeriod = getBaseballPeriodLabel(gameState.baseballState);
+                updateActivePeriodButtons();
+                renderBaseballScorekeeping();
+            }
+        }
+
+        function requireTrackingStarted() {
+            if (!gameState.isRunning && gameState.elapsed === 0) {
+                alert('Please start the game timer before recording stats.');
+                return false;
+            }
+            return true;
+        }
+
+        async function recordBaseballAction(action) {
+            if (!gameState.isBaseballScorekeeping) return;
+            if (!requireTrackingStarted()) return;
+
+            const previousState = createBaseballLiveState({
+                ...gameState.baseballState,
+                homeScore,
+                awayScore
+            });
+            const result = applyBaseballScorekeepingAction(previousState, action);
+            gameState.baseballState = result.state;
+            homeScore = result.state.homeScore;
+            awayScore = result.state.awayScore;
+            gameState.currentPeriod = getBaseballPeriodLabel(result.state);
+            updateActivePeriodButtons();
+            updateScoreDisplay();
+            renderBaseballScorekeeping();
+
+            await addLogEntry(result.description, {
+                type: 'baseball',
+                action,
+                previousState,
+                nextState: result.state
+            });
+
+            broadcastLiveEvent(currentTeamId, currentGameId, {
+                type: 'baseball',
+                period: gameState.currentPeriod,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                baseballAction: action,
+                baseballState: result.state,
+                situation: getBaseballSituationSummary(result.state),
+                description: result.description,
+                isOpponent: result.state.half === 'top',
+                createdBy: currentUser?.uid || null
+            }).catch(console.warn);
+            scheduleScoreSync();
+            scheduleBaseballStateSync();
+            scheduleLiveHasData();
         }
 
         function formatFieldTime(ms) {
@@ -835,6 +1075,22 @@
             }, 500);
         }
 
+        function scheduleBaseballStateSync() {
+            if (!currentTeamId || !currentGameId || !gameState.isBaseballScorekeeping) return;
+            if (liveSync.baseballTimeout) return;
+            liveSync.baseballTimeout = setTimeout(async () => {
+                liveSync.baseballTimeout = null;
+                try {
+                    await updateGame(currentTeamId, currentGameId, {
+                        liveBaseballState: gameState.baseballState,
+                        period: gameState.currentPeriod
+                    });
+                } catch (error) {
+                    console.warn('Failed to sync baseball scorekeeping state:', error);
+                }
+            }, 500);
+        }
+
         function schedulePlayerStatsSync(playerId) {
             if (!currentTeamId || !currentGameId || !playerId) return;
             if (liveSync.playerTimeouts.has(playerId)) return;
@@ -891,6 +1147,10 @@
             if (liveSync.opponentTimeout) {
                 clearTimeout(liveSync.opponentTimeout);
                 liveSync.opponentTimeout = null;
+            }
+            if (liveSync.baseballTimeout) {
+                clearTimeout(liveSync.baseballTimeout);
+                liveSync.baseballTimeout = null;
             }
             if (liveSync.liveFlagTimeout) {
                 clearTimeout(liveSync.liveFlagTimeout);
@@ -1242,10 +1502,7 @@
 
         window.incrementStat = async function (playerId, statKey, value, isOpponent) {
             // Prevent stat tracking before game starts
-            if (!gameState.isRunning && gameState.elapsed === 0) {
-                alert('Please start the game timer before recording stats.');
-                return;
-            }
+            if (!requireTrackingStarted()) return;
 
             const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
             const currentVal = parseInt(statEl.textContent);
@@ -1448,6 +1705,7 @@
                             gameState.playerFieldStatus = createFieldState(players);
                             homeScore = 0;
                             awayScore = 0;
+                            resetBaseballScorekeepingState();
                             opponentPlayers.forEach((opp) => {
                                 const existing = gameState.opponentStats[opp.id] || {};
                                 gameState.opponentStats[opp.id] = {
@@ -1470,6 +1728,7 @@
                                     awayScore: 0,
                                     onCourt: resetLineup.onCourt,
                                     bench: resetLineup.bench,
+                                    baseballState: gameState.isBaseballScorekeeping ? gameState.baseballState : null,
                                     description: `Tracker restarted from zero. Cleared: ${persistedState.summary}.`,
                                     createdBy: currentUser?.uid || null
                                 }),
@@ -1477,12 +1736,15 @@
                                     await updateGame(
                                         currentTeamId,
                                         currentGameId,
-                                        buildTrackLiveResetUpdate({
-                                            currentGame,
-                                            currentConfig,
-                                            period: gameState.currentPeriod,
-                                            liveLineup: resetLineup
-                                        })
+                                        {
+                                            ...buildTrackLiveResetUpdate({
+                                                currentGame,
+                                                currentConfig,
+                                                period: gameState.currentPeriod,
+                                                liveLineup: resetLineup
+                                            }),
+                                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {})
+                                        }
                                     );
                                     currentGame.liveStatus = 'scheduled';
                                     currentGame.liveHasData = false;
@@ -1507,8 +1769,11 @@
 
                             updateScoreDisplay();
                             renderGameLog();
-                            renderStatsTable();
-                            renderOpponentTable();
+                            renderBaseballScorekeeping();
+                            if (!gameState.isBaseballScorekeeping) {
+                                renderStatsTable();
+                                renderOpponentTable();
+                            }
                         }
                     }
                 }
@@ -1531,6 +1796,7 @@
                     gameClockMs: 0,
                     homeScore,
                     awayScore,
+                    baseballState: gameState.isBaseballScorekeeping ? gameState.baseballState : null,
                     description: 'Game started',
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
@@ -1539,6 +1805,7 @@
                 document.getElementById('shareLiveShareBtn').classList.remove('hidden');
                 syncClockToGameDoc().catch(console.warn);
                 scheduleScoreSync();
+                scheduleBaseballStateSync();
                 syncLiveLineup().catch(console.warn);
             }
         }
@@ -1560,7 +1827,11 @@
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
                 syncClockToGameDoc().catch(console.warn);
-                renderStatsTable();
+                if (gameState.isBaseballScorekeeping) {
+                    renderBaseballScorekeeping();
+                } else {
+                    renderStatsTable();
+                }
             }
         }
 
@@ -1589,15 +1860,12 @@
                 });
                 homeScore = 0;
                 awayScore = 0;
+                resetBaseballScorekeepingState();
 
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
 
-                document.querySelectorAll('.period-btn').forEach((button) => {
-                    const isActive = button.dataset.period === gameState.currentPeriod;
-                    button.classList.toggle('period-active', isActive);
-                    button.classList.toggle('period-inactive', !isActive);
-                });
+                updateActivePeriodButtons();
 
                 document.querySelectorAll('[id^="stat-"]').forEach(el => {
                     el.textContent = '0';
@@ -1612,11 +1880,15 @@
                     currentGame.homeScore = 0;
                     currentGame.awayScore = 0;
                     currentGame.opponentStats = {};
+                    currentGame.liveBaseballState = gameState.isBaseballScorekeeping ? gameState.baseballState : null;
                 }
                 updateScoreDisplay();
                 renderGameLog();
-                renderStatsTable();
-                renderOpponentTable();
+                renderBaseballScorekeeping();
+                if (!gameState.isBaseballScorekeeping) {
+                    renderStatsTable();
+                    renderOpponentTable();
+                }
                 document.getElementById('liveBadge').classList.add('hidden');
                 document.getElementById('shareLiveBtn').classList.add('hidden');
                 document.getElementById('shareLiveShareBtn').classList.add('hidden');
@@ -1632,6 +1904,7 @@
                         awayScore: 0,
                         onCourt: liveLineup.onCourt,
                         bench: liveLineup.bench,
+                        baseballState: gameState.isBaseballScorekeeping ? gameState.baseballState : null,
                         description: 'Game reset',
                         createdBy: currentUser?.uid || null
                     }),
@@ -1643,7 +1916,8 @@
                                 period: gameState.currentPeriod,
                                 liveLineup
                             }),
-                            opponentStats: gameState.opponentStats
+                            opponentStats: gameState.opponentStats,
+                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {})
                         });
                         if (currentGame) {
                             currentGame.liveHasData = false;
@@ -1651,6 +1925,7 @@
                             currentGame.homeScore = 0;
                             currentGame.awayScore = 0;
                             currentGame.opponentStats = gameState.opponentStats;
+                            currentGame.liveBaseballState = gameState.isBaseballScorekeeping ? gameState.baseballState : null;
                         }
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     },
@@ -1699,6 +1974,7 @@
                         status: 'scheduled',
                         homeScore: 0,
                         awayScore: 0,
+                        liveBaseballState: gameState.isBaseballScorekeeping ? createBaseballLiveState() : null,
                         // Preserve opponent fields
                         opponent: currentGame.opponent,
                         opponentTeamId: currentGame.opponentTeamId,
@@ -1751,6 +2027,7 @@
                     gameClockMs: gameState.elapsed,
                     homeScore,
                     awayScore,
+                    baseballState: gameState.isBaseballScorekeeping ? gameState.baseballState : null,
                     description: 'Clock sync',
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
@@ -1861,6 +2138,28 @@
                     isOpponent,
                     description: `Undo stat: ${entry.text}`
                 });
+            } else if (undoData && undoData.type === 'baseball' && undoData.previousState) {
+                gameState.baseballState = createBaseballLiveState(undoData.previousState);
+                homeScore = gameState.baseballState.homeScore;
+                awayScore = gameState.baseballState.awayScore;
+                gameState.currentPeriod = getBaseballPeriodLabel(gameState.baseballState);
+                updateActivePeriodButtons();
+                updateScoreDisplay();
+                renderBaseballScorekeeping();
+                scheduleScoreSync();
+                scheduleBaseballStateSync();
+                scheduleLiveHasData();
+
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'undo',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    baseballState: gameState.baseballState,
+                    description: `Undo: ${entry.text}`,
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
             }
 
             gameState.gameLog.splice(index, 1);
@@ -2264,7 +2563,8 @@ Write the match report now:`;
                     awayScore: finalAway,
                     summary: summary,
                     status: 'completed',
-                    opponentStats: gameState.opponentStats
+                    opponentStats: gameState.opponentStats,
+                    ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {})
                 });
 
                 // Commit all writes in a single batch
@@ -2334,6 +2634,13 @@ Write the match report now:`;
         document.getElementById('cancelBtn').addEventListener('click', cancelGame);
         document.getElementById('live-note-add')?.addEventListener('click', addManualGameNote);
         document.getElementById('voice-note-btn')?.addEventListener('click', startVoiceNote);
+        document.querySelectorAll('[data-baseball-action]').forEach((button) => {
+            button.addEventListener('click', () => {
+                recordBaseballAction(button.dataset.baseballAction).catch((error) => {
+                    console.warn('Baseball scorekeeping action failed:', error);
+                });
+            });
+        });
         document.getElementById('live-note-input')?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 event.preventDefault();
@@ -2357,6 +2664,7 @@ Write the match report now:`;
             btn.addEventListener('click', function () {
                 const period = this.getAttribute('data-period');
                 gameState.currentPeriod = period;
+                updateBaseballPeriodFromLabel(period);
 
                 // Update button styles
                 document.querySelectorAll('.period-btn').forEach(b => {

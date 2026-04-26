@@ -7,6 +7,11 @@ describe('live sport config helpers', () => {
     expect(getSportPeriodLabels()).toEqual(['Q1', 'Q2', 'Q3', 'Q4', 'OT']);
   });
 
+  it('falls back to basketball-style labels for unsupported sports', () => {
+    expect(getDefaultLivePeriod({ sport: 'Lacrosse' })).toBe('Q1');
+    expect(getSportPeriodLabels({ sport: 'Lacrosse' })).toEqual(['Q1', 'Q2', 'Q3', 'Q4', 'OT']);
+  });
+
   it('returns soccer half labels by sport', () => {
     expect(getDefaultLivePeriod({ sport: 'Soccer' })).toBe('H1');
     expect(getSportPeriodLabels({ sport: 'Soccer' })).toEqual(['H1', 'H2', 'ET1', 'ET2', 'PK']);
