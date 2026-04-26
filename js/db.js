@@ -2810,9 +2810,29 @@ export async function getUnreadChatCounts(userId, teamIds) {
  */
 export async function broadcastLiveEvent(teamId, gameId, eventData) {
     const eventsRef = getGameSubcollectionRef(teamId, gameId, 'liveEvents');
-    return addDoc(eventsRef, {
+    const eventId = typeof eventData?.eventId === 'string' ? eventData.eventId.trim() : '';
+    const eventPayload = {
         ...eventData,
+        ...(eventId ? { eventId } : {}),
         createdAt: serverTimestamp()
+    };
+
+    if (eventId && !eventId.includes('/')) {
+        const eventRef = doc(eventsRef, eventId);
+        try {
+            await setDoc(eventRef, eventPayload);
+            return eventRef;
+        } catch (error) {
+            const confirmedSnap = await getDoc(eventRef).catch(() => null);
+            if (confirmedSnap?.exists?.() && confirmedSnap.data()?.eventId === eventId) {
+                return eventRef;
+            }
+            throw error;
+        }
+    }
+
+    return addDoc(eventsRef, {
+        ...eventPayload
     });
 }
 
