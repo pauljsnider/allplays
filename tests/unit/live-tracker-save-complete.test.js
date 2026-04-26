@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runSaveAndCompleteWorkflow } from '../../js/live-tracker-save-complete.js';
+import { commitFinishPlan, runSaveAndCompleteWorkflow } from '../../js/live-tracker-save-complete.js';
 
 function buildDocRef(...args) {
   if (args.length === 1) {
@@ -217,5 +217,97 @@ describe('live tracker save-and-complete workflow', () => {
     expect(harness.context.finishButton.disabled).toBe(true);
     expect(harness.endLiveBroadcast).toHaveBeenCalledTimes(1);
     expect(harness.navigationCalls).toHaveLength(1);
+  });
+
+  it('allows failed finalization commits to be converted into pending offline sync without a hard alert', async () => {
+    const harness = buildHarness();
+    const offlineError = new Error('offline');
+    const beforeFinalizationCommit = vi.fn(async () => {
+      throw offlineError;
+    });
+    const onCommitFailure = vi.fn(() => ({ pending: true }));
+
+    const result = await runSaveAndCompleteWorkflow({
+      ...harness.context,
+      beforeFinalizationCommit,
+      onCommitFailure
+    });
+
+    expect(result).toMatchObject({
+      skipped: false,
+      pending: true,
+      finalHome: 5,
+      finalAway: 2,
+      error: offlineError
+    });
+    expect(beforeFinalizationCommit).toHaveBeenCalledWith({
+      finishPlan: expect.objectContaining({
+        finalHome: 5,
+        finalAway: 2,
+        gameUpdate: expect.objectContaining({ status: 'completed' })
+      })
+    });
+    expect(onCommitFailure).toHaveBeenCalledWith({
+      error: offlineError,
+      finishPlan: expect.objectContaining({
+        finalHome: 5,
+        finalAway: 2,
+        gameUpdate: expect.objectContaining({ status: 'completed' })
+      })
+    });
+    expect(harness.batch.commit).not.toHaveBeenCalled();
+    expect(harness.context.alertFn).not.toHaveBeenCalled();
+    expect(harness.context.finishButton.disabled).toBe(false);
+    expect(harness.endLiveBroadcast).not.toHaveBeenCalled();
+    expect(harness.navigationCalls).toHaveLength(0);
+  });
+
+  it('can replay a stored finalization plan into a fresh Firestore batch', async () => {
+    const harness = buildHarness();
+    const finishPlan = {
+      eventWrites: [
+        { data: { text: 'Home layup', gameTime: '01:20' } }
+      ],
+      aggregatedStatsWrites: [
+        { playerId: 'p1', data: { playerName: 'Alex', stats: { pts: 2 }, timeMs: 1000 } }
+      ],
+      gameUpdate: {
+        homeScore: 2,
+        awayScore: 0,
+        status: 'completed'
+      }
+    };
+
+    await commitFinishPlan({
+      finishPlan,
+      db: harness.context.db,
+      currentTeamId: 'team-1',
+      currentGameId: 'game-9',
+      createBatch: harness.context.createBatch,
+      createCollectionRef: harness.context.createCollectionRef,
+      createDocRef: harness.context.createDocRef
+    });
+
+    expect(harness.batch.commit).toHaveBeenCalledTimes(1);
+    expect(harness.setCalls).toEqual([
+      {
+        ref: { kind: 'auto-doc', path: 'teams/team-1/games/game-9/events/AUTO_ID' },
+        data: { text: 'Home layup', gameTime: '01:20' }
+      },
+      {
+        ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p1' },
+        data: { playerName: 'Alex', stats: { pts: 2 }, timeMs: 1000 }
+      }
+    ]);
+    expect(harness.updateCalls).toEqual([
+      {
+        ref: { kind: 'doc', path: 'teams/team-1/games/game-9' },
+        data: {
+          homeScore: 2,
+          awayScore: 0,
+          status: 'completed'
+        }
+      }
+    ]);
   });
 });

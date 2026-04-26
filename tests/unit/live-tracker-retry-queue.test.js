@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from '../../js/live-tracker-queue.js';
+import {
+    readPersistedLiveTrackerPendingFinish,
+    readPersistedLiveTrackerQueue,
+    writePersistedLiveTrackerPendingFinish,
+    writePersistedLiveTrackerQueue
+} from '../../js/live-tracker-queue.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -135,8 +140,8 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     rewritten = replaceNamedImportByModulePath(rewritten, './live-game-state.js', 'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-sport-config.js', 'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-finish.js', 'const { buildOpponentStatsSnapshotFromEntries } = deps.liveTrackerFinish;');
-    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-queue.js', 'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } = deps.liveTrackerQueue;');
-    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-save-complete.js', 'const { runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;');
+    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-queue.js', 'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish } = deps.liveTrackerQueue;');
+    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-save-complete.js', 'const { commitFinishPlan, runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;');
 
     return rewritten
         .replace(authHook, '')
@@ -144,7 +149,9 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
 return {
   liveState,
   scheduleRetry,
+  retryPendingFinalizationNow,
   persistPendingEventQueue,
+  persistPendingFinalization,
   broadcastEvent,
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
@@ -165,7 +172,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootHarness({ broadcastImpl, randomUUID = vi.fn() }) {
+async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGameLiveStatusImpl = async () => {}, randomUUID = vi.fn() }) {
     const { document } = createEnvironment();
     const storage = createStorage();
     const scheduledTimeouts = new Map();
@@ -185,7 +192,7 @@ async function bootHarness({ broadcastImpl, randomUUID = vi.fn() }) {
             broadcastLiveEvent: broadcastImpl,
             subscribeLiveChat: () => () => {},
             postLiveChatMessage: async () => {},
-            setGameLiveStatus: async () => {}
+            setGameLiveStatus: setGameLiveStatusImpl
         },
         firebase: {
             db: {},
@@ -252,9 +259,12 @@ async function bootHarness({ broadcastImpl, randomUUID = vi.fn() }) {
         },
         liveTrackerQueue: {
             readPersistedLiveTrackerQueue,
-            writePersistedLiveTrackerQueue
+            writePersistedLiveTrackerQueue,
+            readPersistedLiveTrackerPendingFinish,
+            writePersistedLiveTrackerPendingFinish
         },
         liveTrackerSaveComplete: {
+            commitFinishPlan: commitImpl,
             runSaveAndCompleteWorkflow: async () => ({})
         }
     };
@@ -375,5 +385,98 @@ describe('live tracker retry queue persistence', () => {
         expect(randomUUID).toHaveBeenCalledTimes(2);
         expect(page.liveState.eventQueue).toEqual([]);
         expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([]);
+    });
+
+    it('drains queued scoring events before replaying a pending finalization', async () => {
+        const operations = [];
+        const pendingFinish = {
+            version: 1,
+            queuedAt: 123,
+            finishPlan: {
+                finalHome: 9,
+                finalAway: 7,
+                eventWrites: [],
+                aggregatedStatsWrites: [],
+                gameUpdate: { homeScore: 9, awayScore: 7, status: 'completed' }
+            }
+        };
+        const page = await bootHarness({
+            randomUUID: vi.fn(() => 'event-1'),
+            broadcastImpl: async (_teamId, _gameId, event) => {
+                operations.push({ type: 'live-event', event });
+            },
+            commitImpl: async ({ finishPlan }) => {
+                operations.push({ type: 'finalization', finishPlan });
+            },
+            setGameLiveStatusImpl: async (_teamId, _gameId, status) => {
+                operations.push({ type: 'live-status', status });
+            }
+        });
+
+        page.setContext({ teamId: 'team-1', gameId: 'game-9' });
+        page.liveState.eventQueue = [{ type: 'stat', statKey: 'pts', value: 2 }];
+        page.persistPendingEventQueue();
+        page.liveState.pendingFinish = pendingFinish;
+        page.persistPendingFinalization();
+
+        await page.retryPendingFinalizationNow({ resetBackoff: true });
+
+        expect(operations).toEqual([
+            {
+                type: 'live-event',
+                event: { type: 'stat', statKey: 'pts', value: 2, eventId: 'live-event-1' }
+            },
+            {
+                type: 'finalization',
+                finishPlan: pendingFinish.finishPlan
+            },
+            {
+                type: 'live-status',
+                status: 'completed'
+            }
+        ]);
+        expect(page.liveState.eventQueue).toEqual([]);
+        expect(page.liveState.pendingFinish).toBeNull();
+        expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([]);
+        expect(readPersistedLiveTrackerPendingFinish(page.storage, 'team-1', 'game-9')).toBeNull();
+    });
+
+    it('keeps a failed pending finalization visible and retryable', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const pendingFinish = {
+            version: 1,
+            queuedAt: 123,
+            finishPlan: {
+                finalHome: 9,
+                finalAway: 7,
+                eventWrites: [],
+                aggregatedStatsWrites: [],
+                gameUpdate: { homeScore: 9, awayScore: 7, status: 'completed' }
+            }
+        };
+        const page = await bootHarness({
+            broadcastImpl: async () => {},
+            commitImpl: async () => {
+                throw new Error('still offline');
+            }
+        });
+
+        page.setContext({ teamId: 'team-1', gameId: 'game-9' });
+        page.liveState.pendingFinish = pendingFinish;
+        page.persistPendingFinalization();
+
+        await page.retryPendingFinalizationNow({ resetBackoff: true });
+
+        expect(page.liveState.pendingFinish).toMatchObject({
+            ...pendingFinish,
+            lastError: 'still offline'
+        });
+        expect(page.liveState.finishRetryAttempt).toBe(1);
+        expect(page.liveState.finishRetryTimeout).not.toBeNull();
+        expect(readPersistedLiveTrackerPendingFinish(page.storage, 'team-1', 'game-9')).toMatchObject({
+            ...pendingFinish,
+            lastError: 'still offline'
+        });
+        warnSpy.mockRestore();
     });
 });

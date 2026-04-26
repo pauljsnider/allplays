@@ -5,7 +5,12 @@ import { buildPersistedResumeClockState, deriveResumeClockState } from '../../js
 import { restoreLiveLineup } from '../../js/live-tracker-lineup.js';
 import { buildLiveResetEvent } from '../../js/live-tracker-reset.js';
 import { getDefaultLivePeriod, getSportPeriodLabels } from '../../js/live-sport-config.js';
-import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from '../../js/live-tracker-queue.js';
+import {
+  readPersistedLiveTrackerPendingFinish,
+  readPersistedLiveTrackerQueue,
+  writePersistedLiveTrackerPendingFinish,
+  writePersistedLiveTrackerQueue
+} from '../../js/live-tracker-queue.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
@@ -268,12 +273,12 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   rewritten = replaceNamedImportByModulePath(
     rewritten,
     './live-tracker-queue.js',
-    'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } = deps.liveTrackerQueue;'
+    'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish } = deps.liveTrackerQueue;'
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
     './live-tracker-save-complete.js',
-    'const { runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;'
+    'const { commitFinishPlan, runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;'
   );
 
   return rewritten
@@ -447,15 +452,24 @@ async function bootLiveTracker({ game, snapshots }) {
     },
     liveTrackerQueue: {
       readPersistedLiveTrackerQueue,
-      writePersistedLiveTrackerQueue
+      writePersistedLiveTrackerQueue,
+      readPersistedLiveTrackerPendingFinish,
+      writePersistedLiveTrackerPendingFinish
     },
     liveTrackerSaveComplete: {
+      commitFinishPlan: async () => {},
       runSaveAndCompleteWorkflow: async () => ({})
     }
   };
 
   const window = {
     location: { href: '' },
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {}
+    },
+    navigator: { onLine: true },
     addEventListener: () => {}
   };
 
