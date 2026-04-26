@@ -17,8 +17,13 @@ import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=1';
-import { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue } from './live-tracker-queue.js?v=1';
-import { runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
+import {
+  readPersistedLiveTrackerQueue,
+  writePersistedLiveTrackerQueue,
+  readPersistedLiveTrackerPendingFinish,
+  writePersistedLiveTrackerPendingFinish
+} from './live-tracker-queue.js?v=1';
+import { commitFinishPlan, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -80,6 +85,9 @@ let liveState = {
   eventQueue: [],
   retryAttempt: 0,
   retryTimeout: null,
+  pendingFinish: null,
+  finishRetryAttempt: 0,
+  finishRetryTimeout: null,
   unsubscribeChat: null,
   unsubscribeViewers: null,
   lastChatSentAt: 0,
@@ -138,6 +146,48 @@ function clearPendingEventQueue() {
     liveState.retryTimeout = null;
   }
   persistPendingEventQueue();
+}
+
+function persistPendingFinalization() {
+  writePersistedLiveTrackerPendingFinish(window.localStorage, currentTeamId, currentGameId, liveState.pendingFinish);
+}
+
+function restorePendingFinalization() {
+  liveState.pendingFinish = readPersistedLiveTrackerPendingFinish(window.localStorage, currentTeamId, currentGameId);
+  liveState.finishRetryAttempt = 0;
+  if (liveState.pendingFinish && window.navigator?.onLine !== false) {
+    schedulePendingFinalizationRetry({ resetBackoff: true });
+  }
+}
+
+function queuePendingFinalization(finishPlan, error) {
+  liveState.pendingFinish = {
+    version: 1,
+    queuedAt: Date.now(),
+    lastError: error?.message || '',
+    finishPlan: {
+      finalHome: finishPlan.finalHome,
+      finalAway: finishPlan.finalAway,
+      eventWrites: finishPlan.eventWrites,
+      aggregatedStatsWrites: finishPlan.aggregatedStatsWrites,
+      gameUpdate: finishPlan.gameUpdate
+    }
+  };
+  liveState.finishRetryAttempt = 0;
+  persistPendingFinalization();
+  renderLiveSyncStatus();
+  schedulePendingFinalizationRetry({ resetBackoff: true });
+}
+
+function clearPendingFinalization() {
+  liveState.pendingFinish = null;
+  liveState.finishRetryAttempt = 0;
+  if (liveState.finishRetryTimeout) {
+    clearTimeout(liveState.finishRetryTimeout);
+    liveState.finishRetryTimeout = null;
+  }
+  persistPendingFinalization();
+  renderLiveSyncStatus();
 }
 
 let connectivityListenersBound = false;
@@ -355,17 +405,43 @@ function renderHeader() {
   renderLiveSyncStatus();
 }
 
-function deriveLiveSyncStatus({ isOnline = true, pendingCount = 0, retryAttempt = 0, isRetryScheduled = false } = {}) {
+function deriveLiveSyncStatus({
+  isOnline = true,
+  pendingCount = 0,
+  retryAttempt = 0,
+  isRetryScheduled = false,
+  hasPendingFinalization = false,
+  finishRetryAttempt = 0,
+  isFinishRetryScheduled = false
+} = {}) {
   const normalizedPendingCount = Math.max(0, Number(pendingCount || 0));
+  const pendingText = hasPendingFinalization
+    ? (normalizedPendingCount > 0 ? `${normalizedPendingCount} event(s) + final` : 'Final pending')
+    : (normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : '');
+
   if (!isOnline) {
     return {
       visible: true,
       tone: 'offline',
-      label: 'Offline tracking',
+      label: hasPendingFinalization ? 'Offline finalization pending' : 'Offline tracking',
+      detail: hasPendingFinalization
+        ? 'Final score is saved locally and will sync after queued events reconnect.'
+        : (normalizedPendingCount > 0
+          ? 'Unsynced events are queued until connection returns.'
+          : 'New live events will queue until connection returns.'),
+      pendingText
+    };
+  }
+
+  if (hasPendingFinalization) {
+    return {
+      visible: true,
+      tone: 'warning',
+      label: finishRetryAttempt > 0 ? 'Retrying finalization sync' : 'Finalization pending sync',
       detail: normalizedPendingCount > 0
-        ? 'Unsynced events are queued until connection returns.'
-        : 'New live events will queue until connection returns.',
-      pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+        ? 'Queued live events will sync before the final score is finalized.'
+        : (isFinishRetryScheduled ? 'Final score will retry in the background.' : 'Tap retry or wait for the next sync attempt.'),
+      pendingText
     };
   }
 
@@ -377,7 +453,7 @@ function deriveLiveSyncStatus({ isOnline = true, pendingCount = 0, retryAttempt 
       detail: normalizedPendingCount > 0
         ? 'Queued live events will continue syncing in the background.'
         : 'Waiting for the next retry window.',
-      pendingText: normalizedPendingCount > 0 ? `${normalizedPendingCount} pending` : ''
+      pendingText
     };
   }
 
@@ -397,8 +473,12 @@ function renderLiveSyncStatus() {
     isOnline: typeof navigator === 'undefined' ? true : navigator.onLine !== false,
     pendingCount: liveState.eventQueue.length,
     retryAttempt: liveState.retryAttempt,
-    isRetryScheduled: Boolean(liveState.retryTimeout)
+    isRetryScheduled: Boolean(liveState.retryTimeout),
+    hasPendingFinalization: Boolean(liveState.pendingFinish),
+    finishRetryAttempt: liveState.finishRetryAttempt,
+    isFinishRetryScheduled: Boolean(liveState.finishRetryTimeout)
   });
+  renderFinishSyncControls();
 
   els.liveSyncBanner.classList.remove('hidden', 'sync-status--offline', 'sync-status--warning');
   els.liveSyncPendingPill.classList.remove('hidden', 'sync-pill--offline', 'sync-pill--warning');
@@ -418,6 +498,19 @@ function renderLiveSyncStatus() {
     els.liveSyncPendingPill.classList.add(status.tone === 'offline' ? 'sync-pill--offline' : 'sync-pill--warning');
   } else {
     els.liveSyncPendingPill.classList.add('hidden');
+  }
+}
+
+function renderFinishSyncControls() {
+  if (!els.finishSave) return;
+  if (liveState.pendingFinish) {
+    els.finishSave.textContent = 'Retry Finalization Sync';
+    els.finishSave.disabled = Boolean(finishSubmissionLock.active);
+    return;
+  }
+  if (!finishSubmissionLock.active && els.finishSave.textContent !== 'Save & Complete') {
+    els.finishSave.textContent = 'Save & Complete';
+    els.finishSave.disabled = false;
   }
 }
 
@@ -1137,6 +1230,35 @@ async function broadcastResetEvent(description = 'Tracker reset. Live viewer sta
   }));
 }
 
+async function drainPendingLiveEventQueue() {
+  if (!currentTeamId || !currentGameId) return;
+  if (liveState.retryTimeout) {
+    clearTimeout(liveState.retryTimeout);
+    liveState.retryTimeout = null;
+  }
+
+  while (liveState.eventQueue.length > 0) {
+    const event = withStableLiveEventId(liveState.eventQueue[0]);
+    if (event !== liveState.eventQueue[0]) {
+      liveState.eventQueue[0] = event;
+      persistPendingEventQueue();
+    }
+    try {
+      await broadcastLiveEvent(currentTeamId, currentGameId, event);
+      liveState.eventQueue.shift();
+      liveState.retryAttempt = 0;
+      persistPendingEventQueue();
+      renderLiveSyncStatus();
+    } catch (error) {
+      persistPendingEventQueue();
+      throw error;
+    }
+  }
+
+  persistPendingEventQueue();
+  renderLiveSyncStatus();
+}
+
 function scheduleRetry({ resetBackoff = false } = {}) {
   if (!currentTeamId || !currentGameId || liveState.eventQueue.length === 0) return;
   if (resetBackoff) {
@@ -1147,38 +1269,92 @@ function scheduleRetry({ resetBackoff = false } = {}) {
   const delay = Math.min(1000 * Math.pow(2, liveState.retryAttempt), 30000);
   liveState.retryTimeout = setTimeout(async () => {
     liveState.retryTimeout = null;
-    let failed = false;
     renderLiveSyncStatus();
 
-    while (liveState.eventQueue.length > 0) {
-      const event = withStableLiveEventId(liveState.eventQueue[0]);
-      if (event !== liveState.eventQueue[0]) {
-        liveState.eventQueue[0] = event;
-        persistPendingEventQueue();
-      }
-      try {
-        await broadcastLiveEvent(currentTeamId, currentGameId, event);
-        liveState.eventQueue.shift();
-        liveState.retryAttempt = 0;
-        persistPendingEventQueue();
-      } catch {
-        failed = true;
-        persistPendingEventQueue();
-        break;
-      }
-      renderLiveSyncStatus();
-    }
-
-    if (liveState.eventQueue.length > 0) {
-      if (failed) {
-        liveState.retryAttempt += 1;
-      }
+    try {
+      await drainPendingLiveEventQueue();
+    } catch {
+      liveState.retryAttempt += 1;
       scheduleRetry();
       return;
-    } else {
-      persistPendingEventQueue();
-      renderLiveSyncStatus();
     }
+
+    persistPendingEventQueue();
+    renderLiveSyncStatus();
+    if (liveState.pendingFinish) {
+      schedulePendingFinalizationRetry({ resetBackoff: true });
+    }
+  }, delay);
+}
+
+async function syncPendingFinalizationNow() {
+  if (!liveState.pendingFinish?.finishPlan || !currentTeamId || !currentGameId) {
+    return { skipped: true };
+  }
+
+  await drainPendingLiveEventQueue();
+  await commitFinishPlan({
+    finishPlan: liveState.pendingFinish.finishPlan,
+    db,
+    currentTeamId,
+    currentGameId,
+    createBatch: writeBatch,
+    createCollectionRef: collection,
+    createDocRef: doc
+  });
+  await endLiveBroadcast();
+  clearPendingFinalization();
+  isFinishing = true;
+  if (els.finishSave) {
+    els.finishSave.textContent = 'Finalization Synced';
+    els.finishSave.disabled = true;
+  }
+  return { skipped: false };
+}
+
+async function retryPendingFinalizationNow({ resetBackoff = false } = {}) {
+  if (!liveState.pendingFinish) return;
+  if (resetBackoff) {
+    liveState.finishRetryAttempt = 0;
+    if (liveState.finishRetryTimeout) {
+      clearTimeout(liveState.finishRetryTimeout);
+      liveState.finishRetryTimeout = null;
+    }
+  }
+
+  try {
+    await syncPendingFinalizationNow();
+  } catch (error) {
+    console.warn('Pending finalization sync failed:', error);
+    if (liveState.pendingFinish) {
+      liveState.pendingFinish.lastError = error?.message || '';
+      liveState.finishRetryAttempt += 1;
+      persistPendingFinalization();
+    }
+    renderLiveSyncStatus();
+    schedulePendingFinalizationRetry();
+  }
+}
+
+function schedulePendingFinalizationRetry({ resetBackoff = false } = {}) {
+  if (!currentTeamId || !currentGameId || !liveState.pendingFinish) return;
+  if (resetBackoff) {
+    liveState.finishRetryAttempt = 0;
+  }
+
+  if (liveState.eventQueue.length > 0) {
+    scheduleRetry({ resetBackoff });
+    renderLiveSyncStatus();
+    return;
+  }
+
+  if (liveState.finishRetryTimeout) return;
+  renderLiveSyncStatus();
+  const delay = Math.min(1000 * Math.pow(2, liveState.finishRetryAttempt), 30000);
+  liveState.finishRetryTimeout = setTimeout(async () => {
+    liveState.finishRetryTimeout = null;
+    renderLiveSyncStatus();
+    await retryPendingFinalizationNow();
   }, delay);
 }
 
@@ -1580,6 +1756,11 @@ function generateEmailRecap() {
 }
 
 async function saveAndComplete() {
+  if (liveState.pendingFinish) {
+    await retryPendingFinalizationNow({ resetBackoff: true });
+    return;
+  }
+
   await runSaveAndCompleteWorkflow({
     finishSubmissionLock,
     finishButton: els.finishSave,
@@ -1605,6 +1786,14 @@ async function saveAndComplete() {
     formatClock,
     onFinishStateChange: (value) => {
       isFinishing = value;
+    },
+    beforeFinalizationCommit: async () => {
+      await drainPendingLiveEventQueue();
+    },
+    onCommitFailure: ({ error, finishPlan }) => {
+      queuePendingFinalization(finishPlan, error);
+      addLog('Finalization saved locally. It will sync when connection returns.');
+      return { pending: true };
     }
   });
 }
@@ -2389,6 +2578,7 @@ async function init() {
   currentTeamId = teamId;
   currentGameId = gameId;
   restorePendingEventQueue();
+  restorePendingFinalization();
   bindConnectivityListeners();
 
   try {
@@ -2511,6 +2701,7 @@ async function init() {
 
       if (!shouldResume) {
         clearPendingEventQueue();
+        clearPendingFinalization();
         const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/events`), 'events'),
           safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`), 'aggregatedStats'),
@@ -2707,6 +2898,8 @@ async function init() {
     }
     if (liveState.eventQueue.length > 0 && window.navigator?.onLine !== false) {
       scheduleRetry({ resetBackoff: true });
+    } else if (liveState.pendingFinish && window.navigator?.onLine !== false) {
+      schedulePendingFinalizationRetry({ resetBackoff: true });
     }
     setupNavigationWarning();
   } catch (error) {
@@ -2719,6 +2912,10 @@ async function init() {
 window.addEventListener('online', () => {
   if (liveState.eventQueue.length > 0) {
     scheduleRetry({ resetBackoff: true });
+    return;
+  }
+  if (liveState.pendingFinish) {
+    schedulePendingFinalizationRetry({ resetBackoff: true });
   }
 });
 

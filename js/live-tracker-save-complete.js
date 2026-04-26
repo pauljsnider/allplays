@@ -9,6 +9,51 @@ function defaultFormatClock(ms) {
   return `${m}:${sec}`;
 }
 
+export function addFinishPlanWritesToBatch({
+  finishPlan,
+  batch,
+  db,
+  currentTeamId,
+  currentGameId,
+  createCollectionRef,
+  createDocRef
+} = {}) {
+  finishPlan.eventWrites.forEach(({ data }) => {
+    const eventRef = createDocRef(createCollectionRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+    batch.set(eventRef, data);
+  });
+
+  finishPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
+    const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+    batch.set(statsRef, data);
+  });
+
+  const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
+  batch.update(gameRef, finishPlan.gameUpdate);
+}
+
+export async function commitFinishPlan({
+  finishPlan,
+  db,
+  currentTeamId,
+  currentGameId,
+  createBatch,
+  createCollectionRef,
+  createDocRef
+} = {}) {
+  const batch = createBatch(db);
+  addFinishPlanWritesToBatch({
+    finishPlan,
+    batch,
+    db,
+    currentTeamId,
+    currentGameId,
+    createCollectionRef,
+    createDocRef
+  });
+  await batch.commit();
+}
+
 export async function runSaveAndCompleteWorkflow({
   finishSubmissionLock,
   finishButton,
@@ -38,6 +83,8 @@ export async function runSaveAndCompleteWorkflow({
   releaseLock = releaseSingleFlightLock,
   formatClock = defaultFormatClock,
   onFinishStateChange = () => {},
+  beforeFinalizationCommit = null,
+  onCommitFailure = null,
   alertFn = (message) => {
     if (typeof alert === 'function') {
       alert(message);
@@ -114,19 +161,19 @@ export async function runSaveAndCompleteWorkflow({
   try {
     const batch = createBatch(db);
 
-    finishPlan.eventWrites.forEach(({ data }) => {
-      const eventRef = createDocRef(createCollectionRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-      batch.set(eventRef, data);
+    addFinishPlanWritesToBatch({
+      finishPlan,
+      batch,
+      db,
+      currentTeamId,
+      currentGameId,
+      createCollectionRef,
+      createDocRef
     });
 
-    finishPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
-      const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-      batch.set(statsRef, data);
-    });
-
-    const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
-    batch.update(gameRef, finishPlan.gameUpdate);
-
+    if (typeof beforeFinalizationCommit === 'function') {
+      await beforeFinalizationCommit({ finishPlan });
+    }
     await batch.commit();
     await endLiveBroadcast();
     onFinishStateChange(true);
@@ -140,6 +187,29 @@ export async function runSaveAndCompleteWorkflow({
       finishPlan
     };
   } catch (error) {
+    if (typeof onCommitFailure === 'function') {
+      try {
+        const failureResult = await onCommitFailure({ error, finishPlan });
+        if (failureResult?.pending) {
+          releaseLock(finishSubmissionLock);
+          onFinishStateChange(false);
+          if (finishButton) {
+            finishButton.disabled = false;
+          }
+          return {
+            skipped: false,
+            pending: true,
+            finalHome: finishPlan.finalHome,
+            finalAway: finishPlan.finalAway,
+            finishPlan,
+            error
+          };
+        }
+      } catch (handlerError) {
+        console.error('Error queuing pending game finalization:', handlerError);
+      }
+    }
+
     if (addedReconciliationLogEntry && state.log[0] === addedReconciliationLogEntry) {
       state.log.shift();
       renderLog();
