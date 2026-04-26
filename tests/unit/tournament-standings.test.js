@@ -170,6 +170,43 @@ describe('tournament standings helpers', () => {
     expect(standings['Pool-A'].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
   });
 
+  it('keeps admin standings scoped by division and pool names', () => {
+    const standings = buildTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        homeScore: 2,
+        awayScore: 1,
+        tournament: {
+          divisionName: '10U Gold',
+          poolName: 'Pool A',
+          slotAssignments: {
+            home: { sourceType: 'team', teamName: 'Tigers' },
+            away: { sourceType: 'team', teamName: 'Lions' }
+          }
+        }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        homeScore: 3,
+        awayScore: 0,
+        tournament: {
+          divisionName: '12U Silver',
+          poolName: 'Pool A',
+          slotAssignments: {
+            home: { sourceType: 'team', teamName: 'Bears' },
+            away: { sourceType: 'team', teamName: 'Hawks' }
+          }
+        }
+      }
+    ]);
+
+    expect(Object.keys(standings)).toEqual(['10U Gold • Pool A', '12U Silver • Pool A']);
+    expect(standings['10U Gold • Pool A'].rows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
+    expect(standings['12U Silver • Pool A'].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
+  });
+
   it('falls back to exact pool-name matches when reading legacy override entries', () => {
     const legacyOverride = {
       poolName: 'Pool A',

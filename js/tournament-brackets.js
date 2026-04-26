@@ -8,6 +8,16 @@ function normalizeSeed(value) {
     return Number.isFinite(seed) && seed > 0 ? seed : null;
 }
 
+function getTournamentPoolLabel(source = {}, context = {}) {
+    const divisionName = normalizeString(source.divisionName)
+        || normalizeString(source.division)
+        || normalizeString(context.divisionName)
+        || normalizeString(context.division);
+    const poolName = normalizeString(source.poolName) || normalizeString(context.poolName);
+    if (divisionName && poolName) return `${divisionName} • ${poolName}`;
+    return poolName || divisionName;
+}
+
 function isCompletedTournamentGame(game) {
     return String(game?.status || '').toLowerCase() === 'completed'
         && Number.isFinite(Number(game?.homeScore))
@@ -30,10 +40,10 @@ function upsertPoolStanding(poolStandings = {}, poolName, seed, teamName) {
     }
 }
 
-export function describeTournamentSource(source = {}) {
+export function describeTournamentSource(source = {}, context = {}) {
     const sourceType = normalizeString(source.sourceType) || 'team';
     if (sourceType === 'pool_seed') {
-        const poolName = normalizeString(source.poolName) || 'Pool';
+        const poolName = getTournamentPoolLabel(source, context) || 'Pool';
         const seed = normalizeSeed(source.seed);
         return seed ? `${poolName} #${seed}` : poolName;
     }
@@ -60,30 +70,33 @@ function getTournamentLoser(game = {}) {
     return winner === 'home' ? 'away' : 'home';
 }
 
-function getPoolSeedTeamName(poolStandings = {}, source = {}) {
-    const poolName = normalizeString(source.poolName);
+function getPoolSeedTeamName(poolStandings = {}, source = {}, context = {}) {
+    const poolName = getTournamentPoolLabel(source, context);
     const seed = normalizeSeed(source.seed);
     if (!poolName || !seed) return null;
-    const poolRows = Array.isArray(poolStandings?.[poolName]) ? poolStandings[poolName] : [];
+    const fallbackPoolName = normalizeString(source.poolName) || normalizeString(context.poolName);
+    const poolRows = Array.isArray(poolStandings?.[poolName])
+        ? poolStandings[poolName]
+        : (fallbackPoolName && Array.isArray(poolStandings?.[fallbackPoolName]) ? poolStandings[fallbackPoolName] : []);
     const row = poolRows[seed - 1];
     return normalizeString(row?.teamName || row?.team || row?.name);
 }
 
-function resolveGameResultSlot(gamesById, source, poolStandings, memo) {
+function resolveGameResultSlot(gamesById, source, poolStandings, memo, context = {}) {
     const upstreamId = normalizeString(source.gameId);
     if (!upstreamId) {
-        return { teamName: null, label: describeTournamentSource(source), ready: false };
+        return { teamName: null, label: describeTournamentSource(source, context), ready: false };
     }
     const upstream = gamesById.get(upstreamId);
     if (!upstream) {
-        return { teamName: null, label: describeTournamentSource(source), ready: false };
+        return { teamName: null, label: describeTournamentSource(source, context), ready: false };
     }
 
     const upstreamResolved = resolveTournamentGame(upstream, gamesById, poolStandings, memo);
     const outcome = normalizeString(source.outcome) || 'winner';
     const side = outcome === 'loser' ? getTournamentLoser(upstream) : getTournamentWinner(upstream);
     if (!side) {
-        return { teamName: null, label: describeTournamentSource(source), ready: false };
+        return { teamName: null, label: describeTournamentSource(source, context), ready: false };
     }
 
     const teamName = side === 'home'
@@ -92,23 +105,23 @@ function resolveGameResultSlot(gamesById, source, poolStandings, memo) {
 
     return {
         teamName: teamName || null,
-        label: teamName || describeTournamentSource(source),
+        label: teamName || describeTournamentSource(source, context),
         ready: !!teamName
     };
 }
 
-function resolveTournamentSource(source = {}, gamesById, poolStandings, memo) {
+function resolveTournamentSource(source = {}, gamesById, poolStandings, memo, context = {}) {
     const sourceType = normalizeString(source.sourceType) || 'team';
     if (sourceType === 'pool_seed') {
-        const teamName = getPoolSeedTeamName(poolStandings, source);
+        const teamName = getPoolSeedTeamName(poolStandings, source, context);
         return {
             teamName,
-            label: teamName || describeTournamentSource(source),
+            label: teamName || describeTournamentSource(source, context),
             ready: !!teamName
         };
     }
     if (sourceType === 'game_result') {
-        return resolveGameResultSlot(gamesById, source, poolStandings, memo);
+        return resolveGameResultSlot(gamesById, source, poolStandings, memo, context);
     }
     const teamName = normalizeString(source.teamName);
     return {
@@ -138,8 +151,8 @@ export function resolveTournamentGame(game = {}, gamesByIdInput, poolStandings =
         ? gamesByIdInput
         : new Map(Array.isArray(gamesByIdInput) ? gamesByIdInput.map((item) => [item.id, item]) : []);
 
-    const home = resolveTournamentSource(slotAssignments.home || {}, gamesById, poolStandings, memo);
-    const away = resolveTournamentSource(slotAssignments.away || {}, gamesById, poolStandings, memo);
+    const home = resolveTournamentSource(slotAssignments.home || {}, gamesById, poolStandings, memo, tournament);
+    const away = resolveTournamentSource(slotAssignments.away || {}, gamesById, poolStandings, memo, tournament);
     const resolved = {
         homeLabel: home.label,
         awayLabel: away.label,
@@ -166,8 +179,9 @@ export function buildPoolStandingsIndex(games = []) {
     const poolStandings = {};
 
     (games || []).forEach((game) => {
-        const slotAssignments = game?.tournament?.slotAssignments || {};
-        const resolved = game?.tournament?.resolved || {};
+        const tournament = game?.tournament || {};
+        const slotAssignments = tournament.slotAssignments || {};
+        const resolved = tournament.resolved || {};
 
         [
             { slot: slotAssignments.home || {}, teamName: resolved.homeTeamName },
@@ -176,7 +190,7 @@ export function buildPoolStandingsIndex(games = []) {
             if ((normalizeString(slot.sourceType) || 'team') !== 'pool_seed') return;
             upsertPoolStanding(
                 poolStandings,
-                normalizeString(slot.poolName),
+                getTournamentPoolLabel(slot, tournament),
                 normalizeSeed(slot.seed),
                 normalizeString(teamName)
             );
@@ -191,10 +205,11 @@ export function collectTournamentPoolSeeds(games = [], poolNameInput) {
     const seeds = new Set();
 
     (games || []).forEach((game) => {
-        const slotAssignments = game?.tournament?.slotAssignments || {};
+        const tournament = game?.tournament || {};
+        const slotAssignments = tournament.slotAssignments || {};
         [slotAssignments.home || {}, slotAssignments.away || {}].forEach((slot) => {
             if ((normalizeString(slot.sourceType) || 'team') !== 'pool_seed') return;
-            if (normalizeString(slot.poolName) !== poolName) return;
+            if (getTournamentPoolLabel(slot, tournament) !== poolName) return;
             const seed = normalizeSeed(slot.seed);
             if (seed) seeds.add(seed);
         });
@@ -203,8 +218,44 @@ export function collectTournamentPoolSeeds(games = [], poolNameInput) {
     return Array.from(seeds).sort((a, b) => a - b);
 }
 
+function buildTournamentAdvancementPreviewRows(games = [], patches = []) {
+    const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
+
+    return (patches || []).flatMap((patch) => {
+        const game = gamesById.get(patch?.gameId) || {};
+        const tournament = game?.tournament || {};
+        const currentResolved = tournament.resolved || {};
+        const nextResolved = patch?.tournament?.resolved || {};
+        const slotAssignments = tournament.slotAssignments || {};
+
+        return ['home', 'away'].map((slot) => {
+            const currentTeamName = normalizeString(currentResolved?.[`${slot}TeamName`]);
+            const nextTeamName = normalizeString(nextResolved?.[`${slot}TeamName`]);
+            const currentLabel = normalizeString(currentResolved?.[`${slot}Label`])
+                || describeTournamentSource(slotAssignments?.[slot] || {}, tournament);
+            const nextLabel = normalizeString(nextResolved?.[`${slot}Label`])
+                || describeTournamentSource(slotAssignments?.[slot] || {}, tournament);
+
+            if (currentTeamName === nextTeamName && currentLabel === nextLabel) return null;
+
+            return {
+                gameId: patch.gameId,
+                slot,
+                slotLabel: slot === 'home' ? 'Home' : 'Away',
+                sourceLabel: describeTournamentSource(slotAssignments?.[slot] || {}, tournament),
+                currentLabel,
+                nextLabel,
+                currentTeamName,
+                nextTeamName,
+                overwritesExistingTeam: !!(currentTeamName && nextTeamName && currentTeamName !== nextTeamName)
+            };
+        }).filter(Boolean);
+    });
+}
+
 export function collectTournamentAdvancementPatches(games = [], options = {}) {
-    const poolStandings = options?.poolStandings || {};
+    const hasPoolStandingsOption = Object.prototype.hasOwnProperty.call(options || {}, 'poolStandings');
+    const poolStandings = hasPoolStandingsOption ? (options?.poolStandings || {}) : buildPoolStandingsIndex(games);
     const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
     const memo = new Map();
 
@@ -235,7 +286,22 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             poolName: null,
             requiredSeeds,
             missingSeeds: [],
-            patches: []
+            patches: [],
+            previewRows: [],
+            requiresOverwriteConfirmation: false
+        };
+    }
+
+    if (!requiredSeeds.length) {
+        return {
+            skipped: true,
+            reason: `No eligible pool-seed bracket slots were found for ${poolName}.`,
+            poolName,
+            requiredSeeds,
+            missingSeeds: [],
+            patches: [],
+            previewRows: [],
+            requiresOverwriteConfirmation: false
         };
     }
 
@@ -246,7 +312,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             poolName,
             requiredSeeds,
             missingSeeds: requiredSeeds,
-            patches: []
+            patches: [],
+            previewRows: [],
+            requiresOverwriteConfirmation: false
         };
     }
 
@@ -258,7 +326,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             poolName,
             requiredSeeds,
             missingSeeds,
-            patches: []
+            patches: [],
+            previewRows: [],
+            requiresOverwriteConfirmation: false
         };
     }
 
@@ -270,6 +340,8 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
         ...basePoolStandings,
         [poolName]: ranking
     };
+    const patches = collectTournamentAdvancementPatches(games, { poolStandings });
+    const previewRows = buildTournamentAdvancementPreviewRows(games, patches);
 
     return {
         skipped: false,
@@ -277,7 +349,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
         poolName,
         requiredSeeds,
         missingSeeds: [],
-        patches: collectTournamentAdvancementPatches(games, { poolStandings }),
+        patches,
+        previewRows,
+        requiresOverwriteConfirmation: previewRows.some((row) => row.overwritesExistingTeam),
         poolStandings
     };
 }
