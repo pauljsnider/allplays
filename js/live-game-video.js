@@ -163,6 +163,16 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     return Boolean(userEmail && approvedEmailFields.some(values => normalizeStringSet(values).has(userEmail)));
 }
 
+function isSafeVideoUrl(value) {
+    if (!value) return false;
+    try {
+        const url = new URL(value, 'https://allplays.local');
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
 function getRecordedReplayConfig(game) {
     if (!game || typeof game !== 'object') return null;
 
@@ -311,6 +321,25 @@ export function normalizeSavedHighlightClips(game, options = {}) {
 
     return collectRawHighlightClips(game)
         .map((clip, index) => {
+            const mediaUrl = firstSafeString([clip?.mediaUrl, clip?.url, clip?.sourceUrl]);
+            if (clip?.type === 'score-linked' && isSafeVideoUrl(mediaUrl)) {
+                return {
+                    id: clip.id || null,
+                    type: 'score-linked',
+                    source: clip.source || 'external',
+                    title: firstSafeString([clip.title, clip.caption, `Scored play clip ${index + 1}`]) || `Scored play clip ${index + 1}`,
+                    caption: clip.caption || '',
+                    mediaUrl,
+                    url: mediaUrl,
+                    playEventId: clip.playEventId || null,
+                    selectedPlayerIds: Array.isArray(clip.selectedPlayerIds) ? clip.selectedPlayerIds : [],
+                    scoreContext: clip.scoreContext || null,
+                    mediaType: clip.mediaType || 'video',
+                    mimeType: clip.mimeType || null,
+                    sizeBytes: toFiniteNumber(clip.sizeBytes),
+                    storagePath: clip.storagePath || ''
+                };
+            }
             const normalized = createHighlightClipDraft({
                 startMs: clip?.startMs,
                 endMs: clip?.endMs,
@@ -425,6 +454,8 @@ export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs 
 export function resolveReplayVideoOptions({ team, game, players = [], isReplay, clipStartMs = null, clipEndMs = null }) {
     const recorded = getRecordedReplayConfig(game);
     const gameClips = normalizeGameClipRecords(game, { players });
+    const savedHighlights = normalizeSavedHighlightClips(game, { durationMs: recorded?.durationMs });
+    const firstAttachedClip = savedHighlights.find(clip => clip.mediaUrl);
     const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || game?.liveStatus === 'completed' || game?.status === 'completed');
 
     if (canUseRecordedReplay) {
@@ -445,7 +476,24 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
             durationMs: recorded.durationMs,
             clipStartMs: activeClip?.startMs ?? null,
             clipEndMs: activeClip?.endMs ?? null,
-            savedHighlights: normalizeSavedHighlightClips(game, { durationMs: recorded.durationMs }),
+            savedHighlights,
+            gameClips
+        };
+    }
+
+    if (firstAttachedClip) {
+        return {
+            mode: 'recorded',
+            hasVideo: true,
+            sourceUrl: firstAttachedClip.mediaUrl,
+            publicUrl: firstAttachedClip.mediaUrl,
+            publicLabel: 'Open attached clip ↗',
+            posterUrl: null,
+            title: firstAttachedClip.title,
+            durationMs: null,
+            clipStartMs: null,
+            clipEndMs: null,
+            savedHighlights,
             gameClips
         };
     }
