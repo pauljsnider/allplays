@@ -557,11 +557,17 @@ test('blocks apply until every included home row is mapped, then saves report da
         p1: {
             playerName: 'Ava Cole',
             playerNumber: '3',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'statsheet-import',
             stats: { pts: 12, reb: 0, ast: 0, fouls: 2 }
         },
         p2: {
             playerName: 'Mia Diaz',
             playerNumber: '5',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'statsheet-import',
             stats: { pts: 7, reb: 0, ast: 0, fouls: 1 }
         }
     });

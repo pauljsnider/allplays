@@ -51,6 +51,9 @@ describe('track statsheet apply helpers', () => {
                     data: {
                         playerName: 'Ava Cole',
                         playerNumber: '3',
+                        participated: true,
+                        participationStatus: 'appeared',
+                        participationSource: 'statsheet-import',
                         stats: {
                             goals: 4,
                             shots: 0,
@@ -75,5 +78,34 @@ describe('track statsheet apply helpers', () => {
                 statSheetPhotoUrl: 'https://img.test/statsheet.png'
             }
         });
+    });
+
+    it('marks included zero-stat home rows as player profile appearances', () => {
+        expect(buildTrackStatsheetApplyPlan({
+            includedHome: [
+                { mappedPlayerId: 'p1', totalPoints: 0, fouls: 0 }
+            ],
+            roster: [
+                { id: 'p1', name: 'Ava Cole', number: '3' }
+            ],
+            columns: ['PTS'],
+            homeScore: 0,
+            awayScore: 0
+        }).aggregatedStatsWrites).toEqual([
+            {
+                playerId: 'p1',
+                data: {
+                    playerName: 'Ava Cole',
+                    playerNumber: '3',
+                    participated: true,
+                    participationStatus: 'appeared',
+                    participationSource: 'statsheet-import',
+                    stats: {
+                        pts: 0,
+                        fouls: 0
+                    }
+                }
+            }
+        ]);
     });
 });
