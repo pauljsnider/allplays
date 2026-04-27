@@ -66,6 +66,7 @@ class MockElement {
         this.classList = new MockClassList();
         this._innerHTML = '';
         this._removeButtons = [];
+        this._rolloverStaffInputs = [];
     }
 
     addEventListener(type, handler) {
@@ -94,12 +95,31 @@ class MockElement {
         if (selector === '.remove-admin-btn') {
             return this._removeButtons;
         }
+        if (selector === '.rollover-staff-email') {
+            return this._rolloverStaffInputs;
+        }
+        if (selector === '.rollover-staff-email:checked') {
+            return this._rolloverStaffInputs.filter((input) => input.checked);
+        }
         return [];
     }
 
     set innerHTML(value) {
         this._innerHTML = value;
         this.textContent = stripHtml(value);
+        if (this.id === 'rollover-staff-list') {
+            const rolloverStaffInputs = [];
+            for (const match of String(value).matchAll(/<input[^>]*class="[^"]*rollover-staff-email[^"]*"[^>]*value="([^"]+)"([^>]*)>/g)) {
+                const input = new MockElement();
+                input.value = match[1];
+                input.checked = /\bchecked\b/.test(match[2]);
+                input.classList.add('rollover-staff-email');
+                rolloverStaffInputs.push(input);
+            }
+            this._rolloverStaffInputs = rolloverStaffInputs;
+            return;
+        }
+
         if (this.id !== 'admin-list') {
             return;
         }
@@ -211,6 +231,9 @@ function createEnvironment(initialState, overrides = {}) {
                 throw new Error(`Unknown test element: ${id}`);
             }
             return element;
+        },
+        querySelectorAll(selector) {
+            return Array.from(elements.values()).flatMap((element) => element.querySelectorAll(selector));
         }
     };
 
@@ -319,7 +342,9 @@ async function bootEditTeam(initialState, overrides = {}) {
 
     const deps = {
         db: {
-            async createTeam() {
+            async createTeam(teamData) {
+                env.state.createCalls = env.state.createCalls || [];
+                env.state.createCalls.push({ teamData: deepClone(teamData) });
                 return 'team-created';
             },
             async updateTeam(teamId, teamData) {
@@ -501,6 +526,90 @@ describe('edit team admin access persistence', () => {
             expect(reloadEnv.elements.get('admin-list').querySelectorAll('.remove-admin-btn')).toHaveLength(2);
         } finally {
             reloadEnv.cleanup();
+        }
+    });
+
+    it('preserves disabled rollover access across new-team admin rerenders', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            sourceTeams: [
+                {
+                    id: 'source-1',
+                    name: 'Spring Sharks',
+                    adminEmails: ['coach-a@example.com', 'coach-b@example.com']
+                }
+            ],
+            createCalls: [],
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('rollover-source-team').value = 'source-1';
+            await env.elements.get('rollover-source-team').dispatchEvent(new MockEvent('change'));
+            expect(env.elements.get('rollover-staff-enabled').checked).toBe(true);
+
+            env.elements.get('rollover-staff-enabled').checked = false;
+            await env.elements.get('add-admin-btn').click();
+            env.elements.get('admin-email-input').value = 'manual@example.com';
+            await env.elements.get('save-admin-btn').click();
+
+            expect(env.elements.get('rollover-staff-enabled').checked).toBe(false);
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData.adminEmails).toEqual(['manual@example.com']);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves individual rollover staff deselections across admin add and remove rerenders', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            sourceTeams: [
+                {
+                    id: 'source-1',
+                    name: 'Spring Sharks',
+                    adminEmails: ['coach-a@example.com', 'coach-b@example.com']
+                }
+            ],
+            createCalls: [],
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('rollover-source-team').value = 'source-1';
+            await env.elements.get('rollover-source-team').dispatchEvent(new MockEvent('change'));
+
+            const findRolloverInput = (email) => env.elements.get('rollover-staff-list')
+                .querySelectorAll('.rollover-staff-email')
+                .find((input) => input.value === email);
+
+            expect(findRolloverInput('coach-a@example.com').checked).toBe(true);
+            expect(findRolloverInput('coach-b@example.com').checked).toBe(true);
+            findRolloverInput('coach-b@example.com').checked = false;
+
+            await env.elements.get('add-admin-btn').click();
+            env.elements.get('admin-email-input').value = 'manual@example.com';
+            await env.elements.get('save-admin-btn').click();
+            expect(findRolloverInput('coach-b@example.com').checked).toBe(false);
+
+            const removeButtons = env.elements.get('admin-list').querySelectorAll('.remove-admin-btn');
+            expect(removeButtons).toHaveLength(1);
+            await removeButtons[0].click();
+            expect(findRolloverInput('coach-b@example.com').checked).toBe(false);
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData.adminEmails).toEqual(['coach-a@example.com']);
+            expect(env.state.createCalls[0].teamData.accessRolloverAudit.staffAdmins).toEqual([
+                { email: 'coach-a@example.com', sourceTeamId: 'source-1', rolledOverAt: expect.any(String) }
+            ]);
+        } finally {
+            env.cleanup();
         }
     });
 

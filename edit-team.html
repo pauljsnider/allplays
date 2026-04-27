@@ -338,6 +338,7 @@
         let pendingAdminInviteEmails = [];
         let rolloverSourceTeams = [];
         let rolloverAccessPreview = null;
+        let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
 
         function buildTeamEditUrl(teamId, created = false) {
@@ -432,6 +433,13 @@
             if (!sourceSelect || !review || !enabled || !list) return;
 
             const sourceTeam = rolloverSourceTeams.find((team) => team.id === sourceSelect.value);
+            const sourceTeamId = sourceTeam?.id || null;
+            const isSameSource = sourceTeamId && sourceTeamId === lastRenderedRolloverSourceTeamId;
+            const wasEnabled = enabled.checked;
+            const previouslySelectedEmails = new Set(
+                Array.from(document.querySelectorAll('.rollover-staff-email:checked'))
+                    .map((input) => input.value)
+            );
             rolloverAccessPreview = sourceTeam
                 ? buildRolloverAccessPreview(sourceTeam, { adminEmails })
                 : null;
@@ -443,18 +451,23 @@
                 list.innerHTML = sourceTeam
                     ? '<p class="text-gray-500 italic">No eligible staff/admin access to copy. Existing admins are skipped.</p>'
                     : '';
+                lastRenderedRolloverSourceTeamId = sourceTeamId;
                 return;
             }
 
             enabled.disabled = false;
-            enabled.checked = true;
+            enabled.checked = isSameSource ? wasEnabled : true;
             review.classList.remove('hidden');
-            list.innerHTML = rolloverAccessPreview.staffAdmins.map((entry) => `
+            list.innerHTML = rolloverAccessPreview.staffAdmins.map((entry) => {
+                const checked = !isSameSource || previouslySelectedEmails.has(entry.email) ? ' checked' : '';
+                return `
                 <label class="flex items-center gap-2">
-                    <input type="checkbox" class="rollover-staff-email h-3.5 w-3.5 text-amber-600 border-gray-300 rounded" value="${entry.email}" checked>
+                    <input type="checkbox" class="rollover-staff-email h-3.5 w-3.5 text-amber-600 border-gray-300 rounded" value="${entry.email}"${checked}>
                     <span>${entry.email}</span>
                 </label>
-            `).join('');
+            `;
+            }).join('');
+            lastRenderedRolloverSourceTeamId = sourceTeamId;
         }
 
         async function loadRolloverSourceTeams() {
