@@ -239,6 +239,28 @@
                     </div>
                 </div>
 
+                <div id="rollover-panel" class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-3">
+                    <div>
+                        <h3 class="font-semibold text-emerald-900 text-sm">Roster Rollover</h3>
+                        <p class="text-xs text-emerald-700">Optional: copy selected players and existing family links from a prior team when this new team is created.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Copy roster from</label>
+                        <select id="rollover-source-team"
+                            class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 border p-2">
+                            <option value="">Do not roll over players</option>
+                        </select>
+                    </div>
+                    <div id="rollover-preview" class="hidden rounded border border-emerald-200 bg-white p-3">
+                        <div class="flex items-center justify-between gap-3 mb-2">
+                            <p id="rollover-preview-summary" class="text-xs font-semibold text-gray-700">Select players to copy</p>
+                            <button id="rollover-select-all" type="button" class="text-xs text-emerald-700 hover:text-emerald-900">Select all</button>
+                        </div>
+                        <div id="rollover-player-list" class="space-y-2 text-sm"></div>
+                    </div>
+                    <div id="rollover-status" class="hidden text-sm rounded p-2"></div>
+                </div>
+
                 <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                     <h3 class="font-semibold text-indigo-900 text-sm mb-3">Team Management</h3>
                     <div class="flex gap-3">
@@ -295,9 +317,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
+        import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=16';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
-        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
@@ -312,6 +334,7 @@
         let currentPhotoUrl = null;
         let adminEmails = [];
         let pendingAdminInviteEmails = [];
+        let rolloverPlayers = [];
         let isInitPending = true;
 
         function buildTeamEditUrl(teamId, created = false) {
@@ -391,6 +414,100 @@
                 saveBtn.textContent = 'Save Team';
             }
         });
+
+        function setRolloverStatus(message, type = 'info') {
+            const status = document.getElementById('rollover-status');
+            status.textContent = message;
+            status.className = 'text-sm rounded p-2';
+            if (type === 'error') {
+                status.classList.add('bg-red-100', 'text-red-800');
+            } else if (type === 'success') {
+                status.classList.add('bg-green-100', 'text-green-800');
+            } else {
+                status.classList.add('bg-emerald-100', 'text-emerald-800');
+            }
+        }
+
+        function clearRolloverStatus() {
+            const status = document.getElementById('rollover-status');
+            status.className = 'hidden text-sm rounded p-2';
+            status.textContent = '';
+        }
+
+        function renderRolloverPreview(players) {
+            const preview = document.getElementById('rollover-preview');
+            const list = document.getElementById('rollover-player-list');
+            const summary = document.getElementById('rollover-preview-summary');
+            rolloverPlayers = players || [];
+
+            if (rolloverPlayers.length === 0) {
+                preview.classList.add('hidden');
+                list.innerHTML = '';
+                summary.textContent = 'Select players to copy';
+                return;
+            }
+
+            summary.textContent = `${rolloverPlayers.length} player${rolloverPlayers.length === 1 ? '' : 's'} available. Uncheck anyone who should not roll over.`;
+            list.innerHTML = rolloverPlayers.map(player => {
+                const parentCount = Array.isArray(player.parents) ? player.parents.length : 0;
+                return `
+                    <label class="flex items-start gap-3 rounded border border-gray-200 px-3 py-2 hover:bg-gray-50">
+                        <input type="checkbox" class="rollover-player-checkbox mt-1 h-4 w-4 text-emerald-600 border-gray-300 rounded" value="${escapeHtml(player.id)}" checked>
+                        <span class="flex-1">
+                            <span class="font-medium text-gray-900">${escapeHtml(player.name || 'Unnamed player')}</span>
+                            <span class="text-gray-500">${player.number ? `#${escapeHtml(player.number)}` : 'No number'}</span>
+                            ${parentCount > 0 ? `<span class="block text-xs text-emerald-700">Includes ${parentCount} linked parent/family record${parentCount === 1 ? '' : 's'}</span>` : ''}
+                        </span>
+                    </label>
+                `;
+            }).join('');
+            preview.classList.remove('hidden');
+        }
+
+        function getSelectedRolloverPlayerIds() {
+            return Array.from(document.querySelectorAll('.rollover-player-checkbox:checked')).map(input => input.value);
+        }
+
+        async function loadRolloverTeams() {
+            const panel = document.getElementById('rollover-panel');
+            if (initialTeamId) {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            const select = document.getElementById('rollover-source-team');
+            try {
+                const teams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email, { includeInactive: true });
+                const availableTeams = teams.filter(team => team?.id);
+                select.innerHTML = '<option value="">Do not roll over players</option>' + availableTeams.map(team => `<option value="${escapeHtml(team.id)}">${escapeHtml(team.name || 'Unnamed team')}</option>`).join('');
+            } catch (error) {
+                console.warn('Failed to load rollover teams:', error);
+                setRolloverStatus('Could not load prior teams for roster rollover. You can still create the team without rollover.', 'error');
+            }
+        }
+
+        async function loadRolloverPreview(sourceTeamId) {
+            clearRolloverStatus();
+            if (!sourceTeamId) {
+                renderRolloverPreview([]);
+                return;
+            }
+
+            try {
+                setRolloverStatus('Loading players from source team...');
+                const players = await getPlayers(sourceTeamId);
+                renderRolloverPreview(players);
+                if (players.length === 0) {
+                    setRolloverStatus('No active players found on the selected source team.');
+                } else {
+                    clearRolloverStatus();
+                }
+            } catch (error) {
+                console.error('Failed to load rollover preview:', error);
+                renderRolloverPreview([]);
+                setRolloverStatus('Could not load players from that team. Choose another team or create without rollover.', 'error');
+            }
+        }
 
         function renderAdminList() {
             const list = document.getElementById('admin-list');
@@ -487,8 +604,21 @@
                     console.warn('Failed to get unread count:', e);
                 }
                 renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
+            } else {
+                await loadRolloverTeams();
             }
         }
+
+        document.getElementById('rollover-source-team').addEventListener('change', (event) => {
+            loadRolloverPreview(event.target.value);
+        });
+
+        document.getElementById('rollover-select-all').addEventListener('click', () => {
+            const checkboxes = Array.from(document.querySelectorAll('.rollover-player-checkbox'));
+            const shouldCheck = checkboxes.some(checkbox => !checkbox.checked);
+            checkboxes.forEach(checkbox => { checkbox.checked = shouldCheck; });
+            document.getElementById('rollover-select-all').textContent = shouldCheck ? 'Clear all' : 'Select all';
+        });
 
         document.getElementById('copy-team-id-btn').addEventListener('click', async () => {
             if (!currentTeamId) return;
@@ -822,6 +952,8 @@
                     await updateTeam(currentTeamId, teamData);
                 } else {
                     const newTeamId = await createTeam(teamData);
+                    currentTeamId = newTeamId;
+                    updateTeamIdPanel(newTeamId);
                     console.log('Created team with ID:', newTeamId);
                     console.log('Team sport:', teamData.sport);
 
@@ -837,6 +969,21 @@
                         }
                     } else {
                         console.log('No template for sport:', teamData.sport);
+                    }
+
+                    const rolloverSourceTeamId = document.getElementById('rollover-source-team').value;
+                    const selectedRolloverPlayerIds = getSelectedRolloverPlayerIds();
+                    if (rolloverSourceTeamId && selectedRolloverPlayerIds.length > 0) {
+                        try {
+                            btn.textContent = 'Copying roster...';
+                            const result = await copySelectedPlayersForTeamRollover(rolloverSourceTeamId, newTeamId, selectedRolloverPlayerIds);
+                            setRolloverStatus(`Copied ${result.copiedCount} selected player${result.copiedCount === 1 ? '' : 's'} into the new team.`, 'success');
+                        } catch (rolloverError) {
+                            console.error('Roster rollover failed:', rolloverError);
+                            alert(`Team created, but roster rollover failed. No selected players were copied. Open this team and try manually from the roster.\n\nError: ${rolloverError.message}`);
+                            window.location.href = buildTeamEditUrl(newTeamId, true);
+                            return;
+                        }
                     }
 
                     let pendingInviteSummary = {

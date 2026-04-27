@@ -165,6 +165,13 @@ function createEnvironment(initialState, overrides = {}) {
         'admin-code-text',
         'copy-admin-code-btn',
         'copy-admin-link-btn',
+        'rollover-panel',
+        'rollover-source-team',
+        'rollover-preview',
+        'rollover-preview-summary',
+        'rollover-select-all',
+        'rollover-player-list',
+        'rollover-status',
         'team-id-panel',
         'team-id-text',
         'team-id-status',
@@ -193,6 +200,9 @@ function createEnvironment(initialState, overrides = {}) {
                 throw new Error(`Unknown test element: ${id}`);
             }
             return element;
+        },
+        querySelectorAll() {
+            return [];
         }
     };
 
@@ -234,16 +244,16 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
-            'const { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=16';",
+            'const { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';",
-            'const { renderHeader, renderFooter, getUrlParams } = deps.utils;'
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';",
+            'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
             /import\s+\{\s*checkAuth,\s*sendInviteEmail\s*\}\s+from\s+'\.\/js\/auth\.js\?v=\d+';/,
@@ -307,6 +317,15 @@ async function bootEditTeam(initialState, overrides = {}) {
             async getTeam(teamId) {
                 return env.state.team && env.state.team.id === teamId ? deepClone(env.state.team) : null;
             },
+            async getUserTeamsWithAccess() {
+                return [];
+            },
+            async getPlayers() {
+                return [];
+            },
+            async copySelectedPlayersForTeamRollover() {
+                return { copiedCount: 0 };
+            },
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
             },
@@ -330,6 +349,14 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             getUrlParams() {
                 return Object.fromEntries(new URLSearchParams(env.window.location.search).entries());
+            },
+            escapeHtml(value) {
+                return String(value ?? '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
             }
         },
         auth: {
