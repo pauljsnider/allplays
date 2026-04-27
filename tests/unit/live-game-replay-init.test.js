@@ -216,8 +216,8 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame\n} from './db.js?v=15';",
-            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, subscribeGame, updateGame } = deps.db;'
+            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=15';",
+            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, subscribeGame, updateGame, uploadGameClip } = deps.db;'
         )
         .replace(
             "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';",
@@ -226,6 +226,14 @@ function buildModuleSource() {
         .replace(
             "import { computePanelVisibility } from './live-stream-utils.js?v=1';",
             'const { computePanelVisibility } = deps.liveStreamUtils;'
+        )
+        .replace(
+            "import { hasFullTeamAccess } from './team-access.js?v=1';",
+            'const { hasFullTeamAccess } = deps.teamAccess;'
+        )
+        .replace(
+            "import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';",
+            'const { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } = deps.gameClips;'
         )
         .replace(
             /import\s+\{\s*checkAuth\s*\}\s+from\s+'\.\/auth\.js\?v=\d+';/,
@@ -337,7 +345,8 @@ async function bootReplayPage({ replayEvents }) {
             getLiveReactions: async () => [],
             getConfigs: async () => [],
             subscribeGame: () => () => {},
-            updateGame: async () => {}
+            updateGame: async () => {},
+            uploadGameClip: async () => ({ url: '' })
         },
         utils: {
             getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: 'true' }),
@@ -354,6 +363,12 @@ async function bootReplayPage({ replayEvents }) {
                 showVideoTab: false,
                 showExternalLink: false
             })
+        },
+        teamAccess: { hasFullTeamAccess: () => false },
+        gameClips: {
+            buildScoreLinkedClipRecord: () => ({}),
+            isScoredPlayEvent: () => false,
+            validateGameClipFile: () => {}
         },
         auth: {
             checkAuth(callback) {

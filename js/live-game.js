@@ -13,9 +13,12 @@ import {
   getLiveReactions,
   getConfigs,
   subscribeGame,
-  updateGame
+  updateGame,
+  uploadGameClip
 } from './db.js?v=15';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
+import { hasFullTeamAccess } from './team-access.js?v=1';
+import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=12';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
@@ -89,7 +92,8 @@ const state = {
   lastResetAt: 0,
   videoPlayback: null,
   clipStartMs: null,
-  clipEndMs: null
+  clipEndMs: null,
+  selectedClipEvent: null
 };
 
 const els = {
@@ -161,7 +165,17 @@ const els = {
   highlightSetEnd: q('#highlight-set-end'),
   highlightShareBtn: q('#highlight-share-btn'),
   highlightSaveBtn: q('#highlight-save-btn'),
-  savedHighlightsList: q('#saved-highlights-list')
+  savedHighlightsList: q('#saved-highlights-list'),
+  attachClipModal: q('#attach-clip-modal'),
+  attachClipForm: q('#attach-clip-form'),
+  attachClipTitle: q('#attach-clip-title'),
+  attachClipCaption: q('#attach-clip-caption'),
+  attachClipUrl: q('#attach-clip-url'),
+  attachClipFile: q('#attach-clip-file'),
+  attachClipPlayers: q('#attach-clip-players'),
+  attachClipError: q('#attach-clip-error'),
+  attachClipCancel: q('#attach-clip-cancel'),
+  attachClipSubmit: q('#attach-clip-submit')
 };
 
 const mentionState = { active: false, atPos: null };
@@ -213,6 +227,10 @@ function updateShareButton() {
     els.replayReportLink.href = reportUrl;
     els.replayReportLink.classList.toggle('hidden', !state.isReplay);
   }
+}
+
+function canAttachScoreLinkedClips() {
+  return hasFullTeamAccess(state.user, state.team);
 }
 
 function initTabs() {
@@ -430,19 +448,27 @@ function renderSavedHighlights() {
     return;
   }
 
-  els.savedHighlightsList.innerHTML = clips.map((clip, index) => `
-    <button
-      type="button"
-      data-highlight-index="${index}"
-      class="flex w-full items-center justify-between rounded-lg border border-teal/20 bg-ink/50 px-3 py-2 text-left hover:bg-ink/80"
-    >
-      <span>
-        <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
-        <span class="block text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</span>
-      </span>
-      <span class="text-xs text-teal">Load</span>
-    </button>
-  `).join('');
+  els.savedHighlightsList.innerHTML = clips.map((clip, index) => {
+    const score = clip.scoreContext && Number.isFinite(clip.scoreContext.homeScore) && Number.isFinite(clip.scoreContext.awayScore)
+      ? `${clip.scoreContext.homeScore}-${clip.scoreContext.awayScore}`
+      : '';
+    const meta = clip.mediaUrl
+      ? [score, clip.caption || 'Attached scored play clip'].filter(Boolean).join(' · ')
+      : `${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}`;
+    return `
+      <button
+        type="button"
+        data-highlight-index="${index}"
+        class="flex w-full items-center justify-between rounded-lg border border-teal/20 bg-ink/50 px-3 py-2 text-left hover:bg-ink/80"
+      >
+        <span>
+          <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
+          <span class="block text-xs text-sand/55">${escapeHtml(meta)}</span>
+        </span>
+        <span class="text-xs text-teal">Load</span>
+      </button>
+    `;
+  }).join('');
 }
 
 function renderRecordedReplayTools() {
@@ -451,13 +477,14 @@ function renderRecordedReplayTools() {
     return;
   }
 
+  const hasAttachedClipsOnly = (state.videoPlayback?.savedHighlights || []).some(clip => clip.mediaUrl) && !Number.isFinite(state.videoPlayback?.durationMs);
   const durationMs = getCurrentReplayVideoDurationMs();
   const defaultClipEndMs = Number.isFinite(durationMs)
     ? Math.min(durationMs, MAX_HIGHLIGHT_CLIP_MS)
     : MAX_HIGHLIGHT_CLIP_MS;
 
   if (els.recordedReplayMeta) {
-    const pieces = ['Create a highlight clip up to 60 seconds.'];
+    const pieces = [hasAttachedClipsOnly ? 'Attached score-linked clips are available below.' : 'Create a highlight clip up to 60 seconds.'];
     if (state.videoPlayback.title) {
       pieces.unshift(state.videoPlayback.title);
     }
@@ -469,10 +496,16 @@ function renderRecordedReplayTools() {
 
   if (els.highlightStartInput && document.activeElement !== els.highlightStartInput) {
     els.highlightStartInput.value = `${Math.round((state.videoPlayback.clipStartMs ?? 0) / 1000)}`;
+    els.highlightStartInput.disabled = hasAttachedClipsOnly;
   }
   if (els.highlightEndInput && document.activeElement !== els.highlightEndInput) {
     els.highlightEndInput.value = `${Math.round((state.videoPlayback.clipEndMs ?? defaultClipEndMs) / 1000)}`;
+    els.highlightEndInput.disabled = hasAttachedClipsOnly;
   }
+  els.highlightSetStart?.classList.toggle('hidden', hasAttachedClipsOnly);
+  els.highlightSetEnd?.classList.toggle('hidden', hasAttachedClipsOnly);
+  els.highlightShareBtn?.classList.toggle('hidden', hasAttachedClipsOnly);
+  els.highlightSaveBtn?.classList.toggle('hidden', hasAttachedClipsOnly);
   if (els.recordedReplayTools) {
     els.recordedReplayTools.classList.remove('hidden');
   }
@@ -518,7 +551,7 @@ async function saveHighlightClip() {
     ...(state.videoPlayback?.savedHighlights || []).filter(clip => clip.startMs !== draft.startMs || clip.endMs !== draft.endMs || clip.title !== draft.title),
     draft
   ]
-    .sort((a, b) => a.startMs - b.startMs)
+    .sort((a, b) => (a.startMs ?? 0) - (b.startMs ?? 0))
     .slice(-12);
 
   try {
@@ -539,6 +572,79 @@ async function saveHighlightClip() {
     console.warn('Failed to save highlight clip:', error);
     await shareHighlightClip(draft);
     showToast('Save unavailable for this account. Clip link copied.');
+  }
+}
+
+function openAttachClipModal(event) {
+  if (!canAttachScoreLinkedClips() || !isScoredPlayEvent(event)) return;
+  state.selectedClipEvent = event;
+  if (els.attachClipTitle) els.attachClipTitle.value = event.description || '';
+  if (els.attachClipCaption) els.attachClipCaption.value = '';
+  if (els.attachClipUrl) els.attachClipUrl.value = '';
+  if (els.attachClipFile) els.attachClipFile.value = '';
+  if (els.attachClipError) els.attachClipError.textContent = '';
+  if (els.attachClipPlayers) {
+    const selected = new Set([event.playerId].filter(Boolean));
+    els.attachClipPlayers.innerHTML = state.players.map((player) => `
+      <label class="flex items-center gap-2 rounded-lg border border-teal/15 px-2 py-1 text-xs text-sand/75">
+        <input type="checkbox" value="${escapeHtml(player.id)}" ${selected.has(player.id) ? 'checked' : ''}>
+        <span>${escapeHtml([player.number ? `#${player.number}` : '', player.name || player.fullName || 'Player'].filter(Boolean).join(' '))}</span>
+      </label>
+    `).join('');
+  }
+  els.attachClipModal?.classList.remove('hidden');
+}
+
+function closeAttachClipModal() {
+  state.selectedClipEvent = null;
+  els.attachClipModal?.classList.add('hidden');
+}
+
+async function submitAttachedClip(event) {
+  event.preventDefault();
+  if (!state.selectedClipEvent || !canAttachScoreLinkedClips()) return;
+  if (els.attachClipError) els.attachClipError.textContent = '';
+  if (els.attachClipSubmit) els.attachClipSubmit.disabled = true;
+
+  try {
+    const file = els.attachClipFile?.files?.[0] || null;
+    const externalUrl = String(els.attachClipUrl?.value || '').trim();
+    let media = null;
+    if (file) {
+      validateGameClipFile(file);
+      media = await uploadGameClip(state.teamId, state.gameId, file);
+    } else if (externalUrl) {
+      media = { url: externalUrl, source: 'external' };
+    } else {
+      throw new Error('Choose a video file or enter an external video URL.');
+    }
+
+    const selectedPlayerIds = Array.from(els.attachClipPlayers?.querySelectorAll('input:checked') || []).map(input => input.value);
+    const clip = buildScoreLinkedClipRecord({
+      teamId: state.teamId,
+      gameId: state.gameId,
+      event: state.selectedClipEvent,
+      playerIds: selectedPlayerIds,
+      title: els.attachClipTitle?.value || '',
+      caption: els.attachClipCaption?.value || '',
+      media,
+      createdBy: state.user?.uid || null
+    });
+    const nextHighlights = [
+      ...(Array.isArray(state.game?.highlightClips) ? state.game.highlightClips : []),
+      clip
+    ].slice(-24);
+
+    await updateGame(state.teamId, state.gameId, { highlightClips: nextHighlights });
+    state.game = { ...state.game, highlightClips: nextHighlights };
+    refreshVideoPanel({ force: true });
+    closeAttachClipModal();
+    showToast('Clip attached to scored play.');
+  } catch (error) {
+    console.warn('Failed to attach scored play clip:', error);
+    if (els.attachClipError) els.attachClipError.textContent = error?.message || 'Unable to attach clip.';
+  } finally {
+    if (els.attachClipSubmit) els.attachClipSubmit.disabled = false;
   }
 }
 
@@ -602,11 +708,32 @@ function initRecordedReplayControls() {
       if (!button) return;
       const clip = state.videoPlayback?.savedHighlights?.[Number(button.dataset.highlightIndex)];
       if (!clip) return;
+      if (clip.mediaUrl) {
+        state.videoPlayback = {
+          ...(state.videoPlayback || {}),
+          sourceUrl: clip.mediaUrl,
+          publicUrl: clip.mediaUrl,
+          title: clip.title || state.videoPlayback?.title || null
+        };
+        if (els.recordedReplayVideo) {
+          els.recordedReplayVideo.src = clip.mediaUrl;
+          els.recordedReplayVideo.load();
+        }
+        return;
+      }
       if (els.highlightTitleInput) {
         els.highlightTitleInput.value = clip.title || '';
       }
       applyHighlightSelection(clip, { autoplay: false });
     });
+  }
+  if (els.attachClipCancel && !els.attachClipCancel.dataset.bound) {
+    els.attachClipCancel.dataset.bound = 'true';
+    els.attachClipCancel.addEventListener('click', closeAttachClipModal);
+  }
+  if (els.attachClipForm && !els.attachClipForm.dataset.bound) {
+    els.attachClipForm.dataset.bound = 'true';
+    els.attachClipForm.addEventListener('submit', submitAttachedClip);
   }
 }
 
@@ -663,6 +790,7 @@ function renderPlayByPlay(event, isNew = false) {
   const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove', 'clock_sync'].includes(event.type);
   const sideClass = isSystemEvent ? 'border-slate' : (event.isOpponent ? 'event-away' : 'event-home');
   card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${sideClass} ${isNew ? 'event-slide' : ''}`;
+  if (event.id) card.dataset.eventId = event.id;
   const opponentLabel = [
     event.opponentPlayerNumber ? `#${escapeHtml(event.opponentPlayerNumber)}` : '',
     event.opponentPlayerName ? escapeHtml(event.opponentPlayerName) : ''
@@ -686,17 +814,33 @@ function renderPlayByPlay(event, isNew = false) {
         ${event.playerName ? `<p class="text-sand/60 text-sm">#${escapeHtml(event.playerNumber || '')} ${escapeHtml(event.playerName)}</p>` : ''}
         ${event.isOpponent && (event.opponentPlayerName || event.opponentPlayerNumber) ? `<p class="text-sand/60 text-sm">${opponentLabel}</p>` : ''}
       </div>
-      ${event.statKey === 'pts' && event.value ? `
-        <span class="text-2xl font-bold ${event.value === 3 ? 'text-gold' : 'text-teal'}">+${event.value}</span>
-      ` : ''}
+      <div class="flex flex-col items-end gap-2">
+        ${event.statKey === 'pts' && event.value ? `
+          <span class="text-2xl font-bold ${event.value === 3 ? 'text-gold' : 'text-teal'}">+${event.value}</span>
+        ` : ''}
+        ${canAttachScoreLinkedClips() && isScoredPlayEvent(event) ? `
+          <button type="button" data-attach-clip-event-id="${escapeHtml(event.id || '')}" class="rounded-lg border border-teal/25 px-2 py-1 text-xs text-teal hover:bg-ink/80">Attach clip</button>
+        ` : ''}
+      </div>
     </div>
   `;
+
+  const attachButton = card.querySelector('[data-attach-clip-event-id]');
+  if (attachButton) {
+    attachButton.addEventListener('click', () => openAttachClipModal(event));
+  }
 
   els.playsFeed.insertBefore(card, els.playsFeed.firstChild);
   if (keepAtTop) els.playsFeed.scrollTop = 0;
   while (els.playsFeed.children.length > 60) {
     els.playsFeed.removeChild(els.playsFeed.lastChild);
   }
+}
+
+function rerenderPlayFeed() {
+  if (!els.playsFeed || !state.events.length) return;
+  els.playsFeed.innerHTML = '';
+  state.events.slice(-60).forEach((event) => renderPlayByPlay(event, false));
 }
 
 function renderStats() {
@@ -1772,6 +1916,7 @@ async function init() {
       if (els.chatAnonNotice) els.chatAnonNotice.classList.add('hidden');
       closeAnonNameEditor();
     }
+    rerenderPlayFeed();
   }, { skipEmailVerificationCheck: true });
 
   if (state.isReplay) {

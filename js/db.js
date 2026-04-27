@@ -272,6 +272,46 @@ export async function deleteUploadedChatAttachments(attachments = []) {
     }
 }
 
+export async function uploadGameClip(teamId, gameId, file) {
+    await requireImageAuth();
+
+    const ts = Date.now();
+    const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
+    const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
+
+    try {
+        const storageRef = ref(imageStorage, clipPath);
+        const snapshot = await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(snapshot.ref);
+        return {
+            url,
+            path: clipPath,
+            name: file.name || null,
+            type: file.type || null,
+            size: Number.isFinite(file.size) ? file.size : null,
+            source: 'upload'
+        };
+    } catch (error) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
+            const fallbackPath = `game-clips/${ts}_${teamId}_${gameId}_${safeName}`;
+            const fallbackRef = ref(storage, fallbackPath);
+            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
+            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
+            return {
+                url: fallbackUrl,
+                path: fallbackPath,
+                name: file.name || null,
+                type: file.type || null,
+                size: Number.isFinite(file.size) ? file.size : null,
+                source: 'upload'
+            };
+        }
+        throw error;
+    }
+}
+
 export async function uploadStatSheetPhoto(file) {
     console.log('Starting stat sheet upload...', {
         fileName: file.name,

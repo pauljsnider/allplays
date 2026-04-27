@@ -64,6 +64,56 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
+    it('normalizes attached scored play clips for the video tab', () => {
+        const clips = normalizeSavedHighlightClips({
+            highlightClips: [
+                {
+                    id: 'clip-1',
+                    type: 'score-linked',
+                    title: 'Corner three',
+                    caption: 'Big shot',
+                    mediaUrl: 'https://cdn.example.com/clip.mp4',
+                    playEventId: 'event-1',
+                    selectedPlayerIds: ['player-1'],
+                    scoreContext: { homeScore: 21, awayScore: 18 }
+                }
+            ]
+        });
+
+        expect(clips).toEqual([
+            expect.objectContaining({
+                id: 'clip-1',
+                type: 'score-linked',
+                title: 'Corner three',
+                mediaUrl: 'https://cdn.example.com/clip.mp4',
+                playEventId: 'event-1',
+                selectedPlayerIds: ['player-1'],
+                scoreContext: { homeScore: 21, awayScore: 18 }
+            })
+        ]);
+    });
+
+    it('shows attached clips as video playback when no replay video exists', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('recorded');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toBe('https://cdn.example.com/putback.mp4');
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',
