@@ -24,6 +24,16 @@ class MockClassList {
         tokens.forEach((token) => this.tokens.delete(token));
     }
 
+    toggle(token, force) {
+        const shouldAdd = force === undefined ? !this.tokens.has(token) : !!force;
+        if (shouldAdd) {
+            this.tokens.add(token);
+        } else {
+            this.tokens.delete(token);
+        }
+        return shouldAdd;
+    }
+
     contains(token) {
         return this.tokens.has(token);
     }
@@ -156,6 +166,12 @@ function createEnvironment(initialState, overrides = {}) {
         'isPublic',
         'streamUrl',
         'stream-detect',
+        'access-rollover-panel',
+        'rollover-source-team',
+        'rollover-staff-review',
+        'rollover-staff-enabled',
+        'rollover-staff-list',
+        'rollover-member-note',
         'add-admin-btn',
         'admin-list',
         'add-admin-form',
@@ -183,6 +199,8 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('add-admin-form').classList.add('hidden');
     elements.get('admin-invite-status').classList.add('hidden');
     elements.get('admin-invite-code').classList.add('hidden');
+    elements.get('access-rollover-panel').classList.add('hidden');
+    elements.get('rollover-staff-review').classList.add('hidden');
     elements.get('save-btn').textContent = 'Save Team';
     elements.get('photo-upload').files = [];
 
@@ -234,8 +252,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
-            'const { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
+            'const { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -264,6 +282,10 @@ function extractEditTeamModule() {
         .replace(
             "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';",
             'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } = deps.editTeamAdminInvites;'
+        )
+        .replace(
+            "import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';",
+            'const { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } = deps.rolloverAccess;'
         );
 }
 
@@ -306,6 +328,9 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             async getTeam(teamId) {
                 return env.state.team && env.state.team.id === teamId ? deepClone(env.state.team) : null;
+            },
+            async getUserTeamsWithAccess() {
+                return deepClone(env.state.sourceTeams || []);
             },
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
@@ -354,6 +379,7 @@ async function bootEditTeam(initialState, overrides = {}) {
             }
         },
         teamAccess: await import('../../js/team-access.js'),
+        rolloverAccess: await import('../../js/rollover-access.js'),
         editTeamAdminInvites: {
             async processPendingAdminInvites() {
                 return { results: [], fallbackCodeCount: 0, failedCount: 0 };
