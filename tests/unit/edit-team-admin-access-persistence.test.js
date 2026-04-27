@@ -156,6 +156,12 @@ function createEnvironment(initialState, overrides = {}) {
         'isPublic',
         'streamUrl',
         'stream-detect',
+        'roster-rollover-section',
+        'rosterRolloverEnabled',
+        'roster-rollover-controls',
+        'rosterRolloverSourceTeam',
+        'roster-rollover-status',
+        'roster-rollover-preview',
         'add-admin-btn',
         'admin-list',
         'add-admin-form',
@@ -234,16 +240,16 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
-            'const { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
+            'const { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';",
-            'const { renderHeader, renderFooter, getUrlParams } = deps.utils;'
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';",
+            'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
             /import\s+\{\s*checkAuth,\s*sendInviteEmail\s*\}\s+from\s+'\.\/js\/auth\.js\?v=\d+';/,
@@ -264,6 +270,10 @@ function extractEditTeamModule() {
         .replace(
             "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';",
             'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } = deps.editTeamAdminInvites;'
+        )
+        .replace(
+            "import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';",
+            'const { buildRosterRolloverPreviewRows } = deps.rosterRolloverPreview;'
         );
 }
 
@@ -307,6 +317,12 @@ async function bootEditTeam(initialState, overrides = {}) {
             async getTeam(teamId) {
                 return env.state.team && env.state.team.id === teamId ? deepClone(env.state.team) : null;
             },
+            async getUserTeamsWithAccess() {
+                return [];
+            },
+            async getPlayers() {
+                return [];
+            },
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
             },
@@ -330,6 +346,14 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             getUrlParams() {
                 return Object.fromEntries(new URLSearchParams(env.window.location.search).entries());
+            },
+            escapeHtml(value) {
+                return String(value || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
             }
         },
         auth: {
@@ -354,6 +378,7 @@ async function bootEditTeam(initialState, overrides = {}) {
             }
         },
         teamAccess: await import('../../js/team-access.js'),
+        rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
         editTeamAdminInvites: {
             async processPendingAdminInvites() {
                 return { results: [], fallbackCodeCount: 0, failedCount: 0 };
