@@ -218,6 +218,7 @@
     <script type="module">
         import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
+        import { hasPlayerProfileParticipation } from './js/player-profile-stats.js?v=2';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=12';
@@ -439,7 +440,7 @@
                         Object.entries(playerStats).forEach(([stat, value]) => {
                             seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
                         });
-                        if (docSnap.id === playerId) {
+                        if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
                             selectedPlayerStats = {
                                 stats: playerStats,
                                 timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
@@ -484,10 +485,12 @@
                     }
                 }
 
-                // Choose a primary game for back link
-                const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
-                    ? gameId
-                    : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
+                // Choose a primary game for back link and insights. Honor a requested game
+                // even when the player has a filtered DNP/zero-stat entry for that game.
+                const requestedGame = gameId ? games.find((entry) => entry.id === gameId) : null;
+                const selectedGameId = requestedGame
+                    ? requestedGame.id
+                    : ([...perGameStats].sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
                 const selectedGame = games.find((entry) => entry.id === selectedGameId) || null;
                 // Set back-link href to team page (fallback navigation when banner not shown)
                 document.getElementById('back-link').href = `team.html#teamId=${teamId}`;

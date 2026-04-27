@@ -73,6 +73,9 @@ export function buildTrackStatsheetApplyPlan({
             data: {
                 playerName: player.name,
                 playerNumber: player.number,
+                participated: true,
+                participationStatus: 'appeared',
+                participationSource: 'statsheet-import',
                 stats
             }
         });
