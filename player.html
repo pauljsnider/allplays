@@ -485,10 +485,12 @@
                     }
                 }
 
-                // Choose a primary game for back link
-                const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
-                    ? gameId
-                    : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
+                // Choose a primary game for back link and insights. Honor a requested game
+                // even when the player has a filtered DNP/zero-stat entry for that game.
+                const requestedGame = gameId ? games.find((entry) => entry.id === gameId) : null;
+                const selectedGameId = requestedGame
+                    ? requestedGame.id
+                    : ([...perGameStats].sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
                 const selectedGame = games.find((entry) => entry.id === selectedGameId) || null;
                 // Set back-link href to team page (fallback navigation when banner not shown)
                 document.getElementById('back-link').href = `team.html#teamId=${teamId}`;

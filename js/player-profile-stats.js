@@ -3,7 +3,11 @@ export function hasPlayerProfileParticipation(statData = {}) {
         return false;
     }
 
-    if (statData.participated === true || statData.participationStatus === 'appeared') {
+    if (
+        statData.participated === true
+        || statData.participationStatus === 'appeared'
+        || statData.participationSource === 'statsheet-import'
+    ) {
         return true;
     }
 
