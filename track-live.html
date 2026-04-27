@@ -522,7 +522,7 @@
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
-        import { applyVolleyballServeOutcome, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=1';
+        import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
         import { checkAuth } from './js/auth.js?v=12';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
@@ -566,6 +566,7 @@
             scoreSyncTimeout: null,
             lastSyncedHome: null,
             lastSyncedAway: null,
+            lastSyncedServingTeam: null,
             playerTimeouts: new Map(),
             opponentTimeout: null,
             liveFlagTimeout: null
@@ -847,13 +848,15 @@
             if (liveSync.scoreSyncTimeout) return;
             liveSync.scoreSyncTimeout = setTimeout(async () => {
                 liveSync.scoreSyncTimeout = null;
-                if (homeScore === liveSync.lastSyncedHome && awayScore === liveSync.lastSyncedAway) return;
+                const servingTeamChanged = isVolleyballGame() && gameState.servingTeam !== liveSync.lastSyncedServingTeam;
+                if (homeScore === liveSync.lastSyncedHome && awayScore === liveSync.lastSyncedAway && !servingTeamChanged) return;
                 try {
                     const update = { homeScore, awayScore };
                     if (isVolleyballGame()) update.servingTeam = gameState.servingTeam;
                     await updateGame(currentTeamId, currentGameId, update);
                     liveSync.lastSyncedHome = homeScore;
                     liveSync.lastSyncedAway = awayScore;
+                    liveSync.lastSyncedServingTeam = gameState.servingTeam;
                 } catch (error) {
                     console.warn('Failed to sync live scores:', error);
                 }
@@ -959,6 +962,7 @@
             liveSync.playerTimeouts.clear();
             liveSync.lastSyncedHome = null;
             liveSync.lastSyncedAway = null;
+            liveSync.lastSyncedServingTeam = null;
         }
 
         async function syncClockToGameDoc() {
@@ -1187,12 +1191,14 @@
                 return;
             }
 
-            const result = applyVolleyballServeOutcome({
+            const before = {
                 homeScore,
                 awayScore,
                 servingTeam: gameState.servingTeam,
                 period: gameState.currentPeriod
-            }, outcome);
+            };
+            const result = applyVolleyballServeOutcome(before, outcome);
+            const undoState = createVolleyballUndoState(before, result);
 
             homeScore = result.homeScore;
             awayScore = result.awayScore;
@@ -1204,7 +1210,9 @@
                 outcome: result.outcome,
                 pointWinner: result.pointWinner,
                 sideOut: result.sideOut,
-                servingTeam: result.servingTeam
+                servingTeam: result.servingTeam,
+                before: undoState.before,
+                after: undoState.after
             });
             broadcastLiveEvent(currentTeamId, currentGameId, {
                 type: 'volleyball',
@@ -1970,6 +1978,35 @@
                     isOpponent,
                     description: `Undo stat: ${entry.text}`
                 });
+            } else if (undoData && undoData.type === 'volleyball') {
+                if (index !== 0) {
+                    alert('Undo volleyball entries from newest to oldest so score and serve order stay accurate.');
+                    return;
+                }
+                const previousState = restoreVolleyballUndoState(undoData);
+                if (!previousState) {
+                    console.warn('Cannot undo volleyball entry without previous state:', entry);
+                    alert('This volleyball entry cannot be undone because its prior score state is missing.');
+                    return;
+                }
+                homeScore = Math.max(0, previousState.homeScore);
+                awayScore = Math.max(0, previousState.awayScore);
+                gameState.servingTeam = previousState.servingTeam;
+                updateScoreDisplay();
+                scheduleScoreSync();
+                scheduleLiveHasData();
+
+                broadcastLiveEvent(currentTeamId, currentGameId, {
+                    type: 'undo',
+                    sport: 'volleyball',
+                    period: gameState.currentPeriod,
+                    gameClockMs: gameState.elapsed,
+                    homeScore,
+                    awayScore,
+                    servingTeam: gameState.servingTeam,
+                    description: `Undo volleyball: ${entry.text}`,
+                    createdBy: currentUser?.uid || null
+                }).catch(console.warn);
             }
 
             gameState.gameLog.splice(index, 1);

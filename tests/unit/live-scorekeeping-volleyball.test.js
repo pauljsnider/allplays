@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyVolleyballServeOutcome,
+  createVolleyballUndoState,
   getDefaultVolleyballState,
   getVolleyballSetLabels,
-  isVolleyballSport
+  isVolleyballSport,
+  restoreVolleyballUndoState
 } from '../../js/live-scorekeeping-volleyball.js';
 
 describe('volleyball live scorekeeping', () => {
@@ -51,5 +53,25 @@ describe('volleyball live scorekeeping', () => {
     expect(awayPoint.awayScore).toBe(11);
     expect(awayPoint.servingTeam).toBe('away');
     expect(awayPoint.sideOut).toBe(true);
+  });
+
+  it('captures and restores previous volleyball state for undo', () => {
+    const before = { homeScore: 7, awayScore: 4, servingTeam: 'home', period: 'Set 2' };
+    const after = applyVolleyballServeOutcome(before, 'service_error');
+    const undoState = createVolleyballUndoState(before, after);
+
+    expect(undoState.before).toEqual(before);
+    expect(undoState.after).toEqual({
+      homeScore: 7,
+      awayScore: 5,
+      servingTeam: 'away',
+      period: 'Set 2'
+    });
+    expect(restoreVolleyballUndoState({ type: 'volleyball', ...undoState })).toEqual(before);
+  });
+
+  it('does not restore malformed volleyball undo data', () => {
+    expect(restoreVolleyballUndoState({ type: 'volleyball' })).toBeNull();
+    expect(restoreVolleyballUndoState({ type: 'stat', before: { homeScore: 1 } })).toBeNull();
   });
 });

@@ -23,6 +23,21 @@ export function getDefaultVolleyballState({ homeScore = 0, awayScore = 0, servin
     };
 }
 
+export function createVolleyballUndoState(before = {}, after = {}) {
+    return {
+        before: getDefaultVolleyballState(before),
+        after: getDefaultVolleyballState(after)
+    };
+}
+
+export function restoreVolleyballUndoState(undoData = {}) {
+    if (undoData.type !== 'volleyball' || !undoData.before) {
+        return null;
+    }
+
+    return getDefaultVolleyballState(undoData.before);
+}
+
 export function applyVolleyballServeOutcome(state = {}, outcome) {
     const current = getDefaultVolleyballState(state);
     const normalizedOutcome = normalizeOutcome(outcome);
