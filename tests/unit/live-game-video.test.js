@@ -138,6 +138,38 @@ describe('live game replay video helpers', () => {
         expect(options.savedHighlights).toHaveLength(1);
     });
 
+    it('keeps the live embed visible during active replay links with attached clips', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'dQw4w9WgXcQ'
+            },
+            game: {
+                liveStatus: 'live',
+                replayVideo: {
+                    url: 'https://cdn.example.com/games/game-1.mp4',
+                    durationMs: 180_000
+                },
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: true,
+            clipStartMs: 10_000,
+            clipEndMs: 25_000
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
+        expect(options.clipStartMs).toBeNull();
+        expect(options.clipEndMs).toBeNull();
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',
