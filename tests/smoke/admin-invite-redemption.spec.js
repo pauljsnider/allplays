@@ -26,6 +26,18 @@ export async function getTeam(teamId) {
     };
 }
 
+export async function getUserTeamsWithAccess() {
+    return [];
+}
+
+export async function getPlayers() {
+    return [];
+}
+
+export async function copySelectedPlayersForTeamRollover() {
+    return { copiedCount: 0 };
+}
+
 export async function uploadTeamPhoto() {
     return null;
 }
@@ -216,7 +228,7 @@ async function mockExternalResources(page) {
 
 async function mockEditTeamDependencies(page) {
     await mockExternalResources(page);
-    await page.route('**/js/db.js?v=15', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_DB_STUB }));
+    await page.route('**/js/db.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_UTILS_STUB }));
     await page.route('**/js/auth.js?v=12', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_AUTH_STUB }));
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
@@ -226,7 +238,7 @@ async function mockEditTeamDependencies(page) {
 
 async function mockAcceptInviteDependencies(page) {
     await mockExternalResources(page);
-    await page.route('**/js/db.js?v=15', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
+    await page.route('**/js/db.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
     await page.route('**/js/auth.js?v=12', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
 }
