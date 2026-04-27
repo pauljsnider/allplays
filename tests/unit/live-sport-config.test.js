@@ -2,9 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { getDefaultLivePeriod, getSportPeriodLabels } from '../../js/live-sport-config.js';
 
 describe('live sport config helpers', () => {
-  it('returns basketball defaults when sport is missing', () => {
+  it('returns basketball defaults when sport is missing or basketball', () => {
     expect(getDefaultLivePeriod()).toBe('Q1');
     expect(getSportPeriodLabels()).toEqual(['Q1', 'Q2', 'Q3', 'Q4', 'OT']);
+    expect(getDefaultLivePeriod({ sport: 'Basketball' })).toBe('Q1');
+    expect(getSportPeriodLabels({ sport: 'Basketball' })).toEqual(['Q1', 'Q2', 'Q3', 'Q4', 'OT']);
+  });
+
+  it('returns volleyball set labels by sport', () => {
+    expect(getDefaultLivePeriod({ sport: 'Volleyball' })).toBe('Set 1');
+    expect(getSportPeriodLabels({ sport: 'Volleyball' })).toEqual(['Set 1', 'Set 2', 'Set 3', 'Set 4', 'Set 5']);
   });
 
   it('returns soccer half labels by sport', () => {
