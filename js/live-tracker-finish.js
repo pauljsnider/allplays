@@ -58,7 +58,11 @@ export function buildFinishCompletionPlan({
     derived: { home: finalHome, away: finalAway }
   };
 
-  if (scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome, liveAway, log })) {
+  const normalizedLiveHome = Number.isFinite(Number(liveHome)) ? Number(liveHome) : 0;
+  const normalizedLiveAway = Number.isFinite(Number(liveAway)) ? Number(liveAway) : 0;
+  const requestedScoreMatchesLive = finalHome === normalizedLiveHome && finalAway === normalizedLiveAway;
+
+  if (requestedScoreMatchesLive && scoreLogIsComplete && canTrustScoreLogForFinalization({ liveHome, liveAway, log })) {
     scoreReconciliation = reconcileFinalScoreFromLog({
       requestedHome: finalHome,
       requestedAway: finalAway,

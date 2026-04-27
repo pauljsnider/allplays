@@ -7,7 +7,7 @@ import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=10'
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
-import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=2';
+import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
 import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
@@ -16,7 +16,7 @@ import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=1';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=2';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
