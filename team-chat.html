@@ -377,9 +377,9 @@
 
         // Get teamId from URL
         function getTeamIdFromUrl() {
-            const hash = window.location.hash;
-            const params = new URLSearchParams(hash.replace('#', ''));
-            return params.get('teamId');
+            const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
+            const searchParams = new URLSearchParams(window.location.search);
+            return hashParams.get('teamId') || searchParams.get('teamId');
         }
 
         // Initialize
