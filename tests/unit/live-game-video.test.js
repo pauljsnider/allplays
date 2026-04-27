@@ -3,6 +3,7 @@ import {
     MAX_HIGHLIGHT_CLIP_MS,
     buildHighlightShareUrl,
     createHighlightClipDraft,
+    normalizeGameClipRecords,
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
     resolveReplayVideoOptions,
@@ -160,6 +161,57 @@ describe('live game replay video helpers', () => {
                 videoUrl: 'https://video.example.com/full-game'
             }
         ]);
+    });
+
+    it('normalizes score-linked game clip records for playable cards', () => {
+        const clips = normalizeGameClipRecords({
+            clips: [
+                {
+                    id: 'clip-1',
+                    title: 'Go-ahead three',
+                    videoUrl: 'https://cdn.example.com/clip-1.mp4',
+                    playDescription: 'Mia hits from the corner',
+                    scoreContext: 'Home 42, Away 40',
+                    period: 'Q4',
+                    playerIds: ['p1']
+                },
+                {
+                    id: 'hidden-clip',
+                    url: 'https://cdn.example.com/hidden.mp4',
+                    hidden: true
+                },
+                {
+                    id: 'unsafe-clip',
+                    url: 'javascript:alert(1)'
+                }
+            ]
+        }, {
+            players: [{ id: 'p1', name: 'Mia Chen', number: '12' }]
+        });
+
+        expect(clips).toHaveLength(1);
+        expect(clips[0]).toMatchObject({
+            id: 'clip-1',
+            title: 'Go-ahead three',
+            playDescription: 'Mia hits from the corner',
+            scoreContext: 'Home 42, Away 40',
+            period: 'Q4',
+            players: ['#12 Mia Chen'],
+            url: 'https://cdn.example.com/clip-1.mp4'
+        });
+        expect(clips[0].downloadName).toBe('Go_ahead_three.mp4');
+    });
+
+    it('exposes the video tab model for games with no stream or clips', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {},
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('none');
+        expect(options.hasVideo).toBe(false);
+        expect(options.gameClips).toEqual([]);
     });
 
     it('builds replay clip links with bounded start and end params', () => {

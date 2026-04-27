@@ -1,4 +1,5 @@
 import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
+import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 
@@ -19,10 +20,40 @@ function getClipVideoUrl(clip) {
         clip.url,
         clip.publicUrl,
         clip.sourceUrl,
+        clip.downloadUrl,
+        clip.src,
+        clip.mediaUrl,
         video.url,
         video.publicUrl,
         video.sourceUrl
     ]);
+}
+
+function toCleanString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function toArray(value) {
+    return Array.isArray(value) ? value : [];
+}
+
+function getClipVisibility(clip = {}) {
+    return toCleanString(clip.visibility || clip.status).toLowerCase();
+}
+
+function isHiddenGameClip(clip = {}) {
+    const visibility = getClipVisibility(clip);
+    return clip.hidden === true || clip.deleted === true || clip.isHidden === true || clip.isDeleted === true || visibility === 'hidden' || visibility === 'deleted';
+}
+
+function getClipUrl(clip = {}) {
+    return getClipVideoUrl(clip);
+}
+
+function getPlayerLabel(player = {}) {
+    const number = toCleanString(player.number || player.jerseyNumber);
+    const name = toCleanString(player.name || player.displayName || player.playerName);
+    return [number ? `#${number}` : '', name].filter(Boolean).join(' ') || toCleanString(player.id || player.playerId);
 }
 
 function normalizeAssociatedPlayers(value) {
@@ -40,6 +71,39 @@ function normalizeAssociatedPlayers(value) {
             return { id, name, number };
         })
         .filter(Boolean);
+}
+
+function normalizeClipPlayers(rawPlayers = [], playersById = new Map()) {
+    return toArray(rawPlayers)
+        .map((entry) => {
+            if (typeof entry === 'string') {
+                const player = playersById.get(entry);
+                return player ? getPlayerLabel(player) : entry;
+            }
+            const id = toCleanString(entry?.id || entry?.playerId);
+            const player = id ? playersById.get(id) : null;
+            return getPlayerLabel(player || entry);
+        })
+        .filter(Boolean);
+}
+
+function getGameClipCollections(game = {}) {
+    return [
+        ...toArray(game.clipRecords),
+        ...toArray(game.gameClips),
+        ...toArray(game.videoClips),
+        ...toArray(game.clips),
+        ...toArray(game.mediaClips)
+    ];
+}
+
+function getClipSortMs(clip = {}) {
+    const raw = clip.createdAt || clip.uploadedAt || clip.timestamp || clip.startMs || 0;
+    if (typeof raw === 'number') return raw;
+    if (raw?.toMillis) return raw.toMillis();
+    if (raw?.toDate) return raw.toDate().getTime();
+    const parsed = Date.parse(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function getRecordedReplayConfig(game) {
@@ -247,6 +311,50 @@ export function normalizeGameRecapHighlightClips(game, options = {}) {
         .sort((a, b) => (a.order - b.order) || ((a.startMs ?? 0) - (b.startMs ?? 0)));
 }
 
+export function normalizeGameClipRecords(game, { players = [], includeHidden = false } = {}) {
+    const playersById = new Map(toArray(players).map((player) => [player.id, player]));
+
+    return getGameClipCollections(game)
+        .filter((clip) => clip && typeof clip === 'object')
+        .filter((clip) => includeHidden || !isHiddenGameClip(clip))
+        .map((clip, index) => {
+            const url = getClipUrl(clip);
+            if (!isSafeChatMediaUrl(url)) return null;
+            const title = firstSafeString([
+                clip.title,
+                clip.name,
+                clip.label,
+                `Clip ${index + 1}`
+            ]);
+            const players = normalizeClipPlayers(
+                clip.relatedPlayers || clip.players || clip.playerIds || clip.relatedPlayerIds || [],
+                playersById
+            );
+            const mediaEntry = {
+                type: 'video',
+                url,
+                name: clip.name || clip.title || `game-clip-${index + 1}.mp4`,
+                mimeType: clip.mimeType || clip.type || 'video/mp4',
+                createdAt: clip.createdAt || clip.uploadedAt || null
+            };
+
+            return {
+                id: toCleanString(clip.id) || `clip-${index}`,
+                title,
+                playDescription: firstSafeString([clip.playDescription, clip.description, clip.play, clip.caption]),
+                scoreContext: firstSafeString([clip.scoreContext, clip.score, clip.scoreLabel]),
+                period: firstSafeString([clip.period, clip.inning, clip.quarter, clip.segment]),
+                players,
+                url,
+                posterUrl: firstSafeString([clip.posterUrl, clip.thumbnailUrl]),
+                downloadName: getChatMediaDownloadName(mediaEntry),
+                createdAtMs: getClipSortMs(clip)
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.createdAtMs - a.createdAtMs || a.title.localeCompare(b.title));
+}
+
 export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs }) {
     const url = new URL('/live-game.html', origin);
     url.searchParams.set('teamId', teamId);
@@ -257,8 +365,9 @@ export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs 
     return url.toString();
 }
 
-export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = null, clipEndMs = null }) {
+export function resolveReplayVideoOptions({ team, game, players = [], isReplay, clipStartMs = null, clipEndMs = null }) {
     const recorded = getRecordedReplayConfig(game);
+    const gameClips = normalizeGameClipRecords(game, { players });
     const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || game?.liveStatus === 'completed' || game?.status === 'completed');
 
     if (canUseRecordedReplay) {
@@ -279,7 +388,8 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
             durationMs: recorded.durationMs,
             clipStartMs: activeClip?.startMs ?? null,
             clipEndMs: activeClip?.endMs ?? null,
-            savedHighlights: normalizeSavedHighlightClips(game, { durationMs: recorded.durationMs })
+            savedHighlights: normalizeSavedHighlightClips(game, { durationMs: recorded.durationMs }),
+            gameClips
         };
     }
 
@@ -296,7 +406,8 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
             durationMs: null,
             clipStartMs: null,
             clipEndMs: null,
-            savedHighlights: []
+            savedHighlights: [],
+            gameClips
         };
     }
 
@@ -311,7 +422,8 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
         durationMs: null,
         clipStartMs: null,
         clipEndMs: null,
-        savedHighlights: []
+        savedHighlights: [],
+        gameClips
     };
 }
 
@@ -320,6 +432,12 @@ export function shouldReloadVideoPlayback(previousPlayback, nextPlayback) {
     const nextMode = nextPlayback?.mode || 'none';
 
     if (previousMode !== nextMode) {
+        return true;
+    }
+
+    const previousClipIds = (previousPlayback?.gameClips || []).map((clip) => `${clip.id}:${clip.url}:${clip.title}:${clip.playDescription}:${clip.scoreContext}:${clip.period}:${clip.players.join(',')}`).join('|');
+    const nextClipIds = (nextPlayback?.gameClips || []).map((clip) => `${clip.id}:${clip.url}:${clip.title}:${clip.playDescription}:${clip.scoreContext}:${clip.period}:${clip.players.join(',')}`).join('|');
+    if (previousClipIds !== nextClipIds) {
         return true;
     }
 
