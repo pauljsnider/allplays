@@ -456,8 +456,26 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
     const gameClips = normalizeGameClipRecords(game, { players });
     const savedHighlights = normalizeSavedHighlightClips(game, { durationMs: recorded?.durationMs });
     const firstAttachedClip = savedHighlights.find(clip => clip.mediaUrl);
-    const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || game?.liveStatus === 'completed' || game?.status === 'completed');
     const isCompletedGame = game?.liveStatus === 'completed' || game?.status === 'completed';
+    const isActiveGame = game?.liveStatus === 'live' || game?.status === 'live';
+    const activeLiveEmbed = isActiveGame ? getLiveEmbedConfig(team) : null;
+    const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || isCompletedGame);
+
+    if (activeLiveEmbed?.embedUrl) {
+        return {
+            mode: 'embed',
+            hasVideo: true,
+            sourceUrl: activeLiveEmbed.embedUrl,
+            publicUrl: activeLiveEmbed.publicUrl,
+            publicLabel: activeLiveEmbed.publicLabel,
+            posterUrl: null,
+            title: null,
+            durationMs: null,
+            clipStartMs: null,
+            clipEndMs: null,
+            savedHighlights
+        };
+    }
 
     if (canUseRecordedReplay) {
         const activeClip = createHighlightClipDraft({
@@ -482,7 +500,7 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
         };
     }
 
-    const liveEmbed = getLiveEmbedConfig(team);
+    const liveEmbed = activeLiveEmbed || getLiveEmbedConfig(team);
     if (liveEmbed?.embedUrl && !isReplay && !isCompletedGame) {
         return {
             mode: 'embed',
