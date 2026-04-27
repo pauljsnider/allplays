@@ -24,6 +24,94 @@ function inferUploadMediaType({ mediaType = '', mimeType = '', url = '' } = {}) 
     return 'link';
 }
 
+
+function formatGameDateValue(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value?.toDate === 'function') return value.toDate().toISOString();
+    if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000).toISOString();
+    return '';
+}
+
+function playerMatchesClip(clip = {}, playerId = '') {
+    const target = toCleanString(playerId);
+    if (!target) return false;
+
+    const directIds = [
+        clip.playerId,
+        clip.athleteId,
+        clip.taggedPlayerId,
+        clip.scoringPlayerId
+    ].map(toCleanString);
+    if (directIds.includes(target)) return true;
+
+    const arrayFields = [clip.playerIds, clip.athleteIds, clip.taggedPlayerIds, clip.players, clip.taggedPlayers];
+    return arrayFields.some((field) => Array.isArray(field) && field.some((entry) => {
+        if (typeof entry === 'string') return toCleanString(entry) === target;
+        return [entry?.id, entry?.playerId, entry?.athleteId].map(toCleanString).includes(target);
+    }));
+}
+
+function isTruthyFlag(value) {
+    return value === true || toCleanString(value).toLowerCase() === 'true';
+}
+
+function buildScoreContext(clip = {}, game = {}) {
+    const explicit = toCleanString(clip.scoreContext || clip.score || clip.scoreLabel);
+    if (explicit) return explicit;
+
+    const homeScore = toFiniteNumber(clip.homeScore ?? game.homeScore ?? game.score?.home);
+    const awayScore = toFiniteNumber(clip.awayScore ?? game.awayScore ?? game.score?.away);
+    if (homeScore !== null && awayScore !== null) {
+        const homeLabel = toCleanString(game.homeTeamName || game.teamName) || 'Home';
+        const awayLabel = toCleanString(game.awayTeamName || game.opponent || game.opponentName || game.opponentTeamName) || 'Away';
+        return `${homeLabel} ${homeScore}, ${awayLabel} ${awayScore}`;
+    }
+
+    const teamScore = toFiniteNumber(clip.teamScore ?? game.teamScore);
+    const opponentScore = toFiniteNumber(clip.opponentScore ?? game.opponentScore);
+    if (teamScore !== null && opponentScore !== null) {
+        return `Score: ${teamScore}-${opponentScore}`;
+    }
+
+    return '';
+}
+
+export function collectAthleteGameClipsForPlayer(games = [], { teamId = '', teamName = '', playerId = '', isStaff = false } = {}) {
+    return (Array.isArray(games) ? games : []).flatMap((game) => {
+        const rawClips = [
+            ...(Array.isArray(game?.gameClips) ? game.gameClips : []),
+            ...(Array.isArray(game?.highlightClips) ? game.highlightClips : []),
+            ...(Array.isArray(game?.replayVideo?.highlights) ? game.replayVideo.highlights : []),
+            ...(Array.isArray(game?.replayHighlights) ? game.replayHighlights : [])
+        ];
+
+        return rawClips
+            .filter((clip) => playerMatchesClip(clip, playerId))
+            .filter((clip) => isStaff || (!isTruthyFlag(clip?.hidden) && !isTruthyFlag(clip?.deleted) && !isTruthyFlag(clip?.isDeleted)))
+            .map((clip, index) => {
+                const startMs = toFiniteNumber(clip.startMs ?? clip.clipStartMs);
+                const endMs = toFiniteNumber(clip.endMs ?? clip.clipEndMs);
+                return {
+                    id: toCleanString(clip.id || clip.clipId) || `${toCleanString(game?.id || game?.gameId)}-${index}`,
+                    source: 'game',
+                    mediaType: toCleanString(clip.mediaType).toLowerCase() === 'video' ? 'video' : 'link',
+                    title: toCleanString(clip.title || clip.playDescription || clip.description) || 'Game clip',
+                    url: toCleanString(clip.url || clip.publicUrl || clip.videoUrl),
+                    teamId: toCleanString(teamId || game?.teamId),
+                    teamName: toCleanString(teamName || game?.teamName),
+                    gameId: toCleanString(game?.id || game?.gameId),
+                    game: toCleanString(game?.title || game?.name || game?.opponent || game?.opponentName || game?.opponentTeamName) || 'Game',
+                    date: formatGameDateValue(game?.date || game?.gameDate || game?.startTime),
+                    playDescription: toCleanString(clip.playDescription || clip.description || clip.title) || 'Score-linked highlight',
+                    scoreContext: buildScoreContext(clip, game),
+                    startMs,
+                    endMs
+                };
+            });
+    });
+}
+
 function normalizeClip(clip = {}) {
     const url = toCleanString(clip.url);
     if (!url) return null;

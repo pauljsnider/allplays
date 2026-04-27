@@ -3,7 +3,8 @@ import {
     normalizeAthleteProfileDraft,
     collectAthleteProfileMediaCleanupPaths,
     summarizeAthleteProfileCareer,
-    buildAthleteProfileShareUrl
+    buildAthleteProfileShareUrl,
+    collectAthleteGameClipsForPlayer
 } from '../../js/athlete-profile-utils.js';
 
 describe('athlete profile helpers', () => {
@@ -138,6 +139,66 @@ describe('athlete profile helpers', () => {
             statTotals: { PTS: 33, AST: 6, REB: 5 },
             statAverages: { PTS: '11.0', AST: '2.0', REB: '1.7' }
         });
+    });
+
+
+    it('collects score-linked game clips for a player and hides non-public clips', () => {
+        const clips = collectAthleteGameClipsForPlayer([
+            {
+                id: 'game-1',
+                opponentName: 'Tigers',
+                date: '2026-04-26',
+                homeTeamName: 'Eagles',
+                awayTeamName: 'Tigers',
+                highlightClips: [
+                    { id: 'clip-1', playerIds: ['player-1'], title: 'Fast break', homeScore: 12, awayScore: 10, startMs: '1000', endMs: '9000' },
+                    { id: 'clip-2', playerIds: ['player-1'], title: 'Hidden bucket', hidden: true },
+                    { id: 'clip-3', playerIds: ['player-2'], title: 'Other player' }
+                ]
+            },
+            {
+                id: 'game-2',
+                opponent: 'Bears',
+                gameClips: [
+                    { clipId: 'clip-4', playerId: 'player-1', playDescription: 'Corner three', scoreContext: 'Eagles lead 44-41' }
+                ]
+            }
+        ], { teamId: 'team-1', teamName: 'Eagles', playerId: 'player-1' });
+
+        expect(clips).toEqual([
+            {
+                id: 'clip-1',
+                source: 'game',
+                mediaType: 'link',
+                title: 'Fast break',
+                url: '',
+                teamId: 'team-1',
+                teamName: 'Eagles',
+                gameId: 'game-1',
+                game: 'Tigers',
+                date: '2026-04-26',
+                playDescription: 'Fast break',
+                scoreContext: 'Eagles 12, Tigers 10',
+                startMs: 1000,
+                endMs: 9000
+            },
+            {
+                id: 'clip-4',
+                source: 'game',
+                mediaType: 'link',
+                title: 'Corner three',
+                url: '',
+                teamId: 'team-1',
+                teamName: 'Eagles',
+                gameId: 'game-2',
+                game: 'Bears',
+                date: '',
+                playDescription: 'Corner three',
+                scoreContext: 'Eagles lead 44-41',
+                startMs: null,
+                endMs: null
+            }
+        ]);
     });
 
     it('builds a shareable athlete profile URL', () => {

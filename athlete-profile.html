@@ -26,8 +26,8 @@
     <script type="module">
         import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=12';
-        import { getAthleteProfile } from './js/db.js?v=25';
-        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=1';
+        import { getAthleteProfile } from './js/db.js?v=26';
+        import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=2';
 
         const params = getUrlParams();
         const content = document.getElementById('profile-content');
@@ -55,6 +55,23 @@
             return cards || '<div class="text-sm text-slate-500">Career stats will appear here once games with tracked stats are included.</div>';
         }
 
+        function buildGameClipUrl(clip) {
+            const url = new URL('/live-game.html', window.location.origin);
+            url.searchParams.set('teamId', clip.teamId || '');
+            url.searchParams.set('gameId', clip.gameId || '');
+            url.searchParams.set('replay', 'true');
+            if (Number.isFinite(clip.startMs)) url.searchParams.set('clipStart', `${clip.startMs}`);
+            if (Number.isFinite(clip.endMs)) url.searchParams.set('clipEnd', `${clip.endMs}`);
+            return url.toString();
+        }
+
+        function formatGameClipDate(value) {
+            if (!value) return 'Date not set';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return value;
+            return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+
         function renderClipMedia(clip) {
             const url = String(clip?.url || '').trim();
             if (!url) {
@@ -74,7 +91,7 @@
 
         function renderClips(clips) {
             if (!Array.isArray(clips) || !clips.length) {
-                return '<div class="text-sm text-slate-500">No clips attached yet.</div>';
+                return '<div class="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">No manually uploaded highlights attached yet.</div>';
             }
 
             return clips.map((clip) => `
@@ -83,6 +100,35 @@
                     <div class="mt-4">
                         <div class="font-semibold text-slate-900">${escapeHtml(clip?.title || 'Highlight Clip')}</div>
                         <div class="text-sm text-slate-500 mt-1">${escapeHtml(clip?.label || (clip?.source === 'upload' ? 'Hosted by ALL PLAYS' : clip?.url || ''))}</div>
+                    </div>
+                </article>
+            `).join('');
+        }
+
+        function renderGameClipMedia(clip) {
+            if (clip?.url && clip?.mediaType === 'video') {
+                return `<video controls preload="metadata" class="w-full h-56 rounded-2xl border border-emerald-200 bg-black" src="${escapeHtml(clip.url)}"></video>`;
+            }
+
+            return `<a href="${escapeHtml(buildGameClipUrl(clip))}" target="_blank" rel="noopener noreferrer" class="flex h-56 items-center justify-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold hover:bg-emerald-100">Open game replay clip ↗</a>`;
+        }
+
+        function renderGameClips(gameClips) {
+            if (!Array.isArray(gameClips) || !gameClips.length) {
+                return '<div class="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">No score-linked game clips found for this athlete yet.</div>';
+            }
+
+            return gameClips.map((clip) => `
+                <article data-athlete-game-clip-card class="rounded-3xl border border-emerald-200 p-4 bg-emerald-50/60 shadow-sm">
+                    ${renderGameClipMedia(clip)}
+                    <div class="mt-4 space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">Game clip</span>
+                            <span class="text-xs text-emerald-700">${escapeHtml(formatGameClipDate(clip?.date))}</span>
+                        </div>
+                        <div class="font-semibold text-slate-900">${escapeHtml(clip?.game || 'Game')}</div>
+                        <div class="text-sm text-slate-700">${escapeHtml(clip?.playDescription || clip?.title || 'Score-linked highlight')}</div>
+                        <div class="text-xs font-semibold text-emerald-800">${escapeHtml(clip?.scoreContext || 'Score context unavailable')}</div>
                     </div>
                 </article>
             `).join('');
@@ -105,6 +151,7 @@
                 const seasons = Array.isArray(profile.seasons) ? profile.seasons : [];
                 const bio = profile.bio || {};
                 const summary = profile.careerSummary || {};
+                const gameClips = Array.isArray(profile.gameClips) ? profile.gameClips : [];
 
                 content.innerHTML = `
                     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
@@ -165,7 +212,13 @@
                     </div>
 
                     <div class="mt-8">
-                        <h2 class="text-2xl font-bold text-slate-900">Highlight Clips</h2>
+                        <h2 class="text-2xl font-bold text-slate-900">Game Clips</h2>
+                        <p class="text-sm text-slate-500 mt-1">Score-linked clips generated from included games. These are separate from manually uploaded highlights.</p>
+                        <div class="grid md:grid-cols-2 gap-4 mt-4">${renderGameClips(gameClips)}</div>
+                    </div>
+
+                    <div class="mt-8">
+                        <h2 class="text-2xl font-bold text-slate-900">Manual Highlight Clips</h2>
                         <div class="grid md:grid-cols-2 gap-4 mt-4">${renderClips(profile.clips)}</div>
                     </div>
                 `;
