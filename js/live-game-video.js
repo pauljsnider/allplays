@@ -457,6 +457,7 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
     const savedHighlights = normalizeSavedHighlightClips(game, { durationMs: recorded?.durationMs });
     const firstAttachedClip = savedHighlights.find(clip => clip.mediaUrl);
     const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || game?.liveStatus === 'completed' || game?.status === 'completed');
+    const isCompletedGame = game?.liveStatus === 'completed' || game?.status === 'completed';
 
     if (canUseRecordedReplay) {
         const activeClip = createHighlightClipDraft({
@@ -481,6 +482,23 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
         };
     }
 
+    const liveEmbed = getLiveEmbedConfig(team);
+    if (liveEmbed?.embedUrl && !isReplay && !isCompletedGame) {
+        return {
+            mode: 'embed',
+            hasVideo: true,
+            sourceUrl: liveEmbed.embedUrl,
+            publicUrl: liveEmbed.publicUrl,
+            publicLabel: liveEmbed.publicLabel,
+            posterUrl: null,
+            title: null,
+            durationMs: null,
+            clipStartMs: null,
+            clipEndMs: null,
+            savedHighlights
+        };
+    }
+
     if (firstAttachedClip) {
         return {
             mode: 'recorded',
@@ -498,7 +516,6 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
         };
     }
 
-    const liveEmbed = getLiveEmbedConfig(team);
     if (liveEmbed?.embedUrl) {
         return {
             mode: 'embed',
