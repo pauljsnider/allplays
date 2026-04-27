@@ -64,6 +64,112 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
+    it('normalizes attached scored play clips for the video tab', () => {
+        const clips = normalizeSavedHighlightClips({
+            highlightClips: [
+                {
+                    id: 'clip-1',
+                    type: 'score-linked',
+                    title: 'Corner three',
+                    caption: 'Big shot',
+                    mediaUrl: 'https://cdn.example.com/clip.mp4',
+                    playEventId: 'event-1',
+                    selectedPlayerIds: ['player-1'],
+                    scoreContext: { homeScore: 21, awayScore: 18 }
+                }
+            ]
+        });
+
+        expect(clips).toEqual([
+            expect.objectContaining({
+                id: 'clip-1',
+                type: 'score-linked',
+                title: 'Corner three',
+                mediaUrl: 'https://cdn.example.com/clip.mp4',
+                playEventId: 'event-1',
+                selectedPlayerIds: ['player-1'],
+                scoreContext: { homeScore: 21, awayScore: 18 }
+            })
+        ]);
+    });
+
+    it('shows attached clips as video playback when no replay video exists', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('recorded');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toBe('https://cdn.example.com/putback.mp4');
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
+    it('keeps the live embed visible over attached clips while a game is active', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'dQw4w9WgXcQ'
+            },
+            game: {
+                liveStatus: 'live',
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
+    it('keeps the live embed visible during active replay links with attached clips', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'dQw4w9WgXcQ'
+            },
+            game: {
+                liveStatus: 'live',
+                replayVideo: {
+                    url: 'https://cdn.example.com/games/game-1.mp4',
+                    durationMs: 180_000
+                },
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: true,
+            clipStartMs: 10_000,
+            clipEndMs: 25_000
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
+        expect(options.clipStartMs).toBeNull();
+        expect(options.clipEndMs).toBeNull();
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',
