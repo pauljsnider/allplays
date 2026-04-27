@@ -14,6 +14,8 @@ describe('live game attach clip UI', () => {
         expect(js).toContain('canAttachScoreLinkedClips() && isScoredPlayEvent(event)');
         expect(js).toContain('data-attach-clip-event-id');
         expect(js).toContain('uploadGameClip(state.teamId, state.gameId, file)');
+        expect(js).toContain('state.clipStartMs = null;');
+        expect(js).toContain('clipEndMs: null');
         expect(html).toContain('id="attach-clip-modal"');
         expect(html).toContain('id="attach-clip-file" type="file" accept="video/*"');
         expect(html).toContain('id="attach-clip-url" type="url"');

@@ -114,6 +114,30 @@ describe('live game replay video helpers', () => {
         expect(options.savedHighlights).toHaveLength(1);
     });
 
+    it('keeps the live embed visible over attached clips while a game is active', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'dQw4w9WgXcQ'
+            },
+            game: {
+                liveStatus: 'live',
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',

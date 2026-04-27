@@ -709,16 +709,23 @@ function initRecordedReplayControls() {
       const clip = state.videoPlayback?.savedHighlights?.[Number(button.dataset.highlightIndex)];
       if (!clip) return;
       if (clip.mediaUrl) {
+        state.clipStartMs = null;
+        state.clipEndMs = null;
         state.videoPlayback = {
           ...(state.videoPlayback || {}),
           sourceUrl: clip.mediaUrl,
           publicUrl: clip.mediaUrl,
-          title: clip.title || state.videoPlayback?.title || null
+          title: clip.title || state.videoPlayback?.title || null,
+          durationMs: null,
+          clipStartMs: null,
+          clipEndMs: null
         };
+        syncHighlightUrl(null, null);
         if (els.recordedReplayVideo) {
           els.recordedReplayVideo.src = clip.mediaUrl;
           els.recordedReplayVideo.load();
         }
+        renderRecordedReplayTools();
         return;
       }
       if (els.highlightTitleInput) {
