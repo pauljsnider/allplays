@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { buildFinishCompletionPlan, prepareFinishPlanForSave } from '../../js/live-tracker-finish.js';
 
 describe('live tracker finish completion plan', () => {
-  it('reconciles the saved game outcome and persisted stats from the score log', () => {
+  it('honors a coach-entered final score when it differs from the live score log totals', () => {
     const plan = buildFinishCompletionPlan({
       requestedHome: 44,
       requestedAway: 41,
@@ -39,16 +39,16 @@ describe('live tracker finish completion plan', () => {
       buildEmailBody: () => 'unused body'
     });
 
-    expect(plan.finalHome).toBe(5);
-    expect(plan.finalAway).toBe(2);
+    expect(plan.finalHome).toBe(44);
+    expect(plan.finalAway).toBe(41);
     expect(plan.scoreReconciliation).toMatchObject({
-      mismatch: true,
-      derived: { home: 5, away: 2 }
+      mismatch: false,
+      derived: { home: 44, away: 41 }
     });
-    expect(plan.reconciliationNote).toBe('Score reconciled from 44-41 to 5-2 based on scoring events');
+    expect(plan.reconciliationNote).toBe('');
     expect(plan.gameUpdate).toEqual({
-      homeScore: 5,
-      awayScore: 2,
+      homeScore: 44,
+      awayScore: 41,
       summary: 'Closed well in the final minute.',
       status: 'completed',
       opponentStats: {
@@ -139,14 +139,8 @@ describe('live tracker finish completion plan', () => {
     ]);
   });
 
-  it('includes the reconciliation note in recap generation inputs when it is already present in the finish log', () => {
+  it('uses the coach-entered final score for recap generation when it corrects the live score', () => {
     let bodyArgs = null;
-    const reconciliationLogEntry = {
-      text: 'Score reconciled from 44-41 to 5-2 based on scoring events',
-      ts: 99,
-      period: 'Q4',
-      clock: '00:00'
-    };
     const plan = buildFinishCompletionPlan({
       requestedHome: 44,
       requestedAway: 41,
@@ -154,7 +148,6 @@ describe('live tracker finish completion plan', () => {
       liveAway: 2,
       scoreLogIsComplete: true,
       log: [
-        reconciliationLogEntry,
         { text: 'Home layup', clock: '01:20', period: 'Q1', ts: 11, undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false, playerId: 'p1' } },
         { text: 'Home three', clock: '00:40', period: 'Q1', ts: 12, undoData: { type: 'stat', statKey: 'PTS', value: 3, isOpponent: false, playerId: 'p2' } },
         { text: 'Away bucket', clock: '00:20', period: 'Q1', ts: 13, undoData: { type: 'stat', statKey: 'points', value: 2, isOpponent: true } }
@@ -180,11 +173,10 @@ describe('live tracker finish completion plan', () => {
 
     expect(plan.navigation[0].href).toContain('body=body');
     expect(bodyArgs).toEqual({
-      finalHome: 5,
-      finalAway: 2,
+      finalHome: 44,
+      finalAway: 41,
       summary: 'Closed well in the final minute.',
       logEntries: [
-        reconciliationLogEntry,
         {
           text: 'Home layup',
           clock: '01:20',
