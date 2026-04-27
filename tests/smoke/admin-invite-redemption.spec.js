@@ -84,6 +84,15 @@ export function getUrlParams() {
         teamId: params.get('teamId')
     };
 }
+
+export function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 `;
 
 const EDIT_TEAM_AUTH_STUB = `
