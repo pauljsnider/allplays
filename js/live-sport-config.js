@@ -11,6 +11,8 @@ function getExplicitPeriodLabels(periods) {
 
 function getSportDefaults(sport) {
   switch (normalizeSport(sport)) {
+    case 'volleyball':
+      return ['Set 1', 'Set 2', 'Set 3', 'Set 4', 'Set 5'];
     case 'soccer':
       return ['H1', 'H2', 'ET1', 'ET2', 'PK'];
     case 'baseball':

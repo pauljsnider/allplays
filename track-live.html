@@ -320,8 +320,34 @@
             </div>
         </div>
 
+        <!-- Volleyball Scorekeeping -->
+        <div id="volleyballPanel" class="track-panel p-3 mb-3 hidden">
+            <div class="flex items-center justify-between gap-3 mb-3">
+                <div>
+                    <div class="text-[11px] uppercase tracking-wide text-sand/60">Current set</div>
+                    <div id="volleyball-set-label" class="text-lg font-bold text-teal">Set 1</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-[11px] uppercase tracking-wide text-sand/60">Set score</div>
+                    <div class="text-2xl font-display font-bold"><span id="volleyball-home-score">0</span> - <span id="volleyball-away-score">0</span></div>
+                </div>
+                <div class="text-right">
+                    <div class="text-[11px] uppercase tracking-wide text-sand/60">Serving</div>
+                    <div id="volleyball-serving-team" class="text-lg font-bold text-gold">Home</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mb-3">
+                <button class="volleyball-outcome-btn bg-teal text-ink rounded px-3 py-2 text-sm font-bold" data-outcome="home_point">Home point</button>
+                <button class="volleyball-outcome-btn bg-coral text-white rounded px-3 py-2 text-sm font-bold" data-outcome="away_point">Away point</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <button class="volleyball-outcome-btn bg-gold text-ink rounded px-3 py-2 text-sm font-bold" data-outcome="ace">Ace</button>
+                <button class="volleyball-outcome-btn bg-slate text-sand rounded px-3 py-2 text-sm font-bold border border-coral/40" data-outcome="service_error">Service error</button>
+            </div>
+        </div>
+
         <!-- Team Stats Table -->
-        <div class="track-panel overflow-hidden mb-3">
+        <div id="teamStatsPanel" class="track-panel overflow-hidden mb-3">
             <div class="track-panel-title p-3 font-bold text-center">Team Stats</div>
             <div class="overflow-x-auto">
                 <table class="w-full text-center text-xs" id="statsTable">
@@ -339,7 +365,7 @@
         </div>
 
         <!-- Opponent Stats Table -->
-        <div class="track-panel overflow-hidden mb-3">
+        <div id="opponentStatsPanel" class="track-panel overflow-hidden mb-3">
             <div class="track-panel-title away p-3 font-bold text-center flex justify-between items-center">
                 <span>Opponent Stats</span>
                 <button id="addOpponentBtn" class="bg-coral text-white px-2 py-1 rounded text-xs hover:bg-coral/80">Add
@@ -496,6 +522,7 @@
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
         import { getDefaultLivePeriod, getSportPeriodLabels } from './js/live-sport-config.js?v=1';
+        import { applyVolleyballServeOutcome, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=1';
         import { checkAuth } from './js/auth.js?v=12';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
@@ -553,8 +580,18 @@
             playerStats: {}, // In-memory player stats (replaces real-time DB writes)
             opponentStats: {},
             currentPeriod: getDefaultLivePeriod(),
-            playerFieldStatus: {}
+            playerFieldStatus: {},
+            servingTeam: 'home'
         };
+
+        function isVolleyballGame() {
+            return isVolleyballSport(currentGame?.sport || currentTeam?.sport || currentConfig?.baseType);
+        }
+
+        function getTeamServingLabel(team) {
+            if (team === 'away') return resolveOpponentDisplayName(currentGame);
+            return currentTeam?.name || 'Home';
+        }
 
         const chatEls = {
             panel: document.getElementById('chat-panel'),
@@ -676,6 +713,7 @@
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);
                 homeScore = game.homeScore || 0;
                 awayScore = game.awayScore || 0;
+                gameState.servingTeam = game.servingTeam === 'away' ? 'away' : 'home';
                 updateScoreDisplay();
                 gameState.playerFieldStatus = createFieldState(players);
                 const existingOnField = Array.isArray(game.liveLineup?.onCourt) ? game.liveLineup.onCourt : [];
@@ -700,14 +738,20 @@
                     };
                 }
 
-                const periodLabels = getSportPeriodLabels({ team: currentTeam, config: currentConfig }).slice(0, 5);
+                const volleyballMode = isVolleyballGame();
+                document.getElementById('volleyballPanel')?.classList.toggle('hidden', !volleyballMode);
+                document.getElementById('teamStatsPanel')?.classList.toggle('hidden', volleyballMode);
+                document.getElementById('opponentStatsPanel')?.classList.toggle('hidden', volleyballMode);
+
+                const periodLabels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig }).slice(0, 5);
                 const periodButtons = document.querySelectorAll('.period-btn');
                 periodButtons.forEach((btn, index) => {
                     const label = periodLabels[index] || periodLabels[0];
                     btn.dataset.period = label;
                     btn.textContent = label;
                 });
-                gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ team: currentTeam, config: currentConfig });
+                gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+                updateVolleyballDisplay();
 
                 // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
@@ -761,6 +805,7 @@
 
                         // Update state
                         gameState.currentPeriod = btn.dataset.period;
+                        updateVolleyballDisplay();
                         addLogEntry(`Period changed to ${gameState.currentPeriod}`);
                     });
                 });
@@ -774,6 +819,16 @@
         function updateScoreDisplay() {
             document.getElementById('home-score').textContent = homeScore;
             document.getElementById('away-score').textContent = awayScore;
+            updateVolleyballDisplay();
+        }
+
+        function updateVolleyballDisplay() {
+            const panel = document.getElementById('volleyballPanel');
+            if (!panel || panel.classList.contains('hidden')) return;
+            document.getElementById('volleyball-set-label').textContent = gameState.currentPeriod || 'Set 1';
+            document.getElementById('volleyball-home-score').textContent = homeScore;
+            document.getElementById('volleyball-away-score').textContent = awayScore;
+            document.getElementById('volleyball-serving-team').textContent = getTeamServingLabel(gameState.servingTeam);
         }
 
         function formatFieldTime(ms) {
@@ -794,7 +849,9 @@
                 liveSync.scoreSyncTimeout = null;
                 if (homeScore === liveSync.lastSyncedHome && awayScore === liveSync.lastSyncedAway) return;
                 try {
-                    await updateGame(currentTeamId, currentGameId, { homeScore, awayScore });
+                    const update = { homeScore, awayScore };
+                    if (isVolleyballGame()) update.servingTeam = gameState.servingTeam;
+                    await updateGame(currentTeamId, currentGameId, update);
                     liveSync.lastSyncedHome = homeScore;
                     liveSync.lastSyncedAway = awayScore;
                 } catch (error) {
@@ -1124,6 +1181,53 @@
             scheduleLiveHasData();
         };
 
+        async function recordVolleyballOutcome(outcome) {
+            if (!gameState.isRunning && gameState.elapsed === 0) {
+                alert('Please start the game timer before recording points.');
+                return;
+            }
+
+            const result = applyVolleyballServeOutcome({
+                homeScore,
+                awayScore,
+                servingTeam: gameState.servingTeam,
+                period: gameState.currentPeriod
+            }, outcome);
+
+            homeScore = result.homeScore;
+            awayScore = result.awayScore;
+            gameState.servingTeam = result.servingTeam;
+            updateScoreDisplay();
+            scheduleScoreSync();
+            await addLogEntry(result.description, {
+                type: 'volleyball',
+                outcome: result.outcome,
+                pointWinner: result.pointWinner,
+                sideOut: result.sideOut,
+                servingTeam: result.servingTeam
+            });
+            broadcastLiveEvent(currentTeamId, currentGameId, {
+                type: 'volleyball',
+                period: gameState.currentPeriod,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                servingTeam: gameState.servingTeam,
+                outcome: result.outcome,
+                pointWinner: result.pointWinner,
+                sideOut: result.sideOut,
+                description: result.description,
+                createdBy: currentUser?.uid || null
+            }).catch(console.warn);
+            scheduleLiveHasData();
+        }
+
+        document.querySelectorAll('.volleyball-outcome-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                recordVolleyballOutcome(button.dataset.outcome).catch(console.warn);
+            });
+        });
+
 
         function setVoiceNoteButtonLabel(isListening) {
             const btn = document.getElementById('voice-note-btn');
@@ -1448,6 +1552,7 @@
                             gameState.playerFieldStatus = createFieldState(players);
                             homeScore = 0;
                             awayScore = 0;
+                            gameState.servingTeam = 'home';
                             opponentPlayers.forEach((opp) => {
                                 const existing = gameState.opponentStats[opp.id] || {};
                                 gameState.opponentStats[opp.id] = {
@@ -1488,6 +1593,7 @@
                                     currentGame.liveHasData = false;
                                     currentGame.homeScore = 0;
                                     currentGame.awayScore = 0;
+                                    currentGame.servingTeam = 'home';
                                     currentGame.opponentStats = {};
                                 },
                                 cleanupPersistedState: async () => {
@@ -1589,6 +1695,7 @@
                 });
                 homeScore = 0;
                 awayScore = 0;
+                gameState.servingTeam = 'home';
 
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
@@ -1611,6 +1718,7 @@
                     currentGame.liveHasData = false;
                     currentGame.homeScore = 0;
                     currentGame.awayScore = 0;
+                    currentGame.servingTeam = 'home';
                     currentGame.opponentStats = {};
                 }
                 updateScoreDisplay();
@@ -1650,6 +1758,7 @@
                             currentGame.liveStatus = 'scheduled';
                             currentGame.homeScore = 0;
                             currentGame.awayScore = 0;
+                            currentGame.servingTeam = 'home';
                             currentGame.opponentStats = gameState.opponentStats;
                         }
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
