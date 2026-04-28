@@ -48,3 +48,28 @@ export function getTeamAccessInfo(user, team) {
 
   return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };
 }
+
+function normalizeMemberIdList(memberIds) {
+  return Array.from(
+    new Set(
+      (Array.isArray(memberIds) ? memberIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function normalizeCapabilityPermission(permission) {
+  const mode = permission?.mode === 'selected' ? 'selected' : 'all_confirmed';
+  return {
+    mode,
+    memberIds: mode === 'selected' ? normalizeMemberIdList(permission?.memberIds) : []
+  };
+}
+
+export function normalizeTeamPermissions(teamPermissions = {}) {
+  return {
+    scorekeeping: normalizeCapabilityPermission(teamPermissions.scorekeeping),
+    streaming: normalizeCapabilityPermission(teamPermissions.streaming)
+  };
+}

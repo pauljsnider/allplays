@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasFullTeamAccess, getTeamAccessInfo } from '../../js/team-access.js';
+import { hasFullTeamAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
 
 const TEAM = {
   id: 'team-1',
@@ -62,4 +62,22 @@ describe('team access helpers', () => {
       exitUrl: 'index.html'
     });
   });
+
+  it('normalizes scoped volunteer permissions without granting admin access', () => {
+    expect(normalizeTeamPermissions({
+      scorekeeping: { mode: 'selected', memberIds: [' user-1 ', 'user-1', '', null, 'user-2'] },
+      streaming: { mode: 'all_confirmed', memberIds: ['user-3'] }
+    })).toEqual({
+      scorekeeping: { mode: 'selected', memberIds: ['user-1', 'user-2'] },
+      streaming: { mode: 'all_confirmed', memberIds: [] }
+    });
+
+    expect(hasFullTeamAccess({ uid: 'user-1' }, {
+      ...TEAM,
+      teamPermissions: {
+        scorekeeping: { mode: 'selected', memberIds: ['user-1'] }
+      }
+    })).toBe(false);
+  });
+
 });
