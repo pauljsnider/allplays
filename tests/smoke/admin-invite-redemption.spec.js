@@ -26,6 +26,14 @@ export async function getTeam(teamId) {
     };
 }
 
+export async function getUserTeamsWithAccess() {
+    return [];
+}
+
+export async function getPlayers() {
+    return [];
+}
+
 export async function uploadTeamPhoto() {
     return null;
 }
@@ -71,6 +79,15 @@ export function getUrlParams() {
     return {
         teamId: params.get('teamId')
     };
+}
+
+export function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 `;
 
