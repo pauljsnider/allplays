@@ -26,6 +26,12 @@ export async function getTeam(teamId) {
     };
 }
 
+export async function getUserProfile() {
+    return {
+        email: 'owner@example.com'
+    };
+}
+
 export async function getUserTeamsWithAccess() {
     return [];
 }
