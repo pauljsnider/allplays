@@ -27,6 +27,23 @@ class MockClassList {
     contains(token) {
         return this.tokens.has(token);
     }
+
+    toggle(token, force) {
+        if (force === true) {
+            this.add(token);
+            return true;
+        }
+        if (force === false) {
+            this.remove(token);
+            return false;
+        }
+        if (this.contains(token)) {
+            this.remove(token);
+            return false;
+        }
+        this.add(token);
+        return true;
+    }
 }
 
 class MockEvent {
@@ -156,6 +173,11 @@ function createEnvironment(initialState, overrides = {}) {
         'isPublic',
         'streamUrl',
         'stream-detect',
+        'streamAccessMode',
+        'stream-volunteer-panel',
+        'stream-volunteer-list',
+        'stream-volunteer-email-input',
+        'add-stream-volunteer-btn',
         'add-admin-btn',
         'admin-list',
         'add-admin-form',
@@ -184,6 +206,7 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('admin-invite-status').classList.add('hidden');
     elements.get('admin-invite-code').classList.add('hidden');
     elements.get('save-btn').textContent = 'Save Team';
+    elements.get('streamAccessMode').value = 'admins';
     elements.get('photo-upload').files = [];
 
     const document = {
@@ -258,8 +281,8 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';",
-            'const { hasFullTeamAccess, normalizeAdminEmailList } = deps.teamAccess;'
+            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList } from './js/team-access.js?v=1';",
+            'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList } = deps.teamAccess;'
         )
         .replace(
             "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';",
