@@ -539,16 +539,20 @@ function renderGameClips() {
 async function handleGameClipAction(action, clip) {
   if (!clip) return;
   if (action === 'copy' && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(clip.url);
-    showToast('Clip link copied!');
-    return;
+    try {
+      await navigator.clipboard.writeText(clip.url);
+      showToast('Clip link copied!');
+      return;
+    } catch (error) {
+      console.warn('Failed to copy clip link directly:', error);
+    }
   }
 
   const result = await shareOrCopy({
     title: clip.title || 'Game clip',
     text: clip.playDescription || clip.scoreContext || 'Watch this game clip',
     url: clip.url,
-    clipboardText: `${clip.title || 'Game clip'}\n${clip.url}`
+    clipboardText: action === 'copy' ? clip.url : `${clip.title || 'Game clip'}\n${clip.url}`
   });
   if (result.status === 'shared') showToast('Clip share sheet opened!');
   if (result.status === 'copied') showToast('Clip link copied!');
