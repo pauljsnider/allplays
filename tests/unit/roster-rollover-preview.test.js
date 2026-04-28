@@ -66,7 +66,11 @@ describe('roster rollover preview', () => {
         const html = readFileSync(new URL('../../edit-team.html', import.meta.url), 'utf8');
 
         expect(html).toContain('Roll Over Previous Roster');
-        expect(html).toContain('getUserTeamsWithAccess(currentUser.uid, currentUser.email)');
+        expect(html).toContain('getUserProfile(user.uid)');
+        expect(html).toContain("const accessEmail = currentUser.email || currentUserProfile?.email || '';");
+        expect(html).toContain('getUserTeamsWithAccess(currentUser.uid, accessEmail)');
+        expect(html).toContain('const requestId = ++rosterRolloverPreviewRequestId;');
+        expect(html).toContain('requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId');
         expect(html).toContain('getPlayers(sourceTeamId)');
         expect(html).toContain('Nothing will be copied when this team is saved.');
         expect(html).not.toContain('rolloverSourceTeamId');

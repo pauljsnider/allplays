@@ -319,7 +319,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
@@ -335,9 +335,11 @@
         let currentUser = null;
         let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
+        let currentUserProfile = null;
         let adminEmails = [];
         let pendingAdminInviteEmails = [];
         let isInitPending = true;
+        let rosterRolloverPreviewRequestId = 0;
 
         function buildTeamEditUrl(teamId, created = false) {
             const params = new URLSearchParams();
@@ -442,7 +444,8 @@
         }
 
         async function loadRosterRolloverTeams() {
-            const teams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
+            const accessEmail = currentUser.email || currentUserProfile?.email || '';
+            const teams = await getUserTeamsWithAccess(currentUser.uid, accessEmail);
             renderRosterRolloverTeamOptions(teams);
             if (teams.length === 0) {
                 setRosterRolloverStatus('No prior teams with owner or admin access were found.');
@@ -461,6 +464,12 @@
                 return;
             }
             currentUser = user;
+            try {
+                currentUserProfile = await getUserProfile(user.uid);
+            } catch (error) {
+                console.warn('Failed to load user profile for team access lookup:', error);
+                currentUserProfile = null;
+            }
             renderHeader(document.getElementById('header-container'), user);
             try {
                 await init();
@@ -574,6 +583,7 @@
             const controls = document.getElementById('roster-rollover-controls');
             const preview = document.getElementById('roster-rollover-preview');
             if (!e.target.checked) {
+                rosterRolloverPreviewRequestId += 1;
                 controls.classList.add('hidden');
                 preview.classList.add('hidden');
                 document.getElementById('rosterRolloverSourceTeam').value = '';
@@ -592,7 +602,9 @@
         });
 
         document.getElementById('rosterRolloverSourceTeam').addEventListener('change', async (e) => {
-            const sourceTeamId = e.target.value;
+            const select = e.target;
+            const sourceTeamId = select.value;
+            const requestId = ++rosterRolloverPreviewRequestId;
             const preview = document.getElementById('roster-rollover-preview');
             if (!sourceTeamId) {
                 preview.classList.add('hidden');
@@ -604,9 +616,15 @@
             preview.classList.remove('hidden');
             try {
                 const players = await getPlayers(sourceTeamId);
+                if (requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId) {
+                    return;
+                }
                 renderRosterRolloverPreview(players);
                 setRosterRolloverStatus('Preview only. Saving this team will not copy roster, family, staff, admin, or fan records.');
             } catch (error) {
+                if (requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId) {
+                    return;
+                }
                 console.error('Failed to load roster rollover preview:', error);
                 preview.innerHTML = '<div class="p-4 text-sm text-red-700">Could not load roster preview.</div>';
                 setRosterRolloverStatus('Could not load roster preview. You can still create this team without rollover.', true);

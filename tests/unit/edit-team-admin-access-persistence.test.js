@@ -240,8 +240,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
-            'const { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -316,6 +316,9 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             async getTeam(teamId) {
                 return env.state.team && env.state.team.id === teamId ? deepClone(env.state.team) : null;
+            },
+            async getUserProfile() {
+                return env.state.profile || null;
             },
             async getUserTeamsWithAccess() {
                 return [];
@@ -403,6 +406,7 @@ async function bootEditTeam(initialState, overrides = {}) {
     };
 
     await runEditTeamModule(deps);
+    await Promise.resolve();
     await Promise.resolve();
 
     return env;
