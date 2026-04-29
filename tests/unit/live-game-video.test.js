@@ -64,6 +64,34 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
+    it('preserves normalized player tags on saved highlights', () => {
+        const clip = createHighlightClipDraft({
+            title: 'Drive and dish',
+            startMs: 10_000,
+            endMs: 35_000,
+            taggedPlayerIds: [' player-1 ', 'player-2', 'player-1', '', null]
+        });
+
+        expect(clip).toEqual({
+            title: 'Drive and dish',
+            startMs: 10_000,
+            endMs: 35_000,
+            taggedPlayerIds: ['player-1', 'player-2']
+        });
+
+        const clips = normalizeSavedHighlightClips({
+            highlightClips: [
+                { title: 'Assist', startMs: 12_000, endMs: 42_000, taggedPlayerIds: ['player-3'] },
+                { title: 'Untagged', startMs: 45_000, endMs: 55_000 }
+            ]
+        });
+
+        expect(clips).toEqual([
+            { title: 'Assist', startMs: 12_000, endMs: 42_000, taggedPlayerIds: ['player-3'] },
+            { title: 'Untagged', startMs: 45_000, endMs: 55_000 }
+        ]);
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',
