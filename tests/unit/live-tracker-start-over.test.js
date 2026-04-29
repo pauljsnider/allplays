@@ -173,7 +173,7 @@ function escapeRegex(value) {
 
 function replaceNamedImportByModulePath(source, modulePath, replacement) {
   const pattern = new RegExp(
-    `import\\s*\\{[\\s\\S]*?\\}\\s*from\\s*['"]${escapeRegex(modulePath)}(?:\\?v=[^'"]+)?['"];?\\s*`
+    `import\\s*\\{[^}]*\\}\\s*from\\s*['"]${escapeRegex(modulePath)}(?:\\?v=[^'"]+)?['"];?\\s*`
   );
   return replaceImport(source, pattern, replacement);
 }
