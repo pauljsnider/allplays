@@ -27,7 +27,7 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=3';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=3';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
@@ -86,6 +86,7 @@ const state = {
   scoringRun: { team: null, points: 0 },
   lastRunAnnounced: 0,
   hasVideoStream: false,
+  nativeCameraStream: null,
   lastResetAt: 0,
   videoPlayback: null,
   clipStartMs: null,
@@ -162,7 +163,13 @@ const els = {
   highlightSetEnd: q('#highlight-set-end'),
   highlightShareBtn: q('#highlight-share-btn'),
   highlightSaveBtn: q('#highlight-save-btn'),
-  savedHighlightsList: q('#saved-highlights-list')
+  savedHighlightsList: q('#saved-highlights-list'),
+  nativeCameraPanel: q('#native-camera-panel'),
+  nativeCameraPreview: q('#native-camera-preview'),
+  nativeCameraPlaceholder: q('#native-camera-placeholder'),
+  nativeCameraStartBtn: q('#native-camera-start-btn'),
+  nativeCameraStopBtn: q('#native-camera-stop-btn'),
+  nativeCameraStatus: q('#native-camera-status')
 };
 
 const mentionState = { active: false, atPos: null };
@@ -262,6 +269,109 @@ function resolveVideoPlayback() {
   });
 }
 
+function userCanUseNativeCamera() {
+  return canAccessNativeCameraCapture({
+    user: state.user,
+    team: state.team,
+    game: state.game
+  });
+}
+
+function setNativeCameraStatus(message, tone = 'muted') {
+  if (!els.nativeCameraStatus) return;
+  els.nativeCameraStatus.textContent = message;
+  els.nativeCameraStatus.classList.toggle('text-coral', tone === 'error');
+  els.nativeCameraStatus.classList.toggle('text-teal', tone === 'success');
+  els.nativeCameraStatus.classList.toggle('text-sand/55', tone === 'muted');
+}
+
+function stopNativeCameraPreview() {
+  if (state.nativeCameraStream) {
+    state.nativeCameraStream.getTracks().forEach(track => track.stop());
+    state.nativeCameraStream = null;
+  }
+  if (els.nativeCameraPreview) {
+    els.nativeCameraPreview.pause();
+    els.nativeCameraPreview.srcObject = null;
+    els.nativeCameraPreview.classList.add('hidden');
+  }
+  els.nativeCameraPlaceholder?.classList.remove('hidden');
+  els.nativeCameraStopBtn?.classList.add('hidden');
+  els.nativeCameraStartBtn?.removeAttribute('disabled');
+}
+
+function updateNativeCameraPanel() {
+  const canUseNativeCamera = userCanUseNativeCamera();
+  els.nativeCameraPanel?.classList.toggle('hidden', !canUseNativeCamera);
+  if (!canUseNativeCamera) {
+    stopNativeCameraPreview();
+    return;
+  }
+  if (!state.nativeCameraStream) {
+    setNativeCameraStatus('Camera and microphone permission required. Native preview is separate from YouTube/Twitch playback.');
+  }
+}
+
+function getNativeCameraRecoveryMessage(error) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return 'Camera access is unavailable in this browser. Use a modern mobile browser over HTTPS and try again.';
+  }
+  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+    return 'Camera or microphone permission was denied. Allow camera and microphone access in your browser settings, then try again.';
+  }
+  if (error?.name === 'NotFoundError' || error?.name === 'OverconstrainedError') {
+    return 'No usable camera or microphone was found. Check that the device is connected and not already in use.';
+  }
+  return 'Camera access failed. Check browser permissions, close other apps using the camera, and try again.';
+}
+
+async function startNativeCameraPreview() {
+  if (!userCanUseNativeCamera()) return;
+  stopNativeCameraPreview();
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setNativeCameraStatus(getNativeCameraRecoveryMessage(), 'error');
+    return;
+  }
+
+  try {
+    els.nativeCameraStartBtn?.setAttribute('disabled', 'disabled');
+    setNativeCameraStatus('Requesting camera and microphone access...');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: true
+    });
+    state.nativeCameraStream = stream;
+    if (els.nativeCameraPreview) {
+      els.nativeCameraPreview.srcObject = stream;
+      els.nativeCameraPreview.classList.remove('hidden');
+      await els.nativeCameraPreview.play().catch(() => {});
+    }
+    els.nativeCameraPlaceholder?.classList.add('hidden');
+    els.nativeCameraStopBtn?.classList.remove('hidden');
+    els.nativeCameraStartBtn?.removeAttribute('disabled');
+    setNativeCameraStatus('Native camera preview active. Local verification only, no broadcast or recording.', 'success');
+  } catch (error) {
+    console.warn('Native camera preview failed:', error);
+    stopNativeCameraPreview();
+    setNativeCameraStatus(getNativeCameraRecoveryMessage(error), 'error');
+  }
+}
+
+function initNativeCameraControls() {
+  if (els.nativeCameraStartBtn && !els.nativeCameraStartBtn.dataset.bound) {
+    els.nativeCameraStartBtn.dataset.bound = 'true';
+    els.nativeCameraStartBtn.addEventListener('click', startNativeCameraPreview);
+  }
+  if (els.nativeCameraStopBtn && !els.nativeCameraStopBtn.dataset.bound) {
+    els.nativeCameraStopBtn.dataset.bound = 'true';
+    els.nativeCameraStopBtn.addEventListener('click', () => {
+      stopNativeCameraPreview();
+      setNativeCameraStatus('Native camera preview stopped.');
+    });
+  }
+  window.addEventListener('pagehide', stopNativeCameraPreview, { once: true });
+}
+
 function refreshVideoPanel({ force = false } = {}) {
   const nextPlayback = resolveVideoPlayback();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
@@ -279,7 +389,9 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
   state.videoPlayback = nextPlayback;
-  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
+  const canUseNativeCamera = userCanUseNativeCamera();
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || canUseNativeCamera);
+  updateNativeCameraPanel();
 
   if (state.videoPlayback?.mode === 'recorded') {
     if (iframe) {
@@ -339,13 +451,13 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       iframe.classList.add('hidden');
     }
     els.recordedReplayTools?.classList.add('hidden');
-    els.videoPanel?.classList.add('hidden');
-    if (videoTab) videoTab.classList.add('hidden');
+    els.videoPanel?.classList.toggle('hidden', !canUseNativeCamera);
+    if (videoTab) videoTab.classList.toggle('hidden', !canUseNativeCamera);
     if (extLink) {
       extLink.classList.add('hidden');
       extLink.removeAttribute('href');
     }
-    if (state.activeTab === 'video') state.activeTab = 'plays';
+    if (state.activeTab === 'video' && !canUseNativeCamera) state.activeTab = 'plays';
   }
 
   updateTabs();
@@ -1779,6 +1891,7 @@ async function init() {
   initReactions();
   initReplayControls();
   initRecordedReplayControls();
+  initNativeCameraControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
@@ -1823,6 +1936,7 @@ async function init() {
       if (els.chatAnonNotice) els.chatAnonNotice.classList.add('hidden');
       closeAnonNameEditor();
     }
+    refreshVideoPanel({ force: true });
   }, { skipEmailVerificationCheck: true });
 
   if (state.isReplay) {
