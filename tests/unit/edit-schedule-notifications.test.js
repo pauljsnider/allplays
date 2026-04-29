@@ -12,6 +12,9 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('id="schedule-notification-settings"');
         expect(source).toContain('id="team-reminder-hours"');
         expect(source).toContain('id="save-team-reminder-settings-btn"');
+        expect(source).toContain('24 hours before');
+        expect(source).toContain('48 hours before');
+        expect(source).toContain('72 hours before');
     });
 
     it('includes notify-team controls in game and practice forms', () => {
@@ -21,6 +24,16 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('id="game-notify-note"');
         expect(source).toContain('id="practice-notify-team"');
         expect(source).toContain('id="practice-notify-note"');
+        expect(source).toContain('Immediate team chat update. Separate from stored timed reminder metadata.');
+    });
+
+    it('shows the effective stored reminder window in event forms', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('id="game-effective-reminder-window"');
+        expect(source).toContain('id="practice-effective-reminder-window"');
+        expect(source).toContain('function renderEffectiveReminderWindows');
+        expect(source).toContain('Effective timed reminder metadata for this ${label}: ${settings.reminderHours} hours before start. Automated delivery is not active yet.');
     });
 
     it('wires the schedule notification helper and RSVP reminder action', () => {

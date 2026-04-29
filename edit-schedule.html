@@ -80,8 +80,8 @@
         <div id="schedule-notification-settings" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <h3 class="font-semibold text-gray-900">Schedule Reminders</h3>
-                    <p class="text-sm text-gray-600">Set the default reminder window for schedule-created events. Save/edit flows can notify the team immediately, and RSVP reminders are sent from the event itself.</p>
+                    <h3 class="font-semibold text-gray-900">Schedule Reminder Defaults</h3>
+                    <p class="text-sm text-gray-600">Store the default reminder window for new and edited events. Automated timed delivery is not active yet; use the notify-team controls below for immediate team chat updates.</p>
                 </div>
             </div>
             <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -296,8 +296,9 @@
                                     <input type="checkbox" id="game-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                                     Save and notify team
                                 </label>
-                                <div class="text-xs text-gray-500">Uses team chat now; reminder timing is stored for later delivery.</div>
+                                <div class="text-xs text-gray-500">Immediate team chat update. Separate from stored timed reminder metadata.</div>
                             </div>
+                            <p id="game-effective-reminder-window" class="mt-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded p-2"></p>
                             <textarea id="game-notify-note" rows="2" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2" placeholder="Optional note to include with the schedule update"></textarea>
                         </div>
                         <div class="flex gap-2">
@@ -349,6 +350,7 @@
                                     </label>
                                     <div class="text-xs text-gray-500">Use this when practice details change and families need a heads-up.</div>
                                 </div>
+                                <p id="practice-effective-reminder-window" class="mt-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded p-2"></p>
                                 <textarea id="practice-notify-note" rows="2"
                                     class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
                                     placeholder="Optional note to include with the practice update"></textarea>
@@ -1367,12 +1369,28 @@
             return normalizeScheduleNotificationSettings(currentTeam?.scheduleNotifications || {});
         }
 
+        function getEffectiveReminderWindowText(eventType, settings = getTeamScheduleNotificationSettings()) {
+            const label = String(eventType || '').toLowerCase() === 'practice' ? 'practice' : 'game';
+            if (!settings.enabled) {
+                return `Timed reminder metadata is off for this ${label}. Immediate team chat updates still use the notify checkbox.`;
+            }
+            return `Effective timed reminder metadata for this ${label}: ${settings.reminderHours} hours before start. Automated delivery is not active yet.`;
+        }
+
+        function renderEffectiveReminderWindows(settings = getTeamScheduleNotificationSettings()) {
+            const gameEl = document.getElementById('game-effective-reminder-window');
+            const practiceEl = document.getElementById('practice-effective-reminder-window');
+            if (gameEl) gameEl.textContent = getEffectiveReminderWindowText('game', settings);
+            if (practiceEl) practiceEl.textContent = getEffectiveReminderWindowText('practice', settings);
+        }
+
         function renderTeamScheduleNotificationSettings(team) {
             const settings = normalizeScheduleNotificationSettings(team?.scheduleNotifications || {});
             const enabledEl = document.getElementById('team-reminder-enabled');
             const hoursEl = document.getElementById('team-reminder-hours');
             if (enabledEl) enabledEl.checked = settings.enabled;
             if (hoursEl) hoursEl.value = String(settings.reminderHours);
+            renderEffectiveReminderWindows(settings);
         }
 
         function getEventDateLabel(dateValue) {
@@ -2894,7 +2912,7 @@
                     scheduleNotifications: nextSettings
                 };
                 renderTeamScheduleNotificationSettings(currentTeam);
-                alert('Schedule reminder settings saved.');
+                alert('Schedule reminder settings saved. Event forms now show the updated effective reminder window.');
             } catch (error) {
                 alert('Error saving reminder settings: ' + error.message);
             }
