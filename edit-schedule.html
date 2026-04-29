@@ -3082,7 +3082,9 @@
         // Practice filter
         document.getElementById('show-practices').addEventListener('change', (e) => {
             showPractices = e.target.checked;
-            loadSchedule();
+            if (currentTeam) {
+                loadSchedule();
+            }
         });
 
         function setScheduleFilter(nextFilter) {
@@ -3096,7 +3098,9 @@
                 btn.classList.toggle('text-gray-600', !active);
                 btn.classList.toggle('border-gray-200', !active);
             });
-            loadSchedule();
+            if (currentTeam) {
+                loadSchedule();
+            }
         }
 
         document.querySelectorAll('.schedule-filter-btn').forEach(btn => {
