@@ -471,6 +471,12 @@ service cloud.firestore {
         allow write: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // Officials directory subcollection
+      match /officials/{officialId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Drill Favorites subcollection
       match /drillFavorites/{favoriteId} {
         allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);

@@ -121,6 +121,9 @@
                         <button id="tab-bulk-ai" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             ✨ AI
                         </button>
+                        <button id="tab-officials" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            Officials
+                        </button>
                     </div>
 
                     <!-- Add Game Tab Content -->
@@ -501,6 +504,52 @@
                         </div>
                     </div>
 
+
+                    <!-- Officials Directory Tab Content -->
+                    <div id="content-officials" class="p-6 hidden">
+                        <div class="mb-4">
+                            <h2 class="text-xl font-bold">Officials Directory</h2>
+                            <p class="text-sm text-gray-600 mt-1">Maintain structured official records for future game officiating assignments. This directory is separate from team members, parents, coaches, and the generic game assignments list.</p>
+                        </div>
+                        <form id="official-form" class="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                            <input type="hidden" id="official-id">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Name</label>
+                                <input type="text" id="official-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Official name">
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Email</label>
+                                    <input type="email" id="official-email" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="name@example.com">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Phone</label>
+                                    <input type="tel" id="official-phone" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="555-123-4567">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Officiating Roles</label>
+                                <input type="text" id="official-roles" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Referee, umpire, line judge">
+                                <p class="text-xs text-gray-500 mt-1">Comma-separated roles this official can cover.</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Tags</label>
+                                <input type="text" id="official-tags" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Varsity, 12U, experienced">
+                                <p class="text-xs text-gray-500 mt-1">Optional skill level or division eligibility tags.</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="submit" id="save-official-btn" class="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add Official</button>
+                                <button type="button" id="cancel-official-edit-btn" class="hidden px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">Cancel</button>
+                            </div>
+                        </form>
+                        <div class="mt-5">
+                            <h3 class="text-sm font-semibold text-gray-900 mb-2">Saved Officials</h3>
+                            <div id="officials-list" class="space-y-2">
+                                <p class="text-sm text-gray-600 italic">No officials added yet.</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Bulk AI Update Tab Content -->
                     <div id="content-bulk-ai" class="p-6 hidden">
                         <div class="flex items-start justify-between gap-3 mb-2">
@@ -795,7 +844,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride } from './js/db.js?v=22';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial } from './js/db.js?v=23';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
         import { checkAuth } from './js/auth.js?v=12';
@@ -833,6 +882,7 @@
         let activeTournamentStandingsPoolKey = null;
         let tournamentStandingsDraft = [];
         let tournamentAdvancementGames = [];
+        let officialsDirectory = [];
 
         const opponentInput = document.getElementById('opponent');
         const opponentResults = document.getElementById('opponent-search-results');
@@ -1508,6 +1558,7 @@
             showPractices = practiceToggle?.checked || false;
 
             loadConfigs();
+            loadOfficialsDirectory();
             renderCalendarManagement();
             loadSchedule();
         }
@@ -2295,6 +2346,134 @@
             return String(d.getFullYear());
         }
 
+        // ===== OFFICIALS DIRECTORY =====
+        function splitDirectoryInput(value) {
+            return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+        }
+
+        function resetOfficialForm() {
+            document.getElementById('official-id').value = '';
+            document.getElementById('official-form').reset();
+            document.getElementById('save-official-btn').textContent = 'Add Official';
+            document.getElementById('cancel-official-edit-btn').classList.add('hidden');
+        }
+
+        function renderOfficialsDirectory() {
+            const list = document.getElementById('officials-list');
+            if (!officialsDirectory.length) {
+                list.innerHTML = '<p class="text-sm text-gray-600 italic">No officials added yet.</p>';
+                return;
+            }
+
+            list.innerHTML = officialsDirectory.map((official) => {
+                const roles = Array.isArray(official.roles) ? official.roles : [];
+                const tags = Array.isArray(official.tags) ? official.tags : [];
+                const contact = [official.email, official.phone].filter(Boolean).join(' • ');
+                return `
+                    <div class="border border-gray-200 rounded-lg p-3 bg-white">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <h4 class="font-semibold text-gray-900">${escapeHtml(official.name)}</h4>
+                                <p class="text-sm text-gray-600">${escapeHtml(contact || 'No contact saved')}</p>
+                            </div>
+                            <div class="flex gap-2 text-sm">
+                                <button type="button" class="text-indigo-600 hover:text-indigo-800 font-medium" data-edit-official-id="${escapeHtml(official.id)}">Edit</button>
+                                <button type="button" class="text-red-600 hover:text-red-800 font-medium" data-delete-official-id="${escapeHtml(official.id)}">Remove</button>
+                            </div>
+                        </div>
+                        <div class="mt-2 flex flex-wrap gap-1">
+                            ${roles.map(role => `<span class="inline-block bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5 text-xs font-medium">${escapeHtml(role)}</span>`).join('')}
+                        </div>
+                        ${tags.length ? `<div class="mt-2 flex flex-wrap gap-1">${tags.map(tag => `<span class="inline-block bg-gray-100 text-gray-700 rounded-full px-2 py-0.5 text-xs">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadOfficialsDirectory() {
+            try {
+                officialsDirectory = await getOfficials(currentTeamId);
+                renderOfficialsDirectory();
+            } catch (error) {
+                console.error('Failed to load officials directory:', error);
+                document.getElementById('officials-list').innerHTML = '<p class="text-sm text-red-600">Could not load officials.</p>';
+            }
+        }
+
+        function getOfficialDraftFromForm() {
+            return {
+                name: document.getElementById('official-name').value.trim(),
+                email: document.getElementById('official-email').value.trim(),
+                phone: document.getElementById('official-phone').value.trim(),
+                roles: splitDirectoryInput(document.getElementById('official-roles').value),
+                tags: splitDirectoryInput(document.getElementById('official-tags').value)
+            };
+        }
+
+        function editOfficial(officialId) {
+            const official = officialsDirectory.find(item => item.id === officialId);
+            if (!official) return;
+            document.getElementById('official-id').value = official.id;
+            document.getElementById('official-name').value = official.name || '';
+            document.getElementById('official-email').value = official.email || '';
+            document.getElementById('official-phone').value = official.phone || '';
+            document.getElementById('official-roles').value = Array.isArray(official.roles) ? official.roles.join(', ') : '';
+            document.getElementById('official-tags').value = Array.isArray(official.tags) ? official.tags.join(', ') : '';
+            document.getElementById('save-official-btn').textContent = 'Update Official';
+            document.getElementById('cancel-official-edit-btn').classList.remove('hidden');
+            document.getElementById('official-form').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        document.getElementById('official-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const officialId = document.getElementById('official-id').value;
+            const draft = getOfficialDraftFromForm();
+            if (!draft.email && !draft.phone) {
+                alert('Add an email or phone for this official.');
+                return;
+            }
+            if (draft.roles.length === 0) {
+                alert('Add at least one officiating role.');
+                return;
+            }
+
+            try {
+                if (officialId) {
+                    await updateOfficial(currentTeamId, officialId, draft);
+                } else {
+                    await addOfficial(currentTeamId, draft);
+                }
+                resetOfficialForm();
+                await loadOfficialsDirectory();
+            } catch (error) {
+                console.error('Failed to save official:', error);
+                alert(`Could not save official: ${error.message}`);
+            }
+        });
+
+        document.getElementById('cancel-official-edit-btn').addEventListener('click', resetOfficialForm);
+        document.getElementById('officials-list').addEventListener('click', async (event) => {
+            const editId = event.target.dataset.editOfficialId;
+            const deleteId = event.target.dataset.deleteOfficialId;
+            if (editId) {
+                editOfficial(editId);
+                return;
+            }
+            if (!deleteId) return;
+            const official = officialsDirectory.find(item => item.id === deleteId);
+            if (!confirm(`Remove ${official?.name || 'this official'} from the officials directory?`)) return;
+            try {
+                await deleteOfficial(currentTeamId, deleteId);
+                if (document.getElementById('official-id').value === deleteId) {
+                    resetOfficialForm();
+                }
+                await loadOfficialsDirectory();
+            } catch (error) {
+                console.error('Failed to delete official:', error);
+                alert(`Could not remove official: ${error.message}`);
+            }
+        });
+
         // ===== ASSIGNMENT ROWS =====
         function addAssignmentRow(role = '', value = '') {
             const container = document.getElementById('assignment-rows');
@@ -2969,8 +3148,8 @@
 
         // Tab switching helper
         function switchTab(activeTab) {
-            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-csv-import', 'tab-bulk-ai'];
-            const contents = ['content-add-game', 'content-add-practice', 'content-csv-import', 'content-bulk-ai'];
+            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-csv-import', 'tab-bulk-ai', 'tab-officials'];
+            const contents = ['content-add-game', 'content-add-practice', 'content-csv-import', 'content-bulk-ai', 'content-officials'];
 
             tabs.forEach((tabId, index) => {
                 const tab = document.getElementById(tabId);
@@ -2995,6 +3174,7 @@
         document.getElementById('tab-add-practice').addEventListener('click', () => switchTab('tab-add-practice'));
         document.getElementById('tab-csv-import').addEventListener('click', () => switchTab('tab-csv-import'));
         document.getElementById('tab-bulk-ai').addEventListener('click', () => switchTab('tab-bulk-ai'));
+        document.getElementById('tab-officials').addEventListener('click', () => switchTab('tab-officials'));
 
         // Recurrence builder toggle
         document.getElementById('practiceRecurring').addEventListener('change', (e) => {
