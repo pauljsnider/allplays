@@ -139,6 +139,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-email.js', 'const { resolveFinalScore } = deps.liveTrackerEmail;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-reset.js', 'const { buildLiveResetEvent } = deps.liveTrackerReset;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-chat-unread.js', 'const { advanceLiveChatUnreadState } = deps.liveTrackerChatUnread;');
+    rewritten = replaceNamedImportByModulePath(rewritten, './live-stream-utils.js', 'const { buildVideoTimestampMetadata, hasConfiguredLiveStream } = deps.liveStreamUtils;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-game-state.js', 'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-sport-config.js', 'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-finish.js', 'const { buildOpponentStatsSnapshotFromEntries } = deps.liveTrackerFinish;');
@@ -249,6 +250,10 @@ async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGame
         },
         liveTrackerChatUnread: {
             advanceLiveChatUnreadState: (state) => state
+        },
+        liveStreamUtils: {
+            buildVideoTimestampMetadata: () => ({}),
+            hasConfiguredLiveStream: () => false
         },
         liveGameState: {
             resolveLiveStatConfig: () => null,

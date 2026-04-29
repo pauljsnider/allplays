@@ -259,6 +259,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
+    './live-stream-utils.js',
+    'const { buildVideoTimestampMetadata, hasConfiguredLiveStream } = deps.liveStreamUtils;'
+  );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
     './live-game-state.js',
     'const { resolveLiveStatConfig, resolveLiveStatColumns } = deps.liveGameState;'
   );
@@ -440,6 +445,10 @@ async function bootLiveTracker({ game, snapshots }) {
     },
     liveTrackerChatUnread: {
       advanceLiveChatUnreadState: (state) => state
+    },
+    liveStreamUtils: {
+      buildVideoTimestampMetadata: () => ({}),
+      hasConfiguredLiveStream: () => false
     },
     liveGameState: {
       resolveLiveStatConfig: () => config,
