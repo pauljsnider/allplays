@@ -39,7 +39,7 @@ function getComparableTitle(event = {}) {
 }
 
 function isSameLocalEvent(sourceEvent, existingEvent) {
-    const sourceDate = toDate(sourceEvent.date || sourceEvent.start || sourceEvent.startTime);
+    const sourceDate = toDate(sourceEvent.date || sourceEvent.start || sourceEvent.startTime || sourceEvent.startsAt);
     const existingDate = toDate(existingEvent.date || existingEvent.start || existingEvent.startTime);
     if (!sourceDate || !existingDate || sourceDate.getTime() !== existingDate.getTime()) return false;
 
