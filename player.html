@@ -140,6 +140,10 @@
                             class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
                             Game Events
                         </button>
+                        <button id="tab-video-clips"
+                            class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
+                            Video Clips
+                        </button>
                     </div>
                 </div>
 
@@ -162,6 +166,13 @@
                     <div id="content-events" class="tab-content hidden">
                         <div id="player-events">
                             <div class="text-gray-500 text-sm">Loading events...</div>
+                        </div>
+                    </div>
+
+                    <!-- Video Clips Tab -->
+                    <div id="content-video-clips" class="tab-content hidden">
+                        <div id="player-video-clips">
+                            <div class="text-gray-500 text-sm">Loading video clips...</div>
                         </div>
                     </div>
                 </div>
@@ -246,7 +257,7 @@
         renderFooter(document.getElementById('footer-container'));
 
         // Tab switching
-        const tabs = ['games', 'season', 'events'];
+        const tabs = ['games', 'season', 'events', 'video-clips'];
         tabs.forEach(tab => {
             document.getElementById(`tab-${tab}`).addEventListener('click', () => {
                 tabs.forEach(t => {
@@ -347,6 +358,134 @@
                             </div>
                         `).join('')}
                     </div>
+                </div>
+            `;
+        }
+
+
+        function cleanClipString(value) {
+            return String(value || '').trim();
+        }
+
+        function toClipDate(value) {
+            if (!value) return null;
+            if (value.toDate) return value.toDate();
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+
+        function isVideoClipUrl(url = '') {
+            return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(cleanClipString(url));
+        }
+
+        function normalizePlayerVideoClip(rawClip = {}, game = null, index = 0) {
+            const url = cleanClipString(rawClip.url || rawClip.videoUrl || rawClip.publicUrl || rawClip.href);
+            if (!url) return null;
+
+            const gameDate = toClipDate(rawClip.gameDate || rawClip.date || game?.date);
+            const mediaType = cleanClipString(rawClip.mediaType).toLowerCase();
+
+            return {
+                id: cleanClipString(rawClip.id || `${game?.id || 'player'}-${index}`),
+                title: cleanClipString(rawClip.title || rawClip.name || `Video Clip ${index + 1}`),
+                url,
+                thumbnailUrl: cleanClipString(rawClip.thumbnailUrl || rawClip.posterUrl || rawClip.imageUrl),
+                gameDate,
+                playLabel: cleanClipString(rawClip.playLabel || rawClip.label || rawClip.eventLabel || rawClip.statLabel),
+                mediaType: mediaType || (isVideoClipUrl(url) ? 'video' : 'link'),
+                gameId: cleanClipString(rawClip.gameId || game?.id)
+            };
+        }
+
+        function clipReferencesPlayer(rawClip = {}, playerId = '') {
+            if (!playerId) return false;
+            if (rawClip.playerId === playerId) return true;
+            if (Array.isArray(rawClip.playerIds) && rawClip.playerIds.includes(playerId)) return true;
+            if (Array.isArray(rawClip.players) && rawClip.players.some((player) => player?.id === playerId || player?.playerId === playerId)) return true;
+            return false;
+        }
+
+        function collectPlayerVideoClips(player = {}, games = [], playerId = '') {
+            const clips = [];
+            const playerClipSources = [player.videoClips, player.clips, player.highlightClips];
+            playerClipSources.forEach((source) => {
+                if (Array.isArray(source)) {
+                    source.forEach((clip) => clips.push({ clip, game: null }));
+                }
+            });
+
+            games.forEach((game) => {
+                [game.videoClips, game.clips, game.highlightClips].forEach((source) => {
+                    if (Array.isArray(source)) {
+                        source
+                            .filter((clip) => clipReferencesPlayer(clip, playerId))
+                            .forEach((clip) => clips.push({ clip, game }));
+                    }
+                });
+            });
+
+            return clips
+                .map(({ clip, game }, index) => normalizePlayerVideoClip(clip, game, index))
+                .filter(Boolean)
+                .sort((a, b) => (b.gameDate?.getTime() || 0) - (a.gameDate?.getTime() || 0));
+        }
+
+        function renderClipPlayableMedia(clip) {
+            if (clip.mediaType === 'video') {
+                return `
+                    <video controls preload="metadata" class="w-full h-48 rounded-xl bg-black border border-gray-200 object-contain" ${clip.thumbnailUrl ? `poster="${escapeHtml(clip.thumbnailUrl)}"` : ''}>
+                        <source src="${escapeHtml(clip.url)}">
+                        <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer">Open video clip</a>
+                    </video>
+                `;
+            }
+
+            if (clip.thumbnailUrl) {
+                return `<img src="${escapeHtml(clip.thumbnailUrl)}" alt="${escapeHtml(clip.title)}" class="w-full h-48 rounded-xl object-cover border border-gray-200 bg-gray-50">`;
+            }
+
+            return `
+                <div class="flex h-48 items-center justify-center rounded-xl border border-dashed border-primary-200 bg-primary-50 text-primary-700">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                </div>
+            `;
+        }
+
+        function renderPlayerVideoClips(clips = []) {
+            if (!clips.length) {
+                return `
+                    <div class="text-center py-12 bg-white rounded-xl border border-dashed border-gray-300">
+                        <svg class="w-16 h-16 text-primary-200 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                        </svg>
+                        <p class="text-lg font-semibold text-gray-700">No video clips yet</p>
+                        <p class="text-sm text-gray-500 mt-2 max-w-md mx-auto">Player clips will appear here after scored streamed games are processed.</p>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    ${clips.map((clip) => `
+                        <article class="bg-gradient-to-br from-gray-50 to-white rounded-xl p-4 border border-gray-200 hover:border-primary-300 hover:shadow-md transition">
+                            ${renderClipPlayableMedia(clip)}
+                            <div class="mt-4">
+                                <h3 class="text-lg font-bold text-gray-900">${escapeHtml(clip.title || 'Video Clip')}</h3>
+                                <div class="mt-2 flex flex-wrap gap-2 text-sm text-gray-600">
+                                    ${clip.gameDate ? `<span class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 font-medium">${escapeHtml(clip.gameDate.toLocaleDateString())}</span>` : ''}
+                                    ${clip.playLabel ? `<span class="inline-flex items-center rounded-full bg-primary-50 px-3 py-1 font-medium text-primary-700">${escapeHtml(clip.playLabel)}</span>` : ''}
+                                </div>
+                                <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer" class="mt-4 inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 font-medium">
+                                    Open video URL
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                    </svg>
+                                </a>
+                            </div>
+                        </article>
+                    `).join('')}
                 </div>
             `;
         }
@@ -596,6 +735,9 @@
                     })
                     : null;
                 const playerTopStats = summarizePlayerTopStats(leaderboardSnapshot, playerId);
+
+                const playerClips = collectPlayerVideoClips(player, games, playerId);
+                document.getElementById('player-video-clips').innerHTML = renderPlayerVideoClips(playerClips);
 
                 // Render Advanced Stats Visualizations
                 const advancedStatsDiv = document.getElementById('advanced-stats');
