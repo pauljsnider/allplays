@@ -255,7 +255,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: 'window.tailwind = window.tailwind || { config: {} };'
     }));
-    await page.route('**/js/db.js?v=15', (route) => route.fulfill({
+    await page.route('**/js/db.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: buildDbStub(scenario)
