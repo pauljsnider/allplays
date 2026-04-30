@@ -17,6 +17,17 @@ export function normalizeScheduleNotificationSettings(settings = {}) {
     };
 }
 
+export function describeScheduleReminderWindow(settings = {}) {
+    const hasTeamDefault = Object.prototype.hasOwnProperty.call(settings || {}, 'reminderHours')
+        && SUPPORTED_REMINDER_HOURS.includes(Number.parseInt(settings?.reminderHours, 10));
+    const { reminderHours } = normalizeScheduleNotificationSettings(settings);
+    const label = `${reminderHours} hours before event start`;
+
+    return hasTeamDefault
+        ? `Team default reminder window: ${label}.`
+        : `Fallback reminder window: ${label}. No team default is set yet.`;
+}
+
 export function buildScheduleNotificationMetadata({
     settings,
     reminderHours,
