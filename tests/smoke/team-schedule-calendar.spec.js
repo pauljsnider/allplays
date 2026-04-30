@@ -75,6 +75,14 @@ export async function getUnreadChatCounts() {
 export async function getUserProfile() {
     return null;
 }
+
+export async function saveTeamAvailabilityPreferences() {
+    return undefined;
+}
+
+export async function getRsvps() {
+    return [];
+}
 `;
 }
 
