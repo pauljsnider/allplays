@@ -1280,6 +1280,11 @@ export async function addGame(teamId, gameData) {
     return docRef.id;
 }
 
+export async function saveGamePlan(teamId, gameId, gamePlan) {
+    const docRef = getTeamGameDocRef(teamId, gameId);
+    await updateDoc(docRef, { gamePlan });
+}
+
 export async function updateGame(teamId, gameId, gameData) {
     const previousGame = await getGame(teamId, gameId);
     const docRef = getGameDocRef(teamId, gameId);
