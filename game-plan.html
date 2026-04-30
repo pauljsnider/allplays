@@ -596,10 +596,25 @@
             lastSelectedPlayerId = null;
             dragSourceCellKey = null;
             autoSave.cancel();
-            // Hide status badge on game switch; it reappears on first change
             const saveStatusEl = document.getElementById('save-status');
-            saveStatusEl.classList.add('hidden');
-            saveStatusEl.classList.remove('flex');
+            const saveStatusText = document.getElementById('save-status-text');
+            const saveStatusDot = document.getElementById('save-status-dot');
+            const saveStatusSpinner = document.getElementById('save-status-spinner');
+            const isReadOnlyGame = !!game.isCalendar || !!game.isSharedGame;
+
+            if (isReadOnlyGame) {
+                const msg = game.isCalendar
+                    ? 'Create this as a scheduled game to save the plan'
+                    : 'Shared tournament games are read-only';
+                saveStatusEl.className = 'flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl bg-amber-50 text-amber-700';
+                saveStatusSpinner.classList.add('hidden');
+                saveStatusDot.className = 'w-2 h-2 rounded-full bg-amber-500 flex-shrink-0';
+                saveStatusText.textContent = msg;
+            } else {
+                // Hide status badge on game switch; it reappears on first change
+                saveStatusEl.classList.add('hidden');
+                saveStatusEl.classList.remove('flex');
+            }
 
             const savePlanButton = document.getElementById('save-plan-btn');
             const savePlanNote = document.getElementById('save-plan-note');
