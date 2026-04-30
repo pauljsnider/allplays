@@ -119,6 +119,7 @@ const Blob = deps.Blob;
         .replace("import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';", 'const { getEventRideshareSummary, getOfferSeatInfo } = deps.rideshareHelpers;')
         .replace("import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';", 'const { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } = deps.parentDashboardRideshareControls;')
         .replace("import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';", 'const { applyRsvpHydration } = deps.rsvpHydration;')
+        .replace("import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';", 'const { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;')
         .replace(/\binit\(\);\s*$/, `
 window.__parentDashboardTestHooks = {
     setAllScheduleEvents(value) {
@@ -271,6 +272,12 @@ function createDeps(submitRecorder) {
         },
         parentDashboardRsvp,
         parentDashboardRsvpControls,
+        availabilityPreferences: {
+            buildAvailabilityNoteRows() { return []; },
+            formatAvailabilityCutoff() { return 'No cutoff'; },
+            isAvailabilityLocked() { return false; },
+            normalizeAvailabilityPreferences() { return { cutoffMinutesBeforeStart: 0, noteVisibility: 'admins' }; }
+        },
         rideshareHelpers: {
             getEventRideshareSummary() { return { seatsLeft: 0, requests: 0, isFull: false }; },
             getOfferSeatInfo() { return { seatCountConfirmed: 0, seatCapacity: 0, seatsLeft: 0 }; }
