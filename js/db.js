@@ -3885,8 +3885,10 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     return summary;
 }
 
-export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
-    await assertAvailabilityOpen(teamId, gameId);
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note, skipAvailabilityCutoff = false }) {
+    if (!skipAvailabilityCutoff) {
+        await assertAvailabilityOpen(teamId, gameId);
+    }
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');
