@@ -52,6 +52,7 @@ import {
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
+import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -322,6 +323,30 @@ export async function getTeam(teamId, options = {}) {
     } else {
         return null;
     }
+}
+
+export async function getLocalAttractionSponsors(teamId) {
+    if (!teamId) return [];
+
+    const sponsorsRef = collection(db, `teams/${teamId}/sponsors`);
+    const sponsorQueries = [
+        query(sponsorsRef, where("status", "==", "published")),
+        query(sponsorsRef, where("published", "==", true)),
+        query(sponsorsRef, where("isPublished", "==", true))
+    ];
+    const snapshots = await Promise.allSettled(sponsorQueries.map((q) => getDocs(q)));
+    const successfulSnapshots = snapshots.filter((result) => result.status === 'fulfilled');
+
+    if (successfulSnapshots.length === 0) {
+        throw snapshots[0]?.reason || new Error('Unable to load local attraction sponsors');
+    }
+
+    const sponsorsById = new Map();
+    successfulSnapshots.forEach((result) => {
+        result.value.docs.forEach(doc => sponsorsById.set(doc.id, { id: doc.id, ...doc.data() }));
+    });
+
+    return normalizeLocalAttractionSponsors(Array.from(sponsorsById.values()));
 }
 
 export async function getUserTeams(userId, options = {}) {
