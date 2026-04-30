@@ -577,6 +577,21 @@ function assertNoSensitivePlayerFields(playerData) {
     }
 }
 
+export async function getRosterFieldDefinitions(teamId, team = null) {
+    const teamFields = team?.rosterFields || team?.rosterProfileFields || team?.playerProfileFields || team?.customRosterFields || [];
+
+    try {
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/rosterFields`));
+        if (!snapshot.empty) {
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        }
+    } catch (e) {
+        console.warn('Failed to load roster field definitions from subcollection:', e);
+    }
+
+    return Array.isArray(teamFields) ? teamFields : [];
+}
+
 export async function getPlayers(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const isActivePlayer = (player) => player?.active !== false;
@@ -2311,10 +2326,17 @@ export async function updatePlayerProfile(teamId, playerId, data) {
     // SECURITY: sensitive fields must never live on the public player doc.
     const now = Timestamp.now();
 
-    // Public player doc: allow photoUrl only.
+    // Public player doc: allow photoUrl and non-sensitive roster profile fields.
+    const publicUpdate = {};
     if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
+        publicUpdate.photoUrl = data.photoUrl || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
+        publicUpdate.profile = data.profile || {};
+    }
+    if (Object.keys(publicUpdate).length > 0) {
         await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
-            photoUrl: data.photoUrl || null,
+            ...publicUpdate,
             updatedAt: now
         });
     }

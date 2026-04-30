@@ -95,6 +95,7 @@
                                 </label>
                             </div>
                         </div>
+                        <div id="roster-profile-fields" class="space-y-4 hidden"></div>
                         <button type="submit" id="submit-player"
                             class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
                             Player</button>
@@ -347,7 +348,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest } from './js/db.js?v=15';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions } from './js/db.js?v=16';
+        import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -362,6 +364,8 @@
         let currentUser = null;
         let editingPlayerId = null;
         let editingPhotoUrl = null;
+        let editingPlayerProfile = null;
+        let rosterFieldDefinitions = [];
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -392,6 +396,8 @@
                 return;
             }
             currentTeam = team;
+            rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
+            renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
 
             // Fetch unread count and render banner
             let unreadCount = 0;
@@ -744,6 +750,7 @@
         function resetForm() {
             editingPlayerId = null;
             editingPhotoUrl = null;
+            editingPlayerProfile = null;
             document.getElementById('add-player-form').reset();
             document.getElementById('submit-player').textContent = 'Add Player';
             document.getElementById('form-subtitle').textContent = 'Add a new player to the roster.';
@@ -751,6 +758,7 @@
             document.getElementById('player-photo-preview').classList.add('hidden');
             document.getElementById('player-photo-thumb').innerHTML = '';
             document.getElementById('removePhoto').checked = false;
+            renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
         }
 
         function startEditPlayer(player) {
@@ -764,6 +772,7 @@
 
             editingPlayerId = player.id;
             editingPhotoUrl = player.photoUrl || null;
+            editingPlayerProfile = player.profile || null;
             document.getElementById('playerName').value = player.name || '';
             document.getElementById('playerNumber').value = player.number || '';
             document.getElementById('submit-player').textContent = 'Save Changes';
@@ -783,6 +792,11 @@
                     </svg>`;
             }
             previewWrap.classList.remove('hidden');
+            renderRosterProfileFields(
+                document.getElementById('roster-profile-fields'),
+                rosterFieldDefinitions,
+                getRosterProfileValues(player)
+            );
         }
 
         document.getElementById('cancel-edit').addEventListener('click', () => resetForm());
@@ -793,6 +807,13 @@
             const number = document.getElementById('playerNumber').value;
             const photoInput = document.getElementById('playerPhoto');
             const removePhoto = document.getElementById('removePhoto').checked;
+            const profileValues = collectRosterProfileValues(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
+            const validationErrors = validateRosterProfileValues(rosterFieldDefinitions, profileValues);
+
+            if (validationErrors.length) {
+                alert(validationErrors.join('\n'));
+                return;
+            }
 
             try {
                 let photoUrl = editingPhotoUrl;
@@ -817,9 +838,19 @@
                 }
 
                 if (editingPlayerId) {
-                    await updatePlayer(currentTeamId, editingPlayerId, { name, number, photoUrl });
+                    await updatePlayer(currentTeamId, editingPlayerId, {
+                        name,
+                        number,
+                        photoUrl,
+                        profile: { ...(editingPlayerProfile || {}), customFields: profileValues }
+                    });
                 } else {
-                    await addPlayer(currentTeamId, { name, number, photoUrl });
+                    await addPlayer(currentTeamId, {
+                        name,
+                        number,
+                        photoUrl,
+                        profile: { customFields: profileValues }
+                    });
                 }
 
                 resetForm();
