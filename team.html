@@ -252,6 +252,7 @@
         import { collection, getDocs } from "./js/firebase.js?v=10";
         import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
+        import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -275,6 +276,7 @@
         let currentUser = null;
         let currentTeam = null;
         let currentTeamId = null;
+        let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -883,6 +885,7 @@
                     }
 
                     const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
+                    currentTeamAccessInfo = accessInfo;
                     if (accessInfo.hasAccess) {
                         // Fetch unread count for chat badge
                         let unreadCount = 0;
@@ -1246,6 +1249,17 @@
                 } else {
                     rosterBody.innerHTML = players.map(p => {
                         const href = latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`;
+                        const rosterFields = getVisibleRosterFieldValues(currentTeam, p, getRosterFieldAccess(p));
+                        const rosterFieldsHtml = rosterFields.length > 0 ? `
+                            <div class="mt-1 flex flex-wrap gap-1.5">
+                                ${rosterFields.map(({ field, value }) => `
+                                    <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+                                        <span class="font-semibold">${escapeHtml(field.label)}:</span>
+                                        <span>${escapeHtml(String(value))}</span>
+                                    </span>
+                                `).join('')}
+                            </div>
+                        ` : '';
                         return `
                     <div class="grid grid-cols-3 p-4 hover:bg-primary-50 transition group">
                         <div class="font-mono text-gray-600 group-hover:text-primary-700 font-semibold">
@@ -1262,6 +1276,7 @@
                                 </span>
                                 <span>${escapeHtml(p.name)}</span>
                             </a>
+                            ${rosterFieldsHtml}
                         </div>
                             </div>
                         `;
@@ -1271,6 +1286,17 @@
             } catch (error) {
                 console.error(error);
             }
+        }
+
+        function getRosterFieldAccess(player) {
+            const isLinkedParent = !!currentUser && Array.isArray(currentUser.parentOf) &&
+                currentUser.parentOf.some(p => p.teamId === currentTeamId && (!player?.id || p.playerId === player.id));
+
+            return {
+                isAdmin: currentTeamAccessInfo.accessLevel === 'full',
+                isTeamMember: !!currentTeamAccessInfo.hasAccess,
+                isLinkedParent
+            };
         }
 
         async function getAllEvents(team, dbGames) {

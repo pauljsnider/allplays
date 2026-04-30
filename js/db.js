@@ -570,8 +570,18 @@ export async function deleteTeam(teamId) {
 // Players
 function assertNoSensitivePlayerFields(playerData) {
     if (!playerData || typeof playerData !== 'object') return;
-    const forbidden = ['medicalInfo', 'emergencyContact'];
+    const forbidden = ['medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes', 'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone'];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
+    const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
+    rosterFieldSources.forEach((sourceKey) => {
+        const source = playerData[sourceKey];
+        if (!source || typeof source !== 'object') return;
+        forbidden.forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(source, key)) {
+                present.push(`${sourceKey}.${key}`);
+            }
+        });
+    });
     if (present.length) {
         throw new Error(`Do not write sensitive fields to public player doc: ${present.join(', ')}`);
     }
