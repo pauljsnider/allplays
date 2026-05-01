@@ -58,6 +58,9 @@
             </div>
         </div>
 
+        <!-- Team Pass entry point -->
+        <div id="team-pass-container"></div>
+
         <!-- Season Overview Cards -->
         <div id="season-overview" class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
             <!-- Loading placeholders -->
@@ -269,6 +272,7 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
+        import { renderTeamPassCard } from './js/team-pass.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1104,6 +1108,10 @@
                 }
 
                 renderAvailabilitySettings(team);
+                renderTeamPassCard(document.getElementById('team-pass-container'), {
+                    user: currentUser,
+                    team: { ...team, id: teamId }
+                });
 
                 const seasonLabels = listSeasonLabels(dbGames);
                 if (!seasonLabels.length) {
