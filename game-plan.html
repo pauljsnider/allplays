@@ -331,6 +331,11 @@
         let dragSourceCellKey = null;
         let combinedGames = [];
         let plannerInitialized = false;
+        let savePlanResetTimer = null;
+
+        function isReadOnlyGame(game = currentGame) {
+            return !!game?.isCalendar || !!game?.isSharedGame;
+        }
 
         function setAutoSaveStatus(status) {
             const el = document.getElementById('save-status');
@@ -610,6 +615,7 @@
                 saveStatusSpinner.classList.add('hidden');
                 saveStatusDot.className = 'w-2 h-2 rounded-full bg-amber-500 flex-shrink-0';
                 saveStatusText.textContent = msg;
+
             } else {
                 // Hide status badge on game switch; it reappears on first change
                 saveStatusEl.classList.add('hidden');
