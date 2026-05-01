@@ -64,4 +64,19 @@ describe('parent dashboard team fees', () => {
         expect(formatParentFeeDueDate(null)).toBe('No due date');
         expect(renderParentTeamFees([])).toBe('');
     });
+
+    it('keeps date-only due dates on the intended local calendar date', () => {
+        const previousTimeZone = process.env.TZ;
+        process.env.TZ = 'America/Chicago';
+
+        try {
+            expect(formatParentFeeDueDate('2026-06-01')).toBe('Jun 1, 2026');
+            expect(sortParentFeeRecords([
+                { title: 'Later', dueDate: '2026-06-02' },
+                { title: 'Sooner', dueDate: '2026-06-01' }
+            ]).map((fee) => fee.title)).toEqual(['Sooner', 'Later']);
+        } finally {
+            process.env.TZ = previousTimeZone;
+        }
+    });
 });

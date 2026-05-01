@@ -30,9 +30,16 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function parseDateOnlyLocal(value) {
+    const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
 function toDateSafe(value) {
     if (!value) return null;
-    const date = value?.toDate ? value.toDate() : new Date(value);
+    const localDateOnly = typeof value === 'string' ? parseDateOnlyLocal(value) : null;
+    const date = value?.toDate ? value.toDate() : localDateOnly || new Date(value);
     return Number.isNaN(date?.getTime?.()) ? null : date;
 }
 
