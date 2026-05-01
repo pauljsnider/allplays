@@ -101,6 +101,8 @@ describe('live game replay video helpers', () => {
             {
                 title: 'Riley hits the go-ahead three',
                 description: 'Riley hits the go-ahead three',
+                startMs: null,
+                endMs: null,
                 period: 'Q4',
                 gameTime: '0:42',
                 videoUrl: 'https://video.example.com/clip-2',
@@ -131,9 +133,32 @@ describe('live game replay video helpers', () => {
             ]
         });
 
-        expect(clips).toEqual([
+        expect(clips).toMatchObject([
             { title: 'Assist', startMs: 12_000, endMs: 42_000, taggedPlayerIds: ['player-3'] },
             { title: 'Untagged', startMs: 45_000, endMs: 55_000 }
+        ]);
+    });
+
+    it('preserves null timing for untimed recap clips that use the replay fallback', () => {
+        const clips = normalizeGameRecapHighlightClips({
+            replayVideo: {
+                url: 'https://cdn.example.com/full-game.mp4',
+                publicUrl: 'https://video.example.com/full-game'
+            },
+            clipMetadata: [
+                {
+                    playDescription: 'Post-game note with no timestamp'
+                }
+            ]
+        });
+
+        expect(clips).toMatchObject([
+            {
+                title: 'Post-game note with no timestamp',
+                startMs: null,
+                endMs: null,
+                videoUrl: 'https://video.example.com/full-game'
+            }
         ]);
     });
 

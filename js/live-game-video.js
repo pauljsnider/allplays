@@ -220,15 +220,17 @@ export function normalizeGameRecapHighlightClips(game, options = {}) {
     return collectRawHighlightClips(game)
         .map((clip, index) => {
             const videoUrl = getClipVideoUrl(clip) || replayUrl;
-            const normalized = createHighlightClipDraft({
-                startMs: clip?.startMs ?? clip?.clipStartMs,
-                endMs: clip?.endMs ?? clip?.clipEndMs,
+            const rawStartMs = toFiniteNumber(clip?.startMs ?? clip?.clipStartMs);
+            const rawEndMs = toFiniteNumber(clip?.endMs ?? clip?.clipEndMs);
+            const normalized = Number.isFinite(rawStartMs) ? createHighlightClipDraft({
+                startMs: rawStartMs,
+                endMs: rawEndMs,
                 durationMs: durationMs ?? recorded?.durationMs,
                 title: clip?.title || clip?.playDescription || clip?.description || `Highlight ${index + 1}`
-            }, options);
+            }, options) : null;
             if (!normalized && !videoUrl) return null;
-            const startMs = normalized?.startMs ?? toFiniteNumber(clip?.startMs ?? clip?.clipStartMs);
-            const endMs = normalized?.endMs ?? toFiniteNumber(clip?.endMs ?? clip?.clipEndMs);
+            const startMs = normalized?.startMs ?? rawStartMs;
+            const endMs = normalized?.endMs ?? rawEndMs;
             return {
                 title: normalized?.title || firstSafeString([clip?.title, clip?.playDescription, clip?.description]) || `Highlight ${index + 1}`,
                 description: firstSafeString([clip?.playDescription, clip?.description, clip?.text, clip?.message]) || normalized?.title || `Highlight ${index + 1}`,
