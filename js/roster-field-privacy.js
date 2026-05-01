@@ -30,7 +30,7 @@ export function getRosterFieldDefinitions(team = {}) {
         team.rosterFieldDefinitions
     ];
 
-    const fields = candidates.find((entry) => Array.isArray(entry)) || [];
+    const fields = candidates.find((entry) => Array.isArray(entry) && entry.length > 0) || [];
     return fields
         .map((field) => {
             const id = normalizeKey(field?.id || field?.key || field?.name);

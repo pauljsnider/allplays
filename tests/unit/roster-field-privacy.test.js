@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getVisibleRosterFieldValues } from '../../js/roster-field-privacy.js';
+import { getRosterFieldDefinitions, getVisibleRosterFieldValues } from '../../js/roster-field-privacy.js';
 
 const team = {
     rosterFields: [
@@ -20,6 +20,17 @@ const player = {
 };
 
 describe('roster field privacy', () => {
+    it('uses populated fallback schema definitions when the primary roster field array is empty', () => {
+        const migratedTeam = {
+            rosterFields: [],
+            rosterProfileFields: [
+                { id: 'school', label: 'School', visibility: 'public' }
+            ]
+        };
+
+        expect(getRosterFieldDefinitions(migratedTeam).map((field) => field.id)).toEqual(['school']);
+    });
+
     it('shows only public configured fields to anonymous roster/profile viewers', () => {
         expect(getVisibleRosterFieldValues(team, player, {}).map(({ field }) => field.id)).toEqual(['school']);
     });
