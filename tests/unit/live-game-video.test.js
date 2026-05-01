@@ -3,6 +3,7 @@ import {
     MAX_HIGHLIGHT_CLIP_MS,
     buildHighlightShareUrl,
     createHighlightClipDraft,
+    normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
@@ -58,9 +59,53 @@ describe('live game replay video helpers', () => {
             durationMs: 90_000
         });
 
-        expect(clips).toEqual([
-            { title: 'Layup', startMs: 5_000, endMs: 55_000 },
-            { title: 'Too long', startMs: 0, endMs: 60_000 }
+        expect(clips).toMatchObject([
+            { title: 'Layup', startMs: 5_000, endMs: 55_000, description: 'Layup' },
+            { title: 'Too long', startMs: 0, endMs: 60_000, description: 'Too long' }
+        ]);
+    });
+
+    it('normalizes game recap clip metadata with context players and links', () => {
+        const clips = normalizeGameRecapHighlightClips({
+            replayVideo: {
+                url: 'https://cdn.example.com/full-game.mp4',
+                publicUrl: 'https://video.example.com/full-game'
+            },
+            clipMetadata: [
+                {
+                    order: 2,
+                    playDescription: 'Riley hits the go-ahead three',
+                    period: 'Q4',
+                    gameTime: '0:42',
+                    playerIds: ['p1'],
+                    videoUrl: 'https://video.example.com/clip-2'
+                },
+                {
+                    order: 1,
+                    title: 'Opening run',
+                    startMs: 10_000,
+                    endMs: 35_000,
+                    players: [{ id: 'p2', name: 'Jordan', number: '12' }]
+                }
+            ]
+        });
+
+        expect(clips).toMatchObject([
+            {
+                title: 'Opening run',
+                startMs: 10_000,
+                endMs: 35_000,
+                videoUrl: 'https://video.example.com/full-game',
+                players: [{ id: 'p2', name: 'Jordan', number: '12' }]
+            },
+            {
+                title: 'Riley hits the go-ahead three',
+                description: 'Riley hits the go-ahead three',
+                period: 'Q4',
+                gameTime: '0:42',
+                videoUrl: 'https://video.example.com/clip-2',
+                players: [{ id: 'p1', name: 'p1' }]
+            }
         ]);
     });
 
