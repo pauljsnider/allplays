@@ -103,6 +103,12 @@
                         <span id="save-status-dot" class="w-2 h-2 rounded-full flex-shrink-0"></span>
                         <span id="save-status-text"></span>
                     </div>
+                    <div class="flex flex-col items-end gap-1">
+                        <button id="save-plan-btn" class="hidden px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition shadow-md font-semibold disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-400 disabled:to-gray-500 disabled:hover:from-gray-400 disabled:hover:to-gray-500">
+                            Save Plan
+                        </button>
+                        <p id="save-plan-note" class="hidden text-xs text-amber-700 max-w-xs text-right"></p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -594,6 +600,24 @@
             const saveStatusEl = document.getElementById('save-status');
             saveStatusEl.classList.add('hidden');
             saveStatusEl.classList.remove('flex');
+
+            const savePlanButton = document.getElementById('save-plan-btn');
+            const savePlanNote = document.getElementById('save-plan-note');
+            const isReadOnlyGame = !!game.isCalendar || !!game.isSharedGame;
+            savePlanButton.disabled = isReadOnlyGame;
+            if (game.isCalendar) {
+                savePlanButton.title = 'Create this as a scheduled game to save the plan';
+                savePlanNote.textContent = 'Calendar games are read-only. Create a scheduled game to save a plan.';
+                savePlanNote.classList.remove('hidden');
+            } else if (game.isSharedGame) {
+                savePlanButton.title = 'Shared tournament games are read-only in Game Plan right now';
+                savePlanNote.textContent = 'Shared tournament games are read-only.';
+                savePlanNote.classList.remove('hidden');
+            } else {
+                savePlanButton.title = '';
+                savePlanNote.classList.add('hidden');
+                savePlanNote.textContent = '';
+            }
 
             // Update UI with game plan data
             document.getElementById('num-periods').value = gamePlan.numPeriods;
