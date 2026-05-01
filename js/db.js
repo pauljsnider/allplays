@@ -2246,6 +2246,62 @@ export async function rollbackParentInviteRedemption(userId, code) {
     console.log('[rollbackParentInviteRedemption] completed', { codeId: codeDoc.id });
 }
 
+function getTeamIdFromDocPath(ref) {
+    const parts = String(ref?.path || '').split('/');
+    const teamIndex = parts.indexOf('teams');
+    return teamIndex >= 0 ? parts[teamIndex + 1] || '' : '';
+}
+
+function isAllowedParentFeeRecipient(data, userId, parentPlayerKeys) {
+    if (!data || !userId) return false;
+    if ([data.parentUserId, data.accountUserId, data.userId].includes(userId)) return true;
+    const teamId = data.teamId || '';
+    const playerId = data.playerId || data.childId || '';
+    const playerKey = data.playerKey || (teamId && playerId ? `${teamId}::${playerId}` : '');
+    return parentPlayerKeys.has(playerKey);
+}
+
+export async function listParentTeamFeeRecipients(userId, children = []) {
+    if (!userId) return [];
+
+    const parentPlayerKeys = new Set((children || [])
+        .map((child) => (child?.teamId && child?.playerId ? `${child.teamId}::${child.playerId}` : ''))
+        .filter(Boolean));
+    const childLinks = [...parentPlayerKeys].map((key) => {
+        const [teamId, playerId] = key.split('::');
+        return { teamId, playerId };
+    });
+
+    const recipientsRef = collectionGroup(db, 'feeRecipients');
+    const queries = [
+        query(recipientsRef, where('parentUserId', '==', userId)),
+        query(recipientsRef, where('accountUserId', '==', userId)),
+        query(recipientsRef, where('userId', '==', userId)),
+        ...childLinks.map((child) => query(
+            recipientsRef,
+            where('teamId', '==', child.teamId),
+            where('playerId', '==', child.playerId)
+        ))
+    ];
+
+    const results = await Promise.allSettled(queries.map((feeQuery) => getDocs(feeQuery)));
+    const feesByPath = new Map();
+
+    results.forEach((result) => {
+        if (result.status !== 'fulfilled') return;
+        result.value.docs.forEach((docSnap) => {
+            const data = { id: docSnap.id, ...docSnap.data() };
+            data.teamId = data.teamId || getTeamIdFromDocPath(docSnap.ref);
+            data.playerKey = data.playerKey || (data.teamId && data.playerId ? `${data.teamId}::${data.playerId}` : '');
+            if (isAllowedParentFeeRecipient(data, userId, parentPlayerKeys)) {
+                feesByPath.set(docSnap.ref.path, data);
+            }
+        });
+    });
+
+    return Array.from(feesByPath.values());
+}
+
 export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {

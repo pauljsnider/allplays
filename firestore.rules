@@ -69,6 +69,18 @@ service cloud.firestore {
       return hasIncentivePlayerLink(data);
     }
 
+    function isTeamFeeRecipientForCurrentParent(data) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let playerKey = data.get('playerKey', data.get('teamId', '') + "::" + data.get('playerId', ''));
+      return isSignedIn() &&
+             (
+               data.get('parentUserId', '') == request.auth.uid ||
+               data.get('accountUserId', '') == request.auth.uid ||
+               data.get('userId', '') == request.auth.uid ||
+               (exists(userPath) && playerKey in get(userPath).data.get('parentPlayerKeys', []))
+             );
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
@@ -188,6 +200,18 @@ service cloud.firestore {
     // SECURITY: deny reads of any player doc that still contains sensitive fields.
     match /{path=**}/players/{playerId} {
       allow read: if !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+    }
+
+    // Collection group rule for assigned team fee recipient records.
+    // Parents can only read records tied directly to their account or linked players.
+    match /{path=**}/feeRecipients/{recipientId} {
+      allow read: if isTeamFeeRecipientForCurrentParent(resource.data) ||
+                     (resource.data.get('teamId', '') is string &&
+                      isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
+      allow create, update: if request.resource.data.get('teamId', '') is string &&
+                              isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
+      allow delete: if resource.data.get('teamId', '') is string &&
+                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
     }
 
     // Parent-managed athlete profiles with explicit public/private sharing.
