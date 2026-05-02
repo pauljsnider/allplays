@@ -603,6 +603,22 @@ function assertNoSensitivePlayerFields(playerData) {
     }
 }
 
+export async function getOfficials(teamId) {
+    const mapOfficial = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
+    try {
+        const q = query(collection(db, `teams/${teamId}/officials`), orderBy('name'));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(mapOfficial);
+    } catch (e) {
+        const code = e?.code || '';
+        if (code !== 'failed-precondition') throw e;
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/officials`));
+        return snapshot.docs
+            .map(mapOfficial)
+            .sort((a, b) => String(a.name || a.displayName || a.email || '').localeCompare(String(b.name || b.displayName || b.email || '')));
+    }
+}
+
 export async function getPlayers(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const isActivePlayer = (player) => player?.active !== false;
