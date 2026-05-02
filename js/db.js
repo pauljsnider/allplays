@@ -61,8 +61,9 @@ import {
 import {
     normalizeAthleteProfileDraft,
     collectAthleteProfileMediaCleanupPaths,
-    summarizeAthleteProfileCareer
-} from './athlete-profile-utils.js?v=1';
+    summarizeAthleteProfileCareer,
+    collectAthleteGameClipsForPlayer
+} from './athlete-profile-utils.js?v=2';
 import {
     isTeamActive,
     filterTeamsByActive,
@@ -2392,7 +2393,12 @@ async function buildAthleteProfileSeasonSummary(link) {
         playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null,
         gamesPlayed,
         totalTimeMs,
-        statTotals
+        statTotals,
+        gameClips: collectAthleteGameClipsForPlayer(games, {
+            teamId: link.teamId,
+            teamName: team.name || link.teamName || 'Team',
+            playerId: link.playerId
+        })
     };
 }
 
@@ -2519,6 +2525,7 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
         bio: normalized.bio,
         privacy: normalized.privacy,
         clips: normalized.clips,
+        gameClips: seasonSummaries.flatMap((season) => Array.isArray(season.gameClips) ? season.gameClips : []),
         seasons: seasonSummaries,
         careerSummary: summarizeAthleteProfileCareer(seasonSummaries),
         profilePhotoUrl: normalized.profilePhoto?.url || coverSeason.playerPhotoUrl || null,
