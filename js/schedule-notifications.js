@@ -9,6 +9,24 @@ function eventTypeLabel(eventType) {
     return String(eventType || '').toLowerCase() === 'practice' ? 'Practice' : 'Game';
 }
 
+function coerceEventDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    if (typeof value?.toDate === 'function') {
+        const date = value.toDate();
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function buildNextReminderAt(eventDate, reminderHours = 24) {
+    const date = coerceEventDate(eventDate);
+    if (!date) return null;
+    const hours = coerceReminderHours(reminderHours, 24);
+    return new Date(date.getTime() - hours * 60 * 60 * 1000).toISOString();
+}
+
 export function normalizeScheduleNotificationSettings(settings = {}) {
     return {
         enabled: settings?.enabled !== false,
@@ -34,13 +52,22 @@ export function buildScheduleNotificationMetadata({
     action,
     sent = false,
     userId = null,
-    note = null
+    note = null,
+    eventDate = null
 } = {}) {
     const normalized = normalizeScheduleNotificationSettings(settings);
+    const effectiveReminderHours = coerceReminderHours(reminderHours, normalized.reminderHours);
+    const nextReminderAt = normalized.enabled ? buildNextReminderAt(eventDate, effectiveReminderHours) : null;
     return {
         enabled: normalized.enabled,
-        reminderHours: coerceReminderHours(reminderHours, normalized.reminderHours),
+        reminderHours: effectiveReminderHours,
         delivery: normalized.delivery,
+        nextReminderAt,
+        reminderStatus: nextReminderAt ? 'pending' : 'disabled',
+        reminderSent: false,
+        reminderSentAt: null,
+        sent,
+        sentAt: sent ? new Date().toISOString() : null,
         lastAction: action || null,
         lastSentAt: sent ? new Date().toISOString() : null,
         lastSentBy: sent ? (userId || null) : null,

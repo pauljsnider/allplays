@@ -140,6 +140,10 @@
                             class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
                             Game Events
                         </button>
+                        <button id="tab-clips"
+                            class="tab-btn px-4 py-2 rounded-lg font-medium transition whitespace-nowrap">
+                            Video Clips
+                        </button>
                     </div>
                 </div>
 
@@ -162,6 +166,19 @@
                     <div id="content-events" class="tab-content hidden">
                         <div id="player-events">
                             <div class="text-gray-500 text-sm">Loading events...</div>
+                        </div>
+                    </div>
+
+                    <!-- Video Clips Tab -->
+                    <div id="content-clips" class="tab-content hidden">
+                        <div class="text-center py-10 px-4 border border-dashed border-gray-300 rounded-xl bg-gray-50">
+                            <svg class="w-14 h-14 text-primary-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                            </svg>
+                            <h3 class="text-lg font-semibold text-gray-900 mb-2">No video clips yet</h3>
+                            <p class="text-sm text-gray-600 max-w-md mx-auto">
+                                Player clips will appear here after scored streamed games are processed.
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -218,6 +235,7 @@
     <script type="module">
         import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
+        import { hasPlayerProfileParticipation } from './js/player-profile-stats.js?v=2';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=12';
@@ -246,7 +264,7 @@
         renderFooter(document.getElementById('footer-container'));
 
         // Tab switching
-        const tabs = ['games', 'season', 'events'];
+        const tabs = ['games', 'season', 'events', 'clips'];
         tabs.forEach(tab => {
             document.getElementById(`tab-${tab}`).addEventListener('click', () => {
                 tabs.forEach(t => {
@@ -439,7 +457,7 @@
                         Object.entries(playerStats).forEach(([stat, value]) => {
                             seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
                         });
-                        if (docSnap.id === playerId) {
+                        if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
                             selectedPlayerStats = {
                                 stats: playerStats,
                                 timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
@@ -484,10 +502,12 @@
                     }
                 }
 
-                // Choose a primary game for back link
-                const selectedGameId = (gameId && perGameStats.find(g => g.gameId === gameId))
-                    ? gameId
-                    : (perGameStats.sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
+                // Choose a primary game for back link and insights. Honor a requested game
+                // even when the player has a filtered DNP/zero-stat entry for that game.
+                const requestedGame = gameId ? games.find((entry) => entry.id === gameId) : null;
+                const selectedGameId = requestedGame
+                    ? requestedGame.id
+                    : ([...perGameStats].sort((a, b) => b.date - a.date)[0]?.gameId || games[0]?.id || null);
                 const selectedGame = games.find((entry) => entry.id === selectedGameId) || null;
                 // Set back-link href to team page (fallback navigation when banner not shown)
                 document.getElementById('back-link').href = `team.html#teamId=${teamId}`;

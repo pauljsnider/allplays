@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Officials - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8">
+        <div class="mb-6">
+            <h1 class="text-3xl font-bold text-gray-900">Official Assignments</h1>
+            <p class="text-gray-600 mt-1">Review assigned games, respond to pending assignments, and claim open officiating slots.</p>
+        </div>
+
+        <div id="officials-status" class="mb-4 text-sm text-gray-600">Loading assignments...</div>
+
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white rounded-lg shadow border border-gray-200">
+                <div class="p-4 border-b border-gray-200">
+                    <h2 class="text-xl font-semibold text-gray-900">My Upcoming Assignments</h2>
+                </div>
+                <div id="assigned-games" class="divide-y divide-gray-100"></div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow border border-gray-200">
+                <div class="p-4 border-b border-gray-200">
+                    <h2 class="text-xl font-semibold text-gray-900">Open Slots</h2>
+                    <p class="text-sm text-gray-500">Only games with self-assignment enabled are shown.</p>
+                </div>
+                <div id="open-slots" class="divide-y divide-gray-100"></div>
+            </div>
+        </section>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { checkAuth } from './js/auth.js?v=12';
+        import { getGames, claimOpenOfficiatingSlot, respondToOfficiatingAssignment } from './js/db.js?v=22';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, escapeHtml } from './js/utils.js?v=10';
+        import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from './js/officiating-utils.js?v=1';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        const params = getUrlParams();
+        const teamId = params.teamId;
+        let currentUser = null;
+        let games = [];
+
+        function toDate(value) {
+            if (!value) return null;
+            return value.toDate ? value.toDate() : new Date(value);
+        }
+
+        function isUpcoming(game) {
+            const date = toDate(game.date);
+            return date && !Number.isNaN(date.getTime()) && date >= new Date() && game.status !== 'cancelled';
+        }
+
+        function renderGameMeta(game, slot) {
+            return `
+                <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide">${formatDate(game.date)} • ${formatTime(game.date)}</div>
+                <div class="text-lg font-bold text-gray-900">vs. ${escapeHtml(game.opponent || 'TBD')}</div>
+                <div class="text-sm text-gray-600">${escapeHtml(game.location || 'Location TBD')}</div>
+                <div class="text-sm text-gray-700 mt-1"><span class="font-semibold">Position:</span> ${escapeHtml(slot.position)}</div>
+            `;
+        }
+
+        function renderAssignedGames() {
+            const container = document.getElementById('assigned-games');
+            const assigned = [];
+            games.filter(isUpcoming).forEach((game) => {
+                getAssignedOfficiatingSlots(game, currentUser).forEach((slot) => assigned.push({ game, slot }));
+            });
+
+            if (!assigned.length) {
+                container.innerHTML = '<div class="p-4 text-sm text-gray-500">No upcoming assignments found for your account.</div>';
+                return;
+            }
+
+            container.innerHTML = assigned.map(({ game, slot }) => `
+                <div class="p-4" data-game-id="${game.id}" data-slot-id="${slot.id}">
+                    ${renderGameMeta(game, slot)}
+                    <div class="mt-2 text-sm"><span class="font-semibold">Status:</span> ${escapeHtml(slot.status.replace(/_/g, ' '))}</div>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        ${slot.status === 'pending' ? '<button data-action="accepted" class="official-response px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Accept</button><button data-action="declined" class="official-response px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200">Decline</button>' : ''}
+                        ${slot.status === 'accepted' ? '<button data-action="cant_make" class="official-response px-3 py-1 bg-amber-100 text-amber-700 rounded text-sm hover:bg-amber-200">Can\'t make it</button>' : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderOpenSlots() {
+            const container = document.getElementById('open-slots');
+            const openSlots = [];
+            games.filter(isUpcoming).forEach((game) => {
+                getOpenOfficiatingSlots(game).forEach((slot) => openSlots.push({ game, slot }));
+            });
+
+            if (!openSlots.length) {
+                container.innerHTML = '<div class="p-4 text-sm text-gray-500">No open self-assignment slots right now.</div>';
+                return;
+            }
+
+            container.innerHTML = openSlots.map(({ game, slot }) => `
+                <div class="p-4" data-game-id="${game.id}" data-slot-id="${slot.id}">
+                    ${renderGameMeta(game, slot)}
+                    <button class="claim-slot mt-3 px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Claim Slot</button>
+                </div>
+            `).join('');
+        }
+
+        async function refresh() {
+            games = await getGames(teamId);
+            renderAssignedGames();
+            renderOpenSlots();
+            document.getElementById('officials-status').textContent = 'Assignments loaded.';
+        }
+
+        document.addEventListener('click', async (event) => {
+            const responseButton = event.target.closest('.official-response');
+            const claimButton = event.target.closest('.claim-slot');
+            if (!responseButton && !claimButton) return;
+
+            const row = event.target.closest('[data-game-id][data-slot-id]');
+            if (!row) return;
+
+            try {
+                document.getElementById('officials-status').textContent = 'Saving...';
+                if (responseButton) {
+                    await respondToOfficiatingAssignment(teamId, row.dataset.gameId, row.dataset.slotId, responseButton.dataset.action);
+                } else {
+                    await claimOpenOfficiatingSlot(teamId, row.dataset.gameId, row.dataset.slotId, currentUser);
+                }
+                await refresh();
+            } catch (error) {
+                document.getElementById('officials-status').textContent = error.message || 'Could not save officiating response.';
+            }
+        });
+
+        checkAuth((user) => {
+            if (!user) {
+                window.location.href = 'login.html';
+                return;
+            }
+            if (!teamId) {
+                document.getElementById('officials-status').textContent = 'Missing teamId.';
+                return;
+            }
+            currentUser = user;
+            renderHeader(document.getElementById('header-container'), user);
+            refresh();
+        }, { skipEmailVerificationCheck: true });
+    </script>
+</body>
+</html>
