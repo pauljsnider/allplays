@@ -77,6 +77,20 @@
             </div>
         </div>
 
+        <div id="registration-schedule-import" class="hidden mb-6 bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                    <h3 class="font-semibold text-emerald-900">Registration Schedule Sync</h3>
+                    <p class="text-sm text-emerald-800">Refresh this team's schedule from the latest linked registration snapshot.</p>
+                    <p id="registration-schedule-import-status" class="mt-2 text-sm text-emerald-700"></p>
+                </div>
+                <button id="registration-schedule-import-btn" type="button"
+                    class="bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-emerald-700 transition">
+                    Re-import Schedule
+                </button>
+            </div>
+        </div>
+
         <div id="schedule-notification-settings" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
             <div class="flex items-start justify-between gap-4">
                 <div>
@@ -826,6 +840,7 @@
         import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=3';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
+        import { formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1504,6 +1519,7 @@
 
             currentTeam = team;
             renderTeamScheduleNotificationSettings(team);
+            renderRegistrationScheduleImport(team);
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
             document.getElementById('organization-schedule-link').href = `organization-schedule.html#teamId=${currentTeamId}`;
@@ -1605,6 +1621,71 @@
                 `).join('');
             }
         }
+
+        function getRegistrationSourceDescriptor(team = {}) {
+            const source = team.registrationSource || team.registrationSourceSnapshot || team.registrationScheduleSnapshot || {};
+            return {
+                type: source.type || source.provider || source.name || 'registration',
+                id: source.id || source.sourceId || team.registrationSourceId || team.externalRegistrationTeamId || 'registration'
+            };
+        }
+
+        function renderRegistrationScheduleImport(team = {}) {
+            const container = document.getElementById('registration-schedule-import');
+            const status = document.getElementById('registration-schedule-import-status');
+            if (!container || !status) return;
+
+            const sourceEvents = getRegistrationScheduleEvents(team);
+            container.classList.toggle('hidden', !isExternallyLinkedRegistrationTeam(team));
+            status.textContent = sourceEvents.length
+                ? `${sourceEvents.length} source event${sourceEvents.length === 1 ? '' : 's'} ready to review.`
+                : 'No source schedule snapshot is available yet.';
+        }
+
+        async function handleRegistrationScheduleImport() {
+            const button = document.getElementById('registration-schedule-import-btn');
+            const status = document.getElementById('registration-schedule-import-status');
+            const sourceEvents = getRegistrationScheduleEvents(currentTeam);
+            if (!sourceEvents.length) {
+                status.textContent = 'No source schedule snapshot is available yet.';
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = 'Re-importing...';
+            try {
+                const existingEvents = await getEvents(currentTeamId);
+                const plan = planRegistrationScheduleImport({
+                    sourceEvents,
+                    existingEvents,
+                    Timestamp,
+                    source: getRegistrationSourceDescriptor(currentTeam)
+                });
+
+                for (const operation of plan.operations) {
+                    if (operation.type === 'add' && operation.eventType === 'practice') {
+                        await addPractice(currentTeamId, operation.payload);
+                    } else if (operation.type === 'add') {
+                        await addGame(currentTeamId, operation.payload);
+                    } else if (operation.eventType === 'practice') {
+                        await updateEvent(currentTeamId, operation.eventId, operation.payload);
+                    } else {
+                        await updateGame(currentTeamId, operation.eventId, operation.payload);
+                    }
+                }
+
+                status.textContent = `Import complete: ${formatRegistrationImportResults(plan.results)}.`;
+                await loadSchedule();
+            } catch (error) {
+                console.error('Registration schedule import failed:', error);
+                status.textContent = `Import failed: ${error.message}`;
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Re-import Schedule';
+            }
+        }
+
+        document.getElementById('registration-schedule-import-btn')?.addEventListener('click', handleRegistrationScheduleImport);
 
         async function loadSchedule() {
             gamesCache = {};
@@ -1732,6 +1813,7 @@
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
                         rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
+                        sourceMetadata: event.sourceMetadata || null,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
                         tournament: resolvedTournament,
@@ -1981,6 +2063,9 @@
             if (practice.isModified) {
                 badges += ' <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-semibold">Modified</span>';
             }
+            if (practice.sourceMetadata?.externalEventId) {
+                badges += ` <span class="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold">Imported: ${escapeHtml(practice.sourceMetadata.sourceType || 'registration')}</span>`;
+            }
 
             // Build action buttons
             let actions = '';
@@ -2211,6 +2296,7 @@
                             ${game.seasonLabel ? `<span class="inline-block bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold">Season: ${escapeHtml(game.seasonLabel)}</span>` : ''}
                             ${game.competitionType ? `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(String(game.competitionType).replace(/_/g, ' '))}</span>` : ''}
                             ${game.countsTowardSeasonRecord === false ? '<span class="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-semibold">No record impact</span>' : ''}
+                            ${game.sourceMetadata?.externalEventId ? `<span class="inline-block bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded-full font-semibold">Imported: ${escapeHtml(game.sourceMetadata.sourceType || 'registration')}</span>` : ''}
                         </div>
                         ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${formatTime(game.arrivalTime)}</div>` : ''}
                         ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
@@ -2527,7 +2613,8 @@
                         settings: notificationSettings,
                         action: editingGameId ? 'updated' : 'created',
                         sent: false,
-                        note: notifyNote
+                        note: notifyNote,
+                        eventDate: parsedGameDate
                     })
                 };
                 if (tournamentData) {
@@ -2571,7 +2658,8 @@
                                 action: editingGameId ? 'updated' : 'created',
                                 sent: true,
                                 userId: currentUser.uid,
-                                note: notifyNote
+                                note: notifyNote,
+                                eventDate: parsedGameDate
                             })
                         });
                     }
@@ -2687,7 +2775,8 @@
                             settings: notificationSettings,
                             action: editingPracticeId ? 'updated' : 'created',
                             sent: false,
-                            note: notifyNote
+                            note: notifyNote,
+                            eventDate: startDate
                         })
                     },
                     recurrenceState: {
@@ -2724,7 +2813,8 @@
                                 action: editingPracticeId ? 'updated' : 'created',
                                 sent: true,
                                 userId: currentUser.uid,
-                                note: notifyNote
+                                note: notifyNote,
+                                eventDate: startDate
                             })
                         });
                     }
@@ -3447,7 +3537,8 @@
                         settings: notificationSettings,
                         action: 'created',
                         sent: false,
-                        note
+                        note,
+                        eventDate: startDate
                     })
                 };
                 const practiceId = await addPractice(currentTeamId, practiceData);
@@ -3468,7 +3559,8 @@
                                 action: 'created',
                                 sent: true,
                                 userId: currentUser?.uid || null,
-                                note
+                                note,
+                                eventDate: startDate
                             })
                         });
                     }
@@ -3506,7 +3598,8 @@
                     settings: notificationSettings,
                     action: 'created',
                     sent: false,
-                    note
+                    note,
+                    eventDate: row.normalized.startsAt
                 }),
                 status: 'scheduled',
                 homeScore: 0,
@@ -3530,7 +3623,8 @@
                             action: 'created',
                             sent: true,
                             userId: currentUser?.uid || null,
-                            note
+                            note,
+                            eventDate: gameData.date
                         })
                     });
                 }
