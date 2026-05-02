@@ -1134,7 +1134,6 @@
         }, { skipEmailVerificationCheck: true });
 
         let currentTeam = null;
-        let officialsDirectory = [];
         let currentRsvpReminderContext = null;
         let currentRsvpRequestToken = 0;
         function hasAccess(team, user) {
@@ -1589,7 +1588,6 @@
 
             await loadOfficialsDirectory();
             loadConfigs();
-            loadOfficialsDirectory();
             renderCalendarManagement();
             loadSchedule();
         }
@@ -2495,10 +2493,11 @@
 
         async function loadOfficialsDirectory() {
             try {
-                officialsDirectory = await getOfficials(currentTeamId);
+                officialsDirectory = normalizeOfficialsDirectory(await getOfficials(currentTeamId));
                 renderOfficialsDirectory();
             } catch (error) {
                 console.error('Failed to load officials directory:', error);
+                officialsDirectory = [];
                 document.getElementById('officials-list').innerHTML = '<p class="text-sm text-red-600">Could not load officials.</p>';
             }
         }
@@ -2608,16 +2607,6 @@
             container.innerHTML = '';
             if (assignments && assignments.length > 0) {
                 assignments.forEach(a => addAssignmentRow(a.role, a.value));
-            }
-        }
-
-
-        async function loadOfficialsDirectory() {
-            try {
-                officialsDirectory = normalizeOfficialsDirectory(await getOfficials(currentTeamId));
-            } catch (error) {
-                console.warn('Could not load officials directory:', error);
-                officialsDirectory = [];
             }
         }
 
