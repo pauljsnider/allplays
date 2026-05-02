@@ -56,11 +56,23 @@ function isPaidCheckoutSession(session = {}) {
   return session.payment_status === 'paid' || session.payment_status === 'no_payment_required';
 }
 
+function hasTeamPassMetadata(session = {}) {
+  const metadata = session.metadata || {};
+  try {
+    normalizeTeamPassCheckoutInput(metadata);
+  } catch (error) {
+    return false;
+  }
+  return Boolean(asTrimmedString(metadata.purchaserUid));
+}
+
 function shouldUnlockTeamPassFromEvent(event = {}) {
   if (!event || event.type !== 'checkout.session.completed') {
     return false;
   }
-  return isPaidCheckoutSession(event.data?.object || {});
+
+  const session = event.data?.object || {};
+  return isPaidCheckoutSession(session) && hasTeamPassMetadata(session);
 }
 
 function buildTeamPassEntitlement({ session = {}, eventId = '', receivedAt = null } = {}) {
@@ -94,6 +106,7 @@ module.exports = {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
   isPaidCheckoutSession,
+  hasTeamPassMetadata,
   shouldUnlockTeamPassFromEvent,
   buildTeamPassEntitlement
 };

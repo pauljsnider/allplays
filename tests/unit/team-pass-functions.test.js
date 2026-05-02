@@ -8,6 +8,7 @@ const {
     shouldUnlockTeamPassFromEvent,
     buildTeamPassEntitlement
 } = require('../../functions/team-pass-core.cjs');
+const { createInMemoryRateLimiter } = require('../../functions/rate-limit.cjs');
 
 describe('team pass function helpers', () => {
     it('normalizes a bounded team pass checkout request', () => {
@@ -47,21 +48,62 @@ describe('team pass function helpers', () => {
         expect(isEligibleTeamPassPurchaser({ team, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
     });
 
-    it('unlocks only paid completed checkout events', () => {
+    it('unlocks only paid completed checkout events with team pass metadata', () => {
+        const teamPassSession = {
+            payment_status: 'paid',
+            metadata: {
+                teamId: 'team_123',
+                seasonId: '2026',
+                tier: 'team-pass',
+                purchaserUid: 'user_123'
+            }
+        };
+
         expect(shouldUnlockTeamPassFromEvent({
             type: 'checkout.session.completed',
-            data: { object: { payment_status: 'paid' } }
+            data: { object: teamPassSession }
         })).toBe(true);
 
         expect(shouldUnlockTeamPassFromEvent({
             type: 'checkout.session.completed',
-            data: { object: { payment_status: 'unpaid' } }
+            data: { object: { ...teamPassSession, payment_status: 'unpaid' } }
         })).toBe(false);
 
         expect(shouldUnlockTeamPassFromEvent({
             type: 'checkout.session.expired',
-            data: { object: { payment_status: 'paid' } }
+            data: { object: teamPassSession }
         })).toBe(false);
+    });
+
+    it('acknowledges unrelated paid checkout sessions without unlocking', () => {
+        expect(shouldUnlockTeamPassFromEvent({
+            type: 'checkout.session.completed',
+            data: { object: { payment_status: 'paid', metadata: { product: 'other' } } }
+        })).toBe(false);
+
+        expect(shouldUnlockTeamPassFromEvent({
+            type: 'checkout.session.completed',
+            data: {
+                object: {
+                    payment_status: 'paid',
+                    metadata: {
+                        teamId: 'team_123',
+                        seasonId: '2026',
+                        tier: 'team-pass'
+                    }
+                }
+            }
+        })).toBe(false);
+    });
+
+    it('rate limits webhook requests by requester within a fixed window', () => {
+        const checkRateLimit = createInMemoryRateLimiter({ windowMs: 60_000, maxRequests: 2 });
+        const req = { ip: '203.0.113.10', headers: {} };
+
+        expect(checkRateLimit(req, 1_000)).toMatchObject({ allowed: true, remaining: 1 });
+        expect(checkRateLimit(req, 2_000)).toMatchObject({ allowed: true, remaining: 0 });
+        expect(checkRateLimit(req, 3_000)).toMatchObject({ allowed: false });
+        expect(checkRateLimit(req, 62_000)).toMatchObject({ allowed: true, remaining: 1 });
     });
 
     it('builds a season-scoped active entitlement from Stripe metadata', () => {

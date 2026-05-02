@@ -9,12 +9,18 @@ const {
   shouldUnlockTeamPassFromEvent,
   buildTeamPassEntitlement
 } = require('./team-pass-core.cjs');
+const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
 const firestore = admin.firestore();
+const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 2_000
+});
 
 function getStripeConfig() {
   const stripeConfig = functions.config()?.stripe || {};
@@ -94,6 +100,13 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
 exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
+    return;
+  }
+
+  const rateLimit = checkStripeWebhookRateLimit(req);
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).send('Too many webhook requests');
     return;
   }
 
