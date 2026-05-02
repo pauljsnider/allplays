@@ -532,12 +532,6 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
-export async function getOfficials(teamId) {
-    const q = query(collection(db, `teams/${teamId}/officials`), orderBy("name"));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
-
 export async function addOfficial(teamId, officialData) {
     const payload = {
         ...normalizeOfficialDraft(officialData),
