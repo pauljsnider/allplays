@@ -399,8 +399,8 @@
                     return {
                         homeTeam: isHome ? teamName : opponent,
                         awayTeam: isHome ? opponent : teamName,
-                        homeScore: game?.homeScore,
-                        awayScore: game?.awayScore,
+                        homeScore: isHome ? game?.homeScore : game?.awayScore,
+                        awayScore: isHome ? game?.awayScore : game?.homeScore,
                         status: game?.status
                     };
                 });
