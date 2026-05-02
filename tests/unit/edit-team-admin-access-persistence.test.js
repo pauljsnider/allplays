@@ -203,6 +203,11 @@ function createEnvironment(initialState, overrides = {}) {
         'isPublic',
         'streamUrl',
         'stream-detect',
+        'team-permissions-empty',
+        'scorekeepingAccessMode',
+        'scorekeeping-member-list',
+        'streamingAccessMode',
+        'streaming-member-list',
         'streamAccessMode',
         'stream-volunteer-panel',
         'stream-volunteer-list',
@@ -306,8 +311,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=16';",
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } from './js/db.js?v=16';",
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -330,8 +335,8 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList } from './js/team-access.js?v=1';",
-            'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList } = deps.teamAccess;'
+            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=2';",
+            'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
             "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';",
@@ -413,7 +418,10 @@ async function bootEditTeam(initialState, overrides = {}) {
             async inviteAdmin() {
                 return { code: 'INVITE123' };
             },
-            async addTeamAdminEmail() {}
+            async addTeamAdminEmail() {},
+            async getAllUsers() {
+                return env.state.users || [];
+            }
         },
         utils: {
             renderHeader(container) {
@@ -482,9 +490,9 @@ async function bootEditTeam(initialState, overrides = {}) {
     };
 
     await runEditTeamModule(deps);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let i = 0; i < 5; i += 1) {
+        await Promise.resolve();
+    }
 
     return env;
 }
