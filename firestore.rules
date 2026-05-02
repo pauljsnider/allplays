@@ -315,6 +315,11 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Officials directory for officiating assignments
+      match /officials/{officialId} {
+        allow read, write: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Games subcollection
       match /games/{gameId} {
         allow read: if true;  // Public game data
