@@ -84,6 +84,14 @@ service cloud.firestore {
       ]);
     }
 
+    function isOfficialForGame() {
+      return isSignedIn() && (
+        request.auth.uid in resource.data.get('officiatingAuthorizedUserIds', []) ||
+        (request.auth.token.email != null &&
+         request.auth.token.email.lower() in resource.data.get('officiatingAuthorizedEmails', []))
+      );
+    }
+
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
 
@@ -338,7 +346,7 @@ service cloud.firestore {
       match /games/{gameId} {
         allow read: if true;  // Public game data
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
-        allow update: if isTeamOwnerOrAdmin(teamId) || (isSignedIn() && isOfficialGameUpdate());
+        allow update: if isTeamOwnerOrAdmin(teamId) || (isOfficialForGame() && isOfficialGameUpdate());
 
         // Events subcollection
         match /events/{eventId} {
