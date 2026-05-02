@@ -128,6 +128,10 @@ export function normalizeAdminEmailList(adminEmails) {
         .map((email) => String(email || '').trim().toLowerCase())
         .filter(Boolean)));
 }
+
+export function normalizeStreamVolunteerEmailList(streamVolunteerEmails) {
+    return normalizeAdminEmailList(streamVolunteerEmails);
+}
 `;
 
 const ACCEPT_INVITE_DB_STUB = `

@@ -186,6 +186,28 @@
                     </details>
                 </div>
 
+                <div class="rounded-lg border border-teal-200 bg-teal-50 p-4 space-y-3">
+                    <div>
+                        <h3 class="font-semibold text-teal-900 text-sm">Streaming Access</h3>
+                        <p class="text-xs text-teal-700">Let assigned videographers open limited streaming actions for scheduled events without team management access.</p>
+                    </div>
+                    <select id="streamAccessMode"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 border p-2 text-sm bg-white">
+                        <option value="admins">Coaches/admins only</option>
+                        <option value="selected_volunteers">Selected streaming volunteers</option>
+                        <option value="confirmed_members">All confirmed members</option>
+                    </select>
+                    <div id="stream-volunteer-panel" class="space-y-2">
+                        <div id="stream-volunteer-list" class="space-y-2 text-sm"></div>
+                        <div class="flex gap-2">
+                            <input type="email" id="stream-volunteer-email-input" placeholder="videographer@example.com"
+                                class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm bg-white">
+                            <button id="add-stream-volunteer-btn" type="button"
+                                class="text-xs bg-teal-600 text-white px-3 py-1 rounded hover:bg-teal-700">Add</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-start">
                     <div class="flex items-center h-5">
                         <input id="isPublic" type="checkbox"
@@ -348,7 +370,7 @@
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
-        import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';
+        import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList } from './js/team-access.js?v=1';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
         import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
@@ -361,6 +383,7 @@
         let currentPhotoUrl = null;
         let currentUserProfile = null;
         let adminEmails = [];
+        let streamVolunteerEmails = [];
         let pendingAdminInviteEmails = [];
         let rolloverSourceTeams = [];
         let rolloverAccessPreview = null;
@@ -623,6 +646,32 @@
             });
         }
 
+        function renderStreamVolunteerList() {
+            const list = document.getElementById('stream-volunteer-list');
+            if (!list) return;
+            if (!streamVolunteerEmails.length) {
+                list.innerHTML = '<p class="text-xs text-teal-700 italic">No streaming volunteers selected.</p>';
+                return;
+            }
+            list.innerHTML = streamVolunteerEmails.map(email => `
+                <div class="flex items-center justify-between bg-white border border-teal-200 rounded px-3 py-2">
+                    <span class="text-gray-800">${email}</span>
+                    <button type="button" class="text-xs text-red-600 hover:text-red-800 remove-stream-volunteer-btn" data-email="${email}">Remove</button>
+                </div>
+            `).join('');
+            list.querySelectorAll('.remove-stream-volunteer-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    streamVolunteerEmails = normalizeStreamVolunteerEmailList(streamVolunteerEmails.filter(e => e !== btn.dataset.email));
+                    renderStreamVolunteerList();
+                });
+            });
+        }
+
+        function syncStreamVolunteerPanel() {
+            const mode = document.getElementById('streamAccessMode').value;
+            document.getElementById('stream-volunteer-panel').classList.toggle('hidden', mode !== 'selected_volunteers');
+        }
+
         async function init() {
             if (!initialTeamId) {
                 await loadRosterRolloverTeams();
@@ -682,7 +731,13 @@
                 }
                 streamInput.dispatchEvent(new Event('input')); // trigger detection badge
                 adminEmails = normalizeAdminEmailList(team.adminEmails);
+                streamVolunteerEmails = normalizeStreamVolunteerEmailList(team.streamVolunteerEmails);
+                document.getElementById('streamAccessMode').value = ['selected_volunteers', 'confirmed_members'].includes(team.streamAccessMode)
+                    ? team.streamAccessMode
+                    : 'admins';
                 renderAdminList();
+                renderStreamVolunteerList();
+                syncStreamVolunteerPanel();
                 updateTeamIdPanel(initialTeamId);
 
                 if (team.photoUrl) {
@@ -991,6 +1046,22 @@
             return null;
         }
 
+        document.getElementById('streamAccessMode').addEventListener('change', syncStreamVolunteerPanel);
+        document.getElementById('add-stream-volunteer-btn').addEventListener('click', () => {
+            const input = document.getElementById('stream-volunteer-email-input');
+            const email = String(input.value || '').trim().toLowerCase();
+            if (!email) return;
+            if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+                alert('Please enter a valid streaming volunteer email.');
+                return;
+            }
+            streamVolunteerEmails = normalizeStreamVolunteerEmailList([...streamVolunteerEmails, email]);
+            input.value = '';
+            renderStreamVolunteerList();
+        });
+        renderStreamVolunteerList();
+        syncStreamVolunteerPanel();
+
         // Live detection badge as the user types / pastes
         document.getElementById('streamUrl').addEventListener('input', function () {
             const detect = document.getElementById('stream-detect');
@@ -1054,7 +1125,9 @@
                     : standingsTiebreakers;
 
                 const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
+                const normalizedStreamVolunteerEmails = normalizeStreamVolunteerEmailList(streamVolunteerEmails);
                 adminEmails = normalizedAdminEmails;
+                streamVolunteerEmails = normalizedStreamVolunteerEmails;
                 const rolloverSourceTeam = rolloverSourceTeams.find((team) => team.id === document.getElementById('rollover-source-team')?.value);
                 const selectedRolloverStaffEmails = rolloverSourceTeam ? getSelectedRolloverStaffEmails() : [];
                 const rolloverStaffUpdate = rolloverSourceTeam && selectedRolloverStaffEmails.length > 0
@@ -1086,6 +1159,8 @@
                     isPublic: document.getElementById('isPublic').checked,
                     adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails,
                     ...(rolloverStaffUpdate ? { accessRolloverAudit: rolloverStaffUpdate.accessRolloverAudit } : {}),
+                    streamAccessMode: document.getElementById('streamAccessMode').value,
+                    streamVolunteerEmails: normalizedStreamVolunteerEmails,
                     ...((() => {
                         const sr = parseStreamUrl(document.getElementById('streamUrl').value);
                         return {
