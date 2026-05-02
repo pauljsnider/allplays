@@ -26,6 +26,10 @@ export async function getTeam(teamId) {
     };
 }
 
+export async function getUserTeamsWithAccess() {
+    return [];
+}
+
 export async function uploadTeamPhoto() {
     return null;
 }
