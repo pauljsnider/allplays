@@ -198,6 +198,30 @@
                     </div>
                 </div>
 
+                <div id="roster-rollover-section" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            <input id="rosterRolloverEnabled" type="checkbox"
+                                class="focus:ring-emerald-500 h-4 w-4 text-emerald-600 border-gray-300 rounded">
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="rosterRolloverEnabled" class="font-medium text-emerald-900">Roll Over Previous Roster</label>
+                            <p class="text-emerald-700">Preview active players from a prior team before copying is added in a later release.</p>
+                        </div>
+                    </div>
+                    <div id="roster-rollover-controls" class="hidden space-y-3">
+                        <div>
+                            <label for="rosterRolloverSourceTeam" class="block text-sm font-medium text-emerald-900">Source Team</label>
+                            <select id="rosterRolloverSourceTeam"
+                                class="mt-1 block w-full rounded-md border-emerald-200 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 border p-2 bg-white">
+                                <option value="">Select a previous team...</option>
+                            </select>
+                            <p id="roster-rollover-status" class="text-xs text-emerald-700 mt-1">Only teams where you have owner or admin access are shown.</p>
+                        </div>
+                        <div id="roster-rollover-preview" class="hidden rounded-lg border border-emerald-200 bg-white overflow-hidden"></div>
+                    </div>
+                </div>
+
                 <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                     <div class="flex items-center justify-between mb-3">
                         <div>
@@ -318,15 +342,16 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
-        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
         import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';
         import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
+        import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -334,12 +359,14 @@
         let currentUser = null;
         let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
+        let currentUserProfile = null;
         let adminEmails = [];
         let pendingAdminInviteEmails = [];
         let rolloverSourceTeams = [];
         let rolloverAccessPreview = null;
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
+        let rosterRolloverPreviewRequestId = 0;
 
         function buildTeamEditUrl(teamId, created = false) {
             const params = new URLSearchParams();
@@ -399,6 +426,61 @@
             panel.classList.remove('hidden');
         }
 
+        function setRosterRolloverStatus(message, isError = false) {
+            const status = document.getElementById('roster-rollover-status');
+            status.textContent = message;
+            status.className = `text-xs mt-1 ${isError ? 'text-red-700' : 'text-emerald-700'}`;
+        }
+
+        function renderRosterRolloverTeamOptions(teams = []) {
+            const select = document.getElementById('rosterRolloverSourceTeam');
+            select.innerHTML = '<option value="">Select a previous team...</option>' + teams.map((team) => `
+                <option value="${escapeHtml(team.id)}">${escapeHtml(team.name || 'Unnamed team')}</option>
+            `).join('');
+        }
+
+        function renderRosterRolloverPreview(players = []) {
+            const preview = document.getElementById('roster-rollover-preview');
+            const rows = buildRosterRolloverPreviewRows(players);
+            if (rows.length === 0) {
+                preview.innerHTML = '<div class="p-4 text-sm text-gray-500">No active players found on this team.</div>';
+                preview.classList.remove('hidden');
+                return;
+            }
+
+            preview.innerHTML = `
+                <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50 text-sm font-semibold text-emerald-900">
+                    Previewing ${rows.length} active player${rows.length === 1 ? '' : 's'} only. Nothing will be copied when this team is saved.
+                </div>
+                <div class="divide-y divide-gray-100">
+                    ${rows.map((player) => `
+                        <div class="px-4 py-3 flex items-center justify-between gap-3 text-sm">
+                            <div>
+                                <div class="font-medium text-gray-900">${player.number ? `#${escapeHtml(player.number)} ` : ''}${escapeHtml(player.name)}</div>
+                            </div>
+                            <div class="text-xs text-gray-500 text-right">
+                                <span>${player.familyCount} linked famil${player.familyCount === 1 ? 'y' : 'ies'}</span>
+                                <span class="mx-1">&middot;</span>
+                                <span>${player.contactCount} visible contact${player.contactCount === 1 ? '' : 's'}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            preview.classList.remove('hidden');
+        }
+
+        async function loadRosterRolloverTeams() {
+            const accessEmail = currentUser.email || currentUserProfile?.email || '';
+            const teams = await getUserTeamsWithAccess(currentUser.uid, accessEmail);
+            renderRosterRolloverTeamOptions(teams);
+            if (teams.length === 0) {
+                setRosterRolloverStatus('No prior teams with owner or admin access were found.');
+            } else {
+                setRosterRolloverStatus('Only teams where you have owner or admin access are shown.');
+            }
+        }
+
         const saveBtn = document.getElementById('save-btn');
         saveBtn.disabled = true;
         saveBtn.textContent = initialTeamId ? 'Loading Team...' : 'Loading...';
@@ -409,6 +491,12 @@
                 return;
             }
             currentUser = user;
+            try {
+                currentUserProfile = await getUserProfile(user.uid);
+            } catch (error) {
+                console.warn('Failed to load user profile for team access lookup:', error);
+                currentUserProfile = null;
+            }
             renderHeader(document.getElementById('header-container'), user);
             try {
                 await init();
@@ -516,11 +604,13 @@
 
         async function init() {
             if (!initialTeamId) {
+                await loadRosterRolloverTeams();
                 await loadRolloverSourceTeams();
                 return;
             }
 
             if (initialTeamId) {
+                document.getElementById('roster-rollover-section').classList.add('hidden');
                 const team = await getTeam(initialTeamId);
                 if (!team) {
                     alert('Team not found or no longer active.');
@@ -593,6 +683,58 @@
                 renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
             }
         }
+
+        document.getElementById('rosterRolloverEnabled').addEventListener('change', async (e) => {
+            const controls = document.getElementById('roster-rollover-controls');
+            const preview = document.getElementById('roster-rollover-preview');
+            if (!e.target.checked) {
+                rosterRolloverPreviewRequestId += 1;
+                controls.classList.add('hidden');
+                preview.classList.add('hidden');
+                document.getElementById('rosterRolloverSourceTeam').value = '';
+                setRosterRolloverStatus('Only teams where you have owner or admin access are shown.');
+                return;
+            }
+
+            controls.classList.remove('hidden');
+            setRosterRolloverStatus('Loading eligible teams...');
+            try {
+                await loadRosterRolloverTeams();
+            } catch (error) {
+                console.error('Failed to load roster rollover teams:', error);
+                setRosterRolloverStatus('Could not load prior teams. You can still create this team without rollover.', true);
+            }
+        });
+
+        document.getElementById('rosterRolloverSourceTeam').addEventListener('change', async (e) => {
+            const select = e.target;
+            const sourceTeamId = select.value;
+            const requestId = ++rosterRolloverPreviewRequestId;
+            const preview = document.getElementById('roster-rollover-preview');
+            if (!sourceTeamId) {
+                preview.classList.add('hidden');
+                setRosterRolloverStatus('Only teams where you have owner or admin access are shown.');
+                return;
+            }
+
+            preview.innerHTML = '<div class="p-4 text-sm text-gray-500">Loading roster preview...</div>';
+            preview.classList.remove('hidden');
+            try {
+                const players = await getPlayers(sourceTeamId);
+                if (requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId) {
+                    return;
+                }
+                renderRosterRolloverPreview(players);
+                setRosterRolloverStatus('Preview only. Saving this team will not copy roster, family, staff, admin, or fan records.');
+            } catch (error) {
+                if (requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId) {
+                    return;
+                }
+                console.error('Failed to load roster rollover preview:', error);
+                preview.innerHTML = '<div class="p-4 text-sm text-red-700">Could not load roster preview.</div>';
+                setRosterRolloverStatus('Could not load roster preview. You can still create this team without rollover.', true);
+            }
+        });
 
         document.getElementById('copy-team-id-btn').addEventListener('click', async () => {
             if (!currentTeamId) return;

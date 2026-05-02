@@ -26,7 +26,15 @@ export async function getTeam(teamId) {
     };
 }
 
+export async function getUserProfile() {
+    return { email: 'owner@example.com' };
+}
+
 export async function getUserTeamsWithAccess() {
+    return [];
+}
+
+export async function getPlayers() {
     return [];
 }
 
@@ -75,6 +83,15 @@ export function getUrlParams() {
     return {
         teamId: params.get('teamId')
     };
+}
+
+export function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 `;
 

@@ -186,6 +186,12 @@ function createEnvironment(initialState, overrides = {}) {
         'isPublic',
         'streamUrl',
         'stream-detect',
+        'roster-rollover-section',
+        'rosterRolloverEnabled',
+        'roster-rollover-controls',
+        'rosterRolloverSourceTeam',
+        'roster-rollover-status',
+        'roster-rollover-preview',
         'access-rollover-panel',
         'rollover-source-team',
         'rollover-staff-review',
@@ -219,6 +225,8 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('add-admin-form').classList.add('hidden');
     elements.get('admin-invite-status').classList.add('hidden');
     elements.get('admin-invite-code').classList.add('hidden');
+    elements.get('roster-rollover-controls').classList.add('hidden');
+    elements.get('roster-rollover-preview').classList.add('hidden');
     elements.get('access-rollover-panel').classList.add('hidden');
     elements.get('rollover-staff-review').classList.add('hidden');
     elements.get('save-btn').textContent = 'Save Team';
@@ -275,16 +283,16 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
-            'const { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';",
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
         )
         .replace(
-            "import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';",
-            'const { renderHeader, renderFooter, getUrlParams } = deps.utils;'
+            "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';",
+            'const { renderHeader, renderFooter, getUrlParams, escapeHtml } = deps.utils;'
         )
         .replace(
             /import\s+\{\s*checkAuth,\s*sendInviteEmail\s*\}\s+from\s+'\.\/js\/auth\.js\?v=\d+';/,
@@ -309,6 +317,10 @@ function extractEditTeamModule() {
         .replace(
             "import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';",
             'const { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } = deps.rolloverAccess;'
+        )
+        .replace(
+            "import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';",
+            'const { buildRosterRolloverPreviewRows } = deps.rosterRolloverPreview;'
         );
 }
 
@@ -354,8 +366,14 @@ async function bootEditTeam(initialState, overrides = {}) {
             async getTeam(teamId) {
                 return env.state.team && env.state.team.id === teamId ? deepClone(env.state.team) : null;
             },
+            async getUserProfile() {
+                return deepClone(env.state.userProfile || {});
+            },
             async getUserTeamsWithAccess() {
                 return deepClone(env.state.sourceTeams || []);
+            },
+            async getPlayers() {
+                return deepClone(env.state.players || []);
             },
             async uploadTeamPhoto() {
                 throw new Error('Not implemented in test');
@@ -380,6 +398,14 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             getUrlParams() {
                 return Object.fromEntries(new URLSearchParams(env.window.location.search).entries());
+            },
+            escapeHtml(value) {
+                return String(value ?? '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
             }
         },
         auth: {
@@ -405,6 +431,7 @@ async function bootEditTeam(initialState, overrides = {}) {
         },
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
+        rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
         editTeamAdminInvites: {
             async processPendingAdminInvites() {
                 return { results: [], fallbackCodeCount: 0, failedCount: 0 };
@@ -429,6 +456,8 @@ async function bootEditTeam(initialState, overrides = {}) {
     };
 
     await runEditTeamModule(deps);
+    await Promise.resolve();
+    await Promise.resolve();
     await Promise.resolve();
 
     return env;
