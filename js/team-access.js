@@ -65,9 +65,29 @@ export function hasStreamTeamAccess(user, team, game = null, rsvp = null) {
   return false;
 }
 
+
+/**
+ * Check whether a user can scorekeep a scheduled game without full team access.
+ * Scorekeeping access never implies team management, roster, schedule, or settings access.
+ */
+export function hasScorekeepingTeamAccess(user, team, game = null, rsvp = null) {
+  if (!user || !team || !isScheduledGame(game)) return false;
+  if (hasFullTeamAccess(user, team)) return true;
+
+  if (!team.teamPermissions?.scorekeeping) return false;
+
+  const permissions = normalizeTeamPermissions(team.teamPermissions);
+  const scorekeeping = permissions.scorekeeping;
+  if (scorekeeping.mode === 'all_confirmed') {
+    return hasConfirmedRsvp(rsvp);
+  }
+
+  return normalizeMemberIdList(scorekeeping.memberIds).includes(String(user.uid || '').trim());
+}
+
 /**
  * Determine user's access level for a team.
- * @returns {{ hasAccess: boolean, accessLevel: 'full'|'stream'|'parent'|null, exitUrl: string }}
+ * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'parent'|null, exitUrl: string }}
  */
 export function getTeamAccessInfo(user, team, options = {}) {
   if (!user || !team) {
@@ -76,6 +96,11 @@ export function getTeamAccessInfo(user, team, options = {}) {
 
   if (hasFullTeamAccess(user, team)) {
     return { hasAccess: true, accessLevel: 'full', exitUrl: 'dashboard.html' };
+  }
+
+  if (hasScorekeepingTeamAccess(user, team, options.game, options.rsvp)) {
+    const teamExitUrl = team.id ? `team.html#teamId=${team.id}` : 'team.html';
+    return { hasAccess: true, accessLevel: 'scorekeep', exitUrl: teamExitUrl };
   }
 
   if (hasStreamTeamAccess(user, team, options.game, options.rsvp)) {
