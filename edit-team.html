@@ -239,6 +239,29 @@
                     </div>
                 </div>
 
+                <div id="access-rollover-panel" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                    <div>
+                        <h3 class="font-semibold text-amber-900 text-sm">Access Rollover</h3>
+                        <p class="text-xs text-amber-800 mt-1">Optionally carry staff/admin access forward from a prior team after creating this team.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-amber-900">Source Team</label>
+                        <select id="rollover-source-team" class="mt-1 block w-full rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 border p-2 text-sm">
+                            <option value="">Do not copy access</option>
+                        </select>
+                    </div>
+                    <div id="rollover-staff-review" class="hidden rounded border border-amber-200 bg-white p-3">
+                        <div class="flex items-start gap-2">
+                            <input id="rollover-staff-enabled" type="checkbox" class="mt-1 h-4 w-4 text-amber-600 border-gray-300 rounded">
+                            <div class="flex-1">
+                                <label for="rollover-staff-enabled" class="text-sm font-medium text-gray-800">Carry over staff/admin access</label>
+                                <div id="rollover-staff-list" class="mt-2 space-y-1 text-xs text-gray-700"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="rollover-member-note" class="text-xs text-amber-800">Fan/member carry-forward is omitted because member access is tied to player links in the current data model.</p>
+                </div>
+
                 <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                     <h3 class="font-semibold text-indigo-900 text-sm mb-3">Team Management</h3>
                     <div class="flex gap-3">
@@ -295,7 +318,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
+        import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
@@ -303,6 +326,7 @@
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
         import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';
+        import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -312,6 +336,9 @@
         let currentPhotoUrl = null;
         let adminEmails = [];
         let pendingAdminInviteEmails = [];
+        let rolloverSourceTeams = [];
+        let rolloverAccessPreview = null;
+        let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
 
         function buildTeamEditUrl(teamId, created = false) {
@@ -392,6 +419,77 @@
             }
         });
 
+        function getSelectedRolloverStaffEmails() {
+            if (!document.getElementById('rollover-staff-enabled')?.checked) return [];
+            return Array.from(document.querySelectorAll('.rollover-staff-email:checked'))
+                .map((input) => input.value);
+        }
+
+        function renderRolloverAccessPreview() {
+            const sourceSelect = document.getElementById('rollover-source-team');
+            const review = document.getElementById('rollover-staff-review');
+            const enabled = document.getElementById('rollover-staff-enabled');
+            const list = document.getElementById('rollover-staff-list');
+            if (!sourceSelect || !review || !enabled || !list) return;
+
+            const sourceTeam = rolloverSourceTeams.find((team) => team.id === sourceSelect.value);
+            const sourceTeamId = sourceTeam?.id || null;
+            const isSameSource = sourceTeamId && sourceTeamId === lastRenderedRolloverSourceTeamId;
+            const wasEnabled = enabled.checked;
+            const previouslySelectedEmails = new Set(
+                Array.from(document.querySelectorAll('.rollover-staff-email:checked'))
+                    .map((input) => input.value)
+            );
+            rolloverAccessPreview = sourceTeam
+                ? buildRolloverAccessPreview(sourceTeam, { adminEmails })
+                : null;
+
+            if (!rolloverAccessPreview || rolloverAccessPreview.staffAdmins.length === 0) {
+                review.classList.toggle('hidden', !sourceTeam);
+                enabled.checked = false;
+                enabled.disabled = true;
+                list.innerHTML = sourceTeam
+                    ? '<p class="text-gray-500 italic">No eligible staff/admin access to copy. Existing admins are skipped.</p>'
+                    : '';
+                lastRenderedRolloverSourceTeamId = sourceTeamId;
+                return;
+            }
+
+            enabled.disabled = false;
+            enabled.checked = isSameSource ? wasEnabled : true;
+            review.classList.remove('hidden');
+            list.innerHTML = rolloverAccessPreview.staffAdmins.map((entry) => {
+                const checked = !isSameSource || previouslySelectedEmails.has(entry.email) ? ' checked' : '';
+                return `
+                <label class="flex items-center gap-2">
+                    <input type="checkbox" class="rollover-staff-email h-3.5 w-3.5 text-amber-600 border-gray-300 rounded" value="${entry.email}"${checked}>
+                    <span>${entry.email}</span>
+                </label>
+            `;
+            }).join('');
+            lastRenderedRolloverSourceTeamId = sourceTeamId;
+        }
+
+        async function loadRolloverSourceTeams() {
+            const panel = document.getElementById('access-rollover-panel');
+            const sourceSelect = document.getElementById('rollover-source-team');
+            if (!panel || !sourceSelect || currentTeamId) return;
+
+            try {
+                const teams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email, { includeInactive: true });
+                rolloverSourceTeams = teams.filter((team) => Array.isArray(team.adminEmails) && team.adminEmails.length > 0);
+                if (rolloverSourceTeams.length === 0) return;
+
+                sourceSelect.innerHTML = '<option value="">Do not copy access</option>' + rolloverSourceTeams.map((team) => `
+                    <option value="${team.id}">${team.name || 'Untitled team'}</option>
+                `).join('');
+                sourceSelect.addEventListener('change', renderRolloverAccessPreview);
+                panel.classList.remove('hidden');
+            } catch (error) {
+                console.warn('Failed to load rollover source teams:', error);
+            }
+        }
+
         function renderAdminList() {
             const list = document.getElementById('admin-list');
             if (!list) return;
@@ -411,11 +509,17 @@
                     adminEmails = normalizeAdminEmailList(adminEmails.filter(e => e !== email));
                     pendingAdminInviteEmails = normalizeAdminEmailList(pendingAdminInviteEmails.filter(e => e !== email));
                     renderAdminList();
+                    renderRolloverAccessPreview();
                 });
             });
         }
 
         async function init() {
+            if (!initialTeamId) {
+                await loadRolloverSourceTeams();
+                return;
+            }
+
             if (initialTeamId) {
                 const team = await getTeam(initialTeamId);
                 if (!team) {
@@ -425,7 +529,7 @@
                     return;
                 }
                 document.getElementById('page-title').textContent = 'Edit Team';
-                if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
+                if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || initialTeamId })) {
                     alert("You don't have permission to edit this team.");
                     window.location.href = 'dashboard.html';
                     return;
@@ -613,6 +717,7 @@
                 // Add to local list and update UI
                 adminEmails = normalizeAdminEmailList([...adminEmails, email]);
                 renderAdminList();
+                renderRolloverAccessPreview();
                 input.value = '';
 
                 // Only auto-hide if no code is displayed (user needs time to copy)
@@ -784,6 +889,17 @@
 
                 const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
                 adminEmails = normalizedAdminEmails;
+                const rolloverSourceTeam = rolloverSourceTeams.find((team) => team.id === document.getElementById('rollover-source-team')?.value);
+                const selectedRolloverStaffEmails = rolloverSourceTeam ? getSelectedRolloverStaffEmails() : [];
+                const rolloverStaffUpdate = rolloverSourceTeam && selectedRolloverStaffEmails.length > 0
+                    ? buildStaffAdminRolloverUpdate({
+                        sourceTeam: rolloverSourceTeam,
+                        targetTeam: { adminEmails: normalizedAdminEmails },
+                        selectedEmails: selectedRolloverStaffEmails,
+                        rolledOverAt: new Date().toISOString()
+                    })
+                    : null;
+
                 const teamData = {
                     name: document.getElementById('name').value,
                     description: document.getElementById('description').value,
@@ -802,7 +918,8 @@
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
-                    adminEmails: normalizedAdminEmails,
+                    adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails,
+                    ...(rolloverStaffUpdate ? { accessRolloverAudit: rolloverStaffUpdate.accessRolloverAudit } : {}),
                     ...((() => {
                         const sr = parseStreamUrl(document.getElementById('streamUrl').value);
                         return {

@@ -4,7 +4,9 @@ import {
     buildScheduleChangeMessage,
     buildScheduleNotificationTargets,
     postScheduleNotificationTargets,
-    buildRsvpReminderMessage
+    buildRsvpReminderMessage,
+    buildNextReminderAt,
+    buildScheduleNotificationMetadata
 } from '../../js/schedule-notifications.js';
 
 describe('schedule notification helpers', () => {
@@ -32,6 +34,30 @@ describe('schedule notification helpers', () => {
             enabled: true,
             reminderHours: 24,
             delivery: 'team_chat'
+        });
+    });
+
+    it('builds due timestamp and pending audit metadata for pre-event reminders', () => {
+        expect(buildNextReminderAt('2026-05-03T18:00:00.000Z', 48)).toBe('2026-05-01T18:00:00.000Z');
+
+        const metadata = buildScheduleNotificationMetadata({
+            settings: { enabled: true, reminderHours: 72 },
+            action: 'created',
+            sent: false,
+            eventDate: '2026-05-03T18:00:00.000Z'
+        });
+
+        expect(metadata).toMatchObject({
+            enabled: true,
+            reminderHours: 72,
+            delivery: 'team_chat',
+            nextReminderAt: '2026-04-30T18:00:00.000Z',
+            reminderStatus: 'pending',
+            reminderSent: false,
+            reminderSentAt: null,
+            sent: false,
+            sentAt: null,
+            lastAction: 'created'
         });
     });
 

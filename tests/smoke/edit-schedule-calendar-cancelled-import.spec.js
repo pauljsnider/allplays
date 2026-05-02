@@ -13,6 +13,7 @@ export async function getTeam(teamId) {
     };
 }
 export async function getTeams() { return []; }
+export async function getOfficials() { return []; }
 export async function getGames() { return []; }
 export async function getEvents() { return []; }
 export async function addGame() { return 'game-1'; }
