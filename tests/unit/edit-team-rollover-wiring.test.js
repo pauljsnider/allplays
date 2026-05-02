@@ -9,7 +9,7 @@ describe('edit team roster rollover wiring', () => {
     it('loads a selectable player preview and copies only selected players after team creation', () => {
         const source = readEditTeamSource();
 
-        expect(source).toContain('id="rollover-source-team"');
+        expect(source).toContain('id="rosterRolloverSourceTeam"');
         expect(source).toContain('class="rollover-player-checkbox');
         expect(source).toContain('getSelectedRolloverPlayerIds()');
         expect(source).toContain('copySelectedPlayersForTeamRollover(rolloverSourceTeamId, newTeamId, selectedRolloverPlayerIds)');

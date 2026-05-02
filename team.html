@@ -86,6 +86,18 @@
             <div id="tournament-standings-content" class="space-y-6"></div>
         </section>
 
+        <!-- Local Attractions -->
+        <section id="local-attractions-section" class="mb-8 hidden">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                <div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Local Attractions</h2>
+                    <p class="text-sm text-gray-500">Nearby sponsors and destinations for tournament attendees.</p>
+                </div>
+            </div>
+            <div id="local-attractions-content" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+        </section>
+
         <!-- Playing Time Insights (Beta Basketball) -->
         <section id="playing-time-insights" class="mb-8 hidden">
             <button id="playing-time-toggle" class="w-full text-left group">
@@ -241,7 +253,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getLocalAttractionSponsors } from './js/db.js?v=16';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
@@ -293,6 +305,44 @@
         window.navScheduleMonth = navScheduleMonth;
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
+
+        function renderLocalAttractionsSection(sponsors, loadError = null) {
+            const section = document.getElementById('local-attractions-section');
+            const content = document.getElementById('local-attractions-content');
+            if (!section || !content) return;
+
+            if (loadError) {
+                section.classList.remove('hidden');
+                content.className = 'bg-amber-50 border border-amber-200 rounded-xl p-4';
+                content.innerHTML = '<p class="text-sm text-amber-700">Local attractions could not be loaded right now.</p>';
+                return;
+            }
+
+            if (!Array.isArray(sponsors) || sponsors.length === 0) {
+                section.classList.add('hidden');
+                content.innerHTML = '';
+                return;
+            }
+
+            section.classList.remove('hidden');
+            content.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4';
+            content.innerHTML = sponsors.map((sponsor) => `
+                <article class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden flex flex-col">
+                    ${sponsor.imageUrl
+                        ? `<img src="${escapeHtml(sponsor.imageUrl)}" alt="${escapeHtml(sponsor.name)}" class="w-full h-40 object-cover bg-gray-100">`
+                        : '<div class="h-3 bg-gradient-to-r from-primary-500 to-primary-700"></div>'
+                    }
+                    <div class="p-5 flex flex-col gap-3 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900">${escapeHtml(sponsor.name)}</h3>
+                        ${sponsor.description ? `<p class="text-sm text-gray-600 leading-relaxed">${escapeHtml(sponsor.description)}</p>` : ''}
+                        <div class="mt-auto flex flex-wrap gap-2 pt-2">
+                            ${sponsor.phone ? `<a class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200" href="tel:${encodeURIComponent(sponsor.phone)}">${escapeHtml(sponsor.phone)}</a>` : ''}
+                            ${sponsor.websiteUrl ? `<a class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 hover:bg-primary-100" target="_blank" rel="noopener noreferrer" href="${escapeHtml(sponsor.websiteUrl)}">Website</a>` : ''}
+                        </div>
+                    </div>
+                </article>
+            `).join('');
+        }
 
         function renderNextGameBody(nextGame) {
             if (!nextGame) return '<p class="text-sm text-gray-500">No upcoming games</p>';
@@ -349,8 +399,8 @@
                     return {
                         homeTeam: isHome ? teamName : opponent,
                         awayTeam: isHome ? opponent : teamName,
-                        homeScore: game?.homeScore,
-                        awayScore: game?.awayScore,
+                        homeScore: isHome ? game?.homeScore : game?.awayScore,
+                        awayScore: isHome ? game?.awayScore : game?.homeScore,
                         status: game?.status
                     };
                 });
@@ -1056,6 +1106,14 @@
                 }
 
                 renderTournamentStandingsSection(tournamentStandings, team);
+
+                try {
+                    const localAttractions = await getLocalAttractionSponsors(teamId);
+                    renderLocalAttractionsSection(localAttractions);
+                } catch (error) {
+                    console.error('Error loading local attractions:', error);
+                    renderLocalAttractionsSection([], error);
+                }
 
                 // Start countdown updates
                 if (nextGame) {

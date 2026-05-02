@@ -24,6 +24,16 @@ class MockClassList {
         tokens.forEach((token) => this.tokens.delete(token));
     }
 
+    toggle(token, force) {
+        const shouldAdd = force === undefined ? !this.tokens.has(token) : !!force;
+        if (shouldAdd) {
+            this.tokens.add(token);
+        } else {
+            this.tokens.delete(token);
+        }
+        return shouldAdd;
+    }
+
     contains(token) {
         return this.tokens.has(token);
     }
@@ -56,6 +66,7 @@ class MockElement {
         this.classList = new MockClassList();
         this._innerHTML = '';
         this._removeButtons = [];
+        this._rolloverStaffInputs = [];
     }
 
     addEventListener(type, handler) {
@@ -84,12 +95,31 @@ class MockElement {
         if (selector === '.remove-admin-btn') {
             return this._removeButtons;
         }
+        if (selector === '.rollover-staff-email') {
+            return this._rolloverStaffInputs;
+        }
+        if (selector === '.rollover-staff-email:checked') {
+            return this._rolloverStaffInputs.filter((input) => input.checked);
+        }
         return [];
     }
 
     set innerHTML(value) {
         this._innerHTML = value;
         this.textContent = stripHtml(value);
+        if (this.id === 'rollover-staff-list') {
+            const rolloverStaffInputs = [];
+            for (const match of String(value).matchAll(/<input[^>]*class="[^"]*rollover-staff-email[^"]*"[^>]*value="([^"]+)"([^>]*)>/g)) {
+                const input = new MockElement();
+                input.value = match[1];
+                input.checked = /\bchecked\b/.test(match[2]);
+                input.classList.add('rollover-staff-email');
+                rolloverStaffInputs.push(input);
+            }
+            this._rolloverStaffInputs = rolloverStaffInputs;
+            return;
+        }
+
         if (this.id !== 'admin-list') {
             return;
         }
@@ -156,6 +186,18 @@ function createEnvironment(initialState, overrides = {}) {
         'isPublic',
         'streamUrl',
         'stream-detect',
+        'roster-rollover-section',
+        'rosterRolloverEnabled',
+        'roster-rollover-controls',
+        'rosterRolloverSourceTeam',
+        'roster-rollover-status',
+        'roster-rollover-preview',
+        'access-rollover-panel',
+        'rollover-source-team',
+        'rollover-staff-review',
+        'rollover-staff-enabled',
+        'rollover-staff-list',
+        'rollover-member-note',
         'add-admin-btn',
         'admin-list',
         'add-admin-form',
@@ -165,13 +207,6 @@ function createEnvironment(initialState, overrides = {}) {
         'admin-code-text',
         'copy-admin-code-btn',
         'copy-admin-link-btn',
-        'rollover-panel',
-        'rollover-source-team',
-        'rollover-preview',
-        'rollover-preview-summary',
-        'rollover-select-all',
-        'rollover-player-list',
-        'rollover-status',
         'team-id-panel',
         'team-id-text',
         'team-id-status',
@@ -190,6 +225,10 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('add-admin-form').classList.add('hidden');
     elements.get('admin-invite-status').classList.add('hidden');
     elements.get('admin-invite-code').classList.add('hidden');
+    elements.get('roster-rollover-controls').classList.add('hidden');
+    elements.get('roster-rollover-preview').classList.add('hidden');
+    elements.get('access-rollover-panel').classList.add('hidden');
+    elements.get('rollover-staff-review').classList.add('hidden');
     elements.get('save-btn').textContent = 'Save Team';
     elements.get('photo-upload').files = [];
 
@@ -201,8 +240,8 @@ function createEnvironment(initialState, overrides = {}) {
             }
             return element;
         },
-        querySelectorAll() {
-            return [];
+        querySelectorAll(selector) {
+            return Array.from(elements.values()).flatMap((element) => element.querySelectorAll(selector));
         }
     };
 
@@ -244,8 +283,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=16';",
-            'const { createTeam, updateTeam, getTeam, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=16';",
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -274,6 +313,14 @@ function extractEditTeamModule() {
         .replace(
             "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';",
             'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } = deps.editTeamAdminInvites;'
+        )
+        .replace(
+            "import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';",
+            'const { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } = deps.rolloverAccess;'
+        )
+        .replace(
+            "import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';",
+            'const { buildRosterRolloverPreviewRows } = deps.rosterRolloverPreview;'
         );
 }
 
@@ -307,7 +354,9 @@ async function bootEditTeam(initialState, overrides = {}) {
 
     const deps = {
         db: {
-            async createTeam() {
+            async createTeam(teamData) {
+                env.state.createCalls = env.state.createCalls || [];
+                env.state.createCalls.push({ teamData: deepClone(teamData) });
                 return 'team-created';
             },
             async updateTeam(teamId, teamData) {
@@ -317,11 +366,14 @@ async function bootEditTeam(initialState, overrides = {}) {
             async getTeam(teamId) {
                 return env.state.team && env.state.team.id === teamId ? deepClone(env.state.team) : null;
             },
+            async getUserProfile() {
+                return deepClone(env.state.userProfile || {});
+            },
             async getUserTeamsWithAccess() {
-                return [];
+                return deepClone(env.state.sourceTeams || []);
             },
             async getPlayers() {
-                return [];
+                return deepClone(env.state.players || []);
             },
             async copySelectedPlayersForTeamRollover() {
                 return { copiedCount: 0 };
@@ -381,6 +433,8 @@ async function bootEditTeam(initialState, overrides = {}) {
             }
         },
         teamAccess: await import('../../js/team-access.js'),
+        rolloverAccess: await import('../../js/rollover-access.js'),
+        rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
         editTeamAdminInvites: {
             async processPendingAdminInvites() {
                 return { results: [], fallbackCodeCount: 0, failedCount: 0 };
@@ -405,6 +459,8 @@ async function bootEditTeam(initialState, overrides = {}) {
     };
 
     await runEditTeamModule(deps);
+    await Promise.resolve();
+    await Promise.resolve();
     await Promise.resolve();
 
     return env;
@@ -502,6 +558,90 @@ describe('edit team admin access persistence', () => {
             expect(reloadEnv.elements.get('admin-list').querySelectorAll('.remove-admin-btn')).toHaveLength(2);
         } finally {
             reloadEnv.cleanup();
+        }
+    });
+
+    it('preserves disabled rollover access across new-team admin rerenders', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            sourceTeams: [
+                {
+                    id: 'source-1',
+                    name: 'Spring Sharks',
+                    adminEmails: ['coach-a@example.com', 'coach-b@example.com']
+                }
+            ],
+            createCalls: [],
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('rollover-source-team').value = 'source-1';
+            await env.elements.get('rollover-source-team').dispatchEvent(new MockEvent('change'));
+            expect(env.elements.get('rollover-staff-enabled').checked).toBe(true);
+
+            env.elements.get('rollover-staff-enabled').checked = false;
+            await env.elements.get('add-admin-btn').click();
+            env.elements.get('admin-email-input').value = 'manual@example.com';
+            await env.elements.get('save-admin-btn').click();
+
+            expect(env.elements.get('rollover-staff-enabled').checked).toBe(false);
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData.adminEmails).toEqual(['manual@example.com']);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('preserves individual rollover staff deselections across admin add and remove rerenders', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            sourceTeams: [
+                {
+                    id: 'source-1',
+                    name: 'Spring Sharks',
+                    adminEmails: ['coach-a@example.com', 'coach-b@example.com']
+                }
+            ],
+            createCalls: [],
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('rollover-source-team').value = 'source-1';
+            await env.elements.get('rollover-source-team').dispatchEvent(new MockEvent('change'));
+
+            const findRolloverInput = (email) => env.elements.get('rollover-staff-list')
+                .querySelectorAll('.rollover-staff-email')
+                .find((input) => input.value === email);
+
+            expect(findRolloverInput('coach-a@example.com').checked).toBe(true);
+            expect(findRolloverInput('coach-b@example.com').checked).toBe(true);
+            findRolloverInput('coach-b@example.com').checked = false;
+
+            await env.elements.get('add-admin-btn').click();
+            env.elements.get('admin-email-input').value = 'manual@example.com';
+            await env.elements.get('save-admin-btn').click();
+            expect(findRolloverInput('coach-b@example.com').checked).toBe(false);
+
+            const removeButtons = env.elements.get('admin-list').querySelectorAll('.remove-admin-btn');
+            expect(removeButtons).toHaveLength(1);
+            await removeButtons[0].click();
+            expect(findRolloverInput('coach-b@example.com').checked).toBe(false);
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData.adminEmails).toEqual(['coach-a@example.com']);
+            expect(env.state.createCalls[0].teamData.accessRolloverAudit.staffAdmins).toEqual([
+                { email: 'coach-a@example.com', sourceTeamId: 'source-1', rolledOverAt: expect.any(String) }
+            ]);
+        } finally {
+            env.cleanup();
         }
     });
 
