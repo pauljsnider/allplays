@@ -77,6 +77,20 @@
             </div>
         </div>
 
+        <div id="registration-schedule-import" class="hidden mb-6 bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                    <h3 class="font-semibold text-emerald-900">Registration Schedule Sync</h3>
+                    <p class="text-sm text-emerald-800">Refresh this team's schedule from the latest linked registration snapshot.</p>
+                    <p id="registration-schedule-import-status" class="mt-2 text-sm text-emerald-700"></p>
+                </div>
+                <button id="registration-schedule-import-btn" type="button"
+                    class="bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-emerald-700 transition">
+                    Re-import Schedule
+                </button>
+            </div>
+        </div>
+
         <div id="schedule-notification-settings" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
             <div class="flex items-start justify-between gap-4">
                 <div>
@@ -120,6 +134,9 @@
                         </button>
                         <button id="tab-bulk-ai" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             ✨ AI
+                        </button>
+                        <button id="tab-officials" class="flex-1 px-3 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            Officials
                         </button>
                     </div>
 
@@ -279,6 +296,23 @@
                             <label class="block text-sm font-medium text-gray-700 mb-1">Assignments</label>
                             <div id="assignment-rows" class="space-y-2"></div>
                             <button type="button" id="add-assignment-btn" class="mt-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add Assignment</button>
+                        </div>
+                        <div id="officiating-section" class="border border-indigo-100 rounded-lg p-3 bg-indigo-50/40 space-y-3">
+                            <div class="flex items-start justify-between gap-3">
+                                <div>
+                                    <label class="block text-sm font-semibold text-indigo-900">Officiating Slots</label>
+                                    <p class="text-xs text-indigo-700">Track official responses and open positions for self-assignment.</p>
+                                </div>
+                                <div class="flex flex-col items-end gap-2">
+                                    <span id="officiating-coverage-preview" class="text-xs font-semibold rounded-full px-2 py-1 bg-gray-100 text-gray-700">Unstaffed</span>
+                                    <label class="inline-flex items-center gap-2 text-xs font-medium text-indigo-900 whitespace-nowrap">
+                                        <input type="checkbox" id="officiating-self-assignment-enabled" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        Self-assign open slots
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="officiating-slot-rows" class="space-y-2"></div>
+                            <button type="button" id="add-officiating-slot-btn" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add Officiating Slot</button>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Stat Config</label>
@@ -497,6 +531,52 @@
                                     <button id="clear-csv-import-btn" type="button" class="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Clear</button>
                                     <button id="import-csv-btn" type="button" class="flex-1 bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 transition">Import Rows</button>
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- Officials Directory Tab Content -->
+                    <div id="content-officials" class="p-6 hidden">
+                        <div class="mb-4">
+                            <h2 class="text-xl font-bold">Officials Directory</h2>
+                            <p class="text-sm text-gray-600 mt-1">Maintain structured official records for future game officiating assignments. This directory is separate from team members, parents, coaches, and the generic game assignments list.</p>
+                        </div>
+                        <form id="official-form" class="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                            <input type="hidden" id="official-id">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Name</label>
+                                <input type="text" id="official-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Official name">
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Email</label>
+                                    <input type="email" id="official-email" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="name@example.com">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Phone</label>
+                                    <input type="tel" id="official-phone" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="555-123-4567">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Officiating Roles</label>
+                                <input type="text" id="official-roles" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Referee, umpire, line judge">
+                                <p class="text-xs text-gray-500 mt-1">Comma-separated roles this official can cover.</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Tags</label>
+                                <input type="text" id="official-tags" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Varsity, 12U, experienced">
+                                <p class="text-xs text-gray-500 mt-1">Optional skill level or division eligibility tags.</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="submit" id="save-official-btn" class="flex-1 bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add Official</button>
+                                <button type="button" id="cancel-official-edit-btn" class="hidden px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">Cancel</button>
+                            </div>
+                        </form>
+                        <div class="mt-5">
+                            <h3 class="text-sm font-semibold text-gray-900 mb-2">Saved Officials</h3>
+                            <div id="officials-list" class="space-y-2">
+                                <p class="text-sm text-gray-600 italic">No officials added yet.</p>
                             </div>
                         </div>
                     </div>
@@ -795,17 +875,19 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride } from './js/db.js?v=22';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial } from './js/db.js?v=23';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
         import { checkAuth } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
+        import { computeOfficiatingCoverageStatus, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=1';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
+        import { normalizeOfficialsDirectory } from './js/officiating-slots.js?v=1';
         import { Timestamp, deleteField } from "./js/firebase.js?v=10";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
@@ -813,6 +895,7 @@
         import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=3';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
+        import { formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -833,6 +916,7 @@
         let activeTournamentStandingsPoolKey = null;
         let tournamentStandingsDraft = [];
         let tournamentAdvancementGames = [];
+        let officialsDirectory = [];
 
         const opponentInput = document.getElementById('opponent');
         const opponentResults = document.getElementById('opponent-search-results');
@@ -1490,6 +1574,7 @@
 
             currentTeam = team;
             renderTeamScheduleNotificationSettings(team);
+            renderRegistrationScheduleImport(team);
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
             document.getElementById('organization-schedule-link').href = `organization-schedule.html#teamId=${currentTeamId}`;
@@ -1507,6 +1592,7 @@
             const practiceToggle = document.getElementById('show-practices');
             showPractices = practiceToggle?.checked || false;
 
+            await loadOfficialsDirectory();
             loadConfigs();
             renderCalendarManagement();
             loadSchedule();
@@ -1590,6 +1676,71 @@
                 `).join('');
             }
         }
+
+        function getRegistrationSourceDescriptor(team = {}) {
+            const source = team.registrationSource || team.registrationSourceSnapshot || team.registrationScheduleSnapshot || {};
+            return {
+                type: source.type || source.provider || source.name || 'registration',
+                id: source.id || source.sourceId || team.registrationSourceId || team.externalRegistrationTeamId || 'registration'
+            };
+        }
+
+        function renderRegistrationScheduleImport(team = {}) {
+            const container = document.getElementById('registration-schedule-import');
+            const status = document.getElementById('registration-schedule-import-status');
+            if (!container || !status) return;
+
+            const sourceEvents = getRegistrationScheduleEvents(team);
+            container.classList.toggle('hidden', !isExternallyLinkedRegistrationTeam(team));
+            status.textContent = sourceEvents.length
+                ? `${sourceEvents.length} source event${sourceEvents.length === 1 ? '' : 's'} ready to review.`
+                : 'No source schedule snapshot is available yet.';
+        }
+
+        async function handleRegistrationScheduleImport() {
+            const button = document.getElementById('registration-schedule-import-btn');
+            const status = document.getElementById('registration-schedule-import-status');
+            const sourceEvents = getRegistrationScheduleEvents(currentTeam);
+            if (!sourceEvents.length) {
+                status.textContent = 'No source schedule snapshot is available yet.';
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = 'Re-importing...';
+            try {
+                const existingEvents = await getEvents(currentTeamId);
+                const plan = planRegistrationScheduleImport({
+                    sourceEvents,
+                    existingEvents,
+                    Timestamp,
+                    source: getRegistrationSourceDescriptor(currentTeam)
+                });
+
+                for (const operation of plan.operations) {
+                    if (operation.type === 'add' && operation.eventType === 'practice') {
+                        await addPractice(currentTeamId, operation.payload);
+                    } else if (operation.type === 'add') {
+                        await addGame(currentTeamId, operation.payload);
+                    } else if (operation.eventType === 'practice') {
+                        await updateEvent(currentTeamId, operation.eventId, operation.payload);
+                    } else {
+                        await updateGame(currentTeamId, operation.eventId, operation.payload);
+                    }
+                }
+
+                status.textContent = `Import complete: ${formatRegistrationImportResults(plan.results)}.`;
+                await loadSchedule();
+            } catch (error) {
+                console.error('Registration schedule import failed:', error);
+                status.textContent = `Import failed: ${error.message}`;
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Re-import Schedule';
+            }
+        }
+
+        document.getElementById('registration-schedule-import-btn')?.addEventListener('click', handleRegistrationScheduleImport);
 
         async function loadSchedule() {
             gamesCache = {};
@@ -1717,6 +1868,7 @@
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
                         rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
+                        sourceMetadata: event.sourceMetadata || null,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
                         tournament: resolvedTournament,
@@ -1966,6 +2118,9 @@
             if (practice.isModified) {
                 badges += ' <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded font-semibold">Modified</span>';
             }
+            if (practice.sourceMetadata?.externalEventId) {
+                badges += ` <span class="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold">Imported: ${escapeHtml(practice.sourceMetadata.sourceType || 'registration')}</span>`;
+            }
 
             // Build action buttons
             let actions = '';
@@ -2196,10 +2351,12 @@
                             ${game.seasonLabel ? `<span class="inline-block bg-slate-100 text-slate-700 text-xs px-2 py-0.5 rounded-full font-semibold">Season: ${escapeHtml(game.seasonLabel)}</span>` : ''}
                             ${game.competitionType ? `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded-full font-semibold">${escapeHtml(String(game.competitionType).replace(/_/g, ' '))}</span>` : ''}
                             ${game.countsTowardSeasonRecord === false ? '<span class="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-semibold">No record impact</span>' : ''}
+                            ${game.sourceMetadata?.externalEventId ? `<span class="inline-block bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded-full font-semibold">Imported: ${escapeHtml(game.sourceMetadata.sourceType || 'registration')}</span>` : ''}
                         </div>
                         ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${formatTime(game.arrivalTime)}</div>` : ''}
                         ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
                         ${renderTournamentSummary(game)}
+                        ${renderOfficiatingSummary(game.officiatingSlots)}
                         ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
                         ${game.status === 'cancelled' ? '<div class="mt-1"><span class="inline-block bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-semibold">CANCELLED</span></div>' : ''}
@@ -2271,6 +2428,8 @@
             }
             document.getElementById('gameNotes').value = game.notes || '';
             populateAssignments(game.assignments || []);
+            populateOfficiatingSlots(game.officiatingSlots || []);
+            document.getElementById('officiating-self-assignment-enabled').checked = game.officiatingSelfAssignmentEnabled === true;
 
             // Update UI
             document.getElementById('submit-game-btn').textContent = 'Update Game';
@@ -2295,6 +2454,135 @@
             return String(d.getFullYear());
         }
 
+        // ===== OFFICIALS DIRECTORY =====
+        function splitDirectoryInput(value) {
+            return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+        }
+
+        function resetOfficialForm() {
+            document.getElementById('official-id').value = '';
+            document.getElementById('official-form').reset();
+            document.getElementById('save-official-btn').textContent = 'Add Official';
+            document.getElementById('cancel-official-edit-btn').classList.add('hidden');
+        }
+
+        function renderOfficialsDirectory() {
+            const list = document.getElementById('officials-list');
+            if (!officialsDirectory.length) {
+                list.innerHTML = '<p class="text-sm text-gray-600 italic">No officials added yet.</p>';
+                return;
+            }
+
+            list.innerHTML = officialsDirectory.map((official) => {
+                const roles = Array.isArray(official.roles) ? official.roles : [];
+                const tags = Array.isArray(official.tags) ? official.tags : [];
+                const contact = [official.email, official.phone].filter(Boolean).join(' • ');
+                return `
+                    <div class="border border-gray-200 rounded-lg p-3 bg-white">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <h4 class="font-semibold text-gray-900">${escapeHtml(official.name)}</h4>
+                                <p class="text-sm text-gray-600">${escapeHtml(contact || 'No contact saved')}</p>
+                            </div>
+                            <div class="flex gap-2 text-sm">
+                                <button type="button" class="text-indigo-600 hover:text-indigo-800 font-medium" data-edit-official-id="${escapeHtml(official.id)}">Edit</button>
+                                <button type="button" class="text-red-600 hover:text-red-800 font-medium" data-delete-official-id="${escapeHtml(official.id)}">Remove</button>
+                            </div>
+                        </div>
+                        <div class="mt-2 flex flex-wrap gap-1">
+                            ${roles.map(role => `<span class="inline-block bg-indigo-50 text-indigo-700 rounded-full px-2 py-0.5 text-xs font-medium">${escapeHtml(role)}</span>`).join('')}
+                        </div>
+                        ${tags.length ? `<div class="mt-2 flex flex-wrap gap-1">${tags.map(tag => `<span class="inline-block bg-gray-100 text-gray-700 rounded-full px-2 py-0.5 text-xs">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadOfficialsDirectory() {
+            try {
+                officialsDirectory = normalizeOfficialsDirectory(await getOfficials(currentTeamId));
+                renderOfficialsDirectory();
+            } catch (error) {
+                console.error('Failed to load officials directory:', error);
+                officialsDirectory = [];
+                document.getElementById('officials-list').innerHTML = '<p class="text-sm text-red-600">Could not load officials.</p>';
+            }
+        }
+
+        function getOfficialDraftFromForm() {
+            return {
+                name: document.getElementById('official-name').value.trim(),
+                email: document.getElementById('official-email').value.trim(),
+                phone: document.getElementById('official-phone').value.trim(),
+                roles: splitDirectoryInput(document.getElementById('official-roles').value),
+                tags: splitDirectoryInput(document.getElementById('official-tags').value)
+            };
+        }
+
+        function editOfficial(officialId) {
+            const official = officialsDirectory.find(item => item.id === officialId);
+            if (!official) return;
+            document.getElementById('official-id').value = official.id;
+            document.getElementById('official-name').value = official.name || '';
+            document.getElementById('official-email').value = official.email || '';
+            document.getElementById('official-phone').value = official.phone || '';
+            document.getElementById('official-roles').value = Array.isArray(official.roles) ? official.roles.join(', ') : '';
+            document.getElementById('official-tags').value = Array.isArray(official.tags) ? official.tags.join(', ') : '';
+            document.getElementById('save-official-btn').textContent = 'Update Official';
+            document.getElementById('cancel-official-edit-btn').classList.remove('hidden');
+            document.getElementById('official-form').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        document.getElementById('official-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const officialId = document.getElementById('official-id').value;
+            const draft = getOfficialDraftFromForm();
+            if (!draft.email && !draft.phone) {
+                alert('Add an email or phone for this official.');
+                return;
+            }
+            if (draft.roles.length === 0) {
+                alert('Add at least one officiating role.');
+                return;
+            }
+
+            try {
+                if (officialId) {
+                    await updateOfficial(currentTeamId, officialId, draft);
+                } else {
+                    await addOfficial(currentTeamId, draft);
+                }
+                resetOfficialForm();
+                await loadOfficialsDirectory();
+            } catch (error) {
+                console.error('Failed to save official:', error);
+                alert(`Could not save official: ${error.message}`);
+            }
+        });
+
+        document.getElementById('cancel-official-edit-btn').addEventListener('click', resetOfficialForm);
+        document.getElementById('officials-list').addEventListener('click', async (event) => {
+            const editId = event.target.dataset.editOfficialId;
+            const deleteId = event.target.dataset.deleteOfficialId;
+            if (editId) {
+                editOfficial(editId);
+                return;
+            }
+            if (!deleteId) return;
+            const official = officialsDirectory.find(item => item.id === deleteId);
+            if (!confirm(`Remove ${official?.name || 'this official'} from the officials directory?`)) return;
+            try {
+                await deleteOfficial(currentTeamId, deleteId);
+                if (document.getElementById('official-id').value === deleteId) {
+                    resetOfficialForm();
+                }
+                await loadOfficialsDirectory();
+            } catch (error) {
+                console.error('Failed to delete official:', error);
+                alert(`Could not remove official: ${error.message}`);
+            }
+        });
+
         // ===== ASSIGNMENT ROWS =====
         function addAssignmentRow(role = '', value = '') {
             const container = document.getElementById('assignment-rows');
@@ -2309,6 +2597,122 @@
         }
 
         document.getElementById('add-assignment-btn').addEventListener('click', () => addAssignmentRow());
+
+        function getOfficiatingStatusLabel(status) {
+            return {
+                pending: 'Pending',
+                accepted: 'Accepted',
+                declined: 'Declined',
+                cant_make: "Can't make it",
+                open: 'Open'
+            }[status] || 'Pending';
+        }
+
+        function getCoverageBadgeClass(status) {
+            if (status === 'covered') return 'bg-green-100 text-green-800';
+            if (status === 'needs_attention') return 'bg-amber-100 text-amber-800';
+            return 'bg-gray-100 text-gray-700';
+        }
+
+        function getCoverageLabel(status) {
+            if (status === 'covered') return 'Covered';
+            if (status === 'needs_attention') return 'Needs attention';
+            return 'Unstaffed';
+        }
+
+        function updateOfficiatingCoveragePreview() {
+            const preview = document.getElementById('officiating-coverage-preview');
+            if (!preview) return;
+            const status = computeOfficiatingCoverageStatus(getOfficiatingSlotsFromForm());
+            preview.textContent = getCoverageLabel(status);
+            preview.className = `text-xs font-semibold rounded-full px-2 py-1 ${getCoverageBadgeClass(status)}`;
+        }
+
+        function renderOfficiatingSummary(slotsOrGame = []) {
+            const sourceSlots = Array.isArray(slotsOrGame) ? slotsOrGame : (slotsOrGame?.officiatingSlots || []);
+            const slots = normalizeAssignmentOfficiatingSlots(sourceSlots);
+            if (!slots.length) return '';
+            const coverageStatus = Array.isArray(slotsOrGame)
+                ? computeOfficiatingCoverageStatus(slots)
+                : (slotsOrGame.officiatingCoverageStatus || computeOfficiatingCoverageStatus(slots));
+            const slotBadges = slots.map((slot) => {
+                const name = slot.officialName || slot.officialEmail || 'Open';
+                return `<span class="inline-block bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(slot.position)}:</b> ${escapeHtml(name)} · ${escapeHtml(getOfficiatingStatusLabel(slot.status))}</span>`;
+            }).join('');
+            return `<div class="mt-1 text-xs text-indigo-800"><span class="inline-block ${getCoverageBadgeClass(coverageStatus)} rounded px-1.5 py-0.5 mr-1 mb-1 font-semibold">Officials: ${escapeHtml(getCoverageLabel(coverageStatus))}</span>${slotBadges}</div>`;
+        }
+
+        function generateOfficiatingSlotId() {
+            const existingIds = new Set(Array.from(document.querySelectorAll('#officiating-slot-rows .officiating-slot-row'))
+                .map(row => row.dataset.slotId)
+                .filter(Boolean));
+            let id;
+            do {
+                id = `slot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            } while (existingIds.has(id));
+            return id;
+        }
+
+        function renderOfficialOptions(selectedId = '') {
+            const options = ['<option value="">Manual / unassigned</option>'];
+            officialsDirectory.forEach((official) => {
+                const selected = official.id === selectedId ? ' selected' : '';
+                const label = official.email ? `${official.name} (${official.email})` : official.name;
+                options.push(`<option value="${escapeHtml(official.id)}" data-name="${escapeHtml(official.name)}" data-email="${escapeHtml(official.email || '')}"${selected}>${escapeHtml(label)}</option>`);
+            });
+            return options.join('');
+        }
+
+        function getDirectoryOfficial(officialId) {
+            return officialsDirectory.find(official => official.id === officialId) || null;
+        }
+
+        function addOfficiatingSlotRow(slot = {}) {
+            const container = document.getElementById('officiating-slot-rows');
+            const row = document.createElement('div');
+            const official = getDirectoryOfficial(slot.officialId || '');
+            const officialName = slot.officialName || official?.name || '';
+            const officialEmail = slot.officialEmail || official?.email || '';
+            row.className = 'officiating-slot-row grid grid-cols-1 lg:grid-cols-5 gap-2 items-center';
+            row.innerHTML = `
+                <input type="text" placeholder="Position (e.g. Referee)" value="${escapeHtml(slot.position || '')}" class="officiating-position rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <select class="officiating-official rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">${renderOfficialOptions(slot.officialId || '')}</select>
+                <input type="text" placeholder="Official name" value="${escapeHtml(officialName)}" class="officiating-name rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <input type="email" placeholder="official@email.com" value="${escapeHtml(officialEmail)}" class="officiating-email rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <div class="flex gap-2">
+                    <select class="officiating-status flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                        <option value="pending" ${slot.status === 'pending' ? 'selected' : ''}>Pending</option>
+                        <option value="accepted" ${slot.status === 'accepted' ? 'selected' : ''}>Accepted</option>
+                        <option value="declined" ${slot.status === 'declined' ? 'selected' : ''}>Declined</option>
+                        <option value="cant_make" ${slot.status === 'cant_make' ? 'selected' : ''}>Can't make it</option>
+                        <option value="open" ${!slot.status || slot.status === 'open' ? 'selected' : ''}>Open</option>
+                    </select>
+                    <button type="button" class="remove-officiating-slot text-red-400 hover:text-red-600 text-lg font-bold">&times;</button>
+                </div>
+            `;
+            row.dataset.slotId = slot.id || generateOfficiatingSlotId();
+            row.dataset.officialUserId = slot.officialUserId || '';
+            row.querySelector('.officiating-official').addEventListener('change', (event) => {
+                const selectedOfficial = getDirectoryOfficial(event.target.value);
+                if (selectedOfficial) {
+                    row.querySelector('.officiating-name').value = selectedOfficial.name || '';
+                    row.querySelector('.officiating-email').value = selectedOfficial.email || '';
+                }
+                updateOfficiatingCoveragePreview();
+            });
+            row.querySelectorAll('input, select').forEach(input => {
+                input.addEventListener('input', updateOfficiatingCoveragePreview);
+                input.addEventListener('change', updateOfficiatingCoveragePreview);
+            });
+            row.querySelector('.remove-officiating-slot').addEventListener('click', () => {
+                row.remove();
+                updateOfficiatingCoveragePreview();
+            });
+            container.appendChild(row);
+            updateOfficiatingCoveragePreview();
+        }
+
+        document.getElementById('add-officiating-slot-btn').addEventListener('click', () => addOfficiatingSlotRow());
 
         function getAssignmentsFromForm() {
             const rows = document.querySelectorAll('#assignment-rows .flex');
@@ -2329,6 +2733,46 @@
             }
         }
 
+        function getOfficiatingSlotsFromForm() {
+            const rows = document.querySelectorAll('#officiating-slot-rows .officiating-slot-row');
+            const slots = Array.from(rows).map(row => {
+                const officialId = row.querySelector('.officiating-official').value.trim();
+                const official = getDirectoryOfficial(officialId);
+                return {
+                    id: row.dataset.slotId || generateOfficiatingSlotId(),
+                    position: row.querySelector('.officiating-position').value.trim(),
+                    officialId: officialId || '',
+                    officialName: row.querySelector('.officiating-name').value.trim() || official?.name || '',
+                    officialEmail: (row.querySelector('.officiating-email').value.trim() || official?.email || '').toLowerCase(),
+                    officialUserId: row.dataset.officialUserId || '',
+                    status: row.querySelector('.officiating-status').value
+                };
+            }).filter(slot => slot.position);
+            return normalizeAssignmentOfficiatingSlots(slots);
+        }
+
+        function getOfficiatingAuthorizationFields(slots = []) {
+            const authorizedUserIds = new Set();
+            const authorizedEmails = new Set();
+            normalizeAssignmentOfficiatingSlots(slots).forEach(slot => {
+                if (slot.officialUserId) authorizedUserIds.add(slot.officialUserId);
+                if (slot.officialEmail) authorizedEmails.add(slot.officialEmail);
+            });
+            return {
+                officiatingAuthorizedUserIds: Array.from(authorizedUserIds),
+                officiatingAuthorizedEmails: Array.from(authorizedEmails)
+            };
+        }
+
+        function populateOfficiatingSlots(slots) {
+            const container = document.getElementById('officiating-slot-rows');
+            container.innerHTML = '';
+            normalizeAssignmentOfficiatingSlots(slots).forEach(slot => addOfficiatingSlotRow(slot));
+            updateOfficiatingCoveragePreview();
+        }
+
+        window.updateOfficiatingCoveragePreview = updateOfficiatingCoveragePreview;
+
         function resetGameForm() {
             editingGameId = null;
             document.getElementById('add-game-form').reset();
@@ -2347,6 +2791,8 @@
             document.getElementById('game-notify-team').checked = true;
             document.getElementById('game-notify-note').value = '';
             document.getElementById('assignment-rows').innerHTML = '';
+            document.getElementById('officiating-self-assignment-enabled').checked = false;
+            populateOfficiatingSlots([]);
         }
 
         // Pre-populate assignments for new games from the latest game
@@ -2423,13 +2869,19 @@
                     arrivalTime: arrivalVal ? Timestamp.fromDate(new Date(arrivalVal)) : null,
                     notes: document.getElementById('gameNotes').value.trim() || null,
                     assignments: getAssignmentsFromForm(),
+                    officiatingSlots: getOfficiatingSlotsFromForm(),
+                    officiatingSelfAssignmentEnabled: document.getElementById('officiating-self-assignment-enabled').checked,
                     scheduleNotifications: buildScheduleNotificationMetadata({
                         settings: notificationSettings,
                         action: editingGameId ? 'updated' : 'created',
                         sent: false,
-                        note: notifyNote
+                        note: notifyNote,
+                        eventDate: parsedGameDate
                     })
                 };
+                Object.assign(gameData, getOfficiatingAuthorizationFields(gameData.officiatingSlots));
+                gameData.officiatingCoverageStatus = computeOfficiatingCoverageStatus(gameData.officiatingSlots);
+
                 if (tournamentData) {
                     gameData.tournament = tournamentData;
                 } else if (editingGameId) {
@@ -2471,7 +2923,8 @@
                                 action: editingGameId ? 'updated' : 'created',
                                 sent: true,
                                 userId: currentUser.uid,
-                                note: notifyNote
+                                note: notifyNote,
+                                eventDate: parsedGameDate
                             })
                         });
                     }
@@ -2587,7 +3040,8 @@
                             settings: notificationSettings,
                             action: editingPracticeId ? 'updated' : 'created',
                             sent: false,
-                            note: notifyNote
+                            note: notifyNote,
+                            eventDate: startDate
                         })
                     },
                     recurrenceState: {
@@ -2624,7 +3078,8 @@
                                 action: editingPracticeId ? 'updated' : 'created',
                                 sent: true,
                                 userId: currentUser.uid,
-                                note: notifyNote
+                                note: notifyNote,
+                                eventDate: startDate
                             })
                         });
                     }
@@ -2903,7 +3358,9 @@
         // Practice filter
         document.getElementById('show-practices').addEventListener('change', (e) => {
             showPractices = e.target.checked;
-            loadSchedule();
+            if (currentTeam) {
+                loadSchedule();
+            }
         });
 
         function setScheduleFilter(nextFilter) {
@@ -2917,7 +3374,9 @@
                 btn.classList.toggle('text-gray-600', !active);
                 btn.classList.toggle('border-gray-200', !active);
             });
-            loadSchedule();
+            if (currentTeam) {
+                loadSchedule();
+            }
         }
 
         document.querySelectorAll('.schedule-filter-btn').forEach(btn => {
@@ -2969,8 +3428,8 @@
 
         // Tab switching helper
         function switchTab(activeTab) {
-            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-csv-import', 'tab-bulk-ai'];
-            const contents = ['content-add-game', 'content-add-practice', 'content-csv-import', 'content-bulk-ai'];
+            const tabs = ['tab-add-game', 'tab-add-practice', 'tab-csv-import', 'tab-bulk-ai', 'tab-officials'];
+            const contents = ['content-add-game', 'content-add-practice', 'content-csv-import', 'content-bulk-ai', 'content-officials'];
 
             tabs.forEach((tabId, index) => {
                 const tab = document.getElementById(tabId);
@@ -2995,6 +3454,7 @@
         document.getElementById('tab-add-practice').addEventListener('click', () => switchTab('tab-add-practice'));
         document.getElementById('tab-csv-import').addEventListener('click', () => switchTab('tab-csv-import'));
         document.getElementById('tab-bulk-ai').addEventListener('click', () => switchTab('tab-bulk-ai'));
+        document.getElementById('tab-officials').addEventListener('click', () => switchTab('tab-officials'));
 
         // Recurrence builder toggle
         document.getElementById('practiceRecurring').addEventListener('change', (e) => {
@@ -3347,7 +3807,8 @@
                         settings: notificationSettings,
                         action: 'created',
                         sent: false,
-                        note
+                        note,
+                        eventDate: startDate
                     })
                 };
                 const practiceId = await addPractice(currentTeamId, practiceData);
@@ -3368,7 +3829,8 @@
                                 action: 'created',
                                 sent: true,
                                 userId: currentUser?.uid || null,
-                                note
+                                note,
+                                eventDate: startDate
                             })
                         });
                     }
@@ -3406,7 +3868,8 @@
                     settings: notificationSettings,
                     action: 'created',
                     sent: false,
-                    note
+                    note,
+                    eventDate: row.normalized.startsAt
                 }),
                 status: 'scheduled',
                 homeScore: 0,
@@ -3430,7 +3893,8 @@
                             action: 'created',
                             sent: true,
                             userId: currentUser?.uid || null,
-                            note
+                            note,
+                            eventDate: gameData.date
                         })
                     });
                 }

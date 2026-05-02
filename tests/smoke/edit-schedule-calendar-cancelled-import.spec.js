@@ -41,6 +41,10 @@ export async function applyTournamentAdvancementPatches() {}
 export async function getRsvpBreakdownByPlayer() { return {}; }
 export async function saveTournamentPoolOverride() {}
 export async function clearTournamentPoolOverride() {}
+export async function getOfficials() { return []; }
+export async function addOfficial() { return 'official-created'; }
+export async function updateOfficial() {}
+export async function deleteOfficial() {}
 `;
 
 const UTILS_STUB = `
