@@ -76,6 +76,11 @@ import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
+import {
+    claimOfficiatingSlot,
+    computeOfficiatingCoverageStatus,
+    updateOfficiatingSlotResponse
+} from './officiating-utils.js?v=1';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -3693,6 +3698,48 @@ export async function cancelGame(teamId, gameId, userId) {
         status: 'cancelled',
         cancelledAt: Timestamp.now(),
         cancelledBy: userId
+    });
+}
+
+
+// ============================================
+// Officiating Assignments
+// ============================================
+
+export async function respondToOfficiatingAssignment(teamId, gameId, slotId, status) {
+    const docRef = getGameDocRef(teamId, gameId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) throw new Error('Game not found');
+        const game = snap.data() || {};
+        const officiatingSlots = updateOfficiatingSlotResponse(game.officiatingSlots || [], slotId, status);
+        transaction.update(docRef, {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: Timestamp.now()
+        });
+    });
+}
+
+export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser) {
+    const docRef = getGameDocRef(teamId, gameId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) throw new Error('Game not found');
+        const game = snap.data() || {};
+        if (game.officiatingSelfAssignmentEnabled !== true) {
+            throw new Error('Self-assignment is not enabled for this game');
+        }
+        const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {
+            uid: official?.uid || '',
+            email: official?.email || '',
+            displayName: official?.displayName || official?.email || 'Official'
+        });
+        transaction.update(docRef, {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: Timestamp.now()
+        });
     });
 }
 
