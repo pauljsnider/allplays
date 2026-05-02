@@ -27,9 +27,7 @@ export async function getTeam(teamId) {
 }
 
 export async function getUserProfile() {
-    return {
-        email: 'owner@example.com'
-    };
+    return { email: 'owner@example.com' };
 }
 
 export async function getUserTeamsWithAccess() {
@@ -88,7 +86,7 @@ export function getUrlParams() {
 }
 
 export function escapeHtml(value) {
-    return String(value || '')
+    return String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
