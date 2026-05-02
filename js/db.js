@@ -90,6 +90,40 @@ const CHAT_REACTIONS = [
 ];
 const CHAT_REACTION_KEYS = new Set(CHAT_REACTIONS.map(r => r.key));
 
+
+function normalizeDelimitedStrings(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(',');
+    return Array.from(new Set(values
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)));
+}
+
+export function normalizeOfficialDraft(draft = {}) {
+    const name = String(draft.name || '').trim();
+    const email = String(draft.email || '').trim();
+    const phone = String(draft.phone || '').trim();
+    const roles = normalizeDelimitedStrings(draft.roles);
+    const tags = normalizeDelimitedStrings(draft.tags);
+
+    if (!name) {
+        throw new Error('Official name is required');
+    }
+    if (!email && !phone) {
+        throw new Error('Official email or phone is required');
+    }
+    if (roles.length === 0) {
+        throw new Error('At least one officiating role is required');
+    }
+
+    return {
+        name,
+        email: email || null,
+        phone: phone || null,
+        roles,
+        tags
+    };
+}
+
 function getTeamGameDocRef(teamId, gameId) {
     return doc(db, 'teams', teamId, 'games', gameId);
 }
@@ -496,6 +530,28 @@ export async function updateTeam(teamId, teamData) {
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, teamData);
+}
+
+export async function addOfficial(teamId, officialData) {
+    const payload = {
+        ...normalizeOfficialDraft(officialData),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/officials`), payload);
+    return docRef.id;
+}
+
+export async function updateOfficial(teamId, officialId, officialData) {
+    const payload = {
+        ...normalizeOfficialDraft(officialData),
+        updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, "teams", teamId, "officials", officialId), payload);
+}
+
+export async function deleteOfficial(teamId, officialId) {
+    await deleteDoc(doc(db, "teams", teamId, "officials", officialId));
 }
 
 function normalizeTournamentPoolOverrideName(poolName) {
