@@ -24,18 +24,25 @@ export async function getTeams() {
 }
 
 export async function getGames() {
-    return [];
+    return state().games || state().dbEvents || [];
 }
 
 export async function getEvents() {
-    return state().dbEvents || [];
+    return state().dbEvents || state().games || [];
 }
 
-export async function addGame() {
+export async function addGame(teamId, gameData) {
+    const testState = state();
+    testState.addGameCalls = testState.addGameCalls || [];
+    testState.addGameCalls.push({ teamId, gameData });
     return 'game-created';
 }
 
-export async function updateGame() {}
+export async function updateGame(teamId, gameId, gameData) {
+    const testState = state();
+    testState.updateGameCalls = testState.updateGameCalls || [];
+    testState.updateGameCalls.push({ teamId, gameId, gameData });
+}
 export async function updateTeam() {}
 export async function deleteGame() {}
 export async function addPractice() { return 'practice-created'; }
@@ -513,5 +520,77 @@ test.describe('edit schedule imported calendar rows', () => {
         const cancelledRow = scheduleList.locator('div').filter({ hasText: 'Storm' }).first();
         await expect(cancelledRow).not.toContainText('Track');
         await expect(cancelledRow).not.toContainText('Plan Practice');
+    });
+});
+
+test.describe('edit schedule season record fields', () => {
+    test.beforeEach(async ({ page }) => {
+        await registerRoutes(page);
+    });
+
+    test('hydrates saved season record fields and persists them on edit', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState({
+            dbEvents: [
+                {
+                    id: 'game-tournament-1',
+                    type: 'game',
+                    date: '2030-04-08T18:00:00.000Z',
+                    opponent: 'Tigers',
+                    location: 'Tournament Field',
+                    status: 'completed',
+                    homeScore: 2,
+                    awayScore: 1,
+                    seasonLabel: '2026 Spring',
+                    competitionType: 'tournament',
+                    countsTowardSeasonRecord: false
+                }
+            ]
+        }));
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await expect(page.locator('#schedule-list')).toContainText('Tigers');
+
+        await page.getByRole('button', { name: 'Edit' }).click();
+        await expect(page.locator('#submit-game-btn')).toHaveText('Update Game');
+        await expect(page.locator('#seasonLabel')).toHaveValue('2026 Spring');
+        await expect(page.locator('#competitionType')).toHaveValue('tournament');
+        await expect(page.locator('#countsTowardSeasonRecord')).not.toBeChecked();
+
+        await page.locator('#submit-game-btn').click();
+
+        const updateCall = await page.waitForFunction(() => window.__editScheduleTestState?.updateGameCalls?.[0]).then((handle) => handle.jsonValue());
+        expect(updateCall.teamId).toBe('team-1');
+        expect(updateCall.gameId).toBe('game-tournament-1');
+        expect(updateCall.gameData.seasonLabel).toBe('2026 Spring');
+        expect(updateCall.gameData.competitionType).toBe('tournament');
+        expect(updateCall.gameData.countsTowardSeasonRecord).toBe(false);
+    });
+
+    test('infers a new league game season label and persists record opt-in', async ({ page }) => {
+        await page.addInitScript((state) => {
+            window.__editScheduleTestState = state;
+            window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
+        }, buildState());
+
+        await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
+        await page.locator('#gameDate').fill('2030-05-02T19:30');
+        await page.locator('#opponent').fill('Bears');
+        await page.locator('#location').fill('Main Field');
+        await page.locator('#seasonLabel').fill('');
+        await page.locator('#competitionType').selectOption('league');
+        await page.locator('#countsTowardSeasonRecord').check();
+        await page.locator('#game-notify-team').uncheck();
+
+        await page.locator('#submit-game-btn').click();
+
+        const addCall = await page.waitForFunction(() => window.__editScheduleTestState?.addGameCalls?.[0]).then((handle) => handle.jsonValue());
+        expect(addCall.teamId).toBe('team-1');
+        expect(addCall.gameData.opponent).toBe('Bears');
+        expect(addCall.gameData.seasonLabel).toBe('2030');
+        expect(addCall.gameData.competitionType).toBe('league');
+        expect(addCall.gameData.countsTowardSeasonRecord).toBe(true);
     });
 });

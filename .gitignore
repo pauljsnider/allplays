@@ -26,6 +26,7 @@ npm-debug.log*
 
 # Testing
 .playwright-mcp/
+test-results/
 
 # Project notes and planning docs
 cleanup.md
