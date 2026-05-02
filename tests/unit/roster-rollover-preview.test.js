@@ -62,7 +62,7 @@ describe('roster rollover preview', () => {
         expect(getVisibleContactCount(player)).toBe(1);
     });
 
-    it('wires the preview-only rollover control into team creation', () => {
+    it('wires the selectable rollover control into team creation', () => {
         const html = readFileSync(new URL('../../edit-team.html', import.meta.url), 'utf8');
 
         expect(html).toContain('Roll Over Previous Roster');
@@ -72,7 +72,8 @@ describe('roster rollover preview', () => {
         expect(html).toContain('const requestId = ++rosterRolloverPreviewRequestId;');
         expect(html).toContain('requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId');
         expect(html).toContain('getPlayers(sourceTeamId)');
-        expect(html).toContain('Nothing will be copied when this team is saved.');
-        expect(html).not.toContain('rolloverSourceTeamId');
+        expect(html).toContain('class="rollover-player-checkbox');
+        expect(html).toContain('getSelectedRolloverPlayerIds()');
+        expect(html).toContain('copySelectedPlayersForTeamRollover(rolloverSourceTeamId, newTeamId, selectedRolloverPlayerIds)');
     });
 });
