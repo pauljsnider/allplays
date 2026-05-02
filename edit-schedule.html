@@ -2513,7 +2513,8 @@
                         settings: notificationSettings,
                         action: editingGameId ? 'updated' : 'created',
                         sent: false,
-                        note: notifyNote
+                        note: notifyNote,
+                        eventDate: parsedGameDate
                     })
                 };
                 if (tournamentData) {
@@ -2557,7 +2558,8 @@
                                 action: editingGameId ? 'updated' : 'created',
                                 sent: true,
                                 userId: currentUser.uid,
-                                note: notifyNote
+                                note: notifyNote,
+                                eventDate: parsedGameDate
                             })
                         });
                     }
@@ -2673,7 +2675,8 @@
                             settings: notificationSettings,
                             action: editingPracticeId ? 'updated' : 'created',
                             sent: false,
-                            note: notifyNote
+                            note: notifyNote,
+                            eventDate: startDate
                         })
                     },
                     recurrenceState: {
@@ -2710,7 +2713,8 @@
                                 action: editingPracticeId ? 'updated' : 'created',
                                 sent: true,
                                 userId: currentUser.uid,
-                                note: notifyNote
+                                note: notifyNote,
+                                eventDate: startDate
                             })
                         });
                     }
@@ -3433,7 +3437,8 @@
                         settings: notificationSettings,
                         action: 'created',
                         sent: false,
-                        note
+                        note,
+                        eventDate: startDate
                     })
                 };
                 const practiceId = await addPractice(currentTeamId, practiceData);
@@ -3454,7 +3459,8 @@
                                 action: 'created',
                                 sent: true,
                                 userId: currentUser?.uid || null,
-                                note
+                                note,
+                                eventDate: startDate
                             })
                         });
                     }
@@ -3492,7 +3498,8 @@
                     settings: notificationSettings,
                     action: 'created',
                     sent: false,
-                    note
+                    note,
+                    eventDate: row.normalized.startsAt
                 }),
                 status: 'scheduled',
                 homeScore: 0,
@@ -3516,7 +3523,8 @@
                             action: 'created',
                             sent: true,
                             userId: currentUser?.uid || null,
-                            note
+                            note,
+                            eventDate: gameData.date
                         })
                     });
                 }
