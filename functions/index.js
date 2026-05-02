@@ -1,13 +1,165 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const Stripe = require('stripe');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const {
+  normalizeTeamPassCheckoutInput,
+  isEligibleTeamPassPurchaser,
+  shouldUnlockTeamPassFromEvent,
+  buildTeamPassEntitlement
+} = require('./team-pass-core.cjs');
+const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
 const firestore = admin.firestore();
+const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 2_000
+});
+
+function getStripeConfig() {
+  const stripeConfig = functions.config()?.stripe || {};
+  return {
+    secretKey: process.env.STRIPE_SECRET_KEY || stripeConfig.secret_key,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || stripeConfig.webhook_secret,
+    teamPassPriceId: process.env.STRIPE_TEAM_PASS_PRICE_ID || stripeConfig.team_pass_price_id,
+    appUrl: process.env.ALLPLAYS_APP_URL || stripeConfig.app_url || 'https://allplays.ai'
+  };
+}
+
+function createStripeClient() {
+  const { secretKey } = getStripeConfig();
+  if (!secretKey) {
+    throw new functions.https.HttpsError('failed-precondition', 'Stripe secret key is not configured.');
+  }
+  return new Stripe(secretKey, { apiVersion: '2024-06-20' });
+}
+
+function buildTeamPassCheckoutUrls(appUrl, teamId) {
+  const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
+  const encodedTeamId = encodeURIComponent(teamId);
+  return {
+    successUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=success`,
+    cancelUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=cancelled`
+  };
+}
+
+async function getUserForEligibility(uid) {
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  return userSnap.exists ? userSnap.data() || {} : {};
+}
+
+exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
+  }
+
+  const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(data || {});
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const user = await getUserForEligibility(context.auth.uid);
+  const email = context.auth.token?.email || user.email || '';
+  if (!isEligibleTeamPassPurchaser({ team, user, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have team access for this purchase.');
+  }
+
+  const { teamPassPriceId, appUrl } = getStripeConfig();
+  if (!teamPassPriceId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Stripe team pass price is not configured.');
+  }
+
+  const stripe = createStripeClient();
+  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [{ price: teamPassPriceId, quantity: 1 }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: email || undefined,
+    client_reference_id: `${teamId}:${seasonId}:${context.auth.uid}`,
+    metadata: {
+      teamId,
+      seasonId,
+      tier,
+      purchaserUid: context.auth.uid
+    }
+  });
+
+  return { checkoutUrl: session.url, sessionId: session.id };
+});
+
+exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('Method not allowed');
+    return;
+  }
+
+  const rateLimit = checkStripeWebhookRateLimit(req);
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).send('Too many webhook requests');
+    return;
+  }
+
+  const { secretKey, webhookSecret } = getStripeConfig();
+  if (!secretKey || !webhookSecret) {
+    res.status(500).send('Stripe webhook configuration is incomplete');
+    return;
+  }
+
+  const stripe = createStripeClient();
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, req.headers['stripe-signature'], webhookSecret);
+  } catch (error) {
+    console.warn('Rejected Stripe webhook with invalid signature:', error?.message || error);
+    res.status(400).send('Invalid Stripe signature');
+    return;
+  }
+
+  if (!shouldUnlockTeamPassFromEvent(event)) {
+    res.status(200).json({ received: true, unlocked: false });
+    return;
+  }
+
+  try {
+    const receivedAt = admin.firestore.FieldValue.serverTimestamp();
+    const entitlement = buildTeamPassEntitlement({
+      session: event.data.object,
+      eventId: event.id,
+      receivedAt
+    });
+    const eventRef = firestore.doc(`stripeEvents/${event.id}`);
+    const entitlementRef = firestore.doc(entitlement.refPath);
+
+    await firestore.runTransaction(async (transaction) => {
+      const eventSnap = await transaction.get(eventRef);
+      if (eventSnap.exists) return;
+      transaction.set(entitlementRef, entitlement.data, { merge: true });
+      transaction.set(eventRef, {
+        provider: 'stripe',
+        type: event.type,
+        checkoutSessionId: event.data.object.id || null,
+        entitlementPath: entitlement.refPath,
+        receivedAt
+      });
+    });
+
+    res.status(200).json({ received: true, unlocked: true });
+  } catch (error) {
+    console.error('Failed to process Stripe team pass webhook:', error);
+    res.status(500).send('Webhook processing failed');
+  }
+});
 
 function normalizeIcsText(text) {
   const marker = 'BEGIN:VCALENDAR';
