@@ -12,10 +12,11 @@ export function normalizeOfficiatingSlots(slots = []) {
             const position = String(slot?.position || slot?.role || '').trim();
             if (!position) return null;
 
+            const officialId = String(slot?.officialId || '').trim();
             const officialEmail = normalizeOfficialEmail(slot?.officialEmail || slot?.email || '');
             const officialUserId = String(slot?.officialUserId || '').trim();
             const officialName = String(slot?.officialName || slot?.name || '').trim();
-            const hasOfficial = !!(officialUserId || officialEmail || officialName);
+            const hasOfficial = !!(officialId || officialUserId || officialEmail || officialName);
             const requestedStatus = String(slot?.status || '').trim();
             const status = OFFICIATING_ASSIGNMENT_STATUSES.includes(requestedStatus)
                 ? requestedStatus
@@ -24,6 +25,7 @@ export function normalizeOfficiatingSlots(slots = []) {
             return {
                 id: String(slot?.id || `slot-${index + 1}`).trim(),
                 position,
+                officialId,
                 officialUserId,
                 officialName,
                 officialEmail,

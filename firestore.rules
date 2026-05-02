@@ -69,6 +69,12 @@ service cloud.firestore {
       return hasIncentivePlayerLink(data);
     }
 
+    function isPublishedSponsor(data) {
+      return data.get('status', '') == 'published' ||
+             data.get('published', false) == true ||
+             data.get('isPublished', false) == true;
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function isOfficialGameUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -331,6 +337,11 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // Officials directory for officiating assignments
+      match /officials/{officialId} {
+        allow read, write: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Games subcollection
       match /games/{gameId} {
         allow read: if true;  // Public game data
@@ -482,10 +493,24 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // Sponsor placements subcollection
+      match /sponsors/{sponsorId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isParentForTeam(teamId) ||
+                       isPublishedSponsor(resource.data);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Stat tracker configs subcollection
       match /statTrackerConfigs/{configId} {
         allow read: if true;
         allow write: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Officials directory subcollection
+      match /officials/{officialId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       // Drill Favorites subcollection
