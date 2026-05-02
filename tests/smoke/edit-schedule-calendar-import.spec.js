@@ -23,6 +23,10 @@ export async function getTeams() {
     return state().teams || [];
 }
 
+export async function getOfficials() {
+    return [];
+}
+
 export async function getGames() {
     return state().games || state().dbEvents || [];
 }

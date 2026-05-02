@@ -52,6 +52,7 @@ import {
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
+import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -72,6 +73,7 @@ import {
 } from './team-visibility.js?v=1';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
+import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
@@ -359,6 +361,30 @@ export async function getTeam(teamId, options = {}) {
     }
 }
 
+export async function getLocalAttractionSponsors(teamId) {
+    if (!teamId) return [];
+
+    const sponsorsRef = collection(db, `teams/${teamId}/sponsors`);
+    const sponsorQueries = [
+        query(sponsorsRef, where("status", "==", "published")),
+        query(sponsorsRef, where("published", "==", true)),
+        query(sponsorsRef, where("isPublished", "==", true))
+    ];
+    const snapshots = await Promise.allSettled(sponsorQueries.map((q) => getDocs(q)));
+    const successfulSnapshots = snapshots.filter((result) => result.status === 'fulfilled');
+
+    if (successfulSnapshots.length === 0) {
+        throw snapshots[0]?.reason || new Error('Unable to load local attraction sponsors');
+    }
+
+    const sponsorsById = new Map();
+    successfulSnapshots.forEach((result) => {
+        result.value.docs.forEach(doc => sponsorsById.set(doc.id, { id: doc.id, ...doc.data() }));
+    });
+
+    return normalizeLocalAttractionSponsors(Array.from(sponsorsById.values()));
+}
+
 export async function getUserTeams(userId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), where("ownerId", "==", userId));
@@ -640,6 +666,22 @@ function assertNoSensitivePlayerFields(playerData) {
     }
 }
 
+export async function getOfficials(teamId) {
+    const mapOfficial = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
+    try {
+        const q = query(collection(db, `teams/${teamId}/officials`), orderBy('name'));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(mapOfficial);
+    } catch (e) {
+        const code = e?.code || '';
+        if (code !== 'failed-precondition') throw e;
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/officials`));
+        return snapshot.docs
+            .map(mapOfficial)
+            .sort((a, b) => String(a.name || a.displayName || a.email || '').localeCompare(String(b.name || b.displayName || b.email || '')));
+    }
+}
+
 export async function getPlayers(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const isActivePlayer = (player) => player?.active !== false;
@@ -681,6 +723,36 @@ export async function addPlayer(teamId, playerData) {
     }
     const docRef = await addDoc(collection(db, `teams/${teamId}/players`), playerData);
     return docRef.id;
+}
+
+export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTeamId, selectedPlayerIds = []) {
+    const sourceId = String(sourceTeamId || '').trim();
+    const targetId = String(targetTeamId || '').trim();
+    const selectedIds = new Set((selectedPlayerIds || []).map(id => String(id || '').trim()).filter(Boolean));
+
+    if (!sourceId) throw new Error('Choose a source team to copy players from.');
+    if (!targetId) throw new Error('New team is required before copying players.');
+    if (sourceId === targetId) throw new Error('Choose a different source team for roster rollover.');
+    if (selectedIds.size === 0) return { copiedCount: 0 };
+
+    const sourcePlayers = await getPlayers(sourceId);
+    const playersToCopy = sourcePlayers.filter(player => selectedIds.has(String(player.id || '')));
+    if (playersToCopy.length !== selectedIds.size) {
+        throw new Error('One or more selected players could not be found on the source team. Refresh and try again.');
+    }
+
+    const batch = writeBatch(db);
+    const rolledOverAt = Timestamp.now();
+    playersToCopy.forEach((player) => {
+        const playerCopy = buildRolloverPlayerCopy(player, sourceId, rolledOverAt);
+        assertNoSensitivePlayerFields(playerCopy);
+        playerCopy.createdAt = Timestamp.now();
+        const targetRef = doc(collection(db, `teams/${targetId}/players`));
+        batch.set(targetRef, playerCopy);
+    });
+
+    await batch.commit();
+    return { copiedCount: playersToCopy.length };
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
