@@ -300,6 +300,7 @@
 <li>How to complete team foundation settings in one pass</li>
 <li>How to invite staff and handle invite delivery issues</li>
 <li>How to delegate scorekeeping and streaming to confirmed members</li>
+<li>How to preview prior roster rollover options during team creation</li>
 <li>How to verify what families and players will see</li>
 <li>How to recover from common setup and access problems</li>
 </ul>
@@ -367,6 +368,15 @@
 <li>Disable it for invite/direct-link access only</li>
 </ul>
 <ol class="ml-6 list-decimal space-y-1">
+<li>Preview prior roster rollover for new teams only.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>Enable <strong>Roll Over Previous Roster</strong> if you want to review a prior team before saving</li>
+<li>Select a source team where you have owner/admin access</li>
+<li>Review active players and visible linked family/contact counts</li>
+<li>This step is preview-only: saving the team does not copy roster, family, staff, admin, fan, or follower records yet</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
 <li>Invite coach/admin staff.</li>
 </ol>
 <ul class="ml-6 list-disc space-y-1">
@@ -381,6 +391,15 @@
 <li>In <strong>Team Permissions</strong>, choose <strong>All confirmed members</strong> or <strong>Selected confirmed members only</strong> for scorekeeping.</li>
 <li>Repeat for streaming access.</li>
 <li>Selected volunteers are saved as member IDs and do not become team admins.</li>
+</ul>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Optionally roll over staff/admin access for a new season team.</li>
+</ol>
+<ul class="ml-6 list-disc space-y-1">
+<li>On a new team, choose a <strong>Source Team</strong> under <strong>Access Rollover</strong>.</li>
+<li>Review eligible staff/admin emails separately from roster work and leave <strong>Carry over staff/admin access</strong> enabled only for the people to copy.</li>
+<li>Existing admins on the new team are skipped to avoid duplicates.</li>
+<li>Fan/member carry-forward is omitted until player rollover can map parent access to copied players.</li>
 </ul>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Handle invite outcomes.</li>
@@ -418,6 +437,10 @@
 <li>When are admin invites sent for a brand-new team?</li>
 </ul>
 <p>Invites are processed when you save the newly created team.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Does roster rollover copy players yet?</li>
+</ul>
+<p>No. The current rollover control only previews eligible prior teams, active players, and linked family/contact counts.</p>
 <ul class="ml-6 list-disc space-y-1">
 <li>Can I make a team private later?</li>
 </ul>
@@ -492,6 +515,8 @@
           toc.appendChild(a);
           return a;
         });
+        const allLinks = [...links];
+        let mobileWrapper = null;
 
         if (mobileToc && window.innerWidth < 1024) {
           const wrapper = document.createElement('details');
@@ -505,22 +530,36 @@
           summary.style.color = '#0f172a';
           const list = toc.cloneNode(true);
           list.style.marginTop = '0.6rem';
+          allLinks.push(...Array.from(list.querySelectorAll('a')));
           wrapper.appendChild(summary);
           wrapper.appendChild(list);
           mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
         }
 
         const sectionById = new Map(headings.map((h) => [h.id, h]));
-        const setActive = () => {
-          let active = headings[0];
-          for (const h of headings) {
-            if (h.getBoundingClientRect().top <= 140) active = h;
+        const setActive = (activeId) => {
+          let active = sectionById.get(activeId) || headings[0];
+          if (!sectionById.has(activeId)) {
+            for (const h of headings) {
+              if (h.getBoundingClientRect().top <= 140) active = h;
+            }
           }
-          links.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+          allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        window.addEventListener('scroll', setActive, { passive: true });
-        setActive();
+        allLinks.forEach((a) => {
+          a.addEventListener('click', () => {
+            setActive(a.getAttribute('href').slice(1));
+            if (mobileWrapper && mobileWrapper.contains(a)) {
+              mobileWrapper.open = false;
+            }
+          });
+        });
+
+        window.addEventListener('scroll', () => setActive(null), { passive: true });
+        window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        setActive(window.location.hash.slice(1) || null);
       })();
     </script>
 </body>

@@ -1,13 +1,165 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const Stripe = require('stripe');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const {
+  normalizeTeamPassCheckoutInput,
+  isEligibleTeamPassPurchaser,
+  shouldUnlockTeamPassFromEvent,
+  buildTeamPassEntitlement
+} = require('./team-pass-core.cjs');
+const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
 const firestore = admin.firestore();
+const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
+  windowMs: 60_000,
+  maxRequests: 120,
+  maxKeys: 2_000
+});
+
+function getStripeConfig() {
+  const stripeConfig = functions.config()?.stripe || {};
+  return {
+    secretKey: process.env.STRIPE_SECRET_KEY || stripeConfig.secret_key,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || stripeConfig.webhook_secret,
+    teamPassPriceId: process.env.STRIPE_TEAM_PASS_PRICE_ID || stripeConfig.team_pass_price_id,
+    appUrl: process.env.ALLPLAYS_APP_URL || stripeConfig.app_url || 'https://allplays.ai'
+  };
+}
+
+function createStripeClient() {
+  const { secretKey } = getStripeConfig();
+  if (!secretKey) {
+    throw new functions.https.HttpsError('failed-precondition', 'Stripe secret key is not configured.');
+  }
+  return new Stripe(secretKey, { apiVersion: '2024-06-20' });
+}
+
+function buildTeamPassCheckoutUrls(appUrl, teamId) {
+  const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
+  const encodedTeamId = encodeURIComponent(teamId);
+  return {
+    successUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=success`,
+    cancelUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=cancelled`
+  };
+}
+
+async function getUserForEligibility(uid) {
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  return userSnap.exists ? userSnap.data() || {} : {};
+}
+
+exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before purchasing a team pass.');
+  }
+
+  const { teamId, seasonId, tier } = normalizeTeamPassCheckoutInput(data || {});
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = { id: teamId, ...(teamSnap.data() || {}) };
+  const user = await getUserForEligibility(context.auth.uid);
+  const email = context.auth.token?.email || user.email || '';
+  if (!isEligibleTeamPassPurchaser({ team, user, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have team access for this purchase.');
+  }
+
+  const { teamPassPriceId, appUrl } = getStripeConfig();
+  if (!teamPassPriceId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Stripe team pass price is not configured.');
+  }
+
+  const stripe = createStripeClient();
+  const { successUrl, cancelUrl } = buildTeamPassCheckoutUrls(appUrl, teamId);
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [{ price: teamPassPriceId, quantity: 1 }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: email || undefined,
+    client_reference_id: `${teamId}:${seasonId}:${context.auth.uid}`,
+    metadata: {
+      teamId,
+      seasonId,
+      tier,
+      purchaserUid: context.auth.uid
+    }
+  });
+
+  return { checkoutUrl: session.url, sessionId: session.id };
+});
+
+exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('Method not allowed');
+    return;
+  }
+
+  const rateLimit = checkStripeWebhookRateLimit(req);
+  if (!rateLimit.allowed) {
+    res.set('Retry-After', String(rateLimit.retryAfterSeconds));
+    res.status(429).send('Too many webhook requests');
+    return;
+  }
+
+  const { secretKey, webhookSecret } = getStripeConfig();
+  if (!secretKey || !webhookSecret) {
+    res.status(500).send('Stripe webhook configuration is incomplete');
+    return;
+  }
+
+  const stripe = createStripeClient();
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, req.headers['stripe-signature'], webhookSecret);
+  } catch (error) {
+    console.warn('Rejected Stripe webhook with invalid signature:', error?.message || error);
+    res.status(400).send('Invalid Stripe signature');
+    return;
+  }
+
+  if (!shouldUnlockTeamPassFromEvent(event)) {
+    res.status(200).json({ received: true, unlocked: false });
+    return;
+  }
+
+  try {
+    const receivedAt = admin.firestore.FieldValue.serverTimestamp();
+    const entitlement = buildTeamPassEntitlement({
+      session: event.data.object,
+      eventId: event.id,
+      receivedAt
+    });
+    const eventRef = firestore.doc(`stripeEvents/${event.id}`);
+    const entitlementRef = firestore.doc(entitlement.refPath);
+
+    await firestore.runTransaction(async (transaction) => {
+      const eventSnap = await transaction.get(eventRef);
+      if (eventSnap.exists) return;
+      transaction.set(entitlementRef, entitlement.data, { merge: true });
+      transaction.set(eventRef, {
+        provider: 'stripe',
+        type: event.type,
+        checkoutSessionId: event.data.object.id || null,
+        entitlementPath: entitlement.refPath,
+        receivedAt
+      });
+    });
+
+    res.status(200).json({ received: true, unlocked: true });
+  } catch (error) {
+    console.error('Failed to process Stripe team pass webhook:', error);
+    res.status(500).send('Webhook processing failed');
+  }
+});
 
 function normalizeIcsText(text) {
   const marker = 'BEGIN:VCALENDAR';
@@ -411,12 +563,13 @@ async function sendCategoryNotification({
   category,
   title,
   body,
-  actorUid = null
+  actorUid = null,
+  linkOverride = null
 }) {
   const targets = await getTargetsForCategory(teamId, category, actorUid);
   if (!targets.length) return null;
 
-  const link = buildNotificationLink({ category, teamId, gameId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId });
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -449,6 +602,162 @@ async function sendCategoryNotification({
     failureCount
   };
 }
+
+function coerceDate(value) {
+  if (!value) return null;
+  if (typeof value.toDate === 'function') return value.toDate();
+  if (value instanceof Date) return value;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getEventTitle(event) {
+  const type = String(event?.type || event?.eventType || '').toLowerCase();
+  if (type === 'practice') {
+    return event?.title || 'Practice';
+  }
+  if (event?.title) return event.title;
+  return event?.opponent ? `vs. ${event.opponent}` : 'Game';
+}
+
+function getReminderDueAt(event) {
+  const notifications = event?.scheduleNotifications || {};
+  const explicitDueAt = coerceDate(notifications.nextReminderAt);
+  if (explicitDueAt) return explicitDueAt;
+
+  const eventDate = coerceDate(event?.date);
+  if (!eventDate) return null;
+  const reminderHours = Number.parseInt(notifications.reminderHours, 10);
+  const supportedHours = [24, 48, 72].includes(reminderHours) ? reminderHours : 24;
+  return new Date(eventDate.getTime() - supportedHours * 60 * 60 * 1000);
+}
+
+function isEligibleForPreEventReminder(event, now = new Date()) {
+  const notifications = event?.scheduleNotifications || {};
+  if (notifications.enabled === false) return false;
+  if (notifications.reminderSent === true || notifications.reminderStatus === 'sent') return false;
+  if (notifications.reminderStatus === 'sending') return false;
+  if (event?.deleted === true || event?.isDeleted === true || event?.deletedAt) return false;
+
+  const status = String(event?.status || '').toLowerCase();
+  if (status === 'cancelled' || status === 'canceled' || status === 'deleted') return false;
+
+  const eventDate = coerceDate(event?.date);
+  if (!eventDate || eventDate <= now) return false;
+
+  const dueAt = getReminderDueAt(event);
+  return Boolean(dueAt && dueAt <= now);
+}
+
+function buildPreEventReminderPayload({ teamId, gameId, event }) {
+  const eventTitle = getEventTitle(event);
+  const eventDate = coerceDate(event?.date);
+  const dateText = eventDate
+    ? eventDate.toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: event?.timeZone || 'UTC'
+    })
+    : 'soon';
+  const location = String(event?.location || '').trim();
+  const bodyParts = [`${eventTitle} is coming up ${dateText}.`];
+  if (location) bodyParts.push(`Location: ${location}`);
+  const link = gameId
+    ? `https://allplays.ai/game-day.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`
+    : `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
+
+  return {
+    title: 'Upcoming team event',
+    body: bodyParts.join(' '),
+    link
+  };
+}
+
+async function markReminderSending(eventRef, claimId, now) {
+  return firestore.runTransaction(async (transaction) => {
+    const snap = await transaction.get(eventRef);
+    if (!snap.exists) return null;
+    const event = snap.data() || {};
+    if (!isEligibleForPreEventReminder(event, now)) return null;
+    transaction.update(eventRef, {
+      'scheduleNotifications.reminderStatus': 'sending',
+      'scheduleNotifications.claimId': claimId,
+      'scheduleNotifications.sendingAt': admin.firestore.FieldValue.serverTimestamp()
+    });
+    return event;
+  });
+}
+
+async function markReminderSent(eventRef, claimId, sendResult) {
+  await eventRef.update({
+    'scheduleNotifications.reminderStatus': 'sent',
+    'scheduleNotifications.reminderSent': true,
+    'scheduleNotifications.reminderSentAt': admin.firestore.FieldValue.serverTimestamp(),
+    'scheduleNotifications.sentAt': admin.firestore.FieldValue.serverTimestamp(),
+    'scheduleNotifications.nextReminderAt': admin.firestore.FieldValue.delete(),
+    'scheduleNotifications.lastSentAt': admin.firestore.FieldValue.serverTimestamp(),
+    'scheduleNotifications.lastAction': 'pre_event_reminder',
+    'scheduleNotifications.claimId': claimId,
+    'scheduleNotifications.pushSuccessCount': Number(sendResult?.successCount || 0),
+    'scheduleNotifications.pushFailureCount': Number(sendResult?.failureCount || 0)
+  });
+}
+
+async function markReminderPendingAfterFailure(eventRef, claimId, error) {
+  await eventRef.update({
+    'scheduleNotifications.reminderStatus': 'pending',
+    'scheduleNotifications.claimId': claimId,
+    'scheduleNotifications.lastError': error?.message || 'Unknown reminder push error',
+    'scheduleNotifications.lastAttemptAt': admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function dispatchDuePreEventReminders(now = new Date()) {
+  const dueIso = now.toISOString();
+  const dueSnap = await firestore
+    .collectionGroup('games')
+    .where('scheduleNotifications.nextReminderAt', '<=', dueIso)
+    .limit(50)
+    .get();
+
+  const results = [];
+  for (const docSnap of dueSnap.docs) {
+    const eventRef = docSnap.ref;
+    const teamRef = eventRef.parent?.parent;
+    const teamId = teamRef?.id;
+    const gameId = eventRef.id;
+    if (!teamId) continue;
+
+    const claimId = `pre-event-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const claimedEvent = await markReminderSending(eventRef, claimId, now);
+    if (!claimedEvent) continue;
+
+    try {
+      const payload = buildPreEventReminderPayload({ teamId, gameId, event: claimedEvent });
+      const sendResult = await sendCategoryNotification({
+        teamId,
+        gameId,
+        category: 'schedule',
+        title: payload.title,
+        body: payload.body,
+        linkOverride: payload.link
+      });
+      await markReminderSent(eventRef, claimId, sendResult);
+      results.push({ teamId, gameId, sent: Number(sendResult?.successCount || 0) });
+    } catch (error) {
+      await markReminderPendingAfterFailure(eventRef, claimId, error);
+      console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
+    }
+  }
+  return results;
+}
+
+exports.dispatchDuePreEventReminders = functions.pubsub
+  .schedule('every 15 minutes')
+  .onRun(() => dispatchDuePreEventReminders());
 
 exports.notifyTeamChatMessageCreated = functions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')
