@@ -46,6 +46,14 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('Inherited from the team reminder default');
     });
 
+    it('refreshes stored event reminder state when team reminder settings change', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('async function refreshEventReminderStateForTeamSettings(settings)');
+        expect(source).toContain('await refreshEventReminderStateForTeamSettings(nextSettings);');
+        expect(source).toContain("action: isCanceled ? 'cancelled' : 'updated'");
+    });
+
     it('uses the submitted linked-opponent state for counterpart notifications', () => {
         const source = readEditSchedule();
 
