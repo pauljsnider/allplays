@@ -69,6 +69,12 @@ service cloud.firestore {
       return hasIncentivePlayerLink(data);
     }
 
+    function isPublishedSponsor(data) {
+      return data.get('status', '') == 'published' ||
+             data.get('published', false) == true ||
+             data.get('isPublished', false) == true;
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
@@ -467,6 +473,14 @@ service cloud.firestore {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        isParentForTeam(teamId) ||
                        resource.data.status == 'published';
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Sponsor placements subcollection
+      match /sponsors/{sponsorId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isParentForTeam(teamId) ||
+                       isPublishedSponsor(resource.data);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
