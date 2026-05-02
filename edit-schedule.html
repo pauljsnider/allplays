@@ -2350,6 +2350,17 @@
             return `<div class="mt-1 text-xs text-indigo-800"><span class="inline-block ${coverageClass} rounded px-1.5 py-0.5 mr-1 mb-1 font-semibold">Officials: ${coverageStatus === 'covered' ? 'Covered' : 'Needs attention'}</span>${slotBadges}</div>`;
         }
 
+        function generateOfficiatingSlotId() {
+            const existingIds = new Set(Array.from(document.querySelectorAll('#officiating-slot-rows .officiating-slot-row'))
+                .map(row => row.dataset.slotId)
+                .filter(Boolean));
+            let id;
+            do {
+                id = `slot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            } while (existingIds.has(id));
+            return id;
+        }
+
         function addOfficiatingSlotRow(slot = {}) {
             const container = document.getElementById('officiating-slot-rows');
             const row = document.createElement('div');
@@ -2369,7 +2380,7 @@
                     <button type="button" class="text-red-400 hover:text-red-600 text-lg font-bold" onclick="this.closest('.officiating-slot-row').remove()">&times;</button>
                 </div>
             `;
-            row.dataset.slotId = slot.id || '';
+            row.dataset.slotId = slot.id || generateOfficiatingSlotId();
             row.dataset.officialUserId = slot.officialUserId || '';
             container.appendChild(row);
         }
@@ -2397,8 +2408,8 @@
 
         function getOfficiatingSlotsFromForm() {
             const rows = document.querySelectorAll('#officiating-slot-rows .officiating-slot-row');
-            const slots = Array.from(rows).map((row, index) => ({
-                id: row.dataset.slotId || `slot-${index + 1}`,
+            const slots = Array.from(rows).map(row => ({
+                id: row.dataset.slotId || generateOfficiatingSlotId(),
                 position: row.querySelector('.officiating-position').value.trim(),
                 officialName: row.querySelector('.officiating-name').value.trim(),
                 officialEmail: row.querySelector('.officiating-email').value.trim().toLowerCase(),
@@ -2406,6 +2417,19 @@
                 status: row.querySelector('.officiating-status').value
             })).filter(slot => slot.position);
             return normalizeOfficiatingSlots(slots);
+        }
+
+        function getOfficiatingAuthorizationFields(slots = []) {
+            const authorizedUserIds = new Set();
+            const authorizedEmails = new Set();
+            normalizeOfficiatingSlots(slots).forEach(slot => {
+                if (slot.officialUserId) authorizedUserIds.add(slot.officialUserId);
+                if (slot.officialEmail) authorizedEmails.add(slot.officialEmail);
+            });
+            return {
+                officiatingAuthorizedUserIds: Array.from(authorizedUserIds),
+                officiatingAuthorizedEmails: Array.from(authorizedEmails)
+            };
         }
 
         function populateOfficiatingSlots(slots) {
@@ -2519,6 +2543,7 @@
                         note: notifyNote
                     })
                 };
+                Object.assign(gameData, getOfficiatingAuthorizationFields(gameData.officiatingSlots));
                 gameData.officiatingCoverageStatus = computeOfficiatingCoverageStatus(gameData.officiatingSlots);
 
                 if (tournamentData) {
