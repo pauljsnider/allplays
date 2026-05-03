@@ -300,6 +300,7 @@
         import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
+        import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -491,6 +492,12 @@
         function formatRsvpSummary(summary) {
             if (!summary) return 'No RSVPs yet.';
             return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} can't go · ${summary.notResponded || 0} no response`;
+        }
+
+        function renderAvailabilityNotes(event) {
+            const notes = Array.isArray(event?.availabilityNotes) ? event.availabilityNotes : [];
+            if (notes.length === 0) return '';
+            return `<div class="mt-2 space-y-1">${notes.map((row) => `<div class="text-[11px] text-gray-500 italic"><span class="font-semibold not-italic">${escapeHtml(row.displayName)}:</span> ${escapeHtml(row.note)}</div>`).join('')}</div>`;
         }
 
         function getEventRideKey(teamId, eventId) {
@@ -941,6 +948,8 @@
                 const [teamId, gameId] = parseTeamGameKey(key);
                 try {
                     const rsvps = await getRsvps(teamId, gameId);
+                    const eventForPrefs = allScheduleEvents.find((event) => event.teamId === teamId && event.id === gameId);
+                    const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs?.availabilityPreferences, !!eventForPrefs?.isTeamAdmin);
                     const myRsvpByChild = resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, rsvps, userId);
                     const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
                     applyRsvpHydration(allScheduleEvents, teamId, gameId, {
@@ -953,6 +962,7 @@
                         event.myRsvp = Object.prototype.hasOwnProperty.call(myRsvpByChild, childId)
                             ? myRsvpByChild[childId]
                             : null;
+                        event.availabilityNotes = availabilityNotes;
                     });
                 } catch (e) {
                     // Ignore per-game RSVP read failures.
@@ -1032,6 +1042,7 @@
                 if (!Array.isArray(dbGames)) dbGames = [];
                 if (!Array.isArray(trackedUids)) trackedUids = [];
                 if (!Array.isArray(practiceSessions)) practiceSessions = [];
+                const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
 
                 const visibleSessions = filterVisiblePracticeSessions(practiceSessions, dbGames);
                 const sessionsByEventId = new Map();
@@ -1111,7 +1122,11 @@
                                     rsvpSummary: null,
                                     practiceAttendance: hasRecordedAttendance(session?.attendance) ? session.attendance : null,
                                     practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
-                                    practiceSessionId: session?.id || null
+                                    practiceSessionId: session?.id || null,
+                                    availabilityPreferences,
+                                    availabilityLocked: isAvailabilityLocked(occDate, availabilityPreferences),
+                                    availabilityNotes: [],
+                                    isTeamAdmin: false
                                 });
                             }
                         }
@@ -1141,7 +1156,11 @@
                                 rsvpSummary: game.rsvpSummary || null,
                                 practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
                                 practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
-                                practiceSessionId: isPractice ? (session?.id || null) : null
+                                practiceSessionId: isPractice ? (session?.id || null) : null,
+                                availabilityPreferences,
+                                availabilityLocked: isAvailabilityLocked(date, availabilityPreferences),
+                                availabilityNotes: [],
+                                isTeamAdmin: false
                             });
                         }
                     }
@@ -1456,12 +1475,14 @@
                                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                                     ${ev.isDbGame ? `
                                         <div class="flex gap-2">
-                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                                            <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                            <button ${ev.availabilityLocked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.availabilityLocked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50')}">Going</button>
+                                            <button ${ev.availabilityLocked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.availabilityLocked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
+                                            <button ${ev.availabilityLocked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-child-ids="${escapeAttr((ev.childIds || []).join(','))}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.availabilityLocked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Can't Go</button>
                                         </div>
+                                        ${ev.availabilityLocked ? `<div class="mt-1 text-xs font-semibold text-amber-700">Availability locked ${formatAvailabilityCutoff(ev.availabilityPreferences).toLowerCase()}.</div>` : ''}
                                     ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
                                     <div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>
+                                    ${renderAvailabilityNotes(ev)}
                                 </div>
                             ` : ''}
                             ${renderEventRideshare(ev, { includeChildPicker: true })}
@@ -1954,12 +1975,14 @@
                             <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                             ${game.isDbGame ? `
                                 <div class="flex gap-2">
-                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                                    <button data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                                    <button ${game.availabilityLocked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.availabilityLocked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50')}">Going</button>
+                                    <button ${game.availabilityLocked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.availabilityLocked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
+                                    <button ${game.availabilityLocked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(game.teamId)}" data-game-id="${escapeAttr(game.id)}" data-child-id="${escapeAttr(game.childId || game.playerId || '')}" onclick="submitGameRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${game.availabilityLocked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Can't Go</button>
                                 </div>
+                                ${game.availabilityLocked ? `<div class="mt-1 text-xs font-semibold text-amber-700">Availability locked ${formatAvailabilityCutoff(game.availabilityPreferences).toLowerCase()}.</div>` : ''}
                             ` : `<div class="text-xs text-gray-500">Availability opens after this event is tracked in the schedule.</div>`}
                             <div class="text-[10px] text-gray-400 mt-1">${formatRsvpSummary(game.rsvpSummary)}</div>
+                            ${renderAvailabilityNotes(game)}
                         </div>
                     ` : ''}
                     ${renderEventRideshare(game)}

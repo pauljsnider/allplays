@@ -43,6 +43,7 @@ import {
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
+import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
@@ -535,6 +536,13 @@ export async function updateTeam(teamId, teamData) {
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, teamData);
+}
+
+export async function saveTeamAvailabilityPreferences(teamId, preferences) {
+    if (!teamId) throw new Error('Missing team for availability preferences');
+    const normalized = normalizeAvailabilityPreferences(preferences);
+    await updateTeam(teamId, { availabilityPreferences: normalized });
+    return normalized;
 }
 
 export async function addOfficial(teamId, officialData) {
@@ -3988,7 +3996,34 @@ export async function getRsvpSummaries(teamId, gameIds) {
     return summaries;
 }
 
+async function getEventDateForAvailabilityCutoff(teamId, gameId) {
+    const [masterId, instanceDate] = String(gameId || '').split('__');
+    const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
+    const snap = await getDoc(gameRef);
+    if (!snap.exists()) return null;
+    const game = snap.data();
+    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
+        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
+        if (!Number.isNaN(occurrenceDate.getTime())) {
+            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
+            return occurrenceDate;
+        }
+    }
+    return baseDate;
+}
+
+async function assertAvailabilityOpen(teamId, gameId) {
+    const team = await getTeam(teamId);
+    const preferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
+    const eventDate = await getEventDateForAvailabilityCutoff(teamId, gameId);
+    if (eventDate && isAvailabilityLocked(eventDate, preferences)) {
+        throw new Error('Availability is locked for this event. Contact a coach or admin for changes.');
+    }
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
+    await assertAvailabilityOpen(teamId, gameId);
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');
@@ -4032,7 +4067,10 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     return summary;
 }
 
-export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note, skipAvailabilityCutoff = false }) {
+    if (!skipAvailabilityCutoff) {
+        await assertAvailabilityOpen(teamId, gameId);
+    }
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');
