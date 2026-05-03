@@ -43,6 +43,7 @@ import {
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
+import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
@@ -52,6 +53,7 @@ import {
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
+import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -72,8 +74,14 @@ import {
 } from './team-visibility.js?v=1';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
+import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
+import {
+    claimOfficiatingSlot,
+    computeOfficiatingCoverageStatus,
+    updateOfficiatingSlotResponse
+} from './officiating-utils.js?v=1';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -87,6 +95,40 @@ const CHAT_REACTIONS = [
     { key: 'clap', emoji: '👏' }
 ];
 const CHAT_REACTION_KEYS = new Set(CHAT_REACTIONS.map(r => r.key));
+
+
+function normalizeDelimitedStrings(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(',');
+    return Array.from(new Set(values
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)));
+}
+
+export function normalizeOfficialDraft(draft = {}) {
+    const name = String(draft.name || '').trim();
+    const email = String(draft.email || '').trim();
+    const phone = String(draft.phone || '').trim();
+    const roles = normalizeDelimitedStrings(draft.roles);
+    const tags = normalizeDelimitedStrings(draft.tags);
+
+    if (!name) {
+        throw new Error('Official name is required');
+    }
+    if (!email && !phone) {
+        throw new Error('Official email or phone is required');
+    }
+    if (roles.length === 0) {
+        throw new Error('At least one officiating role is required');
+    }
+
+    return {
+        name,
+        email: email || null,
+        phone: phone || null,
+        roles,
+        tags
+    };
+}
 
 function getTeamGameDocRef(teamId, gameId) {
     return doc(db, 'teams', teamId, 'games', gameId);
@@ -325,6 +367,30 @@ export async function getTeam(teamId, options = {}) {
     }
 }
 
+export async function getLocalAttractionSponsors(teamId) {
+    if (!teamId) return [];
+
+    const sponsorsRef = collection(db, `teams/${teamId}/sponsors`);
+    const sponsorQueries = [
+        query(sponsorsRef, where("status", "==", "published")),
+        query(sponsorsRef, where("published", "==", true)),
+        query(sponsorsRef, where("isPublished", "==", true))
+    ];
+    const snapshots = await Promise.allSettled(sponsorQueries.map((q) => getDocs(q)));
+    const successfulSnapshots = snapshots.filter((result) => result.status === 'fulfilled');
+
+    if (successfulSnapshots.length === 0) {
+        throw snapshots[0]?.reason || new Error('Unable to load local attraction sponsors');
+    }
+
+    const sponsorsById = new Map();
+    successfulSnapshots.forEach((result) => {
+        result.value.docs.forEach(doc => sponsorsById.set(doc.id, { id: doc.id, ...doc.data() }));
+    });
+
+    return normalizeLocalAttractionSponsors(Array.from(sponsorsById.values()));
+}
+
 export async function getUserTeams(userId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const q = query(collection(db, "teams"), where("ownerId", "==", userId));
@@ -472,6 +538,35 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
+export async function saveTeamAvailabilityPreferences(teamId, preferences) {
+    if (!teamId) throw new Error('Missing team for availability preferences');
+    const normalized = normalizeAvailabilityPreferences(preferences);
+    await updateTeam(teamId, { availabilityPreferences: normalized });
+    return normalized;
+}
+
+export async function addOfficial(teamId, officialData) {
+    const payload = {
+        ...normalizeOfficialDraft(officialData),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/officials`), payload);
+    return docRef.id;
+}
+
+export async function updateOfficial(teamId, officialId, officialData) {
+    const payload = {
+        ...normalizeOfficialDraft(officialData),
+        updatedAt: Timestamp.now()
+    };
+    await updateDoc(doc(db, "teams", teamId, "officials", officialId), payload);
+}
+
+export async function deleteOfficial(teamId, officialId) {
+    await deleteDoc(doc(db, "teams", teamId, "officials", officialId));
+}
+
 function normalizeTournamentPoolOverrideName(poolName) {
     return String(poolName || '').trim();
 }
@@ -588,6 +683,22 @@ function assertNoSensitivePlayerFields(playerData) {
     }
 }
 
+export async function getOfficials(teamId) {
+    const mapOfficial = (docSnap) => ({ id: docSnap.id, ...docSnap.data() });
+    try {
+        const q = query(collection(db, `teams/${teamId}/officials`), orderBy('name'));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(mapOfficial);
+    } catch (e) {
+        const code = e?.code || '';
+        if (code !== 'failed-precondition') throw e;
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/officials`));
+        return snapshot.docs
+            .map(mapOfficial)
+            .sort((a, b) => String(a.name || a.displayName || a.email || '').localeCompare(String(b.name || b.displayName || b.email || '')));
+    }
+}
+
 export async function getPlayers(teamId, options = {}) {
     const includeInactive = !!options.includeInactive;
     const isActivePlayer = (player) => player?.active !== false;
@@ -629,6 +740,36 @@ export async function addPlayer(teamId, playerData) {
     }
     const docRef = await addDoc(collection(db, `teams/${teamId}/players`), playerData);
     return docRef.id;
+}
+
+export async function copySelectedPlayersForTeamRollover(sourceTeamId, targetTeamId, selectedPlayerIds = []) {
+    const sourceId = String(sourceTeamId || '').trim();
+    const targetId = String(targetTeamId || '').trim();
+    const selectedIds = new Set((selectedPlayerIds || []).map(id => String(id || '').trim()).filter(Boolean));
+
+    if (!sourceId) throw new Error('Choose a source team to copy players from.');
+    if (!targetId) throw new Error('New team is required before copying players.');
+    if (sourceId === targetId) throw new Error('Choose a different source team for roster rollover.');
+    if (selectedIds.size === 0) return { copiedCount: 0 };
+
+    const sourcePlayers = await getPlayers(sourceId);
+    const playersToCopy = sourcePlayers.filter(player => selectedIds.has(String(player.id || '')));
+    if (playersToCopy.length !== selectedIds.size) {
+        throw new Error('One or more selected players could not be found on the source team. Refresh and try again.');
+    }
+
+    const batch = writeBatch(db);
+    const rolledOverAt = Timestamp.now();
+    playersToCopy.forEach((player) => {
+        const playerCopy = buildRolloverPlayerCopy(player, sourceId, rolledOverAt);
+        assertNoSensitivePlayerFields(playerCopy);
+        playerCopy.createdAt = Timestamp.now();
+        const targetRef = doc(collection(db, `teams/${targetId}/players`));
+        batch.set(targetRef, playerCopy);
+    });
+
+    await batch.commit();
+    return { copiedCount: playersToCopy.length };
 }
 
 export async function updatePlayer(teamId, playerId, playerData) {
@@ -3634,6 +3775,48 @@ export async function cancelGame(teamId, gameId, userId) {
     });
 }
 
+
+// ============================================
+// Officiating Assignments
+// ============================================
+
+export async function respondToOfficiatingAssignment(teamId, gameId, slotId, status) {
+    const docRef = getGameDocRef(teamId, gameId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) throw new Error('Game not found');
+        const game = snap.data() || {};
+        const officiatingSlots = updateOfficiatingSlotResponse(game.officiatingSlots || [], slotId, status);
+        transaction.update(docRef, {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: Timestamp.now()
+        });
+    });
+}
+
+export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser) {
+    const docRef = getGameDocRef(teamId, gameId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) throw new Error('Game not found');
+        const game = snap.data() || {};
+        if (game.officiatingSelfAssignmentEnabled !== true) {
+            throw new Error('Self-assignment is not enabled for this game');
+        }
+        const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {
+            uid: official?.uid || '',
+            email: official?.email || '',
+            displayName: official?.displayName || official?.email || 'Official'
+        });
+        transaction.update(docRef, {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: Timestamp.now()
+        });
+    });
+}
+
 // ============================================
 // Game Assignments - Carry Forward
 // ============================================
@@ -3823,7 +4006,34 @@ export async function getRsvpSummaries(teamId, gameIds) {
     return summaries;
 }
 
+async function getEventDateForAvailabilityCutoff(teamId, gameId) {
+    const [masterId, instanceDate] = String(gameId || '').split('__');
+    const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
+    const snap = await getDoc(gameRef);
+    if (!snap.exists()) return null;
+    const game = snap.data();
+    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
+        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
+        if (!Number.isNaN(occurrenceDate.getTime())) {
+            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
+            return occurrenceDate;
+        }
+    }
+    return baseDate;
+}
+
+async function assertAvailabilityOpen(teamId, gameId) {
+    const team = await getTeam(teamId);
+    const preferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
+    const eventDate = await getEventDateForAvailabilityCutoff(teamId, gameId);
+    if (eventDate && isAvailabilityLocked(eventDate, preferences)) {
+        throw new Error('Availability is locked for this event. Contact a coach or admin for changes.');
+    }
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
+    await assertAvailabilityOpen(teamId, gameId);
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');
@@ -3867,7 +4077,10 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     return summary;
 }
 
-export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note, skipAvailabilityCutoff = false }) {
+    if (!skipAvailabilityCutoff) {
+        await assertAvailabilityOpen(teamId, gameId);
+    }
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');
