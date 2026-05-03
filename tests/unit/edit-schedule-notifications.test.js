@@ -50,6 +50,14 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('Inherited from the team reminder default');
     });
 
+    it('refreshes stored event reminder state when team reminder settings change', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('async function refreshEventReminderStateForTeamSettings(settings)');
+        expect(source).toContain('await refreshEventReminderStateForTeamSettings(nextSettings);');
+        expect(source).toContain("action: isCanceled ? 'cancelled' : 'updated'");
+    });
+
     it('persists normalized team reminder settings to the team metadata path', () => {
         const source = readEditSchedule();
 
