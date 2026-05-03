@@ -330,8 +330,9 @@
                                     <input type="checkbox" id="game-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                                     Save and notify team
                                 </label>
-                                <div class="text-xs text-gray-500">Uses team chat now; reminder timing is stored for later delivery.</div>
+                                <div id="game-reminder-window-summary" class="text-xs text-gray-500">Reminder window loading…</div>
                             </div>
+                            <p id="game-reminder-window-detail" class="mt-2 text-xs text-gray-500">Uses the team default reminder window for this event.</p>
                             <textarea id="game-notify-note" rows="2" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2" placeholder="Optional note to include with the schedule update"></textarea>
                         </div>
                         <div class="flex gap-2">
@@ -381,8 +382,9 @@
                                         <input type="checkbox" id="practice-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
                                         Save and notify team
                                     </label>
-                                    <div class="text-xs text-gray-500">Use this when practice details change and families need a heads-up.</div>
+                                    <div id="practice-reminder-window-summary" class="text-xs text-gray-500">Reminder window loading…</div>
                                 </div>
+                                <p id="practice-reminder-window-detail" class="mt-2 text-xs text-gray-500">Uses the team default reminder window for this event.</p>
                                 <textarea id="practice-notify-note" rows="2"
                                     class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
                                     placeholder="Optional note to include with the practice update"></textarea>
@@ -892,7 +894,7 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=1';
-        import { normalizeScheduleNotificationSettings, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=3';
+        import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=1';
@@ -1452,11 +1454,19 @@
         }
 
         function renderTeamScheduleNotificationSettings(team) {
-            const settings = normalizeScheduleNotificationSettings(team?.scheduleNotifications || {});
+            const rawSettings = team?.scheduleNotifications || {};
+            const settings = normalizeScheduleNotificationSettings(rawSettings);
+            const windowDescription = describeScheduleReminderWindow(rawSettings);
             const enabledEl = document.getElementById('team-reminder-enabled');
             const hoursEl = document.getElementById('team-reminder-hours');
             if (enabledEl) enabledEl.checked = settings.enabled;
             if (hoursEl) hoursEl.value = String(settings.reminderHours);
+            ['game', 'practice'].forEach((eventType) => {
+                const summaryEl = document.getElementById(`${eventType}-reminder-window-summary`);
+                const detailEl = document.getElementById(`${eventType}-reminder-window-detail`);
+                if (summaryEl) summaryEl.textContent = windowDescription;
+                if (detailEl) detailEl.textContent = 'Inherited from the team reminder default; no per-event reminder override is available here.';
+            });
         }
 
         function getEventDateLabel(dateValue) {

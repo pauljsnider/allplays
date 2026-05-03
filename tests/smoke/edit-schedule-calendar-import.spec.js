@@ -302,6 +302,10 @@ export async function postScheduleNotificationTargets() {
 export function buildRsvpReminderMessage() {
     return '';
 }
+
+export function describeScheduleReminderWindow() {
+    return 'Team default reminder window: 24 hours before event start.';
+}
 `,
     '/js/schedule-csv-import.js': `
 export const SCHEDULE_CSV_IMPORT_FIELDS = [];
