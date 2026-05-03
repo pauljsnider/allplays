@@ -108,9 +108,19 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 mb-2">Upcoming Games</label>
-                    <select id="game-selector" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <div id="game-selector-loading" class="flex items-center gap-3 px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 text-sm">
+                        <svg class="animate-spin h-4 w-4 text-primary-500 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                        Loading games...
+                    </div>
+                    <select id="game-selector" class="hidden w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                         <option value="">Select a game...</option>
                     </select>
+                    <div id="game-selector-empty" class="hidden px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 text-sm">
+                        No upcoming games found.
+                    </div>
                 </div>
                 <div id="selected-game-info" class="hidden">
                     <div class="bg-gradient-to-br from-primary-50 to-white p-4 rounded-lg border border-primary-200">
@@ -448,12 +458,22 @@
 
                 // Populate game selector
                 const gameSelector = document.getElementById('game-selector');
-                gameSelector.innerHTML = '<option value="">Select a game...</option>' +
-                    combinedGames.map(g => {
-                        const date = g.date.toDate ? g.date.toDate() : new Date(g.date);
-                        const statusLabel = g.status === 'completed' ? ' (Completed)' : (g.isCalendar ? ' (Calendar)' : '');
-                        return `<option value="${g.id}">${formatDate(date)} - vs ${g.opponent}${statusLabel}</option>`;
-                    }).join('');
+                const gameSelectorLoading = document.getElementById('game-selector-loading');
+                const gameSelectorEmpty = document.getElementById('game-selector-empty');
+
+                gameSelectorLoading.classList.add('hidden');
+
+                if (combinedGames.length === 0) {
+                    gameSelectorEmpty.classList.remove('hidden');
+                } else {
+                    gameSelector.classList.remove('hidden');
+                    gameSelector.innerHTML = '<option value="">Select a game...</option>' +
+                        combinedGames.map(g => {
+                            const date = g.date.toDate ? g.date.toDate() : new Date(g.date);
+                            const statusLabel = g.status === 'completed' ? ' (Completed)' : (g.isCalendar ? ' (Calendar)' : '');
+                            return `<option value="${g.id}">${formatDate(date)} - vs ${g.opponent}${statusLabel}</option>`;
+                        }).join('');
+                }
 
                 // Auto-select game if provided in URL
                 if (gameId) {
@@ -476,6 +496,12 @@
 
             } catch (error) {
                 console.error('Error loading game planner:', error);
+                const loadingEl = document.getElementById('game-selector-loading');
+                if (loadingEl) {
+                    loadingEl.textContent = 'Failed to load games. Please refresh.';
+                    loadingEl.classList.remove('hidden');
+                    loadingEl.classList.add('text-red-500');
+                }
             }
         }
 
