@@ -106,6 +106,31 @@ service cloud.firestore {
              data.get('published', false) == true;
     }
 
+    function hasOnlyFlatStringValues(data) {
+      return data is map &&
+             data.keys().size() <= 20 &&
+             (data.keys().size() < 1 || data[data.keys()[0]] is string) &&
+             (data.keys().size() < 2 || data[data.keys()[1]] is string) &&
+             (data.keys().size() < 3 || data[data.keys()[2]] is string) &&
+             (data.keys().size() < 4 || data[data.keys()[3]] is string) &&
+             (data.keys().size() < 5 || data[data.keys()[4]] is string) &&
+             (data.keys().size() < 6 || data[data.keys()[5]] is string) &&
+             (data.keys().size() < 7 || data[data.keys()[6]] is string) &&
+             (data.keys().size() < 8 || data[data.keys()[7]] is string) &&
+             (data.keys().size() < 9 || data[data.keys()[8]] is string) &&
+             (data.keys().size() < 10 || data[data.keys()[9]] is string) &&
+             (data.keys().size() < 11 || data[data.keys()[10]] is string) &&
+             (data.keys().size() < 12 || data[data.keys()[11]] is string) &&
+             (data.keys().size() < 13 || data[data.keys()[12]] is string) &&
+             (data.keys().size() < 14 || data[data.keys()[13]] is string) &&
+             (data.keys().size() < 15 || data[data.keys()[14]] is string) &&
+             (data.keys().size() < 16 || data[data.keys()[15]] is string) &&
+             (data.keys().size() < 17 || data[data.keys()[16]] is string) &&
+             (data.keys().size() < 18 || data[data.keys()[17]] is string) &&
+             (data.keys().size() < 19 || data[data.keys()[18]] is string) &&
+             (data.keys().size() < 20 || data[data.keys()[19]] is string);
+    }
+
     function isPendingRegistrationPayloadValid(teamId, formId, data) {
       return data.keys().hasOnly([
                'teamId',
@@ -125,8 +150,8 @@ service cloud.firestore {
              data.formId == formId &&
              data.status == 'pending' &&
              data.waiverAccepted == true &&
-             data.participant is map &&
-             data.guardian is map &&
+             hasOnlyFlatStringValues(data.participant) &&
+             hasOnlyFlatStringValues(data.guardian) &&
              data.source == 'public-registration';
 
     }

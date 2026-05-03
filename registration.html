@@ -100,8 +100,16 @@
         function renderField(container, field, groupName) {
             const wrapper = document.createElement('label');
             wrapper.className = 'block';
-            const requiredMark = field.required ? ' <span class="text-red-600">*</span>' : '';
-            wrapper.innerHTML = `<span class="block text-sm font-medium text-gray-700">${field.label}${requiredMark}</span>`;
+            const labelText = document.createElement('span');
+            labelText.className = 'block text-sm font-medium text-gray-700';
+            labelText.textContent = field.label;
+            if (field.required) {
+                const requiredMark = document.createElement('span');
+                requiredMark.className = 'text-red-600';
+                requiredMark.textContent = ' *';
+                labelText.appendChild(requiredMark);
+            }
+            wrapper.appendChild(labelText);
 
             let input;
             if (field.type === 'textarea') {

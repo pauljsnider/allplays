@@ -96,11 +96,16 @@ describe('public registration flow', () => {
         expect(page).toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
         expect(page).toContain('waiver-accepted');
         expect(page).toContain('confirmation-message');
+        expect(page).toContain('labelText.textContent = field.label');
+        expect(page).toContain("requiredMark.textContent = ' *'");
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
         expect(rules).toContain('allow create: if isPublishedRegistrationForm');
         expect(rules).toContain("data.status == 'pending'");
         expect(rules).toContain('data.waiverAccepted == true');
+        expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
+        expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');
+        expect(rules).toContain('data.keys().size() <= 20');
     });
 });
