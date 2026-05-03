@@ -53,6 +53,20 @@ service cloud.firestore {
              isParentForPlayer(data.teamId, data.playerId);
     }
 
+    function hasRestrictedRosterMap(data, fieldName, restrictedKeys) {
+      let rosterMap = data.get(fieldName, {});
+      return rosterMap is map && rosterMap.keys().hasAny(restrictedKeys);
+    }
+
+    function hasRestrictedRosterFieldValues(data) {
+      let restrictedKeys = ['medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes', 'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone'];
+      return data.keys().hasAny(restrictedKeys) ||
+             hasRestrictedRosterMap(data, 'rosterFieldValues', restrictedKeys) ||
+             hasRestrictedRosterMap(data, 'customFields', restrictedKeys) ||
+             hasRestrictedRosterMap(data, 'profileFields', restrictedKeys) ||
+             hasRestrictedRosterMap(data, 'extraFields', restrictedKeys);
+    }
+
     function isIncentiveCapPayloadValid(data) {
       return data.maxPerGameCents is int &&
              (
@@ -209,7 +223,7 @@ service cloud.firestore {
     // Collection group rule for players - enables collectionGroup('players') queries.
     // SECURITY: deny reads of any player doc that still contains sensitive fields.
     match /{path=**}/players/{playerId} {
-      allow read: if !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+      allow read: if !hasRestrictedRosterFieldValues(resource.data);
     }
 
     // Parent-managed athlete profiles with explicit public/private sharing.
@@ -278,14 +292,14 @@ service cloud.firestore {
 	        // Team owner/admin/parent-of-player may still read legacy docs that contain sensitive fields.
 	        allow read: if isTeamOwnerOrAdmin(teamId) ||
 	                      isParentForPlayer(teamId, playerId) ||
-	                      !resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	                      !hasRestrictedRosterFieldValues(resource.data);
 
 	        // Writes: never allow sensitive fields on the public player doc.
 	        // Coaches/admins can create/update/delete, but must keep the doc "public-safe".
 	        allow create: if isTeamOwnerOrAdmin(teamId) &&
-	                        !request.resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	                        !hasRestrictedRosterFieldValues(request.resource.data);
 	        allow update: if isTeamOwnerOrAdmin(teamId) &&
-	                        !request.resource.data.keys().hasAny(['medicalInfo', 'emergencyContact']);
+	                        !hasRestrictedRosterFieldValues(request.resource.data);
 	        allow delete: if isTeamOwnerOrAdmin(teamId);
 
 	        // Limited write access for parents (only their linked player):
