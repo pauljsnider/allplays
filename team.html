@@ -404,9 +404,12 @@
 
         function renderTeamAvailabilityControls(game, isUpcoming) {
             if (!isUpcoming || game.isCancelled || !currentUser || !currentTeamAccessInfo?.hasAccess) return '';
-            const locked = !!game.availabilityLocked;
+            const hasMixedPlayerRsvps = game.myRsvp === 'mixed';
+            const locked = !!game.availabilityLocked || hasMixedPlayerRsvps;
             const summary = formatRsvpSummary(game.rsvpSummary);
-            const lockCopy = locked ? `Availability locked ${formatAvailabilityCutoff(game.availabilityPreferences).toLowerCase()}.` : '';
+            const lockCopy = hasMixedPlayerRsvps
+                ? 'Player-specific RSVP responses differ. Update each player from the parent dashboard to avoid overwriting child-specific availability.'
+                : (locked ? `Availability locked ${formatAvailabilityCutoff(game.availabilityPreferences).toLowerCase()}.` : '');
             return `
                 <div class="mt-3 border-t border-gray-100 pt-3" data-team-availability-container>
                     <div class="flex items-center justify-between gap-2 mb-2">
@@ -1546,14 +1549,26 @@
             }
 
             const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
-            const isTeamAdmin = currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin' || currentUser?.isAdmin;
-            const canSeeTeamNotes = isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess);
+            const isTeamAdmin = currentTeamAccessInfo?.accessLevel === 'full' || currentUser?.isAdmin;
+            const linkedPlayerIds = Array.from(new Set((Array.isArray(currentUser?.parentOf) ? currentUser.parentOf : [])
+                .filter((link) => link?.teamId === currentTeamId && typeof link?.playerId === 'string' && link.playerId.trim())
+                .map((link) => link.playerId.trim())));
+            const canReadRsvps = !!currentUser && !!currentTeamId && (
+                currentUser?.isAdmin ||
+                currentTeamAccessInfo?.accessLevel === 'full' ||
+                currentTeamAccessInfo?.accessLevel === 'parent' ||
+                (Array.isArray(currentUser?.parentTeamIds) && currentUser.parentTeamIds.includes(currentTeamId)) ||
+                linkedPlayerIds.length > 0
+            );
+            const canSeeTeamNotes = canReadRsvps && (isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess));
             const dbGameIds = (dbGames || []).map((game) => game.id || game.gameId).filter(Boolean);
             let rsvpSummaries = new Map();
-            try {
-                rsvpSummaries = typeof getRsvpSummaries === 'function' ? await getRsvpSummaries(currentTeamId, dbGameIds) : new Map();
-            } catch (_) {
-                rsvpSummaries = new Map();
+            if (canReadRsvps) {
+                try {
+                    rsvpSummaries = typeof getRsvpSummaries === 'function' ? await getRsvpSummaries(currentTeamId, dbGameIds) : new Map();
+                } catch (_) {
+                    rsvpSummaries = new Map();
+                }
             }
 
             for (const game of dbGames) {
@@ -1570,9 +1585,9 @@
                         availabilityNotes = [];
                     }
                 }
-                if (currentUser?.uid) {
+                if (currentUser?.uid && canReadRsvps) {
                     try {
-                        myRsvp = typeof getMyRsvp === 'function' ? (await getMyRsvp(currentTeamId, id, currentUser.uid))?.response || null : null;
+                        myRsvp = typeof getMyRsvp === 'function' ? (await getMyRsvp(currentTeamId, id, currentUser.uid, linkedPlayerIds))?.response || null : null;
                     } catch (_) {
                         myRsvp = null;
                     }

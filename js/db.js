@@ -4221,9 +4221,47 @@ export async function getRsvps(teamId, gameId) {
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-export async function getMyRsvp(teamId, gameId, userId) {
-    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
-    const snap = await getDoc(rsvpRef);
+export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
+    const rsvpCollectionPath = `teams/${teamId}/games/${gameId}/rsvps`;
+    const linkedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const directRsvpRef = doc(db, rsvpCollectionPath, userId);
+
+    if (linkedPlayerIds.length === 0) {
+        const snap = await getDoc(directRsvpRef);
+        return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    }
+
+    const [directResult, ...overrideResults] = await Promise.allSettled([
+        getDoc(directRsvpRef),
+        ...linkedPlayerIds.map((playerId) => getDoc(doc(db, rsvpCollectionPath, buildCoachOverrideRsvpDocId(userId, playerId))))
+    ]);
+
+    const overrideRsvps = overrideResults
+        .filter((result) => result.status === 'fulfilled' && result.value.exists())
+        .map((result) => ({ id: result.value.id, ...result.value.data() }));
+
+    if (overrideRsvps.length > 0) {
+        const responses = Array.from(new Set(overrideRsvps.map((rsvp) => normalizeRsvpResponse(rsvp.response))));
+        if (responses.length === 1) {
+            return {
+                id: `${userId}__linkedPlayers`,
+                userId,
+                playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+                response: responses[0],
+                playerRsvps: overrideRsvps
+            };
+        }
+        return {
+            id: `${userId}__linkedPlayers`,
+            userId,
+            playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+            response: 'mixed',
+            playerRsvps: overrideRsvps
+        };
+    }
+
+    if (directResult.status === 'rejected') throw directResult.reason;
+    const snap = directResult.value;
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
