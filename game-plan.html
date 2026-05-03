@@ -281,6 +281,7 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=12';
         import { getTeamAccessInfo } from './js/team-access.js';
+        import { createAutoSaveController } from './js/game-plan-autosave.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -324,8 +325,6 @@
         let dragSourceCellKey = null;
         let combinedGames = [];
         let plannerInitialized = false;
-        let autoSaveTimer = null;
-        let hasPendingSave = false;
 
         function setAutoSaveStatus(status) {
             const el = document.getElementById('save-status');
@@ -366,26 +365,14 @@
             }
         }
 
+        const autoSave = createAutoSaveController({ updateGame, onStatusChange: setAutoSaveStatus });
+
         function scheduleSave() {
-            if (!currentGameId || currentGame?.isCalendar || currentGame?.isSharedGame) return;
-            hasPendingSave = true;
-            setAutoSaveStatus('unsaved');
-            clearTimeout(autoSaveTimer);
-            autoSaveTimer = setTimeout(async () => {
-                setAutoSaveStatus('saving');
-                try {
-                    await updateGame(currentTeamId, currentGameId, { gamePlan });
-                    hasPendingSave = false;
-                    setAutoSaveStatus('saved');
-                } catch (err) {
-                    console.error('Auto-save failed:', err);
-                    setAutoSaveStatus('error');
-                }
-            }, 1500);
+            autoSave.scheduleSave(currentTeamId, currentGameId, gamePlan, currentGame);
         }
 
         window.addEventListener('beforeunload', (e) => {
-            if (hasPendingSave) {
+            if (autoSave.isPending()) {
                 e.preventDefault();
                 e.returnValue = '';
             }
@@ -602,8 +589,7 @@
             intervalsCache = [];
             lastSelectedPlayerId = null;
             dragSourceCellKey = null;
-            clearTimeout(autoSaveTimer);
-            hasPendingSave = false;
+            autoSave.cancel();
             // Hide status badge on game switch; it reappears on first change
             const saveStatusEl = document.getElementById('save-status');
             saveStatusEl.classList.add('hidden');
