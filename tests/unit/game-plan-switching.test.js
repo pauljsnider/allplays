@@ -33,6 +33,7 @@ function createElement() {
         classList: createClassList(),
         value: '',
         innerHTML: '',
+        textContent: '',
         disabled: false,
         title: ''
     };
@@ -60,6 +61,8 @@ function buildHarness(overrides = {}) {
         'selected-game-info',
         'game-details',
         'save-status',
+        'save-plan-btn',
+        'save-plan-note',
         'num-periods',
         'period-duration',
         'sub-times-input',
@@ -231,5 +234,37 @@ describe('game plan game switching', () => {
 
         // autoSave.cancel should be called once per loadGame call
         expect(deps.autoSave.cancel).toHaveBeenCalledTimes(2);
+    });
+
+    it('disables saving for calendar games and shows an explanatory note', async () => {
+        const { harness, document } = buildHarness();
+
+        await harness.loadGame({
+            id: 'cal-abc123',
+            opponent: 'Eagles',
+            date: '2026-04-07T19:00:00.000Z',
+            isCalendar: true
+        });
+
+        const saveButton = document.getElementById('save-plan-btn');
+        const saveNote = document.getElementById('save-plan-note');
+        expect(saveButton.disabled).toBe(true);
+        expect(saveNote.classList.contains('hidden')).toBe(false);
+        expect(saveNote.textContent).toMatch(/calendar/i);
+    });
+
+    it('enables saving and hides note for regular db games', async () => {
+        const { harness, document } = buildHarness();
+
+        await harness.loadGame({
+            id: 'game-a',
+            opponent: 'Sharks',
+            date: '2026-04-04T19:00:00.000Z'
+        });
+
+        const saveButton = document.getElementById('save-plan-btn');
+        const saveNote = document.getElementById('save-plan-note');
+        expect(saveButton.disabled).toBe(false);
+        expect(saveNote.classList.contains('hidden')).toBe(true);
     });
 });

@@ -63,10 +63,44 @@ describe('schedule notification helpers', () => {
             reminderStatus: 'pending',
             reminderSent: false,
             reminderSentAt: null,
+            reminderCanceled: false,
+            reminderCanceledAt: null,
             sent: false,
             sentAt: null,
             lastAction: 'created'
         });
+    });
+
+    it('marks disabled and canceled reminder state without leaving a due timestamp', () => {
+        expect(buildScheduleNotificationMetadata({
+            settings: { enabled: false, reminderHours: 24 },
+            action: 'updated',
+            eventDate: '2026-05-03T18:00:00.000Z'
+        })).toMatchObject({
+            enabled: false,
+            nextReminderAt: null,
+            reminderStatus: 'disabled',
+            reminderSent: false,
+            reminderCanceled: false
+        });
+
+        const canceledMetadata = buildScheduleNotificationMetadata({
+            settings: { enabled: true, reminderHours: 24 },
+            action: 'cancelled',
+            userId: 'coach-1',
+            eventDate: '2026-05-03T18:00:00.000Z'
+        });
+
+        expect(canceledMetadata).toMatchObject({
+            enabled: true,
+            nextReminderAt: null,
+            reminderStatus: 'canceled',
+            reminderSent: false,
+            reminderCanceled: true,
+            reminderCanceledBy: 'coach-1',
+            lastAction: 'cancelled'
+        });
+        expect(canceledMetadata.reminderCanceledAt).toEqual(expect.any(String));
     });
 
     it('builds schedule change messages with event context and coach note', () => {
