@@ -209,6 +209,8 @@
                          </label>
                     </div>
                     
+                    <div id="edit-roster-profile-fields" class="space-y-4 hidden"></div>
+
                     <div>
                         <label class="block text-sm font-medium text-gray-700">Emergency Contact Name</label>
                         <input type="text" id="edit-ec-name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2">
@@ -233,7 +235,8 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile } from './js/db.js?v=16';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=16';
+        import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=1';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation } from './js/player-profile-stats.js?v=2';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=1';
@@ -251,6 +254,8 @@
         let currentTeamId = null;
         let currentTeam = null;
         let privateProfileLoadFailed = false;
+        let rosterFieldDefinitions = [];
+        let currentCanEditRosterProfile = false;
         let privateFieldsDirty = {
             emergencyContact: false,
             medicalInfo: false
@@ -385,6 +390,7 @@
                     getGames(teamId),
                     getConfigs(teamId)
                 ]);
+                rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
 
                 const player = players.find(p => p.id === playerId);
                 if (!player) {
@@ -1063,6 +1069,7 @@
 
             const isParent = isParentViaPlayer || isParentViaProfile;
             const hasFullAccess = hasFullTeamAccess(currentUser, currentTeam);
+            currentCanEditRosterProfile = hasFullAccess;
             const canEdit = hasFullAccess || isParent;
 
             if (canEdit) {
@@ -1093,6 +1100,11 @@
                  privateProfileLoadFailed = true;
              }
 
+             renderRosterProfileFields(
+                 document.getElementById('edit-roster-profile-fields'),
+                 currentCanEditRosterProfile ? rosterFieldDefinitions : [],
+                 getRosterProfileValues(currentPlayer)
+             );
              document.getElementById('edit-ec-name').value = currentPrivateProfile?.emergencyContact?.name || '';
              document.getElementById('edit-ec-phone').value = currentPrivateProfile?.emergencyContact?.phone || '';
              document.getElementById('edit-medical-info').value = currentPrivateProfile?.medicalInfo || '';
@@ -1110,6 +1122,7 @@
             emergencyContactPhone,
             medicalInfo,
             photoUrl,
+            profile,
             privateProfileLoadFailed,
             privateFieldsDirty
         }) {
@@ -1130,6 +1143,10 @@
 
             if (typeof photoUrl !== 'undefined') {
                 data.photoUrl = photoUrl;
+            }
+
+            if (profile) {
+                data.profile = profile;
             }
 
             return data;
@@ -1175,11 +1192,23 @@
                     photoUrl = await uploadPlayerPhoto(photoFile);
                 }
 
+                const editableRosterFields = currentCanEditRosterProfile ? rosterFieldDefinitions : [];
+                const profileValues = collectRosterProfileValues(document.getElementById('edit-roster-profile-fields'), editableRosterFields);
+                const validationErrors = validateRosterProfileValues(editableRosterFields, profileValues);
+
+                if (validationErrors.length) {
+                    alert(validationErrors.join('\n'));
+                    btn.disabled = false;
+                    btn.textContent = 'Save Changes';
+                    return;
+                }
+
                 const data = buildPlayerProfileUpdatePayload({
                     emergencyContactName: document.getElementById('edit-ec-name').value,
                     emergencyContactPhone: document.getElementById('edit-ec-phone').value,
                     medicalInfo: document.getElementById('edit-medical-info').value,
                     photoUrl,
+                    profile: editableRosterFields.length ? { ...(currentPlayer.profile || {}), customFields: profileValues } : null,
                     privateProfileLoadFailed,
                     privateFieldsDirty
                 });

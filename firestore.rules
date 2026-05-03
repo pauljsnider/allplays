@@ -324,6 +324,11 @@ service cloud.firestore {
         }
       }
 
+      match /rosterFields/{fieldId} {
+        allow read: if true;
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /membershipRequests/{requestId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
