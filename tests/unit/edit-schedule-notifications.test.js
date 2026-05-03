@@ -18,6 +18,19 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('id="team-reminder-settings-summary"');
     });
 
+    it('clarifies reminder timing is stored for future delivery only', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('Stored reminder timing');
+        expect(source).toContain('saved with schedule events for future reminder delivery');
+        expect(source).toContain('Timed reminders are not sent automatically today from this page.');
+        expect(source).toContain('Store reminder timing on schedule events');
+        expect(source).toContain('Timing to store');
+        expect(source).toContain('Save Timing Defaults');
+        expect(source).not.toContain('Save/edit flows can notify the team immediately, and RSVP reminders are sent from the event itself.');
+        expect(source).not.toContain('Schedule reminders enabled');
+    });
+
     it('includes notify-team and reminder-window controls in game and practice forms', () => {
         const source = readEditSchedule();
 
@@ -29,6 +42,18 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('id="practice-notify-note"');
         expect(source).toContain('id="practice-reminder-window-summary"');
         expect(source).toContain('id="practice-reminder-window-detail"');
+    });
+
+    it('visually separates immediate notify-team actions from stored reminder timing', () => {
+        const source = readEditSchedule();
+
+        expect(source.match(/Immediate team chat notification/g)).toHaveLength(3);
+        expect(source).toContain('Posts a team chat update now when this game is saved. Separate from stored reminder timing.');
+        expect(source).toContain('Posts a team chat update now when this practice is saved. Separate from stored reminder timing.');
+        expect(source).toContain('Sends immediate team chat updates after import. This does not schedule future timed reminders.');
+        expect(source.match(/bg-emerald-50 border border-emerald-200 rounded-lg p-3/g)).toHaveLength(3);
+        expect(source).toContain('id="csv-import-notify-team"');
+        expect(source).toContain('Notify the team in chat after import');
     });
 
     it('wires the schedule notification helper and RSVP reminder action', () => {
