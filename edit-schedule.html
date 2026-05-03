@@ -115,6 +115,7 @@
                     <button id="save-team-reminder-settings-btn" type="button" class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition">Save Reminder Settings</button>
                 </div>
             </div>
+            <p id="team-reminder-settings-summary" class="mt-3 text-sm text-gray-600"></p>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1459,8 +1460,10 @@
             const windowDescription = describeScheduleReminderWindow(rawSettings);
             const enabledEl = document.getElementById('team-reminder-enabled');
             const hoursEl = document.getElementById('team-reminder-hours');
+            const summaryEl = document.getElementById('team-reminder-settings-summary');
             if (enabledEl) enabledEl.checked = settings.enabled;
             if (hoursEl) hoursEl.value = String(settings.reminderHours);
+            if (summaryEl) summaryEl.textContent = windowDescription;
             ['game', 'practice'].forEach((eventType) => {
                 const summaryEl = document.getElementById(`${eventType}-reminder-window-summary`);
                 const detailEl = document.getElementById(`${eventType}-reminder-window-detail`);
@@ -1530,6 +1533,29 @@
         function alertNonFatalNotificationError(eventLabel, error) {
             console.error(`${eventLabel} saved but schedule notification failed:`, error);
             alert(`${eventLabel} saved, but the team notification failed: ${error.message}`);
+        }
+
+        async function refreshEventReminderStateForTeamSettings(settings) {
+            const events = await getEvents(currentTeamId);
+            for (const event of events) {
+                if (!event?.id) continue;
+                const eventType = String(event.type || 'game').toLowerCase();
+                const isCanceled = event.status === 'cancelled' || event.status === 'canceled' || event.deleted === true;
+                const payload = {
+                    scheduleNotifications: buildScheduleNotificationMetadata({
+                        settings,
+                        action: isCanceled ? 'cancelled' : 'updated',
+                        userId: currentUser?.uid || null,
+                        eventDate: event.date,
+                        canceled: isCanceled
+                    })
+                };
+                if (eventType === 'practice') {
+                    await updateEvent(currentTeamId, event.id, payload);
+                } else {
+                    await updateGame(currentTeamId, event.id, payload);
+                }
+            }
         }
 
         async function sendRsvpReminder({
@@ -3354,11 +3380,13 @@
 
             try {
                 await updateTeam(currentTeamId, { scheduleNotifications: nextSettings });
+                await refreshEventReminderStateForTeamSettings(nextSettings);
                 currentTeam = {
                     ...(currentTeam || {}),
                     scheduleNotifications: nextSettings
                 };
                 renderTeamScheduleNotificationSettings(currentTeam);
+                await loadSchedule();
                 alert('Schedule reminder settings saved.');
             } catch (error) {
                 alert('Error saving reminder settings: ' + error.message);
