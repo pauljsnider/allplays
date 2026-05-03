@@ -18,7 +18,7 @@ describe('registration roster import planning', () => {
         expect(getRegistrationRosterPlayers({ registrationSourceSnapshot: { rosterPlayers: [{ id: 'p1' }] } })).toEqual([{ id: 'p1' }]);
     });
 
-    it('plans add and update operations by external player ID while preserving local-only conflicts', () => {
+    it('plans add and update operations by source plus external player ID while preserving local-only conflicts', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
             sourcePlayers: [
@@ -49,7 +49,7 @@ describe('registration roster import planning', () => {
                     id: 'player-1',
                     name: 'Avery Lee',
                     number: '3',
-                    sourceMetadata: { externalPlayerId: 'ext-1' }
+                    sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
                 },
                 {
                     id: 'player-2',
@@ -93,6 +93,43 @@ describe('registration roster import planning', () => {
         });
     });
 
+    it('does not update an existing player from a different known source with the same external player ID', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-2' },
+            sourcePlayers: [{ externalPlayerId: 'ext-1', name: 'New Source Player', number: '9' }],
+            existingPlayers: [
+                {
+                    id: 'player-1',
+                    name: 'Old Source Player',
+                    number: '4',
+                    sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+                }
+            ]
+        });
+
+        expect(plan.results).toMatchObject({ added: 1, updated: 0, skipped: 0, conflicted: 0 });
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({ type: 'add', payload: { name: 'New Source Player' } });
+    });
+
+    it('continues to update legacy imported players that have no source identity fields', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            sourcePlayers: [{ externalPlayerId: 'ext-legacy', name: 'Legacy Player', number: '11' }],
+            existingPlayers: [
+                {
+                    id: 'player-legacy',
+                    name: 'Legacy Player',
+                    number: '10',
+                    registrationSource: { externalPlayerId: 'ext-legacy' }
+                }
+            ]
+        });
+
+        expect(plan.results).toMatchObject({ added: 0, updated: 1, skipped: 0, conflicted: 0 });
+        expect(plan.operations[0]).toMatchObject({ type: 'update', playerId: 'player-legacy' });
+    });
+
     it('formats import result counts for the UI', () => {
         expect(formatRegistrationRosterImportResults({ added: 2, updated: 1, skipped: 0, conflicted: 3 }))
             .toBe('2 added, 1 updated, 0 skipped, 3 conflicted');
@@ -107,7 +144,9 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('Re-import Roster');
         expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';");
         expect(source).toContain('planRegistrationRosterImport({');
-        expect(source).toContain('sourceMetadata?.externalPlayerId');
+        expect(source).toContain('function getPlayerImportSourceType');
+        expect(source).toContain('player.registrationSource?.externalPlayerId');
+        expect(source).toContain('player.externalPlayerId');
         expect(source).toContain('Local-only');
     });
 });

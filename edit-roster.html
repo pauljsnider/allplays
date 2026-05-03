@@ -430,6 +430,21 @@
             };
         }
 
+        function getPlayerImportSourceType(player = {}) {
+            const externalPlayerId = player.sourceMetadata?.externalPlayerId ||
+                player.registrationSource?.externalPlayerId ||
+                player.externalPlayerId ||
+                player.sourcePlayerId;
+            if (!externalPlayerId) return '';
+
+            return player.sourceMetadata?.sourceType ||
+                player.registrationSource?.sourceType ||
+                player.registrationSource?.type ||
+                player.registrationSource?.provider ||
+                player.registrationSource?.name ||
+                'registration';
+        }
+
         function renderRegistrationRosterImport(team = {}) {
             const container = document.getElementById('registration-roster-import');
             const status = document.getElementById('registration-roster-import-status');
@@ -539,6 +554,7 @@
             tbody.innerHTML = players.map(p => {
                 const profileParents = parentsByPlayerId.get(p.id) || [];
                 const pendingRequests = pendingRequestsByPlayerId.get(p.id) || [];
+                const importSourceType = getPlayerImportSourceType(p);
 
                 const parentChips = profileParents.length > 0 ? `
                                 <div class="mt-1 flex flex-wrap gap-1 text-xs">
@@ -600,7 +616,7 @@
                                 ${p.active === false ? '<span class="inline-flex ml-2 text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Inactive</span>' : ''}
                             </a>
                             <div class="mt-1">
-                                ${p.sourceMetadata?.externalPlayerId ? `<span class="inline-flex text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Imported: ${escapeHtml(p.sourceMetadata.sourceType || 'registration')}</span>` : '<span class="inline-flex text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Local-only</span>'}
+                                ${importSourceType ? `<span class="inline-flex text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Imported: ${escapeHtml(importSourceType)}</span>` : '<span class="inline-flex text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Local-only</span>'}
                             </div>
                             ${parentChips}
                             ${pendingRequestBlock}

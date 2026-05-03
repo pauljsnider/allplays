@@ -4,7 +4,7 @@ function normalizeString(value) {
 
 function normalizeSource(source = {}) {
     return {
-        sourceType: normalizeString(source.type || source.provider || source.name || 'registration'),
+        sourceType: normalizeString(source.sourceType || source.type || source.provider || source.name || 'registration'),
         sourceId: normalizeString(source.id || source.sourceId || source.providerId || source.registrationSourceId || 'registration')
     };
 }
@@ -26,6 +26,30 @@ function getExistingExternalPlayerId(player = {}) {
         player.externalPlayerId ||
         player.sourcePlayerId
     );
+}
+
+function getKnownExistingSource(player = {}) {
+    const source = player.sourceMetadata || player.registrationSource || {};
+    const sourceType = normalizeString(source.sourceType || source.type || source.provider || source.name);
+    const sourceId = normalizeString(source.sourceId || source.id || source.providerId || source.registrationSourceId);
+    if (!sourceType && !sourceId) return null;
+
+    return {
+        sourceType: sourceType || 'registration',
+        sourceId: sourceId || 'registration'
+    };
+}
+
+function getSourceExternalKey(source = {}, externalPlayerId = '') {
+    const normalizedSource = normalizeSource(source);
+    const normalizedExternalPlayerId = normalizeString(externalPlayerId);
+    if (!normalizedExternalPlayerId) return '';
+
+    return [
+        normalizedSource.sourceType.toLowerCase(),
+        normalizedSource.sourceId.toLowerCase(),
+        normalizedExternalPlayerId
+    ].join('::');
 }
 
 function getPlayerName(player = {}) {
@@ -116,10 +140,18 @@ function isSameLocalPlayer(sourcePlayer, existingPlayer) {
 }
 
 export function planRegistrationRosterImport({ sourcePlayers = [], existingPlayers = [], source = {} } = {}) {
-    const existingByExternalId = new Map();
+    const existingBySourceAndExternalId = new Map();
+    const legacyExistingByExternalId = new Map();
     (existingPlayers || []).forEach((player) => {
         const externalPlayerId = getExistingExternalPlayerId(player);
-        if (externalPlayerId) existingByExternalId.set(externalPlayerId, player);
+        if (!externalPlayerId) return;
+
+        const knownSource = getKnownExistingSource(player);
+        if (knownSource) {
+            existingBySourceAndExternalId.set(getSourceExternalKey(knownSource, externalPlayerId), player);
+        } else {
+            legacyExistingByExternalId.set(externalPlayerId, player);
+        }
     });
 
     const seenExternalIds = new Set();
@@ -146,7 +178,7 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
             return;
         }
 
-        const existing = existingByExternalId.get(externalPlayerId);
+        const existing = existingBySourceAndExternalId.get(getSourceExternalKey(source, externalPlayerId)) || legacyExistingByExternalId.get(externalPlayerId);
         if (existing?.id) {
             operations.push({ type: 'update', playerId: existing.id, payload });
             results.updated += 1;
