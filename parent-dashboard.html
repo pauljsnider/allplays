@@ -127,6 +127,14 @@
 
             <!-- Right Column: Combined Schedule -->
             <div class="lg:col-span-2">
+
+                <div id="team-fees-card" class="hidden bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden mb-6">
+                    <div class="p-6 border-b border-gray-100 bg-gray-50">
+                        <h2 class="text-xl font-bold text-gray-900">Team Fees</h2>
+                        <p class="text-xs text-gray-500 mt-1">Payment is handled offline until online payments are supported.</p>
+                    </div>
+                    <div id="team-fees-list" class="p-6 space-y-4"></div>
+                </div>
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden min-h-[500px]">
                     <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3">
                         <h2 class="text-xl font-bold text-gray-900">Schedule</h2>
@@ -267,8 +275,9 @@
             cancelRideRequest,
             getAggregatedStatsForPlayer,
             createParentMembershipRequest,
-            listMyParentMembershipRequests
-        } from './js/db.js?v=26';
+            listMyParentMembershipRequests,
+            listParentTeamFeeRecipients
+        } from './js/db.js?v=28';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -300,6 +309,7 @@
         import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
+        import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=2';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -856,6 +866,7 @@
                 await ensureParentTeamAccess(user.uid, teamIds);
                 const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
                 renderTeamChats(data.children, unreadCounts);
+                await loadParentTeamFees(user.uid, data.children);
                 queueParentDashboardHydration(data.children, user.uid);
 
                 // Redeem Code Logic
@@ -892,6 +903,28 @@
 
             } catch (error) {
                 console.error(error);
+            }
+        }
+
+        async function loadParentTeamFees(userId, children) {
+            const card = document.getElementById('team-fees-card');
+            const list = document.getElementById('team-fees-list');
+            if (!card || !list) return;
+
+            try {
+                const fees = await listParentTeamFeeRecipients(userId, children || []);
+                const html = renderParentTeamFees(fees);
+                if (!html) {
+                    card.classList.add('hidden');
+                    list.innerHTML = '';
+                    return;
+                }
+                list.innerHTML = html;
+                card.classList.remove('hidden');
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load team fees:', error);
+                card.classList.remove('hidden');
+                list.innerHTML = `<div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Team fees could not be loaded right now.</div>`;
             }
         }
 
