@@ -91,7 +91,17 @@ function getLiveEmbedConfig(team) {
     };
 }
 
-export function createHighlightClipDraft({ startMs, endMs, durationMs = null, title = '' }, options = {}) {
+function normalizeTaggedPlayerIds(taggedPlayerIds) {
+    if (!Array.isArray(taggedPlayerIds)) return [];
+
+    return [...new Set(
+        taggedPlayerIds
+            .map(id => typeof id === 'string' ? id.trim() : '')
+            .filter(Boolean)
+    )];
+}
+
+export function createHighlightClipDraft({ startMs, endMs, durationMs = null, title = '', taggedPlayerIds = [] }, options = {}) {
     const maxDurationMs = toFiniteNumber(options.maxDurationMs) || MAX_HIGHLIGHT_CLIP_MS;
     const safeDurationMs = toFiniteNumber(durationMs);
     const safeStartMs = Math.max(0, toFiniteNumber(startMs) || 0);
@@ -109,11 +119,17 @@ export function createHighlightClipDraft({ startMs, endMs, durationMs = null, ti
         return null;
     }
 
-    return {
+    const normalized = {
         title: typeof title === 'string' ? title.trim() : '',
         startMs: safeStartMs,
         endMs: safeEndMs
     };
+    const safeTaggedPlayerIds = normalizeTaggedPlayerIds(taggedPlayerIds);
+    if (safeTaggedPlayerIds.length) {
+        normalized.taggedPlayerIds = safeTaggedPlayerIds;
+    }
+
+    return normalized;
 }
 
 export function normalizeSavedHighlightClips(game, options = {}) {
@@ -136,7 +152,8 @@ export function normalizeSavedHighlightClips(game, options = {}) {
                 startMs: clip?.startMs,
                 endMs: clip?.endMs,
                 durationMs,
-                title: clip?.title || `Highlight ${index + 1}`
+                title: clip?.title || `Highlight ${index + 1}`,
+                taggedPlayerIds: clip?.taggedPlayerIds
             }, options);
             return normalized;
         })

@@ -115,6 +115,7 @@
                     <button id="save-team-reminder-settings-btn" type="button" class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition">Save Reminder Settings</button>
                 </div>
             </div>
+            <p id="team-reminder-settings-summary" class="mt-3 text-sm text-gray-600"></p>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1459,8 +1460,10 @@
             const windowDescription = describeScheduleReminderWindow(rawSettings);
             const enabledEl = document.getElementById('team-reminder-enabled');
             const hoursEl = document.getElementById('team-reminder-hours');
+            const summaryEl = document.getElementById('team-reminder-settings-summary');
             if (enabledEl) enabledEl.checked = settings.enabled;
             if (hoursEl) hoursEl.value = String(settings.reminderHours);
+            if (summaryEl) summaryEl.textContent = windowDescription;
             ['game', 'practice'].forEach((eventType) => {
                 const summaryEl = document.getElementById(`${eventType}-reminder-window-summary`);
                 const detailEl = document.getElementById(`${eventType}-reminder-window-detail`);

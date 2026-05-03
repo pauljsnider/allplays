@@ -11,7 +11,11 @@ describe('edit schedule notification wiring', () => {
 
         expect(source).toContain('id="schedule-notification-settings"');
         expect(source).toContain('id="team-reminder-hours"');
+        expect(source).toContain('<option value="24">24 hours before</option>');
+        expect(source).toContain('<option value="48">48 hours before</option>');
+        expect(source).toContain('<option value="72">72 hours before</option>');
         expect(source).toContain('id="save-team-reminder-settings-btn"');
+        expect(source).toContain('id="team-reminder-settings-summary"');
     });
 
     it('includes notify-team and reminder-window controls in game and practice forms', () => {
@@ -42,8 +46,17 @@ describe('edit schedule notification wiring', () => {
         const source = readEditSchedule();
 
         expect(source).toContain('const windowDescription = describeScheduleReminderWindow(rawSettings);');
-        expect(source).toContain('summaryEl.textContent = windowDescription;');
+        expect(source).toContain('if (summaryEl) summaryEl.textContent = windowDescription;');
         expect(source).toContain('Inherited from the team reminder default');
+    });
+
+    it('persists normalized team reminder settings to the team metadata path', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain('await updateTeam(currentTeamId, { scheduleNotifications: nextSettings });');
+        expect(source).toContain('reminderHours: document.getElementById(\'team-reminder-hours\').value');
+        expect(source).toContain('currentTeam = {\n                    ...(currentTeam || {}),\n                    scheduleNotifications: nextSettings\n                };');
+        expect(source).toContain('renderTeamScheduleNotificationSettings(currentTeam);');
     });
 
     it('uses the submitted linked-opponent state for counterpart notifications', () => {
