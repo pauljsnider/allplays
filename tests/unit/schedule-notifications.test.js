@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     normalizeScheduleNotificationSettings,
+    describeScheduleReminderWindow,
     buildScheduleChangeMessage,
     buildScheduleNotificationTargets,
     postScheduleNotificationTargets,
-    buildRsvpReminderMessage
+    buildRsvpReminderMessage,
+    buildNextReminderAt,
+    buildScheduleNotificationMetadata
 } from '../../js/schedule-notifications.js';
 
 describe('schedule notification helpers', () => {
@@ -32,6 +35,37 @@ describe('schedule notification helpers', () => {
             enabled: true,
             reminderHours: 24,
             delivery: 'team_chat'
+        });
+    });
+
+    it('describes team default and fallback reminder windows', () => {
+        expect(describeScheduleReminderWindow({ reminderHours: 24 })).toBe('Team default reminder window: 24 hours before event start.');
+        expect(describeScheduleReminderWindow({ reminderHours: 48 })).toBe('Team default reminder window: 48 hours before event start.');
+        expect(describeScheduleReminderWindow({ reminderHours: 72 })).toBe('Team default reminder window: 72 hours before event start.');
+        expect(describeScheduleReminderWindow({})).toBe('Fallback reminder window: 24 hours before event start. No team default is set yet.');
+    });
+
+    it('builds due timestamp and pending audit metadata for pre-event reminders', () => {
+        expect(buildNextReminderAt('2026-05-03T18:00:00.000Z', 48)).toBe('2026-05-01T18:00:00.000Z');
+
+        const metadata = buildScheduleNotificationMetadata({
+            settings: { enabled: true, reminderHours: 72 },
+            action: 'created',
+            sent: false,
+            eventDate: '2026-05-03T18:00:00.000Z'
+        });
+
+        expect(metadata).toMatchObject({
+            enabled: true,
+            reminderHours: 72,
+            delivery: 'team_chat',
+            nextReminderAt: '2026-04-30T18:00:00.000Z',
+            reminderStatus: 'pending',
+            reminderSent: false,
+            reminderSentAt: null,
+            sent: false,
+            sentAt: null,
+            lastAction: 'created'
         });
     });
 
