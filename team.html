@@ -75,6 +75,8 @@
             </div>
         </div>
 
+        <section id="availability-settings-section" class="mb-8 hidden"></section>
+
         <section id="tournament-standings-section" class="mb-8 hidden">
             <div class="flex items-center gap-3 mb-4">
                 <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
@@ -84,6 +86,18 @@
                 </div>
             </div>
             <div id="tournament-standings-content" class="space-y-6"></div>
+        </section>
+
+        <!-- Local Attractions -->
+        <section id="local-attractions-section" class="mb-8 hidden">
+            <div class="flex items-center gap-3 mb-4">
+                <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                <div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Local Attractions</h2>
+                    <p class="text-sm text-gray-500">Nearby sponsors and destinations for tournament attendees.</p>
+                </div>
+            </div>
+            <div id="local-attractions-content" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
         </section>
 
         <!-- Playing Time Insights (Beta Basketball) -->
@@ -241,7 +255,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile } from './js/db.js?v=15';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getLocalAttractionSponsors } from './js/db.js?v=17';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
@@ -252,6 +266,8 @@
         import { collection, getDocs } from "./js/firebase.js?v=10";
         import { db } from './js/firebase.js?v=10';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
+        import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
+        import { buildAvailabilityNoteRows, formatAvailabilityCutoff, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -275,6 +291,7 @@
         let currentUser = null;
         let currentTeam = null;
         let currentTeamId = null;
+        let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -293,6 +310,110 @@
         window.navScheduleMonth = navScheduleMonth;
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
+        window.saveAvailabilityPreferences = saveAvailabilityPreferences;
+
+        function renderAvailabilitySettings(team) {
+            const section = document.getElementById('availability-settings-section');
+            if (!section) return;
+            const canManage = currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin' || currentUser?.isAdmin;
+            if (!canManage) {
+                section.classList.add('hidden');
+                section.innerHTML = '';
+                return;
+            }
+            const prefs = normalizeAvailabilityPreferences(team?.availabilityPreferences);
+            section.classList.remove('hidden');
+            section.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-900">Availability settings</h2>
+                            <p class="text-sm text-gray-500 mt-1">Current cutoff: ${escapeHtml(formatAvailabilityCutoff(prefs))}. RSVP notes are ${prefs.noteVisibility === 'team' ? 'visible to team members' : 'limited to coaches/admins'}.</p>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full md:w-auto">
+                            <label class="block sm:col-span-1">
+                                <span class="text-xs font-semibold text-gray-500 uppercase">Cutoff</span>
+                                <select id="availability-cutoff-minutes" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                                    <option value="0" ${prefs.cutoffMinutesBeforeStart === 0 ? 'selected' : ''}>No cutoff</option>
+                                    <option value="60" ${prefs.cutoffMinutesBeforeStart === 60 ? 'selected' : ''}>1 hour</option>
+                                    <option value="120" ${prefs.cutoffMinutesBeforeStart === 120 ? 'selected' : ''}>2 hours</option>
+                                    <option value="360" ${prefs.cutoffMinutesBeforeStart === 360 ? 'selected' : ''}>6 hours</option>
+                                    <option value="720" ${prefs.cutoffMinutesBeforeStart === 720 ? 'selected' : ''}>12 hours</option>
+                                    <option value="1440" ${prefs.cutoffMinutesBeforeStart === 1440 ? 'selected' : ''}>1 day</option>
+                                    <option value="2880" ${prefs.cutoffMinutesBeforeStart === 2880 ? 'selected' : ''}>2 days</option>
+                                </select>
+                            </label>
+                            <label class="block sm:col-span-1">
+                                <span class="text-xs font-semibold text-gray-500 uppercase">RSVP notes</span>
+                                <select id="availability-note-visibility" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                                    <option value="admins" ${prefs.noteVisibility === 'admins' ? 'selected' : ''}>Coaches/admins only</option>
+                                    <option value="team" ${prefs.noteVisibility === 'team' ? 'selected' : ''}>Team members</option>
+                                </select>
+                            </label>
+                            <div class="flex items-end">
+                                <button onclick="saveAvailabilityPreferences()" class="w-full bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary-700 transition">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="availability-settings-status" class="mt-2 text-xs text-gray-500"></div>
+                </div>
+            `;
+        }
+
+        async function saveAvailabilityPreferences() {
+            if (!currentTeamId) return;
+            const status = document.getElementById('availability-settings-status');
+            const cutoffMinutesBeforeStart = Number(document.getElementById('availability-cutoff-minutes')?.value || 0);
+            const noteVisibility = document.getElementById('availability-note-visibility')?.value || 'admins';
+            try {
+                if (status) status.textContent = 'Saving availability settings...';
+                const availabilityPreferences = await saveTeamAvailabilityPreferences(currentTeamId, { cutoffMinutesBeforeStart, noteVisibility });
+                currentTeam = { ...currentTeam, availabilityPreferences };
+                renderAvailabilitySettings(currentTeam);
+                const nextStatus = document.getElementById('availability-settings-status');
+                if (nextStatus) nextStatus.textContent = 'Saved.';
+            } catch (err) {
+                if (status) status.textContent = `Unable to save: ${err?.message || err}`;
+            }
+        }
+
+        function renderLocalAttractionsSection(sponsors, loadError = null) {
+            const section = document.getElementById('local-attractions-section');
+            const content = document.getElementById('local-attractions-content');
+            if (!section || !content) return;
+
+            if (loadError) {
+                section.classList.remove('hidden');
+                content.className = 'bg-amber-50 border border-amber-200 rounded-xl p-4';
+                content.innerHTML = '<p class="text-sm text-amber-700">Local attractions could not be loaded right now.</p>';
+                return;
+            }
+
+            if (!Array.isArray(sponsors) || sponsors.length === 0) {
+                section.classList.add('hidden');
+                content.innerHTML = '';
+                return;
+            }
+
+            section.classList.remove('hidden');
+            content.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4';
+            content.innerHTML = sponsors.map((sponsor) => `
+                <article class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden flex flex-col">
+                    ${sponsor.imageUrl
+                        ? `<img src="${escapeHtml(sponsor.imageUrl)}" alt="${escapeHtml(sponsor.name)}" class="w-full h-40 object-cover bg-gray-100">`
+                        : '<div class="h-3 bg-gradient-to-r from-primary-500 to-primary-700"></div>'
+                    }
+                    <div class="p-5 flex flex-col gap-3 flex-1">
+                        <h3 class="text-lg font-bold text-gray-900">${escapeHtml(sponsor.name)}</h3>
+                        ${sponsor.description ? `<p class="text-sm text-gray-600 leading-relaxed">${escapeHtml(sponsor.description)}</p>` : ''}
+                        <div class="mt-auto flex flex-wrap gap-2 pt-2">
+                            ${sponsor.phone ? `<a class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200" href="tel:${encodeURIComponent(sponsor.phone)}">${escapeHtml(sponsor.phone)}</a>` : ''}
+                            ${sponsor.websiteUrl ? `<a class="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 hover:bg-primary-100" target="_blank" rel="noopener noreferrer" href="${escapeHtml(sponsor.websiteUrl)}">Website</a>` : ''}
+                        </div>
+                    </div>
+                </article>
+            `).join('');
+        }
 
         function renderNextGameBody(nextGame) {
             if (!nextGame) return '<p class="text-sm text-gray-500">No upcoming games</p>';
@@ -349,8 +470,8 @@
                     return {
                         homeTeam: isHome ? teamName : opponent,
                         awayTeam: isHome ? opponent : teamName,
-                        homeScore: game?.homeScore,
-                        awayScore: game?.awayScore,
+                        homeScore: isHome ? game?.homeScore : game?.awayScore,
+                        awayScore: isHome ? game?.awayScore : game?.homeScore,
                         status: game?.status
                     };
                 });
@@ -883,6 +1004,7 @@
                     }
 
                     const accessInfo = getTeamAccessInfo(currentUser, { ...team, id: teamId });
+                    currentTeamAccessInfo = accessInfo;
                     if (accessInfo.hasAccess) {
                         // Fetch unread count for chat badge
                         let unreadCount = 0;
@@ -906,6 +1028,8 @@
                         );
                     }
                 }
+
+                renderAvailabilitySettings(team);
 
                 const seasonLabels = listSeasonLabels(dbGames);
                 if (!seasonLabels.length) {
@@ -1056,6 +1180,14 @@
                 }
 
                 renderTournamentStandingsSection(tournamentStandings, team);
+
+                try {
+                    const localAttractions = await getLocalAttractionSponsors(teamId);
+                    renderLocalAttractionsSection(localAttractions);
+                } catch (error) {
+                    console.error('Error loading local attractions:', error);
+                    renderLocalAttractionsSection([], error);
+                }
 
                 // Start countdown updates
                 if (nextGame) {
@@ -1246,6 +1378,17 @@
                 } else {
                     rosterBody.innerHTML = players.map(p => {
                         const href = latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`;
+                        const rosterFields = getVisibleRosterFieldValues(currentTeam, p, getRosterFieldAccess(p));
+                        const rosterFieldsHtml = rosterFields.length > 0 ? `
+                            <div class="mt-1 flex flex-wrap gap-1.5">
+                                ${rosterFields.map(({ field, value }) => `
+                                    <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+                                        <span class="font-semibold">${escapeHtml(field.label)}:</span>
+                                        <span>${escapeHtml(String(value))}</span>
+                                    </span>
+                                `).join('')}
+                            </div>
+                        ` : '';
                         return `
                     <div class="grid grid-cols-3 p-4 hover:bg-primary-50 transition group">
                         <div class="font-mono text-gray-600 group-hover:text-primary-700 font-semibold">
@@ -1262,6 +1405,7 @@
                                 </span>
                                 <span>${escapeHtml(p.name)}</span>
                             </a>
+                            ${rosterFieldsHtml}
                         </div>
                             </div>
                         `;
@@ -1271,6 +1415,17 @@
             } catch (error) {
                 console.error(error);
             }
+        }
+
+        function getRosterFieldAccess(player) {
+            const isLinkedParent = !!currentUser && Array.isArray(currentUser.parentOf) &&
+                currentUser.parentOf.some(p => p.teamId === currentTeamId && (!player?.id || p.playerId === player.id));
+
+            return {
+                isAdmin: currentTeamAccessInfo.accessLevel === 'full',
+                isTeamMember: !!currentTeamAccessInfo.hasAccess,
+                isLinkedParent
+            };
         }
 
         async function getAllEvents(team, dbGames) {
@@ -1319,11 +1474,23 @@
                 }
             }
 
-            dbGames.forEach(game => {
+            const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
+            const isTeamAdmin = currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin' || currentUser?.isAdmin;
+            const canSeeTeamNotes = isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess);
+
+            for (const game of dbGames) {
                 const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
                 const id = game.id || game.gameId;
                 const isPractice = game.type === 'practice';
                 const isCancelled = String(game.status || '').toLowerCase() === 'cancelled';
+                let availabilityNotes = [];
+                if (canSeeTeamNotes) {
+                    try {
+                        availabilityNotes = buildAvailabilityNoteRows(await getRsvps(currentTeamId, id), availabilityPreferences, isTeamAdmin);
+                    } catch (_) {
+                        availabilityNotes = [];
+                    }
+                }
                 allEvents.push({
                     type: 'db',
                     id,
@@ -1341,10 +1508,12 @@
                     notes: game.notes,
                     assignments: game.assignments,
                     rsvpSummary: game.rsvpSummary,
+                    availabilityPreferences,
+                    availabilityNotes,
                     isCancelled,
                     isPractice
                 });
-            });
+            }
 
             allEvents.sort((a, b) => a.date - b.date);
             return allEvents;
@@ -1704,6 +1873,7 @@
                                 ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
                                 ${game.assignments && game.assignments.length > 0 ? `<div class="mt-2 flex flex-wrap gap-1">${game.assignments.map(a => `<span class="text-xs bg-gray-100 rounded px-2 py-0.5"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                                 ${game.rsvpSummary ? `<div class="mt-2 flex items-center gap-3 text-xs"><span class="text-green-600 font-semibold">${game.rsvpSummary.going || 0} going</span><span class="text-yellow-600">${game.rsvpSummary.maybe || 0} maybe</span><span class="text-red-600">${game.rsvpSummary.notGoing || 0} can't go</span></div>` : ''}
+                                ${Array.isArray(game.availabilityNotes) && game.availabilityNotes.length ? `<div class="mt-2 space-y-1">${game.availabilityNotes.map((row) => `<div class="text-[11px] text-gray-500 italic"><span class="font-semibold not-italic">${escapeHtml(row.displayName)}:</span> ${escapeHtml(row.note)}</div>`).join('')}</div>` : ''}
                             </div>
                             <div class="flex flex-col items-end gap-2">
                                 ${(isLive || isUpcoming) ? `
