@@ -54,6 +54,7 @@ import {
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
+import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -686,16 +687,59 @@ function assertNoSensitivePlayerFields(playerData) {
 export async function getRosterFieldDefinitions(teamId, team = null) {
     const teamFields = team?.rosterFields || team?.rosterProfileFields || team?.playerProfileFields || team?.customRosterFields || [];
 
+    const fieldsByKey = new Map();
+    if (Array.isArray(teamFields)) {
+        teamFields.forEach((field, index) => {
+            try {
+                const normalized = buildRosterFieldDefinitionPayload(field, index);
+                fieldsByKey.set(normalized.key, { ...field, key: normalized.key });
+            } catch (e) {
+                // Skip malformed legacy team-level definitions.
+            }
+        });
+    }
+
     try {
         const snapshot = await getDocs(collection(db, `teams/${teamId}/rosterFields`));
-        if (!snapshot.empty) {
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        }
+        snapshot.docs.forEach((docSnap) => {
+            fieldsByKey.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+        });
     } catch (e) {
         console.warn('Failed to load roster field definitions from subcollection:', e);
     }
 
-    return Array.isArray(teamFields) ? teamFields : [];
+    return Array.from(fieldsByKey.values());
+}
+
+export async function saveRosterFieldDefinition(teamId, field) {
+    const payload = buildRosterFieldDefinitionPayload(field);
+    const fieldRef = doc(db, `teams/${teamId}/rosterFields`, payload.key);
+    await setDoc(fieldRef, {
+        ...payload,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return { id: payload.key, ...payload };
+}
+
+export async function disableRosterFieldDefinition(teamId, fieldId) {
+    await setDoc(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+        key: fieldId,
+        active: false,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+}
+
+export async function reorderRosterFieldDefinitions(teamId, fields = []) {
+    const batch = writeBatch(db);
+    fields.forEach((field, index) => {
+        const fieldId = field.id || field.key;
+        if (!fieldId) return;
+        batch.update(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+            sortOrder: index,
+            updatedAt: Timestamp.now()
+        });
+    });
+    await batch.commit();
 }
 
 export async function getOfficials(teamId) {
