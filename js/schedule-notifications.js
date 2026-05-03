@@ -53,23 +53,36 @@ export function buildScheduleNotificationMetadata({
     sent = false,
     userId = null,
     note = null,
-    eventDate = null
+    eventDate = null,
+    cancelled = false,
+    canceled = false
 } = {}) {
     const normalized = normalizeScheduleNotificationSettings(settings);
     const effectiveReminderHours = coerceReminderHours(reminderHours, normalized.reminderHours);
-    const nextReminderAt = normalized.enabled ? buildNextReminderAt(eventDate, effectiveReminderHours) : null;
+    const isCanceled = cancelled || canceled || action === 'cancelled' || action === 'canceled' || action === 'deleted';
+    const nextReminderAt = normalized.enabled && !isCanceled ? buildNextReminderAt(eventDate, effectiveReminderHours) : null;
+    const reminderStatus = isCanceled
+        ? 'canceled'
+        : nextReminderAt
+            ? 'pending'
+            : 'disabled';
+    const sentAt = sent ? new Date().toISOString() : null;
+    const canceledAt = isCanceled ? new Date().toISOString() : null;
     return {
         enabled: normalized.enabled,
         reminderHours: effectiveReminderHours,
         delivery: normalized.delivery,
         nextReminderAt,
-        reminderStatus: nextReminderAt ? 'pending' : 'disabled',
+        reminderStatus,
         reminderSent: false,
         reminderSentAt: null,
+        reminderCanceled: isCanceled,
+        reminderCanceledAt: canceledAt,
+        reminderCanceledBy: isCanceled ? (userId || null) : null,
         sent,
-        sentAt: sent ? new Date().toISOString() : null,
+        sentAt,
         lastAction: action || null,
-        lastSentAt: sent ? new Date().toISOString() : null,
+        lastSentAt: sentAt,
         lastSentBy: sent ? (userId || null) : null,
         lastNote: note ? String(note).trim() : null
     };
