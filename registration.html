@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Registration - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+    <div id="header-container"></div>
+
+    <main class="flex-grow px-4 py-8">
+        <div class="max-w-3xl mx-auto bg-white rounded-lg shadow p-6">
+            <div id="loading-state" class="text-gray-600">Loading registration form...</div>
+            <div id="error-message" class="hidden rounded border border-red-200 bg-red-50 p-4 text-red-700"></div>
+            <div id="confirmation-message" class="hidden rounded border border-green-200 bg-green-50 p-4 text-green-800">
+                <h1 class="text-2xl font-bold mb-2">Registration submitted</h1>
+                <p>Your registration is pending review. The program organizer will follow up with next steps.</p>
+            </div>
+
+            <form id="registration-form" class="hidden space-y-6">
+                <section>
+                    <p class="text-sm font-semibold uppercase tracking-wide text-indigo-600">Program registration</p>
+                    <h1 id="program-name" class="mt-1 text-3xl font-bold text-gray-900"></h1>
+                    <p id="program-description" class="mt-2 text-gray-600"></p>
+                    <dl class="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div class="rounded border border-gray-200 p-3">
+                            <dt class="text-sm text-gray-500">Season</dt>
+                            <dd id="program-season" class="font-semibold text-gray-900">Not specified</dd>
+                        </div>
+                        <div class="rounded border border-gray-200 p-3">
+                            <dt class="text-sm text-gray-500">Fee</dt>
+                            <dd id="program-fee" class="font-semibold text-gray-900"></dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section>
+                    <h2 class="text-xl font-semibold text-gray-900">Participant details</h2>
+                    <div id="participant-fields" class="mt-3 grid gap-4"></div>
+                </section>
+
+                <section>
+                    <h2 class="text-xl font-semibold text-gray-900">Guardian details</h2>
+                    <div id="guardian-fields" class="mt-3 grid gap-4"></div>
+                </section>
+
+                <section>
+                    <h2 class="text-xl font-semibold text-gray-900">Waiver</h2>
+                    <div id="waiver-text" class="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700"></div>
+                    <label class="mt-3 flex gap-3 text-sm text-gray-700">
+                        <input id="waiver-accepted" type="checkbox" required class="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        <span>I have read and accept the waiver terms for this registration.</span>
+                    </label>
+                </section>
+
+                <button id="submit-registration" type="submit" class="w-full rounded bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+                    Submit registration
+                </button>
+            </form>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { db, doc, getDoc, collection, addDoc, serverTimestamp } from './js/firebase.js?v=10';
+        import { renderHeader, renderFooter } from './js/utils.js?v=8';
+        import {
+            buildPendingRegistrationRecord,
+            collectFieldValues,
+            formatFeeAmount,
+            normalizeRegistrationForm,
+            validateRegistrationSubmission
+        } from './js/registration-flow.js?v=1';
+
+        renderHeader(document.getElementById('header-container'), null);
+        renderFooter(document.getElementById('footer-container'));
+
+        const params = new URLSearchParams(window.location.search);
+        const teamId = params.get('teamId') || '';
+        const formId = params.get('formId') || params.get('id') || '';
+        let activeForm = null;
+
+        const loadingState = document.getElementById('loading-state');
+        const errorMessage = document.getElementById('error-message');
+        const confirmationMessage = document.getElementById('confirmation-message');
+        const formElement = document.getElementById('registration-form');
+        const submitButton = document.getElementById('submit-registration');
+
+        function showError(message) {
+            loadingState.classList.add('hidden');
+            formElement.classList.add('hidden');
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function renderField(container, field, groupName) {
+            const wrapper = document.createElement('label');
+            wrapper.className = 'block';
+            const requiredMark = field.required ? ' <span class="text-red-600">*</span>' : '';
+            wrapper.innerHTML = `<span class="block text-sm font-medium text-gray-700">${field.label}${requiredMark}</span>`;
+
+            let input;
+            if (field.type === 'textarea') {
+                input = document.createElement('textarea');
+                input.rows = 3;
+            } else if (field.type === 'select') {
+                input = document.createElement('select');
+                input.appendChild(new Option('Select...', ''));
+                field.options.forEach(option => input.appendChild(new Option(option, option)));
+            } else {
+                input = document.createElement('input');
+                input.type = field.type;
+            }
+
+            input.name = `${groupName}.${field.id}`;
+            input.dataset.group = groupName;
+            input.dataset.fieldId = field.id;
+            input.required = field.required;
+            input.className = 'mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500';
+            wrapper.appendChild(input);
+            container.appendChild(wrapper);
+        }
+
+        function renderRegistrationForm(form) {
+            document.getElementById('program-name').textContent = form.programName || 'Registration';
+            document.getElementById('program-description').textContent = form.description || 'Complete the required details below.';
+            document.getElementById('program-season').textContent = form.season || 'Not specified';
+            document.getElementById('program-fee').textContent = formatFeeAmount(form.feeAmountCents, form.currency);
+            document.getElementById('waiver-text').textContent = form.waiverText || 'No waiver text was provided.';
+
+            const participantContainer = document.getElementById('participant-fields');
+            const guardianContainer = document.getElementById('guardian-fields');
+            participantContainer.innerHTML = '';
+            guardianContainer.innerHTML = '';
+            form.participantFields.forEach(field => renderField(participantContainer, field, 'participant'));
+            form.guardianFields.forEach(field => renderField(guardianContainer, field, 'guardian'));
+
+            loadingState.classList.add('hidden');
+            formElement.classList.remove('hidden');
+        }
+
+        function readGroupValues(groupName, fields) {
+            return collectFieldValues(fields, Array.from(formElement.querySelectorAll(`[data-group="${groupName}"]`)).reduce((values, input) => {
+                values[input.dataset.fieldId] = input.value;
+                return values;
+            }, {}));
+        }
+
+        async function loadRegistrationForm() {
+            if (!teamId || !formId) {
+                showError('This registration link is missing required form details.');
+                return;
+            }
+
+            try {
+                const snap = await getDoc(doc(db, 'teams', teamId, 'registrationForms', formId));
+                if (!snap.exists()) {
+                    showError('This registration form could not be found.');
+                    return;
+                }
+
+                activeForm = normalizeRegistrationForm(snap.data(), { teamId, formId });
+                if (!activeForm.published) {
+                    showError('This registration form is not accepting submissions.');
+                    return;
+                }
+
+                renderRegistrationForm(activeForm);
+            } catch (error) {
+                console.error(error);
+                showError('Registration form could not be loaded. Please try again later.');
+            }
+        }
+
+        formElement.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (!activeForm) return;
+
+            errorMessage.classList.add('hidden');
+            submitButton.disabled = true;
+
+            const submission = {
+                participant: readGroupValues('participant', activeForm.participantFields),
+                guardian: readGroupValues('guardian', activeForm.guardianFields),
+                waiverAccepted: document.getElementById('waiver-accepted').checked
+            };
+            const validationErrors = validateRegistrationSubmission(activeForm, submission);
+
+            if (validationErrors.length > 0) {
+                errorMessage.textContent = validationErrors.join(' ');
+                errorMessage.classList.remove('hidden');
+                submitButton.disabled = false;
+                return;
+            }
+
+            try {
+                await addDoc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'), buildPendingRegistrationRecord({
+                    form: activeForm,
+                    ...submission,
+                    now: serverTimestamp()
+                }));
+                formElement.classList.add('hidden');
+                confirmationMessage.classList.remove('hidden');
+            } catch (error) {
+                console.error(error);
+                errorMessage.textContent = 'Registration could not be submitted. Please try again.';
+                errorMessage.classList.remove('hidden');
+                submitButton.disabled = false;
+            }
+        });
+
+        loadRegistrationForm();
+    </script>
+</body>
+</html>
