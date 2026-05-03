@@ -22,11 +22,12 @@ function buildRenderDbGame(overrides = {}) {
         escapeHtml: (value) => String(value ?? ''),
         mapLink: () => '',
         renderTournamentSummary: () => '',
+        renderOfficiatingSummary: () => '',
         ...overrides
     };
 
     const createRenderer = new Function('deps', `
-        const { gamesCache, currentTeamId, formatDate, formatTime, escapeHtml, mapLink, renderTournamentSummary } = deps;
+        const { gamesCache, currentTeamId, formatDate, formatTime, escapeHtml, mapLink, renderTournamentSummary, renderOfficiatingSummary } = deps;
         return function(game) {
 ${body}
         };

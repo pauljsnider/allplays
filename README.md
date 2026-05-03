@@ -44,6 +44,30 @@ Notes:
 - Email summaries are mailto-only; there is no backend email send.
 - AI match summary in `track.html` requires Firebase AI enabled/billing; hide it if disabled.
 
+### 1.1 Stripe Team Pass configuration
+
+Team Pass checkout is handled by Firebase Functions and Stripe. Do not commit Stripe secrets.
+
+Required function configuration or environment variables:
+- `STRIPE_SECRET_KEY` or `stripe.secret_key` — Stripe restricted/secret API key used by Cloud Functions.
+- `STRIPE_WEBHOOK_SECRET` or `stripe.webhook_secret` — signing secret for the Stripe webhook endpoint.
+- `STRIPE_TEAM_PASS_PRICE_ID` or `stripe.team_pass_price_id` — Stripe Price ID for the season Team Pass tier.
+- `ALLPLAYS_APP_URL` or `stripe.app_url` — public app URL used for checkout success/cancel redirects. Defaults to `https://allplays.ai`.
+
+Firebase config example:
+```bash
+firebase functions:config:set \
+  stripe.secret_key="sk_live_..." \
+  stripe.webhook_secret="whsec_..." \
+  stripe.team_pass_price_id="price_..." \
+  stripe.app_url="https://allplays.ai"
+```
+
+Stripe should send checkout events to:
+`https://us-central1-<firebase-project-id>.cloudfunctions.net/stripeTeamPassWebhook`
+
+Only verified `checkout.session.completed` events with paid status create or update team entitlements at `teams/{teamId}/entitlements/{seasonId}_team-pass`.
+
 ### 2. GitHub Pages Deployment
 
 1. Push this repository to GitHub.
