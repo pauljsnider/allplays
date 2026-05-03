@@ -27,7 +27,7 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=3';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
@@ -157,6 +157,7 @@ const els = {
   highlightStartInput: q('#highlight-start-input'),
   highlightEndInput: q('#highlight-end-input'),
   highlightTitleInput: q('#highlight-title-input'),
+  highlightPlayerTags: q('#highlight-player-tags'),
   highlightSetStart: q('#highlight-set-start'),
   highlightSetEnd: q('#highlight-set-end'),
   highlightShareBtn: q('#highlight-share-btn'),
@@ -371,12 +372,50 @@ function getCurrentReplayVideoDurationMs() {
   return state.videoPlayback?.durationMs ?? null;
 }
 
+function getPlayerDisplayName(player) {
+  const number = player?.num || player?.number || player?.playerNumber || '';
+  const name = player?.name || player?.displayName || 'Player';
+  return `${number ? `#${number} ` : ''}${name}`;
+}
+
+function getPlayerNameById(playerId) {
+  const player = state.players.find(p => p.id === playerId);
+  return player ? getPlayerDisplayName(player) : null;
+}
+
+function getSelectedTaggedPlayerIds() {
+  if (!els.highlightPlayerTags) return [];
+  return Array.from(els.highlightPlayerTags.selectedOptions).map(option => option.value).filter(Boolean);
+}
+
+function setSelectedTaggedPlayerIds(taggedPlayerIds = []) {
+  if (!els.highlightPlayerTags) return;
+  const selectedIds = new Set(Array.isArray(taggedPlayerIds) ? taggedPlayerIds : []);
+  Array.from(els.highlightPlayerTags.options).forEach(option => {
+    option.selected = selectedIds.has(option.value);
+  });
+}
+
+function renderHighlightPlayerTagOptions() {
+  if (!els.highlightPlayerTags) return;
+  const selectedIds = new Set(getSelectedTaggedPlayerIds());
+  els.highlightPlayerTags.innerHTML = state.players
+    .map(player => {
+      if (!player?.id) return '';
+      const selected = selectedIds.has(player.id) ? ' selected' : '';
+      return `<option value="${escapeHtml(player.id)}"${selected}>${escapeHtml(getPlayerDisplayName(player))}</option>`;
+    })
+    .join('');
+  els.highlightPlayerTags.disabled = !state.players.length;
+}
+
 function getHighlightDraftFromInputs() {
   return createHighlightClipDraft({
     startMs: Number(els.highlightStartInput?.value || 0) * 1000,
     endMs: Number(els.highlightEndInput?.value || 0) * 1000,
     durationMs: getCurrentReplayVideoDurationMs(),
-    title: els.highlightTitleInput?.value || ''
+    title: els.highlightTitleInput?.value || '',
+    taggedPlayerIds: getSelectedTaggedPlayerIds()
   });
 }
 
@@ -432,19 +471,29 @@ function renderSavedHighlights() {
     return;
   }
 
-  els.savedHighlightsList.innerHTML = clips.map((clip, index) => `
-    <button
-      type="button"
-      data-highlight-index="${index}"
-      class="flex w-full items-center justify-between rounded-lg border border-teal/20 bg-ink/50 px-3 py-2 text-left hover:bg-ink/80"
-    >
-      <span>
-        <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
-        <span class="block text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</span>
-      </span>
-      <span class="text-xs text-teal">Load</span>
-    </button>
-  `).join('');
+  els.savedHighlightsList.innerHTML = clips.map((clip, index) => {
+    const taggedNames = Array.isArray(clip.taggedPlayerIds)
+      ? clip.taggedPlayerIds.map(getPlayerNameById).filter(Boolean)
+      : [];
+    const tags = taggedNames.length
+      ? `<span class="mt-2 flex flex-wrap gap-1">${taggedNames.map(name => `<span class="rounded-full border border-teal/25 px-2 py-0.5 text-[11px] text-teal">${escapeHtml(name)}</span>`).join('')}</span>`
+      : '';
+
+    return `
+      <button
+        type="button"
+        data-highlight-index="${index}"
+        class="flex w-full items-center justify-between rounded-lg border border-teal/20 bg-ink/50 px-3 py-2 text-left hover:bg-ink/80"
+      >
+        <span>
+          <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
+          <span class="block text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</span>
+          ${tags}
+        </span>
+        <span class="text-xs text-teal">Load</span>
+      </button>
+    `;
+  }).join('');
 }
 
 function renderRecordedReplayTools() {
@@ -475,6 +524,7 @@ function renderRecordedReplayTools() {
   if (els.highlightEndInput && document.activeElement !== els.highlightEndInput) {
     els.highlightEndInput.value = `${Math.round((state.videoPlayback.clipEndMs ?? defaultClipEndMs) / 1000)}`;
   }
+  renderHighlightPlayerTagOptions();
   if (els.recordedReplayTools) {
     els.recordedReplayTools.classList.remove('hidden');
   }
@@ -607,6 +657,7 @@ function initRecordedReplayControls() {
       if (els.highlightTitleInput) {
         els.highlightTitleInput.value = clip.title || '';
       }
+      setSelectedTaggedPlayerIds(clip.taggedPlayerIds);
       applyHighlightSelection(clip, { autoplay: false });
     });
   }

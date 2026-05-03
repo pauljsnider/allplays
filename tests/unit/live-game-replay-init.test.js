@@ -240,7 +240,7 @@ function buildModuleSource() {
             'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs } = deps.liveGameReplay;'
         )
         .replace(
-            "import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=2';",
+            /import \{ MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback \} from '\.\/live-game-video\.js\?v=\d+';/,
             'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replace(
