@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     normalizeScheduleNotificationSettings,
+    describeScheduleReminderWindow,
     buildScheduleChangeMessage,
     buildScheduleNotificationTargets,
     postScheduleNotificationTargets,
@@ -35,6 +36,13 @@ describe('schedule notification helpers', () => {
             reminderHours: 24,
             delivery: 'team_chat'
         });
+    });
+
+    it('describes team default and fallback reminder windows', () => {
+        expect(describeScheduleReminderWindow({ reminderHours: 24 })).toBe('Team default reminder window: 24 hours before event start.');
+        expect(describeScheduleReminderWindow({ reminderHours: 48 })).toBe('Team default reminder window: 48 hours before event start.');
+        expect(describeScheduleReminderWindow({ reminderHours: 72 })).toBe('Team default reminder window: 72 hours before event start.');
+        expect(describeScheduleReminderWindow({})).toBe('Fallback reminder window: 24 hours before event start. No team default is set yet.');
     });
 
     it('builds due timestamp and pending audit metadata for pre-event reminders', () => {
