@@ -72,6 +72,10 @@ export async function getRsvpBreakdownByPlayer() {
 }
 export async function saveTournamentPoolOverride() {}
 export async function clearTournamentPoolOverride() {}
+export async function getOfficials() { return []; }
+export async function addOfficial() { return 'official-created'; }
+export async function updateOfficial() {}
+export async function deleteOfficial() {}
 `,
     '/js/utils.js': `
 const state = () => window.__editScheduleTestState || {};
@@ -297,6 +301,10 @@ export async function postScheduleNotificationTargets() {
 
 export function buildRsvpReminderMessage() {
     return '';
+}
+
+export function describeScheduleReminderWindow() {
+    return 'Team default reminder window: 24 hours before event start.';
 }
 `,
     '/js/schedule-csv-import.js': `

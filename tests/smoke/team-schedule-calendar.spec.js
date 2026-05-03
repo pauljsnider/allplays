@@ -83,6 +83,10 @@ export async function saveTeamAvailabilityPreferences() {
 export async function getRsvps() {
     return [];
 }
+
+export async function getLocalAttractionSponsors() {
+    return [];
+}
 `;
 }
 
