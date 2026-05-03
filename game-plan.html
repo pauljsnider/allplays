@@ -95,9 +95,14 @@
                     <p class="text-gray-600">Plan formations, lineups, substitutions, and playing time</p>
                 </div>
                 <div class="flex items-center gap-3">
-                    <button id="save-plan-btn" class="hidden px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-xl hover:from-green-700 hover:to-green-800 transition shadow-md font-semibold">
-                        Save Plan
-                    </button>
+                    <div id="save-status" class="hidden items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl">
+                        <svg id="save-status-spinner" class="hidden animate-spin h-4 w-4 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                        <span id="save-status-dot" class="w-2 h-2 rounded-full flex-shrink-0"></span>
+                        <span id="save-status-text"></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -319,6 +324,72 @@
         let dragSourceCellKey = null;
         let combinedGames = [];
         let plannerInitialized = false;
+        let autoSaveTimer = null;
+        let hasPendingSave = false;
+
+        function setAutoSaveStatus(status) {
+            const el = document.getElementById('save-status');
+            const dot = document.getElementById('save-status-dot');
+            const spinner = document.getElementById('save-status-spinner');
+            const text = document.getElementById('save-status-text');
+            el.classList.remove('hidden');
+            el.classList.add('flex');
+            if (status === 'unsaved') {
+                el.className = 'flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl bg-gray-100 text-gray-500';
+                spinner.classList.add('hidden');
+                dot.classList.remove('hidden');
+                dot.className = 'w-2 h-2 rounded-full bg-gray-400 flex-shrink-0';
+                text.textContent = 'Unsaved changes';
+            } else if (status === 'saving') {
+                el.className = 'flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl bg-blue-50 text-blue-600';
+                spinner.classList.remove('hidden');
+                dot.classList.add('hidden');
+                text.textContent = 'Saving...';
+            } else if (status === 'saved') {
+                el.className = 'flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl bg-green-50 text-green-700';
+                spinner.classList.add('hidden');
+                dot.classList.remove('hidden');
+                dot.className = 'w-2 h-2 rounded-full bg-green-500 flex-shrink-0';
+                text.textContent = 'Saved ✓';
+                setTimeout(() => {
+                    if (text.textContent === 'Saved ✓') {
+                        el.classList.add('hidden');
+                        el.classList.remove('flex');
+                    }
+                }, 3000);
+            } else if (status === 'error') {
+                el.className = 'flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-xl bg-red-50 text-red-600';
+                spinner.classList.add('hidden');
+                dot.classList.remove('hidden');
+                dot.className = 'w-2 h-2 rounded-full bg-red-500 flex-shrink-0';
+                text.textContent = 'Save failed — try again';
+            }
+        }
+
+        function scheduleSave() {
+            if (!currentGameId || currentGame?.isCalendar || currentGame?.isSharedGame) return;
+            hasPendingSave = true;
+            setAutoSaveStatus('unsaved');
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(async () => {
+                setAutoSaveStatus('saving');
+                try {
+                    await updateGame(currentTeamId, currentGameId, { gamePlan });
+                    hasPendingSave = false;
+                    setAutoSaveStatus('saved');
+                } catch (err) {
+                    console.error('Auto-save failed:', err);
+                    setAutoSaveStatus('error');
+                }
+            }, 1500);
+        }
+
+        window.addEventListener('beforeunload', (e) => {
+            if (hasPendingSave) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        });
 
         function createDefaultGamePlan(sportName = null) {
             const gamePlanDefaults = {
@@ -531,16 +602,12 @@
             intervalsCache = [];
             lastSelectedPlayerId = null;
             dragSourceCellKey = null;
-            const savePlanButton = document.getElementById('save-plan-btn');
-            const isReadOnlyGame = !!game.isCalendar || !!game.isSharedGame;
-            savePlanButton.disabled = isReadOnlyGame;
-            if (game.isCalendar) {
-                savePlanButton.title = 'Create this as a scheduled game to save the plan';
-            } else if (game.isSharedGame) {
-                savePlanButton.title = 'Shared tournament games are read-only in Game Plan right now';
-            } else {
-                savePlanButton.title = '';
-            }
+            clearTimeout(autoSaveTimer);
+            hasPendingSave = false;
+            // Hide status badge on game switch; it reappears on first change
+            const saveStatusEl = document.getElementById('save-status');
+            saveStatusEl.classList.add('hidden');
+            saveStatusEl.classList.remove('flex');
 
             // Update UI with game plan data
             document.getElementById('num-periods').value = gamePlan.numPeriods;
@@ -551,7 +618,6 @@
             const hasPlan = gamePlan.formationId && (gamePlan.subTimes || []).length > 0;
 
             document.getElementById('planning-wizard').classList.remove('hidden');
-            document.getElementById('save-plan-btn').classList.remove('hidden');
 
             if (hasPlan) {
                 // Skip setup steps; go straight to lineup
@@ -790,6 +856,7 @@
                         lastSelectedPlayerId = draggedPlayerId;
                         renderSubMatrix();
                         renderPlayingTimeSummary();
+                        scheduleSave();
                     }
                 });
             });
@@ -968,6 +1035,7 @@
             recentAssignments.delete(cellKey);
             renderSubMatrix();
             renderPlayingTimeSummary();
+            scheduleSave();
         };
 
         function playerAssignedInInterval(playerId, intervalKey) {
@@ -1001,6 +1069,7 @@
             renderSubMatrix();
             renderPlayingTimeSummary();
             updatePlanSummary();
+            scheduleSave();
         }
 
         function fillRowWithLastSelected(positionId) {
@@ -1020,6 +1089,7 @@
             renderSubMatrix();
             renderPlayingTimeSummary();
             updatePlanSummary();
+            scheduleSave();
         }
 
         // Step navigation
@@ -1061,6 +1131,7 @@
             renderSubMatrix();
             renderPlayingTimeSummary();
             updatePlanSummary();
+            scheduleSave();
         });
 
         // From Step 3 (Lineup) back to Step 2 (Periods)
@@ -1071,16 +1142,6 @@
             });
         });
 
-        // Save game plan
-        document.getElementById('save-plan-btn')?.addEventListener('click', async () => {
-            try {
-                await updateGame(currentTeamId, currentGameId, { gamePlan });
-                alert('Game plan saved successfully!');
-            } catch (error) {
-                console.error('Error saving game plan:', error);
-                alert('Error saving game plan. Please try again.');
-            }
-        });
 
     </script>
 </body>
