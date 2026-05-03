@@ -26,6 +26,22 @@ export async function getTeam(teamId) {
     };
 }
 
+export async function getUserProfile() {
+    return { email: 'owner@example.com' };
+}
+
+export async function getUserTeamsWithAccess() {
+    return [];
+}
+
+export async function getPlayers() {
+    return [];
+}
+
+export async function copySelectedPlayersForTeamRollover() {
+    return { copiedCount: 0 };
+}
+
 export async function uploadTeamPhoto() {
     return null;
 }
@@ -36,6 +52,10 @@ export async function addConfig() {
 
 export async function getUnreadChatCount() {
     return 0;
+}
+
+export async function getAllUsers() {
+    return [];
 }
 
 export async function inviteAdmin(teamId, email) {
@@ -72,6 +92,15 @@ export function getUrlParams() {
         teamId: params.get('teamId')
     };
 }
+
+export function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 `;
 
 const EDIT_TEAM_AUTH_STUB = `
@@ -102,6 +131,17 @@ export function normalizeAdminEmailList(adminEmails) {
     return Array.from(new Set((Array.isArray(adminEmails) ? adminEmails : [])
         .map((email) => String(email || '').trim().toLowerCase())
         .filter(Boolean)));
+}
+
+export function normalizeTeamPermissions() {
+    return {
+        scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+        streaming: { mode: 'all_confirmed', memberIds: [] }
+    };
+}
+
+export function normalizeStreamVolunteerEmailList(streamVolunteerEmails) {
+    return normalizeAdminEmailList(streamVolunteerEmails);
 }
 `;
 
@@ -217,11 +257,12 @@ async function mockExternalResources(page) {
 async function mockEditTeamDependencies(page) {
     await mockExternalResources(page);
     await page.route('**/js/db.js?v=15', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_DB_STUB }));
+    await page.route('**/js/db.js?v=16', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_UTILS_STUB }));
     await page.route('**/js/auth.js?v=12', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_AUTH_STUB }));
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/live-stream-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_STREAM_UTILS_STUB }));
-    await page.route('**/js/team-access.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
+    await page.route('**/js/team-access.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
 }
 
 async function mockAcceptInviteDependencies(page) {

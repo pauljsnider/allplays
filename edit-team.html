@@ -48,6 +48,39 @@
         <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-md p-8">
             <h1 id="page-title" class="text-2xl font-bold mb-6">Create New Team</h1>
 
+            <div id="team-create-options" class="mb-6 rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                <h2 class="text-sm font-semibold text-indigo-900 mb-3">How do you want to create this team?</h2>
+                <div class="grid gap-3 sm:grid-cols-2">
+                    <label class="flex items-start rounded-lg border border-indigo-200 bg-white p-3 cursor-pointer hover:bg-indigo-50">
+                        <input type="radio" name="teamCreateMode" value="manual" class="mt-1 text-indigo-600 focus:ring-indigo-500" checked>
+                        <span class="ml-3">
+                            <span class="block text-sm font-semibold text-gray-900">Start with a blank team</span>
+                            <span class="block text-xs text-gray-600">Enter team details manually.</span>
+                        </span>
+                    </label>
+                    <label class="flex items-start rounded-lg border border-indigo-200 bg-white p-3 cursor-pointer hover:bg-indigo-50">
+                        <input type="radio" name="teamCreateMode" value="registration" class="mt-1 text-indigo-600 focus:ring-indigo-500">
+                        <span class="ml-3">
+                            <span class="block text-sm font-semibold text-gray-900">Import from registration system</span>
+                            <span class="block text-xs text-gray-600">Create a team shell from a configured registration source.</span>
+                        </span>
+                    </label>
+                </div>
+                <div id="registration-import-panel" class="hidden mt-4 rounded-lg border border-indigo-200 bg-white p-4">
+                    <label class="block text-sm font-medium text-gray-700">Registration source/team</label>
+                    <select id="registration-source-select"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                        <option value="">Select a registration team...</option>
+                    </select>
+                    <p id="registration-empty-state" class="hidden mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
+                        No registration sources are configured yet. Start with a blank team or ask an admin to configure a registration source.
+                    </p>
+                    <p id="registration-import-help" class="mt-2 text-xs text-gray-500">
+                        This only imports team identity and source identifiers. Rosters and schedules are not imported in this step.
+                    </p>
+                </div>
+            </div>
+
             <form id="team-form" class="space-y-6">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Team Name</label>
@@ -186,6 +219,28 @@
                     </details>
                 </div>
 
+                <div class="rounded-lg border border-teal-200 bg-teal-50 p-4 space-y-3">
+                    <div>
+                        <h3 class="font-semibold text-teal-900 text-sm">Streaming Access</h3>
+                        <p class="text-xs text-teal-700">Let assigned videographers open limited streaming actions for scheduled events without team management access.</p>
+                    </div>
+                    <select id="streamAccessMode"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-teal-500 focus:ring-teal-500 border p-2 text-sm bg-white">
+                        <option value="admins">Coaches/admins only</option>
+                        <option value="selected_volunteers">Selected streaming volunteers</option>
+                        <option value="confirmed_members">All confirmed members</option>
+                    </select>
+                    <div id="stream-volunteer-panel" class="space-y-2">
+                        <div id="stream-volunteer-list" class="space-y-2 text-sm"></div>
+                        <div class="flex gap-2">
+                            <input type="email" id="stream-volunteer-email-input" placeholder="videographer@example.com"
+                                class="flex-1 px-3 py-2 border border-gray-300 rounded text-sm bg-white">
+                            <button id="add-stream-volunteer-btn" type="button"
+                                class="text-xs bg-teal-600 text-white px-3 py-1 rounded hover:bg-teal-700">Add</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-start">
                     <div class="flex items-center h-5">
                         <input id="isPublic" type="checkbox"
@@ -195,6 +250,30 @@
                         <label for="isPublic" class="font-medium text-gray-700">Public Team</label>
                         <p class="text-gray-500">If unchecked, this team will be hidden from the "Browse Teams" list but
                             can still be accessed via direct link.</p>
+                    </div>
+                </div>
+
+                <div id="roster-rollover-section" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            <input id="rosterRolloverEnabled" type="checkbox"
+                                class="focus:ring-emerald-500 h-4 w-4 text-emerald-600 border-gray-300 rounded">
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="rosterRolloverEnabled" class="font-medium text-emerald-900">Roll Over Previous Roster</label>
+                            <p class="text-emerald-700">Copy selected active players and supported family links from a prior team when this new team is created.</p>
+                        </div>
+                    </div>
+                    <div id="roster-rollover-controls" class="hidden space-y-3">
+                        <div>
+                            <label for="rosterRolloverSourceTeam" class="block text-sm font-medium text-emerald-900">Source Team</label>
+                            <select id="rosterRolloverSourceTeam"
+                                class="mt-1 block w-full rounded-md border-emerald-200 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 border p-2 bg-white">
+                                <option value="">Select a previous team...</option>
+                            </select>
+                            <p id="roster-rollover-status" class="text-xs text-emerald-700 mt-1">Only teams where you have owner or admin access are shown.</p>
+                        </div>
+                        <div id="roster-rollover-preview" class="hidden rounded-lg border border-emerald-200 bg-white overflow-hidden"></div>
                     </div>
                 </div>
 
@@ -237,6 +316,55 @@
                                 class="bg-gray-500 text-white px-3 py-1 rounded text-sm hover:bg-gray-600">Cancel</button>
                         </div>
                     </div>
+                </div>
+
+                <div id="team-permissions-section" class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 space-y-4">
+                    <div>
+                        <h3 class="font-semibold text-emerald-900 text-sm">Team Permissions</h3>
+                        <p class="text-xs text-emerald-700 mt-1">Choose who can help with scorekeeping and streaming without granting full admin access.</p>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="bg-white border border-emerald-200 rounded p-3">
+                            <label class="block text-sm font-semibold text-gray-800 mb-2">Scorekeeping Access</label>
+                            <select id="scorekeepingAccessMode" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 border p-2 text-sm">
+                                <option value="all_confirmed">All confirmed members</option>
+                                <option value="selected">Selected confirmed members only</option>
+                            </select>
+                            <div id="scorekeeping-member-list" class="mt-3 space-y-2 text-sm"></div>
+                        </div>
+                        <div class="bg-white border border-emerald-200 rounded p-3">
+                            <label class="block text-sm font-semibold text-gray-800 mb-2">Streaming Access</label>
+                            <select id="streamingAccessMode" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 border p-2 text-sm">
+                                <option value="all_confirmed">All confirmed members</option>
+                                <option value="selected">Selected confirmed members only</option>
+                            </select>
+                            <div id="streaming-member-list" class="mt-3 space-y-2 text-sm"></div>
+                        </div>
+                    </div>
+                    <p id="team-permissions-empty" class="hidden text-xs text-emerald-700 bg-white border border-emerald-200 rounded p-2">Confirmed member selections appear after parents/members have joined the roster.</p>
+                </div>
+
+                <div id="access-rollover-panel" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                    <div>
+                        <h3 class="font-semibold text-amber-900 text-sm">Access Rollover</h3>
+                        <p class="text-xs text-amber-800 mt-1">Optionally carry staff/admin access forward from a prior team after creating this team.</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-amber-900">Source Team</label>
+                        <select id="rollover-source-team" class="mt-1 block w-full rounded-md border-amber-300 shadow-sm focus:border-amber-500 focus:ring-amber-500 border p-2 text-sm">
+                            <option value="">Do not copy access</option>
+                        </select>
+                    </div>
+                    <div id="rollover-staff-review" class="hidden rounded border border-amber-200 bg-white p-3">
+                        <div class="flex items-start gap-2">
+                            <input id="rollover-staff-enabled" type="checkbox" class="mt-1 h-4 w-4 text-amber-600 border-gray-300 rounded">
+                            <div class="flex-1">
+                                <label for="rollover-staff-enabled" class="text-sm font-medium text-gray-800">Carry over staff/admin access</label>
+                                <div id="rollover-staff-list" class="mt-2 space-y-1 text-xs text-gray-700"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="rollover-member-note" class="text-xs text-amber-800">Fan/member carry-forward is omitted because member access is tied to player links in the current data model.</p>
                 </div>
 
                 <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
@@ -295,14 +423,16 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail } from './js/db.js?v=15';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } from './js/db.js?v=16';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
-        import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
-        import { hasFullTeamAccess, normalizeAdminEmailList } from './js/team-access.js?v=1';
+        import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=2';
         import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';
+        import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';
+        import { buildRosterRolloverPreviewRows } from './js/roster-rollover-preview.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -310,9 +440,36 @@
         let currentUser = null;
         let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
+        let currentUserProfile = null;
         let adminEmails = [];
+        let streamVolunteerEmails = [];
         let pendingAdminInviteEmails = [];
+        let confirmedTeamMembers = [];
+        let teamPermissions = normalizeTeamPermissions();
+        let rolloverSourceTeams = [];
+        let rolloverAccessPreview = null;
+        let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
+        let selectedRegistrationTeam = null;
+        const configuredRegistrationTeams = getConfiguredRegistrationTeams();
+        let rosterRolloverPreviewRequestId = 0;
+        let rosterRolloverPlayers = [];
+
+        function getConfiguredRegistrationTeams() {
+            const sources = Array.isArray(window.allplaysRegistrationSources) ? window.allplaysRegistrationSources : [];
+            return sources
+                .map((record) => ({
+                    provider: String(record.provider || record.providerId || '').trim(),
+                    sourceId: String(record.sourceId || record.registrationSourceId || '').trim(),
+                    externalTeamId: String(record.externalTeamId || record.teamId || '').trim(),
+                    externalTeamName: String(record.externalTeamName || record.teamName || record.name || '').trim(),
+                    sport: String(record.sport || '').trim(),
+                    season: String(record.season || '').trim(),
+                    division: String(record.division || '').trim(),
+                    organizationName: String(record.organizationName || '').trim()
+                }))
+                .filter((record) => record.provider && record.sourceId && record.externalTeamId && record.externalTeamName);
+        }
 
         function buildTeamEditUrl(teamId, created = false) {
             const params = new URLSearchParams();
@@ -372,6 +529,144 @@
             panel.classList.remove('hidden');
         }
 
+        function getSelectedCreateMode() {
+            if (typeof document.querySelector !== 'function') return 'manual';
+            return document.querySelector('input[name="teamCreateMode"]:checked')?.value || 'manual';
+        }
+
+        function populateRegistrationSourcePicker() {
+            const select = document.getElementById('registration-source-select');
+            const emptyState = document.getElementById('registration-empty-state');
+            select.innerHTML = '<option value="">Select a registration team...</option>';
+            configuredRegistrationTeams.forEach((record, index) => {
+                const labelParts = [record.externalTeamName, record.sport, record.season, record.division].filter(Boolean);
+                const option = document.createElement('option');
+                option.value = String(index);
+                option.textContent = labelParts.join(' • ');
+                select.appendChild(option);
+            });
+
+            select.disabled = configuredRegistrationTeams.length === 0;
+            emptyState.classList.toggle('hidden', configuredRegistrationTeams.length > 0);
+        }
+
+        function applyRegistrationTeam(record) {
+            if (!record) return;
+            document.getElementById('name').value = record.externalTeamName;
+            if (record.sport) {
+                document.getElementById('sport').value = record.sport;
+            }
+            const details = [record.organizationName, record.season, record.division].filter(Boolean).join(' • ');
+            if (details && !document.getElementById('description').value.trim()) {
+                document.getElementById('description').value = details;
+            }
+        }
+
+        function setCreateMode(mode) {
+            const panel = document.getElementById('registration-import-panel');
+            const isRegistration = mode === 'registration';
+            panel.classList.toggle('hidden', !isRegistration);
+            if (!isRegistration) {
+                selectedRegistrationTeam = null;
+                document.getElementById('registration-source-select').value = '';
+            }
+        }
+
+        function initRegistrationImportControls() {
+            const createOptions = document.getElementById('team-create-options');
+            if (initialTeamId) {
+                createOptions.classList.add('hidden');
+                return;
+            }
+
+            populateRegistrationSourcePicker();
+            document.querySelectorAll('input[name="teamCreateMode"]').forEach((input) => {
+                input.addEventListener('change', () => setCreateMode(input.value));
+            });
+            document.getElementById('registration-source-select').addEventListener('change', (event) => {
+                const index = Number.parseInt(event.target.value, 10);
+                selectedRegistrationTeam = Number.isInteger(index) ? configuredRegistrationTeams[index] : null;
+                applyRegistrationTeam(selectedRegistrationTeam);
+            });
+        }
+
+        initRegistrationImportControls();
+
+        function setRosterRolloverStatus(message, isError = false) {
+            const status = document.getElementById('roster-rollover-status');
+            status.textContent = message;
+            status.className = `text-xs mt-1 ${isError ? 'text-red-700' : 'text-emerald-700'}`;
+        }
+
+        function renderRosterRolloverTeamOptions(teams = []) {
+            const select = document.getElementById('rosterRolloverSourceTeam');
+            select.innerHTML = '<option value="">Select a previous team...</option>' + teams.map((team) => `
+                <option value="${escapeHtml(team.id)}">${escapeHtml(team.name || 'Unnamed team')}</option>
+            `).join('');
+        }
+
+        function renderRosterRolloverPreview(players = []) {
+            const preview = document.getElementById('roster-rollover-preview');
+            const rows = buildRosterRolloverPreviewRows(players);
+            rosterRolloverPlayers = rows;
+            if (rows.length === 0) {
+                preview.innerHTML = '<div class="p-4 text-sm text-gray-500">No active players found on this team.</div>';
+                preview.classList.remove('hidden');
+                return;
+            }
+
+            preview.innerHTML = `
+                <div class="px-4 py-3 border-b border-emerald-100 bg-emerald-50 flex items-center justify-between gap-3">
+                    <p class="text-sm font-semibold text-emerald-900">
+                        ${rows.length} active player${rows.length === 1 ? '' : 's'} available. Uncheck anyone who should not roll over.
+                    </p>
+                    <button id="rosterRolloverSelectAll" type="button" class="text-xs font-medium text-emerald-700 hover:text-emerald-900">Clear all</button>
+                </div>
+                <div class="divide-y divide-gray-100">
+                    ${rows.map((player) => `
+                        <div class="px-4 py-3 flex items-center justify-between gap-3 text-sm">
+                            <label class="flex min-w-0 flex-1 items-start gap-3">
+                                <input type="checkbox" class="rollover-player-checkbox mt-1 h-4 w-4 rounded border-gray-300 text-emerald-600" value="${escapeHtml(player.id)}" checked>
+                                <span class="min-w-0">
+                                    <span class="block font-medium text-gray-900">${player.number ? `#${escapeHtml(player.number)} ` : ''}${escapeHtml(player.name)}</span>
+                                </span>
+                            </label>
+                            <div class="shrink-0 text-xs text-gray-500 text-right">
+                                <span>${player.familyCount} linked famil${player.familyCount === 1 ? 'y' : 'ies'}</span>
+                                <span class="mx-1">&middot;</span>
+                                <span>${player.contactCount} visible contact${player.contactCount === 1 ? '' : 's'}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            const selectAllButton = document.getElementById('rosterRolloverSelectAll');
+            selectAllButton?.addEventListener('click', () => {
+                const checkboxes = Array.from(document.querySelectorAll('.rollover-player-checkbox'));
+                const shouldCheck = checkboxes.some((checkbox) => !checkbox.checked);
+                checkboxes.forEach((checkbox) => {
+                    checkbox.checked = shouldCheck;
+                });
+                selectAllButton.textContent = shouldCheck ? 'Clear all' : 'Select all';
+            });
+            preview.classList.remove('hidden');
+        }
+
+        function getSelectedRolloverPlayerIds() {
+            return Array.from(document.querySelectorAll('.rollover-player-checkbox:checked')).map((input) => input.value);
+        }
+
+        async function loadRosterRolloverTeams() {
+            const accessEmail = currentUser.email || currentUserProfile?.email || '';
+            const teams = await getUserTeamsWithAccess(currentUser.uid, accessEmail);
+            renderRosterRolloverTeamOptions(teams);
+            if (teams.length === 0) {
+                setRosterRolloverStatus('No prior teams with owner or admin access were found.');
+            } else {
+                setRosterRolloverStatus('Only teams where you have owner or admin access are shown.');
+            }
+        }
+
         const saveBtn = document.getElementById('save-btn');
         saveBtn.disabled = true;
         saveBtn.textContent = initialTeamId ? 'Loading Team...' : 'Loading...';
@@ -382,6 +677,12 @@
                 return;
             }
             currentUser = user;
+            try {
+                currentUserProfile = await getUserProfile(user.uid);
+            } catch (error) {
+                console.warn('Failed to load user profile for team access lookup:', error);
+                currentUserProfile = null;
+            }
             renderHeader(document.getElementById('header-container'), user);
             try {
                 await init();
@@ -391,6 +692,77 @@
                 saveBtn.textContent = 'Save Team';
             }
         });
+
+        function getSelectedRolloverStaffEmails() {
+            if (!document.getElementById('rollover-staff-enabled')?.checked) return [];
+            return Array.from(document.querySelectorAll('.rollover-staff-email:checked'))
+                .map((input) => input.value);
+        }
+
+        function renderRolloverAccessPreview() {
+            const sourceSelect = document.getElementById('rollover-source-team');
+            const review = document.getElementById('rollover-staff-review');
+            const enabled = document.getElementById('rollover-staff-enabled');
+            const list = document.getElementById('rollover-staff-list');
+            if (!sourceSelect || !review || !enabled || !list) return;
+
+            const sourceTeam = rolloverSourceTeams.find((team) => team.id === sourceSelect.value);
+            const sourceTeamId = sourceTeam?.id || null;
+            const isSameSource = sourceTeamId && sourceTeamId === lastRenderedRolloverSourceTeamId;
+            const wasEnabled = enabled.checked;
+            const previouslySelectedEmails = new Set(
+                Array.from(document.querySelectorAll('.rollover-staff-email:checked'))
+                    .map((input) => input.value)
+            );
+            rolloverAccessPreview = sourceTeam
+                ? buildRolloverAccessPreview(sourceTeam, { adminEmails })
+                : null;
+
+            if (!rolloverAccessPreview || rolloverAccessPreview.staffAdmins.length === 0) {
+                review.classList.toggle('hidden', !sourceTeam);
+                enabled.checked = false;
+                enabled.disabled = true;
+                list.innerHTML = sourceTeam
+                    ? '<p class="text-gray-500 italic">No eligible staff/admin access to copy. Existing admins are skipped.</p>'
+                    : '';
+                lastRenderedRolloverSourceTeamId = sourceTeamId;
+                return;
+            }
+
+            enabled.disabled = false;
+            enabled.checked = isSameSource ? wasEnabled : true;
+            review.classList.remove('hidden');
+            list.innerHTML = rolloverAccessPreview.staffAdmins.map((entry) => {
+                const checked = !isSameSource || previouslySelectedEmails.has(entry.email) ? ' checked' : '';
+                return `
+                <label class="flex items-center gap-2">
+                    <input type="checkbox" class="rollover-staff-email h-3.5 w-3.5 text-amber-600 border-gray-300 rounded" value="${entry.email}"${checked}>
+                    <span>${entry.email}</span>
+                </label>
+            `;
+            }).join('');
+            lastRenderedRolloverSourceTeamId = sourceTeamId;
+        }
+
+        async function loadRolloverSourceTeams() {
+            const panel = document.getElementById('access-rollover-panel');
+            const sourceSelect = document.getElementById('rollover-source-team');
+            if (!panel || !sourceSelect || currentTeamId) return;
+
+            try {
+                const teams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email, { includeInactive: true });
+                rolloverSourceTeams = teams.filter((team) => Array.isArray(team.adminEmails) && team.adminEmails.length > 0);
+                if (rolloverSourceTeams.length === 0) return;
+
+                sourceSelect.innerHTML = '<option value="">Do not copy access</option>' + rolloverSourceTeams.map((team) => `
+                    <option value="${team.id}">${team.name || 'Untitled team'}</option>
+                `).join('');
+                sourceSelect.addEventListener('change', renderRolloverAccessPreview);
+                panel.classList.remove('hidden');
+            } catch (error) {
+                console.warn('Failed to load rollover source teams:', error);
+            }
+        }
 
         function renderAdminList() {
             const list = document.getElementById('admin-list');
@@ -411,12 +783,140 @@
                     adminEmails = normalizeAdminEmailList(adminEmails.filter(e => e !== email));
                     pendingAdminInviteEmails = normalizeAdminEmailList(pendingAdminInviteEmails.filter(e => e !== email));
                     renderAdminList();
+                    renderRolloverAccessPreview();
                 });
             });
         }
 
+        function getPermissionState(kind) {
+            return teamPermissions[kind] || { mode: 'all_confirmed', memberIds: [] };
+        }
+
+        function renderPermissionMemberList(kind) {
+            const list = document.getElementById(`${kind}-member-list`);
+            const mode = document.getElementById(`${kind}AccessMode`).value;
+            const selectedIds = new Set(getPermissionState(kind).memberIds);
+            if (!list) return;
+
+            if (mode !== 'selected') {
+                list.innerHTML = '<p class="text-xs text-gray-500">Every confirmed team member can help.</p>';
+                return;
+            }
+
+            if (confirmedTeamMembers.length === 0) {
+                list.innerHTML = '<p class="text-xs text-gray-500 italic">No confirmed members available yet.</p>';
+                return;
+            }
+
+            list.innerHTML = confirmedTeamMembers.map((member) => `
+                <label class="flex items-center gap-2 rounded border border-gray-200 px-3 py-2">
+                    <input type="checkbox" class="${kind}-member-checkbox h-4 w-4 text-emerald-600 border-gray-300 rounded" value="${escapeHtml(member.id)}" ${selectedIds.has(member.id) ? 'checked' : ''}>
+                    <span>
+                        <span class="block font-medium text-gray-800">${escapeHtml(member.name)}</span>
+                        <span class="block text-xs text-gray-500">${escapeHtml(member.email)}</span>
+                    </span>
+                </label>
+            `).join('');
+
+            list.querySelectorAll(`.${kind}-member-checkbox`).forEach((input) => {
+                input.addEventListener('change', () => {
+                    const current = new Set(getPermissionState(kind).memberIds);
+                    if (input.checked) {
+                        current.add(input.value);
+                    } else {
+                        current.delete(input.value);
+                    }
+                    teamPermissions = normalizeTeamPermissions({
+                        ...teamPermissions,
+                        [kind]: {
+                            mode: 'selected',
+                            memberIds: Array.from(current)
+                        }
+                    });
+                });
+            });
+        }
+
+        function renderStreamVolunteerList() {
+            const list = document.getElementById('stream-volunteer-list');
+            if (!list) return;
+            if (!streamVolunteerEmails.length) {
+                list.innerHTML = '<p class="text-xs text-teal-700 italic">No streaming volunteers selected.</p>';
+                return;
+            }
+            list.innerHTML = streamVolunteerEmails.map(email => `
+                <div class="flex items-center justify-between bg-white border border-teal-200 rounded px-3 py-2">
+                    <span class="text-gray-800">${email}</span>
+                    <button type="button" class="text-xs text-red-600 hover:text-red-800 remove-stream-volunteer-btn" data-email="${email}">Remove</button>
+                </div>
+            `).join('');
+            list.querySelectorAll('.remove-stream-volunteer-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    streamVolunteerEmails = normalizeStreamVolunteerEmailList(streamVolunteerEmails.filter(e => e !== btn.dataset.email));
+                    renderStreamVolunteerList();
+                });
+            });
+        }
+
+        function renderTeamPermissions() {
+            ['scorekeeping', 'streaming'].forEach((kind) => {
+                const modeSelect = document.getElementById(`${kind}AccessMode`);
+                modeSelect.value = getPermissionState(kind).mode;
+                renderPermissionMemberList(kind);
+            });
+            document.getElementById('team-permissions-empty').classList.toggle('hidden', confirmedTeamMembers.length > 0);
+        }
+
+        async function loadConfirmedTeamMembers(teamId) {
+            if (!teamId) {
+                confirmedTeamMembers = [];
+                return;
+            }
+
+            try {
+                const users = await getAllUsers();
+                confirmedTeamMembers = (users || [])
+                    .filter((user) => (user.parentOf || []).some((link) => link.teamId === teamId))
+                    .map((user) => ({
+                        id: user.id,
+                        name: user.fullName || user.displayName || user.email || 'Member',
+                        email: user.email || 'No email on file'
+                    }))
+                    .filter((member) => member.id)
+                    .sort((a, b) => a.name.localeCompare(b.name));
+            } catch (error) {
+                console.warn('Failed to load confirmed team members for permissions:', error);
+                confirmedTeamMembers = [];
+            }
+        }
+
+        ['scorekeeping', 'streaming'].forEach((kind) => {
+            document.getElementById(`${kind}AccessMode`).addEventListener('change', (event) => {
+                teamPermissions = normalizeTeamPermissions({
+                    ...teamPermissions,
+                    [kind]: {
+                        ...getPermissionState(kind),
+                        mode: event.target.value
+                    }
+                });
+                renderPermissionMemberList(kind);
+            });
+        });
+
+        function syncStreamVolunteerPanel() {
+            const mode = document.getElementById('streamAccessMode').value;
+            document.getElementById('stream-volunteer-panel').classList.toggle('hidden', mode !== 'selected_volunteers');
+        }
+
         async function init() {
+            if (!initialTeamId) {
+                await loadRosterRolloverTeams();
+                await loadRolloverSourceTeams();
+                return;
+            }
+
             if (initialTeamId) {
+                document.getElementById('roster-rollover-section').classList.add('hidden');
                 const team = await getTeam(initialTeamId);
                 if (!team) {
                     alert('Team not found or no longer active.');
@@ -425,7 +925,7 @@
                     return;
                 }
                 document.getElementById('page-title').textContent = 'Edit Team';
-                if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || teamId })) {
+                if (!hasFullTeamAccess(currentUser, { ...team, id: team.id || initialTeamId })) {
                     alert("You don't have permission to edit this team.");
                     window.location.href = 'dashboard.html';
                     return;
@@ -467,7 +967,16 @@
                 }
                 streamInput.dispatchEvent(new Event('input')); // trigger detection badge
                 adminEmails = normalizeAdminEmailList(team.adminEmails);
+                teamPermissions = normalizeTeamPermissions(team.teamPermissions);
+                await loadConfirmedTeamMembers(initialTeamId);
+                streamVolunteerEmails = normalizeStreamVolunteerEmailList(team.streamVolunteerEmails);
+                document.getElementById('streamAccessMode').value = ['selected_volunteers', 'confirmed_members'].includes(team.streamAccessMode)
+                    ? team.streamAccessMode
+                    : 'admins';
                 renderAdminList();
+                renderTeamPermissions();
+                renderStreamVolunteerList();
+                syncStreamVolunteerPanel();
                 updateTeamIdPanel(initialTeamId);
 
                 if (team.photoUrl) {
@@ -487,8 +996,65 @@
                     console.warn('Failed to get unread count:', e);
                 }
                 renderTeamAdminBanner(document.getElementById('team-admin-banner'), { team, teamId: initialTeamId, active: 'edit', unreadCount });
+            } else {
+                renderTeamPermissions();
             }
         }
+
+        document.getElementById('rosterRolloverEnabled').addEventListener('change', async (e) => {
+            const controls = document.getElementById('roster-rollover-controls');
+            const preview = document.getElementById('roster-rollover-preview');
+            if (!e.target.checked) {
+                rosterRolloverPreviewRequestId += 1;
+                rosterRolloverPlayers = [];
+                controls.classList.add('hidden');
+                preview.classList.add('hidden');
+                document.getElementById('rosterRolloverSourceTeam').value = '';
+                setRosterRolloverStatus('Only teams where you have owner or admin access are shown.');
+                return;
+            }
+
+            controls.classList.remove('hidden');
+            setRosterRolloverStatus('Loading eligible teams...');
+            try {
+                await loadRosterRolloverTeams();
+            } catch (error) {
+                console.error('Failed to load roster rollover teams:', error);
+                setRosterRolloverStatus('Could not load prior teams. You can still create this team without rollover.', true);
+            }
+        });
+
+        document.getElementById('rosterRolloverSourceTeam').addEventListener('change', async (e) => {
+            const select = e.target;
+            const sourceTeamId = select.value;
+            const requestId = ++rosterRolloverPreviewRequestId;
+            const preview = document.getElementById('roster-rollover-preview');
+            if (!sourceTeamId) {
+                rosterRolloverPlayers = [];
+                preview.classList.add('hidden');
+                setRosterRolloverStatus('Only teams where you have owner or admin access are shown.');
+                return;
+            }
+
+            preview.innerHTML = '<div class="p-4 text-sm text-gray-500">Loading roster preview...</div>';
+            preview.classList.remove('hidden');
+            try {
+                const players = await getPlayers(sourceTeamId);
+                if (requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId) {
+                    return;
+                }
+                renderRosterRolloverPreview(players);
+                setRosterRolloverStatus('Selected players will copy after this new team is created.');
+            } catch (error) {
+                if (requestId !== rosterRolloverPreviewRequestId || select.value !== sourceTeamId) {
+                    return;
+                }
+                console.error('Failed to load roster rollover preview:', error);
+                rosterRolloverPlayers = [];
+                preview.innerHTML = '<div class="p-4 text-sm text-red-700">Could not load roster preview.</div>';
+                setRosterRolloverStatus('Could not load roster preview. You can still create this team without rollover.', true);
+            }
+        });
 
         document.getElementById('copy-team-id-btn').addEventListener('click', async () => {
             if (!currentTeamId) return;
@@ -613,6 +1179,7 @@
                 // Add to local list and update UI
                 adminEmails = normalizeAdminEmailList([...adminEmails, email]);
                 renderAdminList();
+                renderRolloverAccessPreview();
                 input.value = '';
 
                 // Only auto-hide if no code is displayed (user needs time to copy)
@@ -720,6 +1287,22 @@
             return null;
         }
 
+        document.getElementById('streamAccessMode').addEventListener('change', syncStreamVolunteerPanel);
+        document.getElementById('add-stream-volunteer-btn').addEventListener('click', () => {
+            const input = document.getElementById('stream-volunteer-email-input');
+            const email = String(input.value || '').trim().toLowerCase();
+            if (!email) return;
+            if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+                alert('Please enter a valid streaming volunteer email.');
+                return;
+            }
+            streamVolunteerEmails = normalizeStreamVolunteerEmailList([...streamVolunteerEmails, email]);
+            input.value = '';
+            renderStreamVolunteerList();
+        });
+        renderStreamVolunteerList();
+        syncStreamVolunteerPanel();
+
         // Live detection badge as the user types / pastes
         document.getElementById('streamUrl').addEventListener('input', function () {
             const detect = document.getElementById('stream-detect');
@@ -783,7 +1366,27 @@
                     : standingsTiebreakers;
 
                 const normalizedAdminEmails = normalizeAdminEmailList(adminEmails);
+                const normalizedStreamVolunteerEmails = normalizeStreamVolunteerEmailList(streamVolunteerEmails);
                 adminEmails = normalizedAdminEmails;
+                streamVolunteerEmails = normalizedStreamVolunteerEmails;
+                const createMode = currentTeamId ? 'manual' : getSelectedCreateMode();
+                if (createMode === 'registration' && !selectedRegistrationTeam) {
+                    alert('Select a configured registration team before importing.');
+                    btn.disabled = false;
+                    btn.textContent = 'Save Team';
+                    return;
+                }
+                const rolloverSourceTeam = rolloverSourceTeams.find((team) => team.id === document.getElementById('rollover-source-team')?.value);
+                const selectedRolloverStaffEmails = rolloverSourceTeam ? getSelectedRolloverStaffEmails() : [];
+                const rolloverStaffUpdate = rolloverSourceTeam && selectedRolloverStaffEmails.length > 0
+                    ? buildStaffAdminRolloverUpdate({
+                        sourceTeam: rolloverSourceTeam,
+                        targetTeam: { adminEmails: normalizedAdminEmails },
+                        selectedEmails: selectedRolloverStaffEmails,
+                        rolledOverAt: new Date().toISOString()
+                    })
+                    : null;
+
                 const teamData = {
                     name: document.getElementById('name').value,
                     description: document.getElementById('description').value,
@@ -802,7 +1405,23 @@
                     zip,
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
-                    adminEmails: normalizedAdminEmails,
+                    adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails,
+                    ...(createMode === 'registration' && selectedRegistrationTeam ? {
+                        season: selectedRegistrationTeam.season || null,
+                        division: selectedRegistrationTeam.division || null,
+                        registrationSource: {
+                            provider: selectedRegistrationTeam.provider,
+                            sourceId: selectedRegistrationTeam.sourceId,
+                            externalTeamId: selectedRegistrationTeam.externalTeamId,
+                            externalTeamName: selectedRegistrationTeam.externalTeamName,
+                            season: selectedRegistrationTeam.season || null,
+                            division: selectedRegistrationTeam.division || null
+                        }
+                    } : {}),
+                    ...(rolloverStaffUpdate ? { accessRolloverAudit: rolloverStaffUpdate.accessRolloverAudit } : {}),
+                    teamPermissions: normalizeTeamPermissions(teamPermissions),
+                    streamAccessMode: document.getElementById('streamAccessMode').value,
+                    streamVolunteerEmails: normalizedStreamVolunteerEmails,
                     ...((() => {
                         const sr = parseStreamUrl(document.getElementById('streamUrl').value);
                         return {
@@ -822,6 +1441,8 @@
                     await updateTeam(currentTeamId, teamData);
                 } else {
                     const newTeamId = await createTeam(teamData);
+                    currentTeamId = newTeamId;
+                    updateTeamIdPanel(newTeamId);
                     console.log('Created team with ID:', newTeamId);
                     console.log('Team sport:', teamData.sport);
 
@@ -837,6 +1458,21 @@
                         }
                     } else {
                         console.log('No template for sport:', teamData.sport);
+                    }
+
+                    const rolloverSourceTeamId = document.getElementById('rosterRolloverSourceTeam')?.value || '';
+                    const selectedRolloverPlayerIds = getSelectedRolloverPlayerIds();
+                    if (rolloverSourceTeamId && rosterRolloverPlayers.length > 0 && selectedRolloverPlayerIds.length > 0) {
+                        try {
+                            btn.textContent = 'Copying roster...';
+                            const result = await copySelectedPlayersForTeamRollover(rolloverSourceTeamId, newTeamId, selectedRolloverPlayerIds);
+                            setRosterRolloverStatus(`Copied ${result.copiedCount} selected player${result.copiedCount === 1 ? '' : 's'} into the new team.`);
+                        } catch (rolloverError) {
+                            console.error('Roster rollover failed:', rolloverError);
+                            alert(`Team created, but roster rollover failed. No selected players were copied. Open this team and try manually from the roster.\n\nError: ${rolloverError.message}`);
+                            window.location.href = buildTeamEditUrl(newTeamId, true);
+                            return;
+                        }
                     }
 
                     let pendingInviteSummary = {

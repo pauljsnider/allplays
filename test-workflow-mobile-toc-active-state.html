@@ -201,8 +201,13 @@
         })();
 
         // Helper to check if a link is active
-        function isLinkActive(id) {
-            return !!document.querySelector(`a[href="#${id}"].is-active`);
+        function isLinkActive(id, scope = document) {
+            return !!scope.querySelector(`a[href="#${id}"].is-active`);
+        }
+
+        function isMobileLinkActive(id) {
+            const mobileToc = document.querySelector('details .wf-toc');
+            return !!mobileToc && isLinkActive(id, mobileToc);
         }
 
         // ============================================
@@ -213,24 +218,24 @@
 
 
         test('Mobile TOC: Initial active state (section1) on page load', () => {
-            assertTrue(isLinkActive('section1'), 'Section 1 should be active initially');
-            assertFalse(isLinkActive('section2'), 'Section 2 should not be active initially');
+            assertTrue(isMobileLinkActive('section1'), 'Mobile section 1 should be active initially');
+            assertFalse(isMobileLinkActive('section2'), 'Mobile section 2 should not be active initially');
         });
 
         test('Mobile TOC: Active state on clicking a link (section2)', () => {
             const link2 = document.querySelector('details .wf-toc a[href="#section2"]');
             assertTrue(link2 !== null, 'Mobile link for section 2 should exist');
             link2.click(); // Simulate click
-            assertTrue(isLinkActive('section2'), 'Section 2 should be active after click');
-            assertFalse(isLinkActive('section1'), 'Section 1 should not be active after click');
+            assertTrue(isMobileLinkActive('section2'), 'Mobile section 2 should be active after click');
+            assertFalse(isMobileLinkActive('section1'), 'Mobile section 1 should not be active after click');
         });
 
         test('Mobile TOC: Active state on scroll (section3)', () => {
             mockHeadingPositions({ section1: -220, section2: -40, section3: 100, section4: 360 });
             window.dispatchEvent(new Event('scroll'));
 
-            assertTrue(isLinkActive('section3'), 'Section 3 should be active after scroll');
-            assertFalse(isLinkActive('section2'), 'Section 2 should not be active after scroll');
+            assertTrue(isMobileLinkActive('section3'), 'Mobile section 3 should be active after scroll');
+            assertFalse(isMobileLinkActive('section2'), 'Mobile section 2 should not be active after scroll');
         });
 
         test('Desktop TOC: Active state on initial load', () => {

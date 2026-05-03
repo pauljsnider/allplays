@@ -152,5 +152,7 @@ describe('edit schedule calendar import wiring', () => {
 
         expect(importSpec).toContain('export function buildScheduleNotificationTargets()');
         expect(cancelledSpec).toContain('export function buildScheduleNotificationTargets()');
+        expect(importSpec).toContain('export function describeScheduleReminderWindow()');
+        expect(cancelledSpec).toContain('export function describeScheduleReminderWindow()');
     });
 });
