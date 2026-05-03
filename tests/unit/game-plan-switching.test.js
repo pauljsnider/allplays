@@ -19,13 +19,6 @@ function extractCreateDefaultGamePlanSource() {
     return match[0];
 }
 
-function extractSavePlanBody() {
-    const source = readGamePlanPage();
-    const match = source.match(/document\.getElementById\('save-plan-btn'\)\?\.addEventListener\('click', async \(\) => \{([\s\S]*?)\n        \}\);/);
-    expect(match, 'save-plan handler should exist').toBeTruthy();
-    return match[1];
-}
-
 function createClassList() {
     const classes = new Set(['hidden']);
     return {
@@ -61,13 +54,12 @@ function createDocument() {
 function buildHarness(overrides = {}) {
     const createDefaultGamePlanSource = extractCreateDefaultGamePlanSource();
     const loadGameBody = extractLoadGameBody();
-    const savePlanBody = extractSavePlanBody();
     const document = createDocument();
 
     [
         'selected-game-info',
         'game-details',
-        'save-plan-btn',
+        'save-status',
         'num-periods',
         'period-duration',
         'sub-times-input',
@@ -103,8 +95,11 @@ function buildHarness(overrides = {}) {
         renderSubMatrix: vi.fn(),
         renderPlayingTimeSummary: vi.fn(),
         updatePlanSummary: vi.fn(),
-        updateGame: vi.fn().mockResolvedValue(undefined),
-        alert: vi.fn(),
+        autoSave: {
+            cancel: vi.fn(),
+            isPending: vi.fn().mockReturnValue(false),
+            scheduleSave: vi.fn()
+        },
         console: {
             error: vi.fn()
         },
@@ -130,8 +125,7 @@ function buildHarness(overrides = {}) {
         const renderSubMatrix = deps.renderSubMatrix;
         const renderPlayingTimeSummary = deps.renderPlayingTimeSummary;
         const updatePlanSummary = deps.updatePlanSummary;
-        const updateGame = deps.updateGame;
-        const alert = deps.alert;
+        const autoSave = deps.autoSave;
         const console = deps.console;
 
         ${createDefaultGamePlanSource}
@@ -140,13 +134,8 @@ function buildHarness(overrides = {}) {
 ${loadGameBody}
         }
 
-        async function clickSave() {
-${savePlanBody}
-        }
-
         return {
             loadGame,
-            clickSave,
             getState: () => ({
                 currentGameId,
                 currentGame,
@@ -196,8 +185,8 @@ describe('game plan game switching', () => {
         expect(deps.renderSubMatrix).toHaveBeenCalledTimes(2);
     });
 
-    it('saves the switched game without carrying over the previous game lineup payload', async () => {
-        const { harness, deps } = buildHarness();
+    it('isolates gamePlan per game so a subsequent auto-save cannot carry over a previous lineup', async () => {
+        const { harness } = buildHarness();
 
         await harness.loadGame({
             id: 'game-a',
@@ -208,9 +197,7 @@ describe('game plan game switching', () => {
                 periodDuration: 25,
                 subTimes: [7, 14, 21],
                 formationId: 'soccer-9v9',
-                lineups: {
-                    '1-7-keeper': 'player-1'
-                }
+                lineups: { '1-7-keeper': 'player-1' }
             }
         });
 
@@ -220,29 +207,29 @@ describe('game plan game switching', () => {
             date: '2026-04-05T19:00:00.000Z'
         });
 
-        await harness.clickSave();
-
-        expect(deps.updateGame).toHaveBeenCalledWith('team-1', 'game-b', {
-            gamePlan: expect.objectContaining({
-                formationId: 'soccer-9v9',
-                lineups: {}
-            })
-        });
-        expect(deps.updateGame.mock.calls[0][2].gamePlan.lineups).not.toHaveProperty('1-7-keeper');
+        // The in-memory gamePlan after switching must not contain game-a's lineup
+        const { gamePlan } = harness.getState();
+        expect(gamePlan.lineups).toEqual({});
+        expect(gamePlan.lineups).not.toHaveProperty('1-7-keeper');
+        expect(harness.getState().currentGameId).toBe('game-b');
     });
 
-    it('disables saving for shared projected games', async () => {
-        const { harness, document } = buildHarness();
+    it('cancels any pending auto-save when switching games', async () => {
+        const { harness, deps } = buildHarness();
 
         await harness.loadGame({
-            id: 'shared_games%2Fabc123',
-            opponent: 'Wolves',
-            date: '2026-04-06T19:00:00.000Z',
-            isSharedGame: true
+            id: 'game-a',
+            opponent: 'Sharks',
+            date: '2026-04-04T19:00:00.000Z'
         });
 
-        const saveButton = document.getElementById('save-plan-btn');
-        expect(saveButton.disabled).toBe(true);
-        expect(saveButton.title).toBe('Shared tournament games are read-only in Game Plan right now');
+        await harness.loadGame({
+            id: 'game-b',
+            opponent: 'Bears',
+            date: '2026-04-05T19:00:00.000Z'
+        });
+
+        // autoSave.cancel should be called once per loadGame call
+        expect(deps.autoSave.cancel).toHaveBeenCalledTimes(2);
     });
 });
