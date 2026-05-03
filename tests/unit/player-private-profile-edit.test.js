@@ -144,6 +144,20 @@ describe('player private-profile edit payload', () => {
 });
 
 describe('updatePlayerProfile private doc writes', () => {
+    it('keeps standard sensitive roster fields out of the public player document helper', () => {
+        const source = readDbSource();
+        const fnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+        const factory = new Function(`${fnSource}; return assertNoSensitivePlayerFields;`);
+        const assertNoSensitivePlayerFields = factory();
+
+        expect(() => assertNoSensitivePlayerFields({
+            rosterFieldValues: {
+                medicalInfo: 'Allergy',
+                emergencyContactPhone: '555-0100'
+            }
+        })).toThrow('Do not write sensitive fields to public player doc');
+    });
+
     it('skips the private profile document when only photoUrl is present', async () => {
         const { deps, updatePlayerProfile } = buildUpdatePlayerProfile();
 

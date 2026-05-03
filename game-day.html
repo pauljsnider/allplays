@@ -484,11 +484,11 @@
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import {
             getTeam, getGame, subscribeGame, getPlayers,
-            getRsvpBreakdownByPlayer, getGames, getAggregatedStatsForGames,
+            getRsvpBreakdownByPlayer, getMyRsvp, getGames, getAggregatedStatsForGames,
             getConfigs, updateGame, logStatEvent, updatePlayerStats,
             broadcastLiveEvent, subscribeLiveEvents, subscribeAggregatedStats,
             setGameLiveStatus, submitRsvpForPlayer, postChatMessage
-        } from './js/db.js?v=16';
+        } from './js/db.js?v=17';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=12';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
@@ -623,7 +623,10 @@
             state,
             documentRef: document,
             escapeHtml,
-            submitRsvpForPlayer,
+            submitRsvpForPlayer: (teamId, gameId, userId, payload) => submitRsvpForPlayer(teamId, gameId, userId, {
+                ...payload,
+                skipAvailabilityCutoff: true
+            }),
             loadRsvps
         });
         window.setCoachPlayerRsvp = gameDayRsvpController.setCoachPlayerRsvp;
@@ -943,13 +946,6 @@
                 state.configs = configs;
                 loadPlayerColors();
 
-                // Access check — full access only
-                const accessInfo = getTeamAccessInfo(state.user, { ...team, id: teamId });
-                if (!accessInfo.hasAccess || accessInfo.accessLevel !== 'full') {
-                    window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches+and+admins+only`;
-                    return;
-                }
-
                 const resolvedGameId = pickBestGameId(games, gameId);
                 if (!resolvedGameId) {
                     showError(`No games found for this team. Add one in edit-schedule.html#teamId=${teamId}`);
@@ -964,6 +960,20 @@
                     return;
                 }
                 state.game = game;
+
+                const streamRsvp = String(team.streamAccessMode || '').toLowerCase() === 'confirmed_members'
+                    ? await getMyRsvp(teamId, resolvedGameId, state.user.uid).catch(() => null)
+                    : null;
+                const accessInfo = getTeamAccessInfo(state.user, { ...team, id: teamId }, { game, rsvp: streamRsvp });
+                if (!accessInfo.hasAccess || (accessInfo.accessLevel !== 'full' && accessInfo.accessLevel !== 'stream')) {
+                    window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches,+admins,+and+approved+streaming+volunteers+only`;
+                    return;
+                }
+                if (accessInfo.accessLevel === 'stream') {
+                    renderLimitedStreamAccess(accessInfo);
+                    return;
+                }
+
                 hydrateChatState(game);
 
                 // Render banner
@@ -2433,6 +2443,52 @@ Respond ONLY with valid JSON.`;
         function hideLoading() {
             const overlay = document.getElementById('loading-overlay');
             if (overlay) overlay.style.display = 'none';
+        }
+
+        function getStreamExternalUrl(team) {
+            if (team?.twitchChannel) return `https://www.twitch.tv/${encodeURIComponent(team.twitchChannel)}`;
+            const embedUrl = String(team?.streamEmbedUrl || team?.youtubeEmbedUrl || '').trim();
+            const channelMatch = embedUrl.match(/[?&]channel=([^&]+)/);
+            const videoMatch = embedUrl.match(/\/embed\/([a-zA-Z0-9_-]{11})/);
+            if (channelMatch) return `https://www.youtube.com/channel/${encodeURIComponent(channelMatch[1])}/live`;
+            if (videoMatch) return `https://www.youtube.com/watch?v=${encodeURIComponent(videoMatch[1])}`;
+            return '';
+        }
+
+        function renderLimitedStreamAccess(accessInfo) {
+            hideLoading();
+            const externalUrl = getStreamExternalUrl(state.team);
+            const watchUrl = `live-game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
+            renderTeamAdminBanner(document.getElementById('banner-container'), {
+                team: state.team,
+                teamId: state.teamId,
+                active: 'gameday',
+                accessLevel: accessInfo.accessLevel,
+                exitUrl: accessInfo.exitUrl
+            });
+            const gameTitle = state.game?.opponent ? `vs ${escapeHtml(state.game.opponent)}` : 'Scheduled event';
+            const streamButton = externalUrl
+                ? `<a href="${escapeHtml(externalUrl)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Open stream provider ↗</a>`
+                : '<div class="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">No saved team stream URL yet. Ask a coach/admin to add the YouTube or Twitch URL in team settings.</div>';
+            document.getElementById('game-subbanner')?.classList.add('hidden');
+            document.getElementById('pre-game-view')?.classList.add('hidden');
+            document.getElementById('game-day-view')?.classList.add('hidden');
+            document.getElementById('wrap-up-view')?.classList.add('hidden');
+            const main = document.createElement('main');
+            main.className = 'max-w-3xl mx-auto px-4 py-8';
+            main.innerHTML = `
+                <section class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-4">
+                    <div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-indigo-600">Streaming access</div>
+                        <h1 class="text-2xl font-bold text-gray-900 mt-1">${gameTitle}</h1>
+                        <p class="text-sm text-gray-600 mt-2">You have limited streaming access for this scheduled event. Roster, schedule, admin, stats configuration, and team settings remain restricted to coaches/admins.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <a href="${watchUrl}" class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Open live viewer</a>
+                        ${streamButton}
+                    </div>
+                </section>`;
+            document.getElementById('footer-container')?.before(main);
         }
 
         function showError(msg) {

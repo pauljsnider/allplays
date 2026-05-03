@@ -29,6 +29,11 @@ function buildGetAllEvents(overrides = {}) {
         isTrackedCalendarEvent: () => false,
         isPracticeEvent: () => false,
         extractOpponent: () => 'Opponent',
+        normalizeAvailabilityPreferences: () => ({ cutoffMinutesBeforeStart: 0, noteVisibility: 'admins' }),
+        buildAvailabilityNoteRows: () => [],
+        getRsvps: async () => [],
+        currentTeamAccessInfo: null,
+        currentUser: null,
         ...overrides
     };
 
@@ -39,7 +44,12 @@ function buildGetAllEvents(overrides = {}) {
             fetchAndParseCalendar,
             isTrackedCalendarEvent,
             isPracticeEvent,
-            extractOpponent
+            extractOpponent,
+            normalizeAvailabilityPreferences,
+            buildAvailabilityNoteRows,
+            getRsvps,
+            currentTeamAccessInfo,
+            currentUser
         } = deps;
         return async function(team, dbGames) {
 ${body}

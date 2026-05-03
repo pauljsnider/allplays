@@ -134,12 +134,13 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries } from './js/db.js?v=23';
+        import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=23';
         import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=12';
         import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';
         import { requireAuth, checkAuth } from './js/auth.js?v=12';
         import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
+        import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -221,16 +222,28 @@
             `;
         }
 
+        function renderAvailabilityNotes(ev) {
+            const notes = Array.isArray(ev.availabilityNotes) ? ev.availabilityNotes : [];
+            if (notes.length === 0) return '';
+            return `
+                <div class="mt-2 space-y-1">
+                    ${notes.map((row) => `<div class="text-[11px] text-gray-500 italic"><span class="font-semibold not-italic">${escapeHtml(row.displayName)}:</span> ${escapeHtml(row.note)}</div>`).join('')}
+                </div>
+            `;
+        }
+
         function renderRsvpBlock(ev, compact = false) {
             if ((ev.type !== 'game' && ev.type !== 'practice') || ev.status === 'cancelled') return '';
             const summary = formatRsvpSummary(ev.rsvpSummary);
+            const locked = !!ev.availabilityLocked;
+            const lockCopy = locked ? `Availability locked ${formatAvailabilityCutoff(ev.availabilityPreferences).toLowerCase()}.` : '';
             if (ev.source !== 'db') {
                 return compact
                     ? `<span class="text-[10px] text-gray-400">Availability after tracking</span>`
                     : `<div class="mt-1 text-xs text-gray-400">Availability opens after this event is tracked in the schedule.</div><div class="mt-1 text-xs text-gray-400">${summary}</div>`;
             }
             if (compact) {
-                return `<span class="text-[10px] text-gray-500">${summary}</span>`;
+                return `<span class="text-[10px] ${locked ? 'text-amber-600 font-semibold' : 'text-gray-500'}">${locked ? 'Locked' : summary}</span>`;
             }
             const linkedPlayers = getLinkedPlayersForTeam(ev.teamId);
             const defaultChildId = linkedPlayers.length === 1 ? linkedPlayers[0].playerId : '';
@@ -239,16 +252,19 @@
                     <div class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Availability</div>
                     ${renderCalendarChildScope(ev.teamId)}
                     <div class="flex gap-2">
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}">Going</button>
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50'}">Maybe</button>
-                        <button data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}">Can't Go</button>
+                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'going')" class="rsvp-btn rsvp-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (ev.myRsvp === 'going' ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50')}">Going</button>
+                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (ev.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
+                        <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(ev.teamId)}" data-game-id="${escapeAttr(ev.id)}" data-rsvp-child-id="${escapeAttr(defaultChildId)}" onclick="submitCalendarRsvpFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (ev.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Can't Go</button>
                     </div>
+                    ${lockCopy ? `<div class="mt-1 text-xs font-semibold text-amber-700">${escapeHtml(lockCopy)}</div>` : ''}
                     <div class="mt-1 text-xs text-gray-500">${summary}</div>
+                    ${renderAvailabilityNotes(ev)}
                 </div>
             `;
         }
 
         function submitCalendarRsvpFromButton(btn, response) {
+            if (btn?.disabled) return;
             const teamId = btn?.dataset?.teamId || '';
             const gameId = btn?.dataset?.gameId || '';
             if (!teamId || !gameId) return;
@@ -296,6 +312,9 @@
                 const loadPromises = teams.map(async (team) => {
                     const games = await getGames(team.id);
                     const events = [];
+                    const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
+                    const isTeamAdmin = team.ownerId === currentUserId || (email && Array.isArray(team.adminEmails) && team.adminEmails.map(e => String(e).toLowerCase()).includes(String(email).toLowerCase())) || !!currentUser?.isAdmin;
+                    const notesVisible = canViewAvailabilityNotes(availabilityPreferences, isTeamAdmin);
 
                     for (const game of games) {
                         if (game.isSeriesMaster && game.recurrence) {
@@ -326,6 +345,11 @@
                                     childIds: Array.isArray(game.childIds) && game.childIds.length > 0
                                         ? game.childIds
                                         : getLinkedPlayersForTeam(team.id).map((player) => player.playerId).filter(Boolean),
+                                    availabilityPreferences,
+                                    availabilityLocked: isAvailabilityLocked(occ.date, availabilityPreferences),
+                                    availabilityNotes: [],
+                                    notesVisible,
+                                    isTeamAdmin,
                                     source: 'db'
                                 });
                             }
@@ -355,6 +379,11 @@
                                 childIds: Array.isArray(game.childIds) && game.childIds.length > 0
                                     ? game.childIds
                                     : getLinkedPlayersForTeam(team.id).map((player) => player.playerId).filter(Boolean),
+                                availabilityPreferences,
+                                availabilityLocked: isAvailabilityLocked(date, availabilityPreferences),
+                                availabilityNotes: [],
+                                notesVisible,
+                                isTeamAdmin,
                                 source: 'db'
                             });
                         }
@@ -412,11 +441,19 @@
                 await Promise.all(uniqueGameKeys.map(async (key) => {
                     const [teamId, gameId] = parseTeamGameKey(key);
                     try {
-                        const myRsvp = await getMyRsvp(teamId, gameId, currentUserId);
+                        const eventForPrefs = allEvents.find(ev => ev.teamId === teamId && ev.id === gameId);
+                        const [myRsvp, rsvps] = await Promise.all([
+                            getMyRsvp(teamId, gameId, currentUserId),
+                            eventForPrefs?.notesVisible ? getRsvps(teamId, gameId) : Promise.resolve([])
+                        ]);
                         const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
+                        const availabilityNotes = buildAvailabilityNoteRows(rsvps, eventForPrefs?.availabilityPreferences, !!eventForPrefs?.isTeamAdmin);
                         applyRsvpHydration(allEvents, teamId, gameId, {
                             myRsvp: myRsvp ? myRsvp.response : null,
                             summary
+                        });
+                        allEvents.forEach((ev) => {
+                            if (ev.teamId === teamId && ev.id === gameId) ev.availabilityNotes = availabilityNotes;
                         });
                     } catch (_) {}
                 }));
