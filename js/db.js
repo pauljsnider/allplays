@@ -2469,6 +2469,58 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
     return Array.from(feesByPath.values());
 }
 
+export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {
+    if (!teamId) throw new Error('Team ID is required.');
+    if (!feeDraft?.title) throw new Error('Fee title is required.');
+    if (!feeDraft?.amountCents || feeDraft.amountCents <= 0) throw new Error('Fee amount is required.');
+    if (!feeDraft?.dueDate) throw new Error('Due date is required.');
+    if (!recipients.length) throw new Error('At least one recipient is required.');
+
+    const batchRef = doc(collection(db, `teams/${teamId}/feeBatches`));
+    const write = writeBatch(db);
+    const now = serverTimestamp();
+    const collectionMode = 'offline_manual';
+    const offlinePaymentInstructions = feeDraft.offlinePaymentInstructions || 'Collect payment outside ALL PLAYS. No online payment is processed.';
+
+    write.set(batchRef, {
+        teamId,
+        title: feeDraft.title,
+        amountCents: feeDraft.amountCents,
+        dueDate: feeDraft.dueDate,
+        notes: feeDraft.notes || '',
+        recipientCount: recipients.length,
+        status: 'open',
+        collectionMode,
+        offlinePaymentInstructions,
+        createdBy: user.uid || null,
+        createdByEmail: user.email || user.profileEmail || null,
+        createdAt: now,
+        updatedAt: now
+    });
+
+    recipients.forEach((recipient) => {
+        if (!recipient.playerId) return;
+        const recipientRef = doc(db, `teams/${teamId}/feeBatches/${batchRef.id}/feeRecipients/${recipient.playerId}`);
+        write.set(recipientRef, {
+            ...recipient,
+            batchId: batchRef.id,
+            teamId,
+            feeTitle: feeDraft.title,
+            amountCents: feeDraft.amountCents,
+            dueDate: feeDraft.dueDate,
+            notes: feeDraft.notes || '',
+            status: 'unpaid',
+            collectionMode,
+            offlinePaymentInstructions,
+            createdAt: now,
+            updatedAt: now
+        });
+    });
+
+    await write.commit();
+    return { id: batchRef.id };
+}
+
 export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
