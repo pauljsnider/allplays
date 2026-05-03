@@ -1,5 +1,5 @@
 import { escapeHtml } from './utils.js?v=8';
-import { getTeams } from './db.js?v=15';
+import { getTeams } from './db.js?v=29';
 import { filterSearchableTeams } from './global-search-visibility.js?v=1';
 import {
     db,
@@ -9,7 +9,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=10';
+} from './firebase.js?v=11';
 
 let cachedTeams = null;
 let cachedTeamsLoadedAt = 0;

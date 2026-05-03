@@ -1,4 +1,4 @@
-import { auth } from './firebase.js';
+import { auth } from './firebase.js?v=11';
 import { hasFullTeamAccess } from './team-access.js';
 
 function getFunctionsBaseUrl() {
