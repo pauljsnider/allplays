@@ -50,6 +50,7 @@ export function createParentDashboardRsvpController({
     }
 
     function submitGameRsvpFromButton(button, response) {
+        if (button?.disabled) return Promise.resolve(null);
         const teamId = button?.dataset?.teamId || '';
         const gameId = button?.dataset?.gameId || '';
         if (!teamId || !gameId) return Promise.resolve(null);

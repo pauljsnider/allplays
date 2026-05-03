@@ -43,6 +43,7 @@ import {
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
+import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     shouldMirrorSharedGame,
@@ -537,6 +538,13 @@ export async function updateTeam(teamId, teamData) {
     await updateDoc(docRef, teamData);
 }
 
+export async function saveTeamAvailabilityPreferences(teamId, preferences) {
+    if (!teamId) throw new Error('Missing team for availability preferences');
+    const normalized = normalizeAvailabilityPreferences(preferences);
+    await updateTeam(teamId, { availabilityPreferences: normalized });
+    return normalized;
+}
+
 export async function addOfficial(teamId, officialData) {
     const payload = {
         ...normalizeOfficialDraft(officialData),
@@ -658,11 +666,36 @@ export async function deleteTeam(teamId) {
 // Players
 function assertNoSensitivePlayerFields(playerData) {
     if (!playerData || typeof playerData !== 'object') return;
-    const forbidden = ['medicalInfo', 'emergencyContact'];
+    const forbidden = ['medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes', 'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone'];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
+    const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
+    rosterFieldSources.forEach((sourceKey) => {
+        const source = playerData[sourceKey];
+        if (!source || typeof source !== 'object') return;
+        forbidden.forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(source, key)) {
+                present.push(`${sourceKey}.${key}`);
+            }
+        });
+    });
     if (present.length) {
         throw new Error(`Do not write sensitive fields to public player doc: ${present.join(', ')}`);
     }
+}
+
+export async function getRosterFieldDefinitions(teamId, team = null) {
+    const teamFields = team?.rosterFields || team?.rosterProfileFields || team?.playerProfileFields || team?.customRosterFields || [];
+
+    try {
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/rosterFields`));
+        if (!snapshot.empty) {
+            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        }
+    } catch (e) {
+        console.warn('Failed to load roster field definitions from subcollection:', e);
+    }
+
+    return Array.isArray(teamFields) ? teamFields : [];
 }
 
 export async function getOfficials(teamId) {
@@ -2380,6 +2413,62 @@ export async function rollbackParentInviteRedemption(userId, code) {
     console.log('[rollbackParentInviteRedemption] completed', { codeId: codeDoc.id });
 }
 
+function getTeamIdFromDocPath(ref) {
+    const parts = String(ref?.path || '').split('/');
+    const teamIndex = parts.indexOf('teams');
+    return teamIndex >= 0 ? parts[teamIndex + 1] || '' : '';
+}
+
+function isAllowedParentFeeRecipient(data, userId, parentPlayerKeys) {
+    if (!data || !userId) return false;
+    if ([data.parentUserId, data.accountUserId, data.userId].includes(userId)) return true;
+    const teamId = data.teamId || '';
+    const playerId = data.playerId || data.childId || '';
+    const playerKey = data.playerKey || (teamId && playerId ? `${teamId}::${playerId}` : '');
+    return parentPlayerKeys.has(playerKey);
+}
+
+export async function listParentTeamFeeRecipients(userId, children = []) {
+    if (!userId) return [];
+
+    const parentPlayerKeys = new Set((children || [])
+        .map((child) => (child?.teamId && child?.playerId ? `${child.teamId}::${child.playerId}` : ''))
+        .filter(Boolean));
+    const childLinks = [...parentPlayerKeys].map((key) => {
+        const [teamId, playerId] = key.split('::');
+        return { teamId, playerId };
+    });
+
+    const recipientsRef = collectionGroup(db, 'feeRecipients');
+    const queries = [
+        query(recipientsRef, where('parentUserId', '==', userId)),
+        query(recipientsRef, where('accountUserId', '==', userId)),
+        query(recipientsRef, where('userId', '==', userId)),
+        ...childLinks.map((child) => query(
+            recipientsRef,
+            where('teamId', '==', child.teamId),
+            where('playerId', '==', child.playerId)
+        ))
+    ];
+
+    const results = await Promise.allSettled(queries.map((feeQuery) => getDocs(feeQuery)));
+    const feesByPath = new Map();
+
+    results.forEach((result) => {
+        if (result.status !== 'fulfilled') return;
+        result.value.docs.forEach((docSnap) => {
+            const data = { id: docSnap.id, ...docSnap.data() };
+            data.teamId = data.teamId || getTeamIdFromDocPath(docSnap.ref);
+            data.playerKey = data.playerKey || (data.teamId && data.playerId ? `${data.teamId}::${data.playerId}` : '');
+            if (isAllowedParentFeeRecipient(data, userId, parentPlayerKeys)) {
+                feesByPath.set(docSnap.ref.path, data);
+            }
+        });
+    });
+
+    return Array.from(feesByPath.values());
+}
+
 export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
@@ -2445,10 +2534,17 @@ export async function updatePlayerProfile(teamId, playerId, data) {
     // SECURITY: sensitive fields must never live on the public player doc.
     const now = Timestamp.now();
 
-    // Public player doc: allow photoUrl only.
+    // Public player doc: allow photoUrl and non-sensitive roster profile fields.
+    const publicUpdate = {};
     if (Object.prototype.hasOwnProperty.call(data, 'photoUrl')) {
+        publicUpdate.photoUrl = data.photoUrl || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(data, 'profile')) {
+        publicUpdate.profile = data.profile || {};
+    }
+    if (Object.keys(publicUpdate).length > 0) {
         await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
-            photoUrl: data.photoUrl || null,
+            ...publicUpdate,
             updatedAt: now
         });
     }
@@ -3988,7 +4084,34 @@ export async function getRsvpSummaries(teamId, gameIds) {
     return summaries;
 }
 
+async function getEventDateForAvailabilityCutoff(teamId, gameId) {
+    const [masterId, instanceDate] = String(gameId || '').split('__');
+    const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
+    const snap = await getDoc(gameRef);
+    if (!snap.exists()) return null;
+    const game = snap.data();
+    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
+    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
+        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
+        if (!Number.isNaN(occurrenceDate.getTime())) {
+            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
+            return occurrenceDate;
+        }
+    }
+    return baseDate;
+}
+
+async function assertAvailabilityOpen(teamId, gameId) {
+    const team = await getTeam(teamId);
+    const preferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
+    const eventDate = await getEventDateForAvailabilityCutoff(teamId, gameId);
+    if (eventDate && isAvailabilityLocked(eventDate, preferences)) {
+        throw new Error('Availability is locked for this event. Contact a coach or admin for changes.');
+    }
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
+    await assertAvailabilityOpen(teamId, gameId);
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');
@@ -4032,7 +4155,10 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     return summary;
 }
 
-export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note }) {
+export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note, skipAvailabilityCutoff = false }) {
+    if (!skipAvailabilityCutoff) {
+        await assertAvailabilityOpen(teamId, gameId);
+    }
     const authUid = auth.currentUser?.uid || null;
     if (userId && authUid && userId !== authUid) {
         throw new Error('RSVP user mismatch. Please refresh and try again.');

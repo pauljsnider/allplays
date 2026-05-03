@@ -27,6 +27,9 @@ export async function getAllUsers() {
 export async function getUnreadChatCount() {
     return 0;
 }
+export async function getRosterFieldDefinitions() {
+    return [];
+}
 export async function listTeamParentMembershipRequests() {
     return [];
 }
@@ -115,7 +118,7 @@ export function getGenerativeModel() {
 `;
 
 async function mockEditRosterDependencies(page) {
-    await page.route('**/js/db.js?v=15', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route('**/js/auth.js?v=12', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/team-access.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));

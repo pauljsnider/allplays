@@ -88,8 +88,8 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries } from './js/db.js?v=23';",
-            'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries } = deps.db;'
+            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=23';",
+            'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
         )
         .replace(
             "import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=12';",
@@ -110,6 +110,10 @@ const Blob = deps.Blob;
         .replace(
             "import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';",
             'const { applyRsvpHydration } = deps.rsvpHydration;'
+        )
+        .replace(
+            "import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';",
+            'const { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
@@ -250,6 +254,9 @@ function createDeps(submitRecorder, overrides = {}) {
             },
             async getRsvpSummaries() {
                 return new Map([['game-1', initialSummary]]);
+            },
+            async getRsvps() {
+                return [];
             }
         },
         utils: {
@@ -364,6 +371,13 @@ function createDeps(submitRecorder, overrides = {}) {
                     submitMode: 'user'
                 };
             }
+        },
+        availabilityPreferences: {
+            buildAvailabilityNoteRows() { return []; },
+            canViewAvailabilityNotes() { return false; },
+            formatAvailabilityCutoff() { return 'No cutoff'; },
+            isAvailabilityLocked() { return false; },
+            normalizeAvailabilityPreferences() { return { cutoffMinutesBeforeStart: 0, noteVisibility: 'admins' }; }
         },
         rsvpHydration: {
             applyRsvpHydration(allEvents, teamId, gameId, hydration) {
