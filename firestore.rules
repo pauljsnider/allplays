@@ -49,14 +49,18 @@ service cloud.firestore {
              );
     }
 
+    function keepsScorekeeperGameLifecycleVisible() {
+      return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
+             request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
+    }
+
     function isScorekeepingGameUpdate(teamId, gameId) {
       return canScorekeepGame(teamId, gameId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'homeScore', 'awayScore', 'summary', 'status', 'liveStatus', 'opponentStats',
                'completedAt', 'completedBy', 'completedByName', 'updatedAt'
              ]) &&
-             request.resource.data.get('status', 'scheduled') != 'cancelled' &&
-             request.resource.data.get('liveStatus', '') != 'deleted';
+             keepsScorekeeperGameLifecycleVisible();
     }
 
     // Check if user is a parent for a specific player.
