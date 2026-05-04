@@ -117,7 +117,11 @@ export function resolveFinalScoreForCompletion({
   const home = Number.isFinite(Number(requestedHome)) ? Number(requestedHome) : 0;
   const away = Number.isFinite(Number(requestedAway)) ? Number(requestedAway) : 0;
 
-  if (!scoreLogIsComplete || !canTrustScoreLogForFinalization({ liveHome, liveAway, log })) {
+  const normalizedLiveHome = Number.isFinite(Number(liveHome)) ? Number(liveHome) : 0;
+  const normalizedLiveAway = Number.isFinite(Number(liveAway)) ? Number(liveAway) : 0;
+  const requestedScoreMatchesLive = home === normalizedLiveHome && away === normalizedLiveAway;
+
+  if (!requestedScoreMatchesLive || !scoreLogIsComplete || !canTrustScoreLogForFinalization({ liveHome, liveAway, log })) {
     return {
       home,
       away,
