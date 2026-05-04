@@ -111,6 +111,18 @@ service cloud.firestore {
              data.get('isPublished', false) == true;
     }
 
+    function isTeamFeeRecipientForCurrentParent(data) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let playerKey = data.get('playerKey', data.get('teamId', '') + "::" + data.get('playerId', ''));
+      return isSignedIn() &&
+             (
+               data.get('parentUserId', '') == request.auth.uid ||
+               data.get('accountUserId', '') == request.auth.uid ||
+               data.get('userId', '') == request.auth.uid ||
+               (exists(userPath) && playerKey in get(userPath).data.get('parentPlayerKeys', []))
+             );
+    }
+
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function isOfficialGameUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -267,6 +279,22 @@ service cloud.firestore {
                        resource.data.teamId is string &&
                        isTeamOwnerOrAdmin(resource.data.teamId);
     }
+
+    // Collection group rule for assigned team fee recipient records.
+    // Parents can only read records tied directly to their account or linked players.
+    match /{path=**}/feeRecipients/{recipientId} {
+      allow read: if isTeamFeeRecipientForCurrentParent(resource.data) ||
+                     (resource.data.get('teamId', '') is string &&
+                      isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
+      allow create: if request.resource.data.get('teamId', '') is string &&
+                       isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
+      allow update: if resource.data.get('teamId', '') is string &&
+                       request.resource.data.get('teamId', '') == resource.data.get('teamId', '') &&
+                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
+      allow delete: if resource.data.get('teamId', '') is string &&
+                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
+    }
+
 
     // Parent-managed athlete profiles with explicit public/private sharing.
     match /athleteProfiles/{profileId} {
