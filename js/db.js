@@ -734,10 +734,11 @@ export async function reorderRosterFieldDefinitions(teamId, fields = []) {
     fields.forEach((field, index) => {
         const fieldId = field.id || field.key;
         if (!fieldId) return;
-        batch.update(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+        batch.set(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+            key: fieldId,
             sortOrder: index,
             updatedAt: Timestamp.now()
-        });
+        }, { merge: true });
     });
     await batch.commit();
 }
