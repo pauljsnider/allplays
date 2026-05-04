@@ -624,7 +624,6 @@
 
             const savePlanButton = document.getElementById('save-plan-btn');
             const savePlanNote = document.getElementById('save-plan-note');
-            const isReadOnlyGame = !!game.isCalendar || !!game.isSharedGame;
             savePlanButton.disabled = isReadOnlyGame;
             if (game.isCalendar) {
                 savePlanButton.title = 'Create this as a scheduled game to save the plan';
