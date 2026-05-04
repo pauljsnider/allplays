@@ -99,6 +99,10 @@ export async function getMyRsvp() {
 export async function getLocalAttractionSponsors() {
     return [];
 }
+
+export async function getAdSpaceSponsors() {
+    return [];
+}
 `;
 }
 
