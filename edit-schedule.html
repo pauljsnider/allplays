@@ -94,17 +94,17 @@
         <div id="schedule-notification-settings" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <h3 class="font-semibold text-gray-900">Schedule Reminders</h3>
-                    <p class="text-sm text-gray-600">Set the default reminder window for schedule-created events. Save/edit flows can notify the team immediately, and RSVP reminders are sent from the event itself.</p>
+                    <h3 class="font-semibold text-gray-900">Stored reminder timing</h3>
+                    <p class="text-sm text-gray-600">These settings are saved with schedule events for future reminder delivery. Timed reminders are not sent automatically today from this page.</p>
                 </div>
             </div>
             <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
                     <input type="checkbox" id="team-reminder-enabled" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                    Schedule reminders enabled
+                    Store reminder timing on schedule events
                 </label>
                 <div>
-                    <label for="team-reminder-hours" class="block text-sm font-medium text-gray-700">Default reminder timing</label>
+                    <label for="team-reminder-hours" class="block text-sm font-medium text-gray-700">Timing to store</label>
                     <select id="team-reminder-hours" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                         <option value="24">24 hours before</option>
                         <option value="48">48 hours before</option>
@@ -112,7 +112,7 @@
                     </select>
                 </div>
                 <div class="flex items-end">
-                    <button id="save-team-reminder-settings-btn" type="button" class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition">Save Reminder Settings</button>
+                    <button id="save-team-reminder-settings-btn" type="button" class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition">Save Timing Defaults</button>
                 </div>
             </div>
             <p id="team-reminder-settings-summary" class="mt-3 text-sm text-gray-600"></p>
@@ -326,15 +326,21 @@
                                     class="text-indigo-600 hover:underline">Edit Configs</a></p>
                         </div>
                         <div class="border-t border-gray-200 pt-4">
-                            <div class="flex items-center justify-between gap-4">
-                                <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
-                                    <input type="checkbox" id="game-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                    Save and notify team
-                                </label>
-                                <div id="game-reminder-window-summary" class="text-xs text-gray-500">Reminder window loading…</div>
+                            <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                                <div class="flex items-center justify-between gap-4">
+                                    <div>
+                                        <h3 class="text-sm font-semibold text-emerald-900">Immediate team chat notification</h3>
+                                        <label class="mt-2 inline-flex items-center gap-2 text-sm font-medium text-emerald-900">
+                                            <input type="checkbox" id="game-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                            Save and notify team
+                                        </label>
+                                    </div>
+                                    <div id="game-reminder-window-summary" class="text-xs text-emerald-700">Reminder window loading…</div>
+                                </div>
+                                <p class="mt-2 text-xs text-emerald-700">Posts a team chat update now when this game is saved. Separate from stored reminder timing.</p>
+                                <p id="game-reminder-window-detail" class="mt-1 text-xs text-emerald-700">Uses the team default reminder window for this event.</p>
+                                <textarea id="game-notify-note" rows="2" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2" placeholder="Optional note to include with the schedule update"></textarea>
                             </div>
-                            <p id="game-reminder-window-detail" class="mt-2 text-xs text-gray-500">Uses the team default reminder window for this event.</p>
-                            <textarea id="game-notify-note" rows="2" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2" placeholder="Optional note to include with the schedule update"></textarea>
                         </div>
                         <div class="flex gap-2">
                             <button type="submit" id="submit-game-btn"
@@ -378,17 +384,23 @@
                                     placeholder="Optional notes..."></textarea>
                             </div>
                             <div class="border-t border-gray-200 pt-4">
-                                <div class="flex items-center justify-between gap-4">
-                                    <label class="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
-                                        <input type="checkbox" id="practice-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                        Save and notify team
-                                    </label>
-                                    <div id="practice-reminder-window-summary" class="text-xs text-gray-500">Reminder window loading…</div>
+                                <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                                    <div class="flex items-center justify-between gap-4">
+                                        <div>
+                                            <h3 class="text-sm font-semibold text-emerald-900">Immediate team chat notification</h3>
+                                            <label class="mt-2 inline-flex items-center gap-2 text-sm font-medium text-emerald-900">
+                                                <input type="checkbox" id="practice-notify-team" checked class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                                Save and notify team
+                                            </label>
+                                        </div>
+                                        <div id="practice-reminder-window-summary" class="text-xs text-emerald-700">Reminder window loading…</div>
+                                    </div>
+                                    <p class="mt-2 text-xs text-emerald-700">Posts a team chat update now when this practice is saved. Separate from stored reminder timing.</p>
+                                    <p id="practice-reminder-window-detail" class="mt-1 text-xs text-emerald-700">Uses the team default reminder window for this event.</p>
+                                    <textarea id="practice-notify-note" rows="2"
+                                        class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                                        placeholder="Optional note to include with the practice update"></textarea>
                                 </div>
-                                <p id="practice-reminder-window-detail" class="mt-2 text-xs text-gray-500">Uses the team default reminder window for this event.</p>
-                                <textarea id="practice-notify-note" rows="2"
-                                    class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
-                                    placeholder="Optional note to include with the practice update"></textarea>
                             </div>
 
                             <!-- Recurrence Builder (Phase 2) -->
@@ -524,11 +536,15 @@
                                     <h3 class="text-sm font-semibold text-gray-900">Preview & Validation</h3>
                                     <p id="csv-import-preview-summary" class="text-xs text-gray-600"></p>
                                 </div>
-                                <label class="flex items-center gap-2 text-sm text-gray-700">
-                                    <input type="checkbox" id="csv-import-notify-team" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
-                                    Notify the team after import
-                                </label>
-                                <textarea id="csv-import-notify-note" rows="2" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Optional note for the import notification"></textarea>
+                                <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                                    <h3 class="text-sm font-semibold text-emerald-900">Immediate team chat notification</h3>
+                                    <label class="mt-2 flex items-center gap-2 text-sm font-medium text-emerald-900">
+                                        <input type="checkbox" id="csv-import-notify-team" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                                        Notify the team in chat after import
+                                    </label>
+                                    <p class="mt-2 text-xs text-emerald-700">Sends immediate team chat updates after import. This does not schedule future timed reminders.</p>
+                                    <textarea id="csv-import-notify-note" rows="2" class="mt-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm" placeholder="Optional note for the import notification"></textarea>
+                                </div>
                                 <div id="csv-import-preview-list" class="space-y-3 max-h-[32rem] overflow-y-auto"></div>
                                 <div class="flex gap-2">
                                     <button id="clear-csv-import-btn" type="button" class="flex-1 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Clear</button>

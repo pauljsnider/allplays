@@ -99,27 +99,27 @@ function buildHarness({ commitControl } = {}) {
 }
 
 describe('live tracker save-and-complete workflow', () => {
-  it('persists reconciled final scores, completes live status, and composes email from reconciled totals', async () => {
+  it('persists coach-entered final scores and composes email from corrected totals', async () => {
     const harness = buildHarness();
 
     const result = await runSaveAndCompleteWorkflow(harness.context);
 
     expect(result).toMatchObject({
       skipped: false,
-      finalHome: 5,
-      finalAway: 2
+      finalHome: 44,
+      finalAway: 41
     });
-    expect(harness.context.homeFinalInput.value).toBe('5');
-    expect(harness.context.awayFinalInput.value).toBe('2');
-    expect(harness.renderLog).toHaveBeenCalledTimes(1);
+    expect(harness.context.homeFinalInput.value).toBe('44');
+    expect(harness.context.awayFinalInput.value).toBe('41');
+    expect(harness.renderLog).not.toHaveBeenCalled();
     expect(harness.batch.commit).toHaveBeenCalledTimes(1);
     expect(harness.endLiveBroadcast).toHaveBeenCalledTimes(1);
     expect(harness.updateCalls).toEqual([
       {
         ref: { kind: 'doc', path: 'teams/team-1/games/game-9' },
         data: {
-          homeScore: 5,
-          awayScore: 2,
+          homeScore: 44,
+          awayScore: 41,
           summary: 'Closed well in the final minute.',
           status: 'completed',
           opponentStats: {
@@ -136,18 +136,12 @@ describe('live tracker save-and-complete workflow', () => {
         }
       }
     ]);
-    expect(harness.emailBodyCalls).toHaveLength(2);
+    expect(harness.emailBodyCalls).toHaveLength(1);
     expect(harness.emailBodyCalls.at(-1)).toEqual({
-      finalHome: 5,
-      finalAway: 2,
+      finalHome: 44,
+      finalAway: 41,
       summary: 'Closed well in the final minute.',
       logEntries: [
-        {
-          text: 'Score reconciled from 44-41 to 5-2 based on scoring events',
-          ts: expect.any(Number),
-          period: 'Q4',
-          clock: '00:00'
-        },
         {
           text: 'Home layup',
           clock: '01:20',
@@ -175,7 +169,7 @@ describe('live tracker save-and-complete workflow', () => {
     expect(harness.navigationCalls[0]).toEqual([
       {
         type: 'mailto',
-        href: 'mailto:team-notify@example.com?subject=Tigers%20vs%20Bears%20-%20Game%20Summary&body=Final%205-2%0AClosed%20well%20in%20the%20final%20minute.',
+        href: 'mailto:team-notify@example.com?subject=Tigers%20vs%20Bears%20-%20Game%20Summary&body=Final%2044-41%0AClosed%20well%20in%20the%20final%20minute.',
         delayMs: 0
       },
       {
@@ -211,8 +205,8 @@ describe('live tracker save-and-complete workflow', () => {
 
     expect(firstResult).toMatchObject({
       skipped: false,
-      finalHome: 5,
-      finalAway: 2
+      finalHome: 44,
+      finalAway: 41
     });
     expect(harness.context.finishButton.disabled).toBe(true);
     expect(harness.endLiveBroadcast).toHaveBeenCalledTimes(1);
@@ -236,22 +230,22 @@ describe('live tracker save-and-complete workflow', () => {
     expect(result).toMatchObject({
       skipped: false,
       pending: true,
-      finalHome: 5,
-      finalAway: 2,
+      finalHome: 44,
+      finalAway: 41,
       error: offlineError
     });
     expect(beforeFinalizationCommit).toHaveBeenCalledWith({
       finishPlan: expect.objectContaining({
-        finalHome: 5,
-        finalAway: 2,
+        finalHome: 44,
+        finalAway: 41,
         gameUpdate: expect.objectContaining({ status: 'completed' })
       })
     });
     expect(onCommitFailure).toHaveBeenCalledWith({
       error: offlineError,
       finishPlan: expect.objectContaining({
-        finalHome: 5,
-        finalAway: 2,
+        finalHome: 44,
+        finalAway: 41,
         gameUpdate: expect.objectContaining({ status: 'completed' })
       })
     });
