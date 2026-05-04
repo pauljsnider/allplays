@@ -99,6 +99,13 @@ describe('local attraction sponsor helpers', () => {
     });
   });
 
+  it('returns empty lists for missing or malformed sponsor collections', () => {
+    expect(normalizeLocalAttractionSponsors()).toEqual([]);
+    expect(normalizeLocalAttractionSponsors(null)).toEqual([]);
+    expect(normalizeAdSpaceSponsors()).toEqual([]);
+    expect(normalizeAdSpaceSponsors({ location: null })).toEqual([]);
+  });
+
   it('rotates away from the previously shown sponsor when possible', () => {
     const sponsors = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }];
 

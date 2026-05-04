@@ -98,7 +98,9 @@ function normalizeSponsorDisplayFields(sponsor) {
 }
 
 function sortSponsors(sponsors) {
-    return sponsors.sort((a, b) => {
+    const sortableSponsors = Array.isArray(sponsors) ? sponsors : [];
+
+    return sortableSponsors.sort((a, b) => {
         if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
         return a.name.localeCompare(b.name);
     });
