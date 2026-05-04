@@ -11,6 +11,37 @@ function firstSafeString(values) {
     return values.find(value => typeof value === 'string' && value.trim()) || null;
 }
 
+function getClipVideoUrl(clip) {
+    if (!clip || typeof clip !== 'object') return null;
+    const video = clip.video && typeof clip.video === 'object' ? clip.video : {};
+    return firstSafeString([
+        clip.videoUrl,
+        clip.url,
+        clip.publicUrl,
+        clip.sourceUrl,
+        video.url,
+        video.publicUrl,
+        video.sourceUrl
+    ]);
+}
+
+function normalizeAssociatedPlayers(value) {
+    const rawPlayers = Array.isArray(value) ? value : value ? [value] : [];
+    return rawPlayers
+        .map((player) => {
+            if (typeof player === 'string') {
+                return { id: player, name: player };
+            }
+            if (!player || typeof player !== 'object') return null;
+            const name = firstSafeString([player.name, player.displayName, player.fullName, player.label]);
+            const id = firstSafeString([player.id, player.playerId, player.uid]);
+            const number = firstSafeString([player.number, player.jerseyNumber]);
+            if (!name && !id && !number) return null;
+            return { id, name, number };
+        })
+        .filter(Boolean);
+}
+
 function getRecordedReplayConfig(game) {
     if (!game || typeof game !== 'object') return null;
 
@@ -132,12 +163,17 @@ export function createHighlightClipDraft({ startMs, endMs, durationMs = null, ti
     return normalized;
 }
 
-export function normalizeSavedHighlightClips(game, options = {}) {
-    const durationMs = toFiniteNumber(options.durationMs);
+export function collectRawHighlightClips(game) {
     const rawClips = [];
 
     if (Array.isArray(game?.highlightClips)) {
         rawClips.push(...game.highlightClips);
+    }
+    if (Array.isArray(game?.clipMetadata)) {
+        rawClips.push(...game.clipMetadata);
+    }
+    if (Array.isArray(game?.clips)) {
+        rawClips.push(...game.clips);
     }
     if (Array.isArray(game?.replayVideo?.highlights)) {
         rawClips.push(...game.replayVideo.highlights);
@@ -146,18 +182,69 @@ export function normalizeSavedHighlightClips(game, options = {}) {
         rawClips.push(...game.replayHighlights);
     }
 
-    return rawClips
+    return rawClips;
+}
+
+export function normalizeSavedHighlightClips(game, options = {}) {
+    const durationMs = toFiniteNumber(options.durationMs);
+
+    return collectRawHighlightClips(game)
         .map((clip, index) => {
             const normalized = createHighlightClipDraft({
                 startMs: clip?.startMs,
                 endMs: clip?.endMs,
                 durationMs,
-                title: clip?.title || `Highlight ${index + 1}`,
+                title: clip?.title || clip?.playDescription || clip?.description || `Highlight ${index + 1}`,
                 taggedPlayerIds: clip?.taggedPlayerIds
             }, options);
-            return normalized;
+            if (!normalized) return null;
+            return {
+                ...normalized,
+                description: firstSafeString([clip?.playDescription, clip?.description, clip?.text, clip?.message]) || normalized.title,
+                period: firstSafeString([clip?.period, clip?.inning, clip?.quarter, clip?.half]),
+                gameTime: firstSafeString([clip?.gameTime, clip?.clock, clip?.time]),
+                players: normalizeAssociatedPlayers(clip?.players || clip?.associatedPlayers || clip?.playerIds || clip?.playerId),
+                videoUrl: getClipVideoUrl(clip),
+                order: toFiniteNumber(clip?.order ?? clip?.sortOrder ?? clip?.sequence ?? clip?.rank) ?? index
+            };
         })
-        .filter(Boolean);
+        .filter(Boolean)
+        .sort((a, b) => (a.order - b.order) || (a.startMs - b.startMs));
+}
+
+export function normalizeGameRecapHighlightClips(game, options = {}) {
+    const durationMs = toFiniteNumber(options.durationMs);
+    const recorded = getRecordedReplayConfig(game);
+    const replayUrl = recorded?.publicUrl || recorded?.sourceUrl || null;
+
+    return collectRawHighlightClips(game)
+        .map((clip, index) => {
+            const videoUrl = getClipVideoUrl(clip) || replayUrl;
+            const rawStartMs = toFiniteNumber(clip?.startMs ?? clip?.clipStartMs);
+            const rawEndMs = toFiniteNumber(clip?.endMs ?? clip?.clipEndMs);
+            const normalized = Number.isFinite(rawStartMs) ? createHighlightClipDraft({
+                startMs: rawStartMs,
+                endMs: rawEndMs,
+                durationMs: durationMs ?? recorded?.durationMs,
+                title: clip?.title || clip?.playDescription || clip?.description || `Highlight ${index + 1}`
+            }, options) : null;
+            if (!normalized && !videoUrl) return null;
+            const startMs = normalized?.startMs ?? rawStartMs;
+            const endMs = normalized?.endMs ?? rawEndMs;
+            return {
+                title: normalized?.title || firstSafeString([clip?.title, clip?.playDescription, clip?.description]) || `Highlight ${index + 1}`,
+                description: firstSafeString([clip?.playDescription, clip?.description, clip?.text, clip?.message]) || normalized?.title || `Highlight ${index + 1}`,
+                startMs: Number.isFinite(startMs) ? startMs : null,
+                endMs: Number.isFinite(endMs) ? endMs : null,
+                period: firstSafeString([clip?.period, clip?.inning, clip?.quarter, clip?.half]),
+                gameTime: firstSafeString([clip?.gameTime, clip?.clock, clip?.time]),
+                players: normalizeAssociatedPlayers(clip?.players || clip?.associatedPlayers || clip?.playerIds || clip?.playerId),
+                videoUrl,
+                order: toFiniteNumber(clip?.order ?? clip?.sortOrder ?? clip?.sequence ?? clip?.rank) ?? index
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (a.order - b.order) || ((a.startMs ?? 0) - (b.startMs ?? 0)));
 }
 
 export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs }) {
