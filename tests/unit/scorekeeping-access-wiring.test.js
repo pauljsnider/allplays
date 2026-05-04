@@ -30,7 +30,7 @@ describe('scorekeeping access wiring', () => {
         const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
         expect(rules).toContain('function canScorekeepGame(teamId, gameId)');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isScorekeepingGameUpdate(teamId, gameId);');
+        expect(rules).toMatch(/allow update: if isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\);/);
         expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
         expect(rules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
     });
