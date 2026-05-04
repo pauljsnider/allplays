@@ -238,7 +238,7 @@
         import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=16';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
-        import { hasPlayerProfileParticipation } from './js/player-profile-stats.js?v=2';
+        import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=12';
@@ -339,6 +339,49 @@
                         <p class="mt-1 text-sm text-gray-700 leading-relaxed">${escapeHtml(item.body || '')}</p>
                     </div>
                 `).join('')}
+            `;
+        }
+
+        function renderVideoClipFallback() {
+            return `
+                <div class="flex h-40 items-center justify-center bg-gradient-to-br from-primary-50 to-gray-100 text-primary-300">
+                    <svg class="w-14 h-14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                </div>
+            `;
+        }
+
+        function renderPlayerVideoClips(clips = []) {
+            const clipsContent = document.getElementById('content-clips');
+            if (!clipsContent || !clips.length) return;
+
+            clipsContent.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5" data-player-video-clips>
+                    ${clips.map((clip) => `
+                        <article class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition" data-player-video-clip-card>
+                            <a href="${escapeHtml(clip.url)}" target="_blank" rel="noopener noreferrer" class="block group">
+                                ${clip.thumbnailUrl
+                                    ? `<img src="${escapeHtml(clip.thumbnailUrl)}" alt="${escapeHtml(clip.title)} thumbnail" class="w-full h-40 object-cover bg-gray-100 group-hover:opacity-90 transition" loading="lazy">`
+                                    : renderVideoClipFallback()}
+                                <div class="p-4">
+                                    <div class="flex items-center justify-between gap-3 mb-2">
+                                        <span class="text-xs font-semibold uppercase tracking-wide text-primary-700 bg-primary-50 px-2.5 py-1 rounded-full">${escapeHtml(clip.playLabel)}</span>
+                                        <span class="text-xs text-gray-500">${escapeHtml(clip.gameDate)}</span>
+                                    </div>
+                                    <h3 class="text-base font-bold text-gray-900 group-hover:text-primary-700 transition">${escapeHtml(clip.title)}</h3>
+                                    <p class="text-sm text-gray-500 mt-1">${escapeHtml(clip.gameLabel)}</p>
+                                    <span class="inline-flex items-center gap-1 text-sm text-primary-600 font-medium mt-3">
+                                        Watch clip
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                        </svg>
+                                    </span>
+                                </div>
+                            </a>
+                        </article>
+                    `).join('')}
+                </div>
             `;
         }
 
@@ -859,6 +902,8 @@
                         ${advancedStatsDiv.innerHTML}
                     `;
                 }
+
+                renderPlayerVideoClips(collectPlayerVideoClips(games, { teamId, playerId }));
 
                 // Render per-game stats
                 const gameStatsDiv = document.getElementById('game-stats');

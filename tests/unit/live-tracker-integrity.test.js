@@ -113,7 +113,7 @@ describe('live tracker integrity helpers', () => {
     expect(result.away).toBe(39);
   });
 
-  it('reconciles final score only when the score log is complete and trustworthy', () => {
+  it('keeps a coach-entered final score correction even when the score log is complete and trustworthy', () => {
     const result = resolveFinalScoreForCompletion({
       requestedHome: 4,
       requestedAway: 1,
@@ -127,10 +127,10 @@ describe('live tracker integrity helpers', () => {
       scoreLogIsComplete: true
     });
 
-    expect(result.reconciled).toBe(true);
-    expect(result.mismatch).toBe(true);
-    expect(result.home).toBe(5);
-    expect(result.away).toBe(2);
+    expect(result.reconciled).toBe(false);
+    expect(result.mismatch).toBe(false);
+    expect(result.home).toBe(4);
+    expect(result.away).toBe(1);
   });
 
   it('trusts score log when derived totals match live score and contains scoring events', () => {
