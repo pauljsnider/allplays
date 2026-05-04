@@ -260,6 +260,10 @@ export function getTeamAccessInfo() {
 }
 `;
 
+const TEAM_PASS_STUB = `
+export function renderTeamPassCard() {}
+`;
+
 async function mockTeamPageModules(page, scenario) {
     await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
         status: 200,
@@ -315,6 +319,11 @@ async function mockTeamPageModules(page, scenario) {
         status: 200,
         contentType: 'application/javascript',
         body: TEAM_ADMIN_BANNER_STUB
+    }));
+    await page.route('**/js/team-pass.js?v=1', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: TEAM_PASS_STUB
     }));
 }
 
