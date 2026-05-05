@@ -30,6 +30,9 @@ export async function getUnreadChatCount() {
 export async function getRosterFieldDefinitions() {
     return [];
 }
+export async function saveRosterFieldDefinition() {}
+export async function disableRosterFieldDefinition() {}
+export async function reorderRosterFieldDefinitions() {}
 export async function listTeamParentMembershipRequests() {
     return [];
 }
@@ -130,7 +133,9 @@ async function mockEditRosterDependencies(page) {
 async function openBulkAiTab(page, baseURL) {
     await mockEditRosterDependencies(page);
     await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#team-name-display')).toHaveText('Test Team');
     await page.click('#tab-bulk-ai');
+    await expect(page.locator('#content-bulk-ai')).toBeVisible();
 }
 
 async function uploadRosterImage(page) {

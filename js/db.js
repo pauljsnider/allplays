@@ -54,6 +54,7 @@ import {
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
+import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -686,16 +687,60 @@ function assertNoSensitivePlayerFields(playerData) {
 export async function getRosterFieldDefinitions(teamId, team = null) {
     const teamFields = team?.rosterFields || team?.rosterProfileFields || team?.playerProfileFields || team?.customRosterFields || [];
 
+    const fieldsByKey = new Map();
+    if (Array.isArray(teamFields)) {
+        teamFields.forEach((field, index) => {
+            try {
+                const normalized = buildRosterFieldDefinitionPayload(field, index);
+                fieldsByKey.set(normalized.key, { ...field, key: normalized.key });
+            } catch (e) {
+                // Skip malformed legacy team-level definitions.
+            }
+        });
+    }
+
     try {
         const snapshot = await getDocs(collection(db, `teams/${teamId}/rosterFields`));
-        if (!snapshot.empty) {
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        }
+        snapshot.docs.forEach((docSnap) => {
+            fieldsByKey.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+        });
     } catch (e) {
         console.warn('Failed to load roster field definitions from subcollection:', e);
     }
 
-    return Array.isArray(teamFields) ? teamFields : [];
+    return Array.from(fieldsByKey.values());
+}
+
+export async function saveRosterFieldDefinition(teamId, field) {
+    const payload = buildRosterFieldDefinitionPayload(field);
+    const fieldRef = doc(db, `teams/${teamId}/rosterFields`, payload.key);
+    await setDoc(fieldRef, {
+        ...payload,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return { id: payload.key, ...payload };
+}
+
+export async function disableRosterFieldDefinition(teamId, fieldId) {
+    await setDoc(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+        key: fieldId,
+        active: false,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+}
+
+export async function reorderRosterFieldDefinitions(teamId, fields = []) {
+    const batch = writeBatch(db);
+    fields.forEach((field, index) => {
+        const fieldId = field.id || field.key;
+        if (!fieldId) return;
+        batch.set(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+            key: fieldId,
+            sortOrder: index,
+            updatedAt: Timestamp.now()
+        }, { merge: true });
+    });
+    await batch.commit();
 }
 
 export async function getOfficials(teamId) {
@@ -1278,6 +1323,11 @@ export async function addGame(teamId, gameData) {
         }
     }
     return docRef.id;
+}
+
+export async function saveGamePlan(teamId, gameId, gamePlan) {
+    const docRef = getTeamGameDocRef(teamId, gameId);
+    await updateDoc(docRef, { gamePlan });
 }
 
 export async function updateGame(teamId, gameId, gameData) {
@@ -4221,9 +4271,47 @@ export async function getRsvps(teamId, gameId) {
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-export async function getMyRsvp(teamId, gameId, userId) {
-    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
-    const snap = await getDoc(rsvpRef);
+export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
+    const rsvpCollectionPath = `teams/${teamId}/games/${gameId}/rsvps`;
+    const linkedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const directRsvpRef = doc(db, rsvpCollectionPath, userId);
+
+    if (linkedPlayerIds.length === 0) {
+        const snap = await getDoc(directRsvpRef);
+        return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    }
+
+    const [directResult, ...overrideResults] = await Promise.allSettled([
+        getDoc(directRsvpRef),
+        ...linkedPlayerIds.map((playerId) => getDoc(doc(db, rsvpCollectionPath, buildCoachOverrideRsvpDocId(userId, playerId))))
+    ]);
+
+    const overrideRsvps = overrideResults
+        .filter((result) => result.status === 'fulfilled' && result.value.exists())
+        .map((result) => ({ id: result.value.id, ...result.value.data() }));
+
+    if (overrideRsvps.length > 0) {
+        const responses = Array.from(new Set(overrideRsvps.map((rsvp) => normalizeRsvpResponse(rsvp.response))));
+        if (responses.length === 1) {
+            return {
+                id: `${userId}__linkedPlayers`,
+                userId,
+                playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+                response: responses[0],
+                playerRsvps: overrideRsvps
+            };
+        }
+        return {
+            id: `${userId}__linkedPlayers`,
+            userId,
+            playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+            response: 'mixed',
+            playerRsvps: overrideRsvps
+        };
+    }
+
+    if (directResult.status === 'rejected') throw directResult.reason;
+    const snap = directResult.value;
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
