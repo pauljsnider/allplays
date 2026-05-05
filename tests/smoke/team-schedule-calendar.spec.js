@@ -99,6 +99,10 @@ export async function getMyRsvp() {
 export async function getLocalAttractionSponsors() {
     return [];
 }
+
+export async function postChatMessage() {
+    return undefined;
+}
 `;
 }
 
@@ -260,6 +264,50 @@ export function getTeamAccessInfo() {
 }
 `;
 
+const TOURNAMENT_STANDINGS_STUB = `
+export function computeTournamentPoolStandings() {
+    return [];
+}
+`;
+
+const ROSTER_FIELD_PRIVACY_STUB = `
+export function getVisibleRosterFieldValues() {
+    return {};
+}
+`;
+
+const AVAILABILITY_PREFERENCES_STUB = `
+export function buildAvailabilityNoteRows() {
+    return [];
+}
+
+export function formatAvailabilityCutoff() {
+    return 'No cutoff';
+}
+
+export function isAvailabilityLocked() {
+    return false;
+}
+
+export function normalizeAvailabilityPreferences(preferences = {}) {
+    return {
+        cutoffMinutesBeforeStart: 0,
+        noteVisibility: 'admins',
+        ...preferences
+    };
+}
+`;
+
+const SCHEDULE_NOTIFICATIONS_STUB = `
+export function buildAvailabilityReminderRecipients() {
+    return [];
+}
+
+export function buildRsvpReminderMessage() {
+    return '';
+}
+`;
+
 async function mockTeamPageModules(page, scenario) {
     await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
         status: 200,
@@ -315,6 +363,26 @@ async function mockTeamPageModules(page, scenario) {
         status: 200,
         contentType: 'application/javascript',
         body: TEAM_ADMIN_BANNER_STUB
+    }));
+    await page.route('**/js/tournament-standings.js?v=3', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: TOURNAMENT_STANDINGS_STUB
+    }));
+    await page.route('**/js/roster-field-privacy.js', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: ROSTER_FIELD_PRIVACY_STUB
+    }));
+    await page.route('**/js/availability-preferences.js?v=1', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: AVAILABILITY_PREFERENCES_STUB
+    }));
+    await page.route('**/js/schedule-notifications.js?v=4', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: SCHEDULE_NOTIFICATIONS_STUB
     }));
 }
 
