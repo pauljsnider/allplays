@@ -269,6 +269,7 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
+        import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1273,6 +1274,12 @@
 
                 // Render Team Advanced Stats
                 const teamAdvancedStatsDiv = document.getElementById('team-advanced-stats');
+                const teamPremiumEntitlement = await readTeamPremiumEntitlement({
+                    teamId,
+                    user: currentUser,
+                    teamAccessInfo: currentTeamAccessInfo
+                });
+                if (!renderPremiumGateState(teamAdvancedStatsDiv, { state: teamPremiumEntitlement.state, scope: 'team' })) {
                 if (completedGames.length >= 3) {
                     // Calculate win/loss trend (recent vs earlier)
                     const sortedGames = [...completedGames].sort((a, b) => {
@@ -1436,6 +1443,7 @@
                         </div>
                         ${teamAdvancedStatsDiv.innerHTML}
                     `;
+                }
                 }
 
                 // Render Roster
