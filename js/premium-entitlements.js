@@ -35,14 +35,18 @@ function getExpiryDate(data) {
     return null;
 }
 
-export function isValidPremiumEntitlementRecord(data, { scope, teamId = '', userId = '', now = new Date() } = {}) {
+function getDefaultSeasonId(now) {
+    const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
+    return String(date.getUTCFullYear());
+}
+
+export function isValidPremiumEntitlementRecord(data, { scope, teamId = '', userId = '', currentSeasonId = '', now = new Date() } = {}) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     if (normalizeStatus(data.status) !== 'active') return false;
     if (data.revoked === true || data.isRevoked === true || data.deleted === true) return false;
 
     const revokedAt = normalizeDateValue(data.revokedAt);
     if (revokedAt) return false;
-    if (revokedAt === undefined) return false;
 
     const expiryDate = getExpiryDate(data);
     if (expiryDate === undefined) return false;
@@ -53,6 +57,9 @@ export function isValidPremiumEntitlementRecord(data, { scope, teamId = '', user
         if (entitlementTeamId && entitlementTeamId !== teamId) return false;
         const tier = normalizeString(data.tier);
         if (tier && tier !== 'team-pass') return false;
+        const entitlementSeasonId = normalizeString(data.seasonId);
+        const requiredSeasonId = normalizeString(currentSeasonId) || getDefaultSeasonId(now);
+        if (!entitlementSeasonId || entitlementSeasonId !== requiredSeasonId) return false;
         return true;
     }
 
@@ -74,7 +81,7 @@ function dataFromSnapshot(docSnap) {
     return typeof docSnap?.data === 'function' ? docSnap.data() : null;
 }
 
-export async function readTeamPremiumEntitlement({ teamId, user, teamAccessInfo, deps = {} } = {}) {
+export async function readTeamPremiumEntitlement({ teamId, user, teamAccessInfo, currentSeasonId = '', deps = {} } = {}) {
     if (!teamId || !user?.uid || !teamAccessInfo?.hasAccess) {
         return { state: 'locked', reason: 'missing-linked-team-access' };
     }
@@ -84,7 +91,7 @@ export async function readTeamPremiumEntitlement({ teamId, user, teamAccessInfo,
         const snapshot = await getDocs(collection(db, `teams/${teamId}/entitlements`));
         const hasValidEntitlement = snapshot.docs.some((docSnap) => isValidPremiumEntitlementRecord(
             dataFromSnapshot(docSnap),
-            { scope: 'team', teamId }
+            { scope: 'team', teamId, currentSeasonId }
         ));
         return hasValidEntitlement
             ? { state: 'unlocked', reason: 'valid-team-entitlement' }
