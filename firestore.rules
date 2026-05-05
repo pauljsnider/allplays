@@ -267,6 +267,11 @@ service cloud.firestore {
       match /notificationDevices/{deviceId} {
         allow read, write: if isOwner(userId) || isGlobalAdmin();
       }
+
+      match /entitlements/{entitlementId} {
+        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow write: if isGlobalAdmin();
+      }
     }
 
 	    // Access codes - allow public read for validation during signup
@@ -451,6 +456,13 @@ service cloud.firestore {
           allow create: if isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data) &&
                           isPendingRegistrationPayloadValid(teamId, formId, request.resource.data);
         }
+      }
+
+      match /entitlements/{entitlementId} {
+        // Raw entitlement documents include billing provider metadata.
+        // Parents need a derived yes/no premium state, not direct access to Stripe identifiers.
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow write: if isGlobalAdmin();
       }
 
       match /feeBatches/{batchId} {
