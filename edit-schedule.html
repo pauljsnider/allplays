@@ -899,7 +899,7 @@
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
         import { checkAuth } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { computeOfficiatingCoverageStatus, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=1';
+        import { computeOfficiatingCoverageStatus, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=2';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
@@ -2816,6 +2816,26 @@
             };
         }
 
+        function formatOfficiatingConflictWarning(warning) {
+            const conflictLabel = warning.conflictType === 'back-to-back' ? 'back-to-back' : 'overlapping';
+            return `${warning.officialName} has ${conflictLabel} assignments: ${warning.candidateGameLabel} and ${warning.conflictingGameLabel}`;
+        }
+
+        function confirmOfficiatingAssignmentConflicts(gameData) {
+            const warnings = getOfficiatingAssignmentConflictWarnings(gameData, Object.values(gamesCache), {
+                editingGameId
+            });
+            if (!warnings.length) return true;
+
+            return confirm([
+                'Officiating assignment conflict warning:',
+                '',
+                ...warnings.map(formatOfficiatingConflictWarning),
+                '',
+                'Save this game anyway?'
+            ].join('\n'));
+        }
+
         function populateOfficiatingSlots(slots) {
             const container = document.getElementById('officiating-slot-rows');
             container.innerHTML = '';
@@ -2933,6 +2953,8 @@
                 };
                 Object.assign(gameData, getOfficiatingAuthorizationFields(gameData.officiatingSlots));
                 gameData.officiatingCoverageStatus = computeOfficiatingCoverageStatus(gameData.officiatingSlots);
+
+                if (!confirmOfficiatingAssignmentConflicts(gameData)) return;
 
                 if (tournamentData) {
                     gameData.tournament = tournamentData;

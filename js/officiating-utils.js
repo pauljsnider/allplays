@@ -42,6 +42,103 @@ export function computeOfficiatingCoverageStatus(slots = []) {
     return normalized.every((slot) => slot.status === 'accepted') ? 'covered' : 'needs_attention';
 }
 
+function getDateMillis(dateValue) {
+    if (!dateValue) return null;
+    if (typeof dateValue.toMillis === 'function') return dateValue.toMillis();
+    if (typeof dateValue.toDate === 'function') return dateValue.toDate().getTime();
+    if (typeof dateValue.seconds === 'number') return dateValue.seconds * 1000;
+    const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    const millis = parsed.getTime();
+    return Number.isNaN(millis) ? null : millis;
+}
+
+function getGameWindow(game = {}, defaultGameMinutes = 120) {
+    const start = getDateMillis(game.date);
+    if (start === null) return null;
+    const explicitEnd = getDateMillis(game.endTime || game.endDate || game.endsAt);
+    const end = explicitEnd && explicitEnd > start
+        ? explicitEnd
+        : start + Math.max(1, Number(defaultGameMinutes) || 120) * 60000;
+    return { start, end };
+}
+
+function getGameLabel(game = {}) {
+    const opponent = String(game.opponent || game.title || 'TBD').trim();
+    const location = String(game.location || '').trim();
+    return location ? `vs. ${opponent} at ${location}` : `vs. ${opponent}`;
+}
+
+function getActiveOfficialAssignments(game = {}) {
+    return normalizeOfficiatingSlots(game.officiatingSlots || [])
+        .filter((slot) => !['open', 'declined', 'cant_make'].includes(slot.status))
+        .map((slot) => {
+            const identityKeys = [
+                slot.officialId ? `id:${slot.officialId}` : '',
+                slot.officialUserId ? `uid:${slot.officialUserId}` : '',
+                slot.officialEmail ? `email:${slot.officialEmail}` : '',
+                slot.officialName ? `name:${slot.officialName.toLowerCase()}` : ''
+            ].filter(Boolean);
+            return {
+                slot,
+                identityKeys,
+                label: slot.officialName || slot.officialEmail || 'Official'
+            };
+        })
+        .filter((assignment) => assignment.identityKeys.length > 0);
+}
+
+function hasSharedOfficialIdentity(a, b) {
+    const keys = new Set(a.identityKeys);
+    return b.identityKeys.some((key) => keys.has(key));
+}
+
+function isCancelledGame(game = {}) {
+    const status = String(game?.status || '').trim().toLowerCase();
+    return status === 'cancelled' || status === 'canceled' || game?.deleted === true;
+}
+
+export function getOfficiatingAssignmentConflictWarnings(candidateGame = {}, existingGames = [], options = {}) {
+    const candidateWindow = getGameWindow(candidateGame, options.defaultGameMinutes);
+    if (!candidateWindow || isCancelledGame(candidateGame) || !Array.isArray(existingGames)) return [];
+
+    const candidateAssignments = getActiveOfficialAssignments(candidateGame);
+    if (!candidateAssignments.length) return [];
+
+    const candidateId = String(options.editingGameId || candidateGame.id || '').trim();
+    const warnings = [];
+
+    existingGames.forEach((existingGame) => {
+        if (isCancelledGame(existingGame)) return;
+
+        const existingId = String(existingGame?.id || '').trim();
+        if (candidateId && existingId && candidateId === existingId) return;
+
+        const existingWindow = getGameWindow(existingGame, options.defaultGameMinutes);
+        if (!existingWindow) return;
+
+        const overlaps = candidateWindow.start < existingWindow.end && existingWindow.start < candidateWindow.end;
+        const backToBack = candidateWindow.end === existingWindow.start || existingWindow.end === candidateWindow.start;
+        if (!overlaps && !backToBack) return;
+
+        const existingAssignments = getActiveOfficialAssignments(existingGame);
+        candidateAssignments.forEach((candidateAssignment) => {
+            existingAssignments.forEach((existingAssignment) => {
+                if (!hasSharedOfficialIdentity(candidateAssignment, existingAssignment)) return;
+                warnings.push({
+                    officialName: candidateAssignment.label || existingAssignment.label,
+                    conflictType: overlaps ? 'overlap' : 'back-to-back',
+                    candidateGameId: candidateId || null,
+                    conflictingGameId: existingId || null,
+                    candidateGameLabel: getGameLabel(candidateGame),
+                    conflictingGameLabel: getGameLabel(existingGame)
+                });
+            });
+        });
+    });
+
+    return warnings;
+}
+
 export function getAssignedOfficiatingSlots(game = {}, user = {}) {
     const uid = String(user?.uid || '').trim();
     const email = normalizeOfficialEmail(user?.email || '');

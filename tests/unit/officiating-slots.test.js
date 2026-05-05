@@ -47,6 +47,8 @@ describe('officiating slots', () => {
         expect(source).toContain('Officiating Slots');
         expect(source).toContain('populateOfficiatingSlots(game.officiatingSlots || [])');
         expect(source).toContain('officiatingSlots: getOfficiatingSlotsFromForm()');
+        expect(source).toContain('confirmOfficiatingAssignmentConflicts(gameData)');
+        expect(source).toContain('Officiating assignment conflict warning:');
         expect(source).toContain('${renderOfficiatingSummary(game.officiatingSlots)}');
         expect(source).toContain('assignments: getAssignmentsFromForm()');
     });
