@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildRosterFieldDefinitionPayload,
     getRosterProfileValues,
     normalizeRosterFieldDefinitions,
     validateRosterProfileValues
@@ -54,5 +55,41 @@ describe('roster profile fields', () => {
     it('loads existing custom field values from the structured profile object', () => {
         expect(getRosterProfileValues({ profile: { customFields: { position: 'Guard' } } })).toEqual({ position: 'Guard' });
         expect(getRosterProfileValues({ customFields: { position: 'Forward' } })).toEqual({ position: 'Forward' });
+    });
+
+    it('builds persisted roster field definitions with visibility and menu options', () => {
+        expect(buildRosterFieldDefinitionPayload({
+            label: 'Jersey Size',
+            type: 'menu',
+            options: ['Youth M', 'Adult S'],
+            section: 'Uniform',
+            required: true,
+            defaultVisibility: 'parents',
+            sortOrder: 3
+        })).toEqual({
+            key: 'jersey-size',
+            label: 'Jersey Size',
+            type: 'menu',
+            section: 'Uniform',
+            required: true,
+            options: [
+                { value: 'Youth M', label: 'Youth M' },
+                { value: 'Adult S', label: 'Adult S' }
+            ],
+            description: '',
+            visibility: 'parents',
+            active: true,
+            sortOrder: 3
+        });
+    });
+
+    it('excludes disabled definitions from player forms unless requested', () => {
+        const fields = [
+            { key: 'active', label: 'Active Field', type: 'text', active: true, sortOrder: 1 },
+            { key: 'disabled', label: 'Disabled Field', type: 'text', active: false, sortOrder: 2 }
+        ];
+
+        expect(normalizeRosterFieldDefinitions(fields).map((field) => field.key)).toEqual(['active']);
+        expect(normalizeRosterFieldDefinitions(fields, { includeInactive: true }).map((field) => field.key)).toEqual(['active', 'disabled']);
     });
 });
