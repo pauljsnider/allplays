@@ -14,6 +14,7 @@ import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
+import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
 import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=2';
@@ -384,6 +385,7 @@ const els = {
   liveSyncStatusLabel: q('#live-sync-status-label'),
   liveSyncStatusDetail: q('#live-sync-status-detail'),
   liveSyncPendingPill: q('#live-sync-pending-pill'),
+  videoTimestampStatus: q('#video-timestamp-status'),
   onCourtCount: q('#on-court-count-mobile'),
   startStop: q('#start-stop'),
   undoMini: q('#undo-mini'),
@@ -615,6 +617,36 @@ function renderLiveSyncStatus() {
   } else {
     els.liveSyncPendingPill.classList.add('hidden');
   }
+}
+
+function renderVideoTimestampStatus() {
+  if (!els.videoTimestampStatus) return;
+
+  const hasStream = hasConfiguredLiveStream(currentTeam, currentGame);
+  els.videoTimestampStatus.classList.remove('border-emerald-200', 'bg-emerald-50', 'text-emerald-700', 'border-amber-200', 'bg-amber-50', 'text-amber-700', 'border-slate/10', 'bg-white', 'text-slate-600');
+
+  if (!hasStream) {
+    els.videoTimestampStatus.textContent = 'Video timestamps unavailable: no stream configured.';
+    els.videoTimestampStatus.classList.add('border-slate/10', 'bg-white', 'text-slate-600');
+    return;
+  }
+
+  const timestampMs = buildVideoTimestampMetadata({
+    team: currentTeam,
+    game: currentGame,
+    gameClockMs: state.clock,
+    isScoringEvent: true
+  }).streamRelativeTimestampMs;
+  if (liveState.isLive && Number.isFinite(timestampMs)) {
+    els.videoTimestampStatus.textContent = 'Video timestamps active for scoring events.';
+    els.videoTimestampStatus.classList.add('border-emerald-200', 'bg-emerald-50', 'text-emerald-700');
+    return;
+  }
+
+  els.videoTimestampStatus.textContent = liveState.isLive
+    ? 'Video timestamps unavailable: stream start or offset missing.'
+    : 'Video timestamps ready when live scoring starts.';
+  els.videoTimestampStatus.classList.add('border-amber-200', 'bg-amber-50', 'text-amber-700');
 }
 
 function renderFinishSyncControls() {
@@ -1508,24 +1540,44 @@ function broadcastLineupUpdate(description = 'Lineup updated') {
     .catch(err => console.warn('Failed to sync live lineup:', err));
 }
 
+function buildVideoTimestampMetadataForStat(statKey) {
+  return buildVideoTimestampMetadata({
+    team: currentTeam,
+    game: currentGame,
+    gameClockMs: state.clock,
+    isScoringEvent: isPointsColumn(statKey)
+  });
+}
+
 function buildStatEvent(undoData, description) {
   const playerId = undoData?.playerId || null;
   const isOpponent = !!undoData?.isOpponent;
   const player = !isOpponent ? roster.find(r => r.id === playerId) : null;
   const opponent = isOpponent ? state.opp.find(o => o.id === playerId) : null;
 
+  const statKey = undoData?.statKey || null;
+  const hasExistingTimestampMetadata = Object.prototype.hasOwnProperty.call(undoData || {}, 'streamRelativeTimestampMs');
+  const timestampMetadata = hasExistingTimestampMetadata
+    ? {
+        videoTimestampCaptureActive: undoData.videoTimestampCaptureActive,
+        streamRelativeTimestampMs: undoData.streamRelativeTimestampMs,
+        videoTimestampUnavailableReason: undoData.videoTimestampUnavailableReason
+      }
+    : buildVideoTimestampMetadataForStat(statKey);
+
   return baseLiveEvent({
     type: 'stat',
     playerId,
     playerName: player?.name || null,
     playerNumber: player?.num || '',
-    statKey: undoData?.statKey || null,
+    statKey,
     value: undoData?.value || 0,
     isOpponent,
     opponentPlayerName: opponent?.name || null,
     opponentPlayerNumber: opponent?.number || '',
     opponentPlayerPhoto: opponent?.photoUrl || '',
-    description
+    description,
+    ...timestampMetadata
   });
 }
 
@@ -1653,6 +1705,25 @@ async function startLiveBroadcast() {
   if (liveState.isLive) return;
   liveState.isLive = true;
   liveState.lastClockSyncAt = 0;
+  const hasTimestampBasis = Number.isFinite(currentGame?.liveStreamStartedAtMs) ||
+    currentGame?.liveStreamStartedAt ||
+    currentGame?.liveStartedAt ||
+    currentGame?.streamStartedAt ||
+    Number.isFinite(currentGame?.liveStreamOffsetMs) ||
+    Number.isFinite(currentGame?.videoTimestampOffsetMs);
+  if (hasConfiguredLiveStream(currentTeam, currentGame) && !hasTimestampBasis) {
+    const liveStreamStartedAtMs = Date.now();
+    currentGame = {
+      ...(currentGame || {}),
+      liveStreamStartedAtMs,
+      videoTimestampCaptureEnabled: true
+    };
+    updateGame(currentTeamId, currentGameId, {
+      liveStreamStartedAtMs,
+      videoTimestampCaptureEnabled: true
+    }).catch(error => console.warn('Failed to set video timestamp start:', error));
+  }
+  renderVideoTimestampStatus();
   try {
     await setGameLiveStatus(currentTeamId, currentGameId, 'live');
   } catch (error) {
@@ -1681,6 +1752,7 @@ async function endLiveBroadcast() {
     if (liveState.unsubscribeChat) liveState.unsubscribeChat();
     if (liveState.unsubscribeViewers) liveState.unsubscribeViewers();
   }
+  renderVideoTimestampStatus();
 }
 
 function renderFinish() {
@@ -2103,7 +2175,8 @@ function addStat(id, key, delta) {
     playerId: id,
     statKey: key,
     value: delta,
-    isOpponent: false
+    isOpponent: false,
+    ...buildVideoTimestampMetadataForStat(key)
   });
   schedulePlayerStatsSync(id);
   scheduleLiveHasData();
@@ -2138,7 +2211,8 @@ function addOppStat(id, key, delta) {
     playerId: id,
     statKey: key,
     value: delta,
-    isOpponent: true
+    isOpponent: true,
+    ...buildVideoTimestampMetadataForStat(key)
   });
   scheduleOpponentStatsSync();
   scheduleLiveHasData();
@@ -3025,6 +3099,7 @@ async function init() {
     setTab('live');
     setPeriod(state.period);
     renderAll();
+    renderVideoTimestampStatus();
     renderQueue();
     attachEvents();
     updateSubsButton();
