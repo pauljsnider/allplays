@@ -1,5 +1,5 @@
 import { escapeHtml } from './utils.js';
-import { getDefaultLivePeriod } from './live-sport-config.js';
+import { getDefaultLivePeriod, getGoalSportProfile } from './live-sport-config.js';
 
 const statKeyMap = {
   PTS: 'pts',
@@ -11,6 +11,8 @@ const statKeyMap = {
   BLOCK: 'blk',
   TO: 'to',
   TOV: 'to',
+  GOALS: 'goals',
+  GOAL: 'goals',
   FOUL: 'fouls',
   FOULS: 'fouls',
   FLS: 'fouls'
@@ -77,6 +79,9 @@ export function resolveLiveStatColumns({ columns = [], configs = [], game = null
   if (config) {
     return normalizeLiveStatColumns(config.columns);
   }
+
+  const goalSportProfile = getGoalSportProfile({ game, team });
+  if (goalSportProfile) return [...goalSportProfile.statColumns];
 
   return directColumns;
 }
@@ -359,7 +364,9 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
     shouldRenderLineup = true;
   }
 
-  const isScoreEvent = event.type === 'stat' && event.statKey === 'pts';
+  const statKey = String(event.statKey || '').toLowerCase();
+  const isScoreEvent = event.type === 'goal' ||
+    (event.type === 'stat' && ['pts', 'points', 'goals'].includes(statKey));
 
   return {
     state: nextState,
