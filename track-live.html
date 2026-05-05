@@ -1007,23 +1007,21 @@
                 yardLine: context.yardLine
             });
 
-            if (gameState.isRunning) {
-                broadcastLiveEvent(currentTeamId, currentGameId, {
-                    type: 'football_play',
-                    footballPlayType: playType,
-                    possession: context.possession,
-                    down: context.down,
-                    distance: context.distance,
-                    yardLine: context.yardLine,
-                    period: gameState.currentPeriod,
-                    gameClockMs: gameState.elapsed,
-                    homeScore,
-                    awayScore,
-                    isOpponent: context.possession === 'away',
-                    description,
-                    createdBy: currentUser?.uid || null
-                }).catch(console.warn);
-            }
+            broadcastLiveEvent(currentTeamId, currentGameId, {
+                type: 'football_play',
+                footballPlayType: playType,
+                possession: context.possession,
+                down: context.down,
+                distance: context.distance,
+                yardLine: context.yardLine,
+                period: gameState.currentPeriod,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                isOpponent: context.possession === 'away',
+                description,
+                createdBy: currentUser?.uid || null
+            }).catch(console.warn);
             scheduleLiveHasData();
 
             if (['turnover', 'punt', 'kickoff'].includes(playType)) {
