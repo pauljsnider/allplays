@@ -42,6 +42,63 @@ function normalizeAssociatedPlayers(value) {
         .filter(Boolean);
 }
 
+function normalizeStringSet(values) {
+    if (!Array.isArray(values)) return new Set();
+    return new Set(values
+        .filter(value => typeof value === 'string')
+        .map(value => value.trim().toLowerCase())
+        .filter(Boolean));
+}
+
+function normalizeUidSet(values) {
+    if (!Array.isArray(values)) return new Set();
+    return new Set(values
+        .filter(value => typeof value === 'string')
+        .map(value => value.trim())
+        .filter(Boolean));
+}
+
+function isGameCameraEligible(game) {
+    if (!game || typeof game !== 'object') return false;
+    const status = String(game.status || game.liveStatus || '').toLowerCase();
+    return !['cancelled', 'canceled', 'completed', 'final'].includes(status);
+}
+
+export function canAccessNativeCameraCapture({ user, team, game }) {
+    if (!user || !team || !isGameCameraEligible(game)) return false;
+
+    if (user.isAdmin) return true;
+    if (team.ownerId && user.uid === team.ownerId) return true;
+
+    const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
+    const adminEmails = normalizeStringSet(team.adminEmails);
+    if (userEmail && adminEmails.has(userEmail)) return true;
+
+    const approvedUidFields = [
+        team.mediaContributorUids,
+        team.gameMediaContributorUids,
+        team.approvedMediaContributorUids,
+        game.mediaContributorUids,
+        game.gameMediaContributorUids,
+        game.approvedMediaContributorUids,
+        game.nativeCameraContributorUids
+    ];
+    if (user.uid && approvedUidFields.some(values => normalizeUidSet(values).has(user.uid))) {
+        return true;
+    }
+
+    const approvedEmailFields = [
+        team.mediaContributorEmails,
+        team.gameMediaContributorEmails,
+        team.approvedMediaContributorEmails,
+        game.mediaContributorEmails,
+        game.gameMediaContributorEmails,
+        game.approvedMediaContributorEmails,
+        game.nativeCameraContributorEmails
+    ];
+    return Boolean(userEmail && approvedEmailFields.some(values => normalizeStringSet(values).has(userEmail)));
+}
+
 function getRecordedReplayConfig(game) {
     if (!game || typeof game !== 'object') return null;
 
