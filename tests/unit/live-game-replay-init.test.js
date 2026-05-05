@@ -240,8 +240,8 @@ function buildModuleSource() {
             'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs } = deps.liveGameReplay;'
         )
         .replace(
-            /import \{ MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback \} from '\.\/live-game-video\.js\?v=\d+';/,
-            'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+            /import\s+\{\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildHighlightShareUrl,\s*canAccessNativeCameraCapture,\s*createHighlightClipDraft,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
+            'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replace(
             /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
@@ -424,6 +424,7 @@ async function bootReplayPage({ replayEvents }) {
         liveGameVideo: {
             MAX_HIGHLIGHT_CLIP_MS: 60000,
             buildHighlightShareUrl: () => '',
+            canAccessNativeCameraCapture: () => false,
             createHighlightClipDraft: () => ({ startMs: 0, endMs: 0, title: '' }),
             resolveReplayVideoOptions: () => null,
             shouldReloadVideoPlayback: () => false

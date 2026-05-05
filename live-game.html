@@ -287,6 +287,26 @@
           referrerpolicy="strict-origin-when-cross-origin"
           allowfullscreen
         ></iframe>
+        <div id="native-camera-panel" class="hidden mt-3 rounded-xl border border-teal/25 bg-ink/55 p-3">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-[11px] uppercase tracking-[0.25em] text-teal/70">Native Camera Preview</p>
+              <p class="text-sm text-sand/75">Verify your phone camera and microphone locally before going live. This does not broadcast or record yet.</p>
+            </div>
+            <span class="rounded-full border border-teal/30 px-2 py-1 text-[11px] text-teal whitespace-nowrap">Local only</span>
+          </div>
+          <div class="mt-3 overflow-hidden rounded-xl border border-teal/20 bg-black">
+            <video id="native-camera-preview" class="hidden w-full aspect-video object-cover" autoplay muted playsinline></video>
+            <div id="native-camera-placeholder" class="aspect-video flex items-center justify-center px-4 text-center text-sm text-sand/50">
+              Start the native camera to confirm device access.
+            </div>
+          </div>
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <button id="native-camera-start-btn" type="button" class="rounded-lg bg-teal px-4 py-2 text-sm font-medium text-ink">Start Native Camera</button>
+            <button id="native-camera-stop-btn" type="button" class="hidden rounded-lg border border-teal/25 px-4 py-2 text-sm font-medium text-sand hover:bg-slate/70">Stop Preview</button>
+            <span id="native-camera-status" class="text-xs text-sand/55">Camera and microphone permission required.</span>
+          </div>
+        </div>
         <div id="recorded-replay-tools" class="hidden mt-3 rounded-xl border border-teal/20 bg-slate/45 p-3">
           <div class="flex items-center justify-between gap-3">
             <div>

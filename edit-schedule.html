@@ -1594,16 +1594,14 @@
                 senderEmail: currentUser.email
             });
             if (eventDocId) {
+                const sentAt = new Date().toISOString();
                 await updateEvent(currentTeamId, eventDocId, {
-                    scheduleNotifications: {
-                        ...buildScheduleNotificationMetadata({
-                            settings: getTeamScheduleNotificationSettings(),
-                            action: 'rsvp_reminder',
-                            sent: true,
-                            userId: currentUser.uid
-                        }),
-                        lastRsvpReminderCount: missingCount
-                    }
+                    'scheduleNotifications.sent': true,
+                    'scheduleNotifications.sentAt': sentAt,
+                    'scheduleNotifications.lastAction': 'rsvp_reminder',
+                    'scheduleNotifications.lastSentAt': sentAt,
+                    'scheduleNotifications.lastSentBy': currentUser.uid || null,
+                    'scheduleNotifications.lastRsvpReminderCount': missingCount
                 });
             }
         }
