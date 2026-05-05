@@ -126,7 +126,7 @@ describe('officiating assignment helpers', () => {
     ]);
   });
 
-  it('does not warn for different officials, ignored statuses, or the game being edited', () => {
+  it('does not warn for different officials, ignored statuses, cancelled games, or the game being edited', () => {
     const warnings = getOfficiatingAssignmentConflictWarnings({
       id: 'game-1',
       date: new Date('2026-05-04T10:00:00Z'),
@@ -158,8 +158,40 @@ describe('officiating assignment helpers', () => {
         officiatingSlots: [
           { position: 'Referee', officialEmail: 'ref@example.com', status: 'declined' }
         ]
+      },
+      {
+        id: 'game-4',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Cancelled game',
+        status: 'cancelled',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', status: 'accepted' }
+        ]
       }
     ], { editingGameId: 'game-1' });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('does not warn when the candidate game is cancelled', () => {
+    const warnings = getOfficiatingAssignmentConflictWarnings({
+      id: 'game-cancelled',
+      date: new Date('2026-05-04T10:00:00Z'),
+      opponent: 'Lions',
+      status: 'cancelled',
+      officiatingSlots: [
+        { position: 'Referee', officialEmail: 'ref@example.com', status: 'pending' }
+      ]
+    }, [
+      {
+        id: 'game-active',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Tigers',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', status: 'accepted' }
+        ]
+      }
+    ]);
 
     expect(warnings).toEqual([]);
   });

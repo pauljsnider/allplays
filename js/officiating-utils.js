@@ -92,9 +92,14 @@ function hasSharedOfficialIdentity(a, b) {
     return b.identityKeys.some((key) => keys.has(key));
 }
 
+function isCancelledGame(game = {}) {
+    const status = String(game?.status || '').trim().toLowerCase();
+    return status === 'cancelled' || status === 'canceled' || game?.deleted === true;
+}
+
 export function getOfficiatingAssignmentConflictWarnings(candidateGame = {}, existingGames = [], options = {}) {
     const candidateWindow = getGameWindow(candidateGame, options.defaultGameMinutes);
-    if (!candidateWindow || !Array.isArray(existingGames)) return [];
+    if (!candidateWindow || isCancelledGame(candidateGame) || !Array.isArray(existingGames)) return [];
 
     const candidateAssignments = getActiveOfficialAssignments(candidateGame);
     if (!candidateAssignments.length) return [];
@@ -103,6 +108,8 @@ export function getOfficiatingAssignmentConflictWarnings(candidateGame = {}, exi
     const warnings = [];
 
     existingGames.forEach((existingGame) => {
+        if (isCancelledGame(existingGame)) return;
+
         const existingId = String(existingGame?.id || '').trim();
         if (candidateId && existingId && candidateId === existingId) return;
 
