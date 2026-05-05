@@ -28,6 +28,7 @@ import {
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
 import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=3';
+import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=1';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
@@ -86,6 +87,7 @@ const state = {
   scoringRun: { team: null, points: 0 },
   lastRunAnnounced: 0,
   hasVideoStream: false,
+  teamEntitlement: { active: false, reason: 'not-loaded' },
   lastResetAt: 0,
   videoPlayback: null,
   clipStartMs: null,
@@ -152,6 +154,7 @@ const els = {
   statsPanel: q('#stats-panel'),
   chatPanelMobile: q('#chat-panel'),
   recordedReplayVideo: q('#recorded-replay-video'),
+  videoPaywall: q('#video-paywall'),
   recordedReplayTools: q('#recorded-replay-tools'),
   recordedReplayMeta: q('#recorded-replay-meta'),
   highlightStartInput: q('#highlight-start-input'),
@@ -278,10 +281,35 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const recordedVideo = els.recordedReplayVideo;
   const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
   state.videoPlayback = nextPlayback;
-  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
+  const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && !videoUnlocked;
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo) || isGatedRecordedReplay;
 
-  if (state.videoPlayback?.mode === 'recorded') {
+  if (els.videoPaywall) {
+    els.videoPaywall.classList.toggle('hidden', !isGatedRecordedReplay);
+  }
+
+  if (isGatedRecordedReplay) {
+    if (recordedVideo) {
+      recordedVideo.pause();
+      if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
+        recordedVideo.removeAttribute('src');
+        recordedVideo.load();
+      }
+      recordedVideo.classList.add('hidden');
+    }
+    if (iframe) {
+      if (iframe.getAttribute('src')) iframe.src = '';
+      iframe.classList.add('hidden');
+    }
+    els.recordedReplayTools?.classList.add('hidden');
+    if (videoTab) videoTab.classList.remove('hidden');
+    if (extLink) {
+      extLink.classList.add('hidden');
+      extLink.removeAttribute('href');
+    }
+  } else if (state.videoPlayback?.mode === 'recorded') {
     if (iframe) {
       if (iframe.getAttribute('src')) iframe.src = '';
       iframe.classList.add('hidden');
@@ -304,6 +332,7 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       extLink.removeAttribute('href');
     }
   } else if (state.videoPlayback?.mode === 'embed') {
+    els.videoPaywall?.classList.add('hidden');
     if (recordedVideo) {
       recordedVideo.pause();
       if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
@@ -326,6 +355,7 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       extLink.classList.remove('hidden');
     }
   } else {
+    els.videoPaywall?.classList.add('hidden');
     if (recordedVideo) {
       recordedVideo.pause();
       if (recordedVideo.currentSrc || recordedVideo.getAttribute('src')) {
@@ -1769,6 +1799,14 @@ async function init() {
   state.awayScore = game.awayScore || 0;
   state.period = game.period || getDefaultLivePeriod({ game, team });
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
+
+  const seasonId = resolveTeamEntitlementSeasonId({ game, team });
+  try {
+    state.teamEntitlement = await getTeamEntitlementStatus({ teamId: state.teamId, seasonId });
+  } catch (error) {
+    console.warn('Failed to load team entitlement:', error);
+    state.teamEntitlement = { active: false, reason: 'load-failed', seasonId, tier: 'team-pass' };
+  }
 
   refreshVideoPanel({ force: true });
   renderGameInfo();

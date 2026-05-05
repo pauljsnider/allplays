@@ -384,6 +384,19 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // Team-wide paid access read model. Public reads let fan pages decide
+      // whether to show gated content; writes stay with coach/team admins so
+      // viewers cannot grant themselves paid access.
+      match /entitlements/{entitlementId} {
+        allow read: if true;
+        allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.teamId == teamId &&
+          request.resource.data.seasonId is string &&
+          request.resource.data.tier == 'team-pass' &&
+          request.resource.data.status in ['active', 'inactive', 'expired', 'cancelled'];
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /membershipRequests/{requestId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
