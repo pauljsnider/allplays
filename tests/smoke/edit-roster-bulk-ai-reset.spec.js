@@ -30,6 +30,9 @@ export async function getUnreadChatCount() {
 export async function getRosterFieldDefinitions() {
     return [];
 }
+export async function saveRosterFieldDefinition() {}
+export async function disableRosterFieldDefinition() {}
+export async function reorderRosterFieldDefinitions() {}
 export async function listTeamParentMembershipRequests() {
     return [];
 }
