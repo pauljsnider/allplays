@@ -1045,10 +1045,14 @@
             const baseballPanel = document.getElementById('baseballScorekeepingPanel');
             const volleyballPanel = document.getElementById('volleyballPanel');
             const genericPanels = document.getElementById('generic-stat-tracking');
+            const teamStatsPanel = document.getElementById('teamStatsPanel');
+            const opponentStatsPanel = document.getElementById('opponentStatsPanel');
             const isGoalSportMode = !!currentGoalSportProfile;
             if (baseballPanel) baseballPanel.classList.toggle('hidden', !gameState.isBaseballScorekeeping);
             if (volleyballPanel) volleyballPanel.classList.toggle('hidden', !volleyballMode);
-            if (genericPanels) genericPanels.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode || isGoalSportMode);
+            if (genericPanels) genericPanels.classList.toggle('hidden', isGoalSportMode || volleyballMode);
+            if (teamStatsPanel) teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping);
+            if (opponentStatsPanel) opponentStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping);
             if (gameState.isBaseballScorekeeping) {
                 renderBaseballScorekeeping();
             }
