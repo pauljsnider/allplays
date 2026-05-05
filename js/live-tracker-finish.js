@@ -82,20 +82,28 @@ export function buildFinishCompletionPlan({
     reconciliationNote = buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway);
   }
 
-  const eventWrites = effectiveLog.map((entry) => ({
-    data: {
-      text: entry.text,
-      gameTime: entry.clock,
-      period: entry.period,
-      timestamp: entry.ts || Date.now(),
-      type: entry.undoData?.type || 'game_log',
-      playerId: entry.undoData?.playerId || null,
-      statKey: entry.undoData?.statKey || null,
-      value: entry.undoData?.value || null,
-      isOpponent: entry.undoData?.isOpponent || false,
-      createdBy: currentUserUid
-    }
-  }));
+  const eventWrites = effectiveLog.map((entry) => {
+    const hasVideoTimestampMetadata = Object.prototype.hasOwnProperty.call(entry.undoData || {}, 'streamRelativeTimestampMs');
+    return {
+      data: {
+        text: entry.text,
+        gameTime: entry.clock,
+        period: entry.period,
+        timestamp: entry.ts || Date.now(),
+        type: entry.undoData?.type || 'game_log',
+        playerId: entry.undoData?.playerId || null,
+        statKey: entry.undoData?.statKey || null,
+        value: entry.undoData?.value || null,
+        isOpponent: entry.undoData?.isOpponent || false,
+        createdBy: currentUserUid,
+        ...(hasVideoTimestampMetadata ? {
+          videoTimestampCaptureActive: entry.undoData.videoTimestampCaptureActive,
+          streamRelativeTimestampMs: entry.undoData.streamRelativeTimestampMs,
+          videoTimestampUnavailableReason: entry.undoData.videoTimestampUnavailableReason
+        } : {})
+      }
+    };
+  });
 
   const aggregatedStatsWrites = safeRoster.map((player) => {
     const statsObj = {};

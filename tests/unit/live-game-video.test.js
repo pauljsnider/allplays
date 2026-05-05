@@ -6,6 +6,7 @@ import {
     normalizeGameClipRecords,
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
+    canAccessNativeCameraCapture,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
 } from '../../js/live-game-video.js';
@@ -250,5 +251,52 @@ describe('live game replay video helpers', () => {
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live456?autoplay=1&mute=1' }
         )).toBe(true);
+    });
+});
+
+
+describe('native camera capture authorization', () => {
+    const scheduledGame = { status: 'scheduled' };
+
+    it('allows team owners and admins on scheduled games', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'owner-1', email: 'owner@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: scheduledGame
+        })).toBe(true);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'coach-2', email: 'Coach@Example.com' },
+            team: { ownerId: 'owner-1', adminEmails: ['coach@example.com'] },
+            game: scheduledGame
+        })).toBe(true);
+    });
+
+    it('allows explicitly approved media contributors by uid or email', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'streamer-1', email: 'helper@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [], mediaContributorUids: ['streamer-1'] },
+            game: scheduledGame
+        })).toBe(true);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'helper-2', email: 'Helper@Example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: { ...scheduledGame, mediaContributorEmails: ['helper@example.com'] }
+        })).toBe(true);
+    });
+
+    it('blocks regular viewers and ended games', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'viewer-1', email: 'viewer@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: scheduledGame
+        })).toBe(false);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'owner-1', email: 'owner@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: { status: 'completed' }
+        })).toBe(false);
     });
 });

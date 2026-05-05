@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=10';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=3';
+} from './firebase.js?v=11';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
@@ -2488,12 +2488,15 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
         const [teamId, playerId] = key.split('::');
         return { teamId, playerId };
     });
+    const teamIds = [...new Set(childLinks.map((child) => child.teamId).filter(Boolean))];
 
     const recipientsRef = collectionGroup(db, 'feeRecipients');
     const queries = [
-        query(recipientsRef, where('parentUserId', '==', userId)),
-        query(recipientsRef, where('accountUserId', '==', userId)),
-        query(recipientsRef, where('userId', '==', userId)),
+        ...teamIds.flatMap((teamId) => [
+            query(recipientsRef, where('teamId', '==', teamId), where('parentUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('accountUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('userId', '==', userId))
+        ]),
         ...childLinks.map((child) => query(
             recipientsRef,
             where('teamId', '==', child.teamId),
@@ -2517,6 +2520,88 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
     });
 
     return Array.from(feesByPath.values());
+}
+
+export async function getTeamFeeBatch(teamId, batchId) {
+    if (!teamId || !batchId) return null;
+    const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
+    const batchSnap = await getDoc(batchRef);
+    return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeRecipients(teamId, batchId) {
+    if (!teamId || !batchId) return [];
+    const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
+    const snapshot = await getDocs(recipientsRef);
+    return snapshot.docs
+        .map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }))
+        .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+}
+
+export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
+    if (!teamId || !batchId || !recipientId) {
+        throw new Error('Missing fee recipient context.');
+    }
+
+    const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
+    await updateDoc(recipientRef, {
+        ...updates,
+        teamId,
+        batchId,
+        updatedAt: serverTimestamp()
+    });
+}
+
+export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {
+    if (!teamId) throw new Error('Team ID is required.');
+    if (!feeDraft?.title) throw new Error('Fee title is required.');
+    if (!feeDraft?.amountCents || feeDraft.amountCents <= 0) throw new Error('Fee amount is required.');
+    if (!feeDraft?.dueDate) throw new Error('Due date is required.');
+    if (!recipients.length) throw new Error('At least one recipient is required.');
+
+    const batchRef = doc(collection(db, `teams/${teamId}/feeBatches`));
+    const write = writeBatch(db);
+    const now = serverTimestamp();
+    const collectionMode = 'offline_manual';
+    const offlinePaymentInstructions = feeDraft.offlinePaymentInstructions || 'Collect payment outside ALL PLAYS. No online payment is processed.';
+
+    write.set(batchRef, {
+        teamId,
+        title: feeDraft.title,
+        amountCents: feeDraft.amountCents,
+        dueDate: feeDraft.dueDate,
+        notes: feeDraft.notes || '',
+        recipientCount: recipients.length,
+        status: 'open',
+        collectionMode,
+        offlinePaymentInstructions,
+        createdBy: user.uid || null,
+        createdByEmail: user.email || user.profileEmail || null,
+        createdAt: now,
+        updatedAt: now
+    });
+
+    recipients.forEach((recipient) => {
+        if (!recipient.playerId) return;
+        const recipientRef = doc(db, `teams/${teamId}/feeBatches/${batchRef.id}/feeRecipients/${recipient.playerId}`);
+        write.set(recipientRef, {
+            ...recipient,
+            batchId: batchRef.id,
+            teamId,
+            feeTitle: feeDraft.title,
+            amountCents: feeDraft.amountCents,
+            dueDate: feeDraft.dueDate,
+            notes: feeDraft.notes || '',
+            status: 'unpaid',
+            collectionMode,
+            offlinePaymentInstructions,
+            createdAt: now,
+            updatedAt: now
+        });
+    });
+
+    await write.commit();
+    return { id: batchRef.id };
 }
 
 export async function getParentDashboardData(userId) {
