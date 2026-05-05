@@ -164,6 +164,9 @@ const els = {
   highlightShareBtn: q('#highlight-share-btn'),
   highlightSaveBtn: q('#highlight-save-btn'),
   savedHighlightsList: q('#saved-highlights-list'),
+  videoEmptyState: q('#video-empty-state'),
+  gameClipsSection: q('#game-clips-section'),
+  gameClipsList: q('#game-clips-list'),
   nativeCameraPanel: q('#native-camera-panel'),
   nativeCameraPreview: q('#native-camera-preview'),
   nativeCameraPlaceholder: q('#native-camera-placeholder'),
@@ -265,6 +268,7 @@ function resolveVideoPlayback() {
   return resolveReplayVideoOptions({
     team: state.team,
     game: state.game,
+    players: state.players,
     isReplay: state.isReplay,
     clipStartMs: state.clipStartMs,
     clipEndMs: state.clipEndMs
@@ -389,11 +393,18 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const iframe = document.getElementById('youtube-stream-iframe');
   const recordedVideo = els.recordedReplayVideo;
   const previousPlayback = state.videoPlayback;
-  const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  const previousMode = previousPlayback?.mode || 'none';
+  const nextMode = nextPlayback?.mode || 'none';
+  const shouldReloadPlayback = previousMode !== nextMode || (
+    (nextMode === 'embed' || nextMode === 'recorded') &&
+    (previousPlayback?.sourceUrl || '') !== (nextPlayback?.sourceUrl || '')
+  );
   state.videoPlayback = nextPlayback;
   const canUseNativeCamera = userCanUseNativeCamera();
-  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || canUseNativeCamera);
+  const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || canUseNativeCamera || hasGameClips);
   updateNativeCameraPanel();
+  renderGameClips();
 
   if (state.videoPlayback?.mode === 'recorded') {
     if (iframe) {
@@ -453,13 +464,18 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       iframe.classList.add('hidden');
     }
     els.recordedReplayTools?.classList.add('hidden');
-    els.videoPanel?.classList.toggle('hidden', !canUseNativeCamera);
-    if (videoTab) videoTab.classList.toggle('hidden', !canUseNativeCamera);
+    const shouldShowVideoPanel = canUseNativeCamera || hasGameClips;
+    els.videoPanel?.classList.toggle('hidden', !shouldShowVideoPanel);
+    if (videoTab) videoTab.classList.toggle('hidden', !shouldShowVideoPanel);
     if (extLink) {
       extLink.classList.add('hidden');
       extLink.removeAttribute('href');
     }
-    if (state.activeTab === 'video' && !canUseNativeCamera) state.activeTab = 'plays';
+    if (state.activeTab === 'video' && !shouldShowVideoPanel) state.activeTab = 'plays';
+  }
+
+  if (els.videoEmptyState) {
+    els.videoEmptyState.classList.toggle('hidden', state.videoPlayback?.mode !== 'none' || canUseNativeCamera || hasGameClips);
   }
 
   updateTabs();
@@ -606,6 +622,58 @@ function renderSavedHighlights() {
       </button>
     `;
   }).join('');
+}
+
+function renderGameClips() {
+  if (!els.gameClipsList) return;
+  const clips = state.videoPlayback?.gameClips || [];
+  if (!clips.length) {
+    els.gameClipsList.innerHTML = '<div class="rounded-lg border border-dashed border-teal/20 px-3 py-4 text-sm text-sand/50">No clips for this game yet.</div>';
+    return;
+  }
+
+  els.gameClipsList.innerHTML = clips.map((clip, index) => `
+    <article class="rounded-xl border border-teal/20 bg-ink/45 p-3">
+      <video class="w-full rounded-lg bg-black" controls playsinline preload="metadata" src="${escapeHtml(clip.url)}"${clip.posterUrl ? ` poster="${escapeHtml(clip.posterUrl)}"` : ''}></video>
+      <div class="mt-3 space-y-1">
+        <h3 class="text-sm font-semibold text-sand">${escapeHtml(clip.title || `Clip ${index + 1}`)}</h3>
+        ${clip.playDescription ? `<p class="text-sm text-sand/75">${escapeHtml(clip.playDescription)}</p>` : ''}
+        <div class="flex flex-wrap gap-2 text-xs text-sand/55">
+          ${clip.scoreContext ? `<span class="rounded-full border border-teal/20 px-2 py-1">${escapeHtml(clip.scoreContext)}</span>` : ''}
+          ${clip.period ? `<span class="rounded-full border border-teal/20 px-2 py-1">${escapeHtml(clip.period)}</span>` : ''}
+          ${clip.players.length ? `<span class="rounded-full border border-teal/20 px-2 py-1">${escapeHtml(clip.players.join(', '))}</span>` : ''}
+        </div>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-2 text-xs">
+        <button type="button" data-game-clip-action="share" data-game-clip-index="${index}" class="rounded-lg bg-teal px-3 py-2 font-medium text-ink">Share</button>
+        <a href="${escapeHtml(clip.url)}" download="${escapeHtml(clip.downloadName || 'game-clip.mp4')}" class="rounded-lg border border-teal/25 px-3 py-2 font-medium text-sand hover:bg-ink/80">Download</a>
+        <button type="button" data-game-clip-action="copy" data-game-clip-index="${index}" class="rounded-lg border border-teal/25 px-3 py-2 font-medium text-sand hover:bg-ink/80">Copy link</button>
+      </div>
+    </article>
+  `).join('');
+}
+
+async function handleGameClipAction(action, clip) {
+  if (!clip) return;
+  if (action === 'copy' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(clip.url);
+      showToast('Clip link copied!');
+      return;
+    } catch (error) {
+      console.warn('Failed to copy clip link directly:', error);
+    }
+  }
+
+  const result = await shareOrCopy({
+    title: clip.title || 'Game clip',
+    text: clip.playDescription || clip.scoreContext || 'Watch this game clip',
+    url: clip.url,
+    clipboardText: action === 'copy' ? clip.url : `${clip.title || 'Game clip'}\n${clip.url}`
+  });
+  if (result.status === 'shared') showToast('Clip share sheet opened!');
+  if (result.status === 'copied') showToast('Clip link copied!');
+  if (result.status === 'failed') showToast('Failed to share clip.');
 }
 
 function renderRecordedReplayTools() {
@@ -771,6 +839,15 @@ function initRecordedReplayControls() {
       }
       setSelectedTaggedPlayerIds(clip.taggedPlayerIds);
       applyHighlightSelection(clip, { autoplay: false });
+    });
+  }
+  if (els.gameClipsList && !els.gameClipsList.dataset.bound) {
+    els.gameClipsList.dataset.bound = 'true';
+    els.gameClipsList.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-game-clip-action]');
+      if (!button) return;
+      const clip = state.videoPlayback?.gameClips?.[Number(button.dataset.gameClipIndex)];
+      await handleGameClipAction(button.dataset.gameClipAction, clip);
     });
   }
 }
