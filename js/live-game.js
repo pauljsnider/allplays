@@ -31,8 +31,8 @@ import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=1';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=5';
-import { getDefaultLivePeriod } from './live-sport-config.js?v=1';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
+import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
 
 const state = {
   teamId: null,
@@ -179,6 +179,8 @@ const statKeyMap = {
   BLOCK: 'blk',
   TO: 'to',
   TOV: 'to',
+  GOALS: 'goals',
+  GOAL: 'goals',
   FOUL: 'fouls',
   FOULS: 'fouls',
   FLS: 'fouls'
@@ -756,6 +758,11 @@ function renderPlayByPlay(event, isNew = false) {
       ? '<span class="event-side-tag away-color">AWAY</span>'
       : '<span class="event-side-tag home-color">HOME</span>';
   }
+  const statKey = String(event.statKey || '').toLowerCase();
+  const scoringBadge = event.type === 'goal' || statKey === 'goals'
+    ? '<span class="text-2xl font-bold text-teal">GOAL</span>'
+    : (statKey === 'pts' && event.value ? `<span class="text-2xl font-bold ${event.value === 3 ? 'text-gold' : 'text-teal'}">+${event.value}</span>` : '');
+
   card.innerHTML = `
     <div class="flex justify-between items-start">
       <div>
@@ -767,9 +774,7 @@ function renderPlayByPlay(event, isNew = false) {
         ${event.playerName ? `<p class="text-sand/60 text-sm">#${escapeHtml(event.playerNumber || '')} ${escapeHtml(event.playerName)}</p>` : ''}
         ${event.isOpponent && (event.opponentPlayerName || event.opponentPlayerNumber) ? `<p class="text-sand/60 text-sm">${opponentLabel}</p>` : ''}
       </div>
-      ${event.statKey === 'pts' && event.value ? `
-        <span class="text-2xl font-bold ${event.value === 3 ? 'text-gold' : 'text-teal'}">+${event.value}</span>
-      ` : ''}
+      ${scoringBadge}
     </div>
   `;
 
@@ -1039,6 +1044,11 @@ function showScoreCelebration(event) {
   document.body.appendChild(flash);
   setTimeout(() => flash.remove(), 200);
 
+  if (event.type === 'goal' || String(event.statKey || '').toLowerCase() === 'goals') {
+    showFloatingText('Goal!', event.isOpponent ? 'text-coral text-4xl font-bold' : 'text-teal text-4xl font-bold');
+    return;
+  }
+
   if (event.value === 3) {
     showFloatingText('+3!', 'text-gold text-4xl font-bold');
   }
@@ -1046,10 +1056,10 @@ function showScoreCelebration(event) {
 
 function showEventCelebration(event) {
   if (!event) return;
-  if (event.type === 'stat' && event.statKey === 'pts') return;
+  const key = (event.statKey || '').toLowerCase();
+  if (event.type === 'goal' || (event.type === 'stat' && ['pts', 'points', 'goals'].includes(key))) return;
 
   const type = event.type;
-  const key = (event.statKey || '').toLowerCase();
   let text = '';
   let classes = event.isOpponent ? 'text-coral text-2xl font-semibold' : 'text-teal text-2xl font-semibold';
 
