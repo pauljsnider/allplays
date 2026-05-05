@@ -453,8 +453,9 @@ service cloud.firestore {
 
         match /registrations/{registrationId} {
           allow read, update, delete: if isTeamOwnerOrAdmin(teamId);
-          allow create: if isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data) &&
-                          isPendingRegistrationPayloadValid(teamId, formId, request.resource.data);
+          allow create: if (isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending') ||
+                          (isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data) &&
+                           isPendingRegistrationPayloadValid(teamId, formId, request.resource.data));
         }
       }
 
