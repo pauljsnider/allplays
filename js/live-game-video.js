@@ -151,9 +151,10 @@ function getRecordedReplayConfig(game) {
 }
 
 function getLiveEmbedConfig(team) {
+    const parentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
     if (team?.twitchChannel) {
         return {
-            embedUrl: `https://player.twitch.tv/?channel=${team.twitchChannel}&parent=${window.location.hostname}&autoplay=true&muted=true`,
+            embedUrl: `https://player.twitch.tv/?channel=${team.twitchChannel}&parent=${parentHost}&autoplay=true&muted=true`,
             publicUrl: `https://twitch.tv/${team.twitchChannel}`,
             publicLabel: 'Watch on Twitch ↗'
         };
@@ -304,6 +305,29 @@ export function normalizeGameRecapHighlightClips(game, options = {}) {
         .sort((a, b) => (a.order - b.order) || ((a.startMs ?? 0) - (b.startMs ?? 0)));
 }
 
+
+export function resolveGameMediaHub({ team, game, durationMs = null } = {}) {
+    const recorded = getRecordedReplayConfig(game);
+    const liveEmbed = getLiveEmbedConfig(team);
+    const highlightDurationMs = toFiniteNumber(durationMs) ?? recorded?.durationMs ?? null;
+
+    return {
+        liveStream: liveEmbed?.embedUrl ? {
+            sourceUrl: liveEmbed.embedUrl,
+            publicUrl: liveEmbed.publicUrl,
+            publicLabel: liveEmbed.publicLabel || 'Open live stream ↗'
+        } : null,
+        replay: recorded?.sourceUrl ? {
+            sourceUrl: recorded.sourceUrl,
+            publicUrl: recorded.publicUrl || recorded.sourceUrl,
+            publicLabel: recorded.publicUrl ? 'Open replay video ↗' : 'Open replay video',
+            title: recorded.title,
+            durationMs: recorded.durationMs
+        } : null,
+        highlights: normalizeSavedHighlightClips(game, { durationMs: highlightDurationMs })
+    };
+}
+
 export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs }) {
     const url = new URL('/live-game.html', origin);
     url.searchParams.set('teamId', teamId);
@@ -315,6 +339,7 @@ export function buildHighlightShareUrl({ origin, teamId, gameId, startMs, endMs 
 }
 
 export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = null, clipEndMs = null }) {
+    const mediaHub = resolveGameMediaHub({ team, game });
     const recorded = getRecordedReplayConfig(game);
     const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || game?.liveStatus === 'completed' || game?.status === 'completed');
 
@@ -336,7 +361,8 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
             durationMs: recorded.durationMs,
             clipStartMs: activeClip?.startMs ?? null,
             clipEndMs: activeClip?.endMs ?? null,
-            savedHighlights: normalizeSavedHighlightClips(game, { durationMs: recorded.durationMs })
+            savedHighlights: mediaHub.highlights,
+            mediaHub
         };
     }
 
@@ -353,7 +379,8 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
             durationMs: null,
             clipStartMs: null,
             clipEndMs: null,
-            savedHighlights: []
+            savedHighlights: mediaHub.highlights,
+            mediaHub
         };
     }
 
@@ -368,7 +395,8 @@ export function resolveReplayVideoOptions({ team, game, isReplay, clipStartMs = 
         durationMs: null,
         clipStartMs: null,
         clipEndMs: null,
-        savedHighlights: []
+        savedHighlights: mediaHub.highlights,
+        mediaHub
     };
 }
 
