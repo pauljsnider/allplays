@@ -84,6 +84,18 @@ export async function getRsvps() {
     return [];
 }
 
+export async function getRsvpSummaries() {
+    return new Map();
+}
+
+export async function submitRsvp() {
+    return undefined;
+}
+
+export async function getMyRsvp() {
+    return null;
+}
+
 export async function getLocalAttractionSponsors() {
     return [];
 }

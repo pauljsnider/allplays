@@ -78,4 +78,30 @@ describe('team schedule filtering', () => {
         expect(pastEvents).toHaveLength(1);
         expect(pastEvents[0].opponent).toBe('Storm');
     });
+
+    it('shows only upcoming tracked games and practices in the availability view', () => {
+        const getFilteredScheduleEvents = loadGetFilteredScheduleEvents();
+        const result = getFilteredScheduleEvents({
+            showPractices: false,
+            scheduleViewFilter: 'availability',
+            allScheduleEvents: [
+                { type: 'calendar', isPractice: false, isCancelled: false, date: hoursFromNow(24), opponent: 'Imported' },
+                { type: 'db', isPractice: false, isCancelled: false, date: hoursFromNow(25), opponent: 'Rivals' },
+                { type: 'db', isPractice: true, isCancelled: false, date: hoursFromNow(26), opponent: 'Practice' },
+                { type: 'db', isPractice: false, isCancelled: true, date: hoursFromNow(27), opponent: 'Cancelled' },
+                { type: 'db', isPractice: false, isCancelled: false, date: hoursFromNow(-24), opponent: 'Past' }
+            ]
+        });
+
+        expect(result.map((event) => event.opponent)).toEqual(['Rivals', 'Practice']);
+    });
+
+    it('wires the team availability filter and RSVP controls into team.html', () => {
+        const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="schedule-filter-availability"');
+        expect(source).toContain('submitTeamAvailabilityFromButton');
+        expect(source).toContain('getRsvpSummaries');
+        expect(source).toContain('no response');
+    });
 });
