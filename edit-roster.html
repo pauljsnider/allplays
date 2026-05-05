@@ -190,7 +190,74 @@
             </div>
 
             <!-- Roster List -->
-            <div class="md:col-span-2">
+            <div class="md:col-span-2 space-y-6">
+                <section id="roster-field-settings" class="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div class="p-6 border-b border-gray-200">
+                        <div class="flex items-start justify-between gap-4">
+                            <div>
+                                <h2 class="text-xl font-bold">Roster Field Settings</h2>
+                                <p class="text-sm text-gray-600 mt-1">Create custom profile fields for this team. These definitions are saved, but player form/display rollout is separate.</p>
+                            </div>
+                            <button id="new-roster-field-btn" type="button" class="px-3 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-md hover:bg-indigo-700">New Field</button>
+                        </div>
+                    </div>
+                    <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-900 mb-3">Configured Fields</h3>
+                            <div id="roster-field-list" class="space-y-2 text-sm"></div>
+                        </div>
+                        <form id="roster-field-form" class="space-y-3 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                            <div class="flex items-center justify-between">
+                                <h3 id="roster-field-form-title" class="font-semibold text-gray-900">Add Field</h3>
+                                <button id="cancel-roster-field-edit" type="button" class="hidden text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+                            </div>
+                            <input type="hidden" id="roster-field-key">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Label</label>
+                                <input id="roster-field-label" type="text" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Type</label>
+                                    <select id="roster-field-type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                        <option value="text">Text</option>
+                                        <option value="menu">Menu</option>
+                                        <option value="checkbox">Checkbox</option>
+                                        <option value="date">Date</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Default Visibility</label>
+                                    <select id="roster-field-visibility" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                                        <option value="team">Team</option>
+                                        <option value="parents">Parents</option>
+                                        <option value="admins">Admins only</option>
+                                        <option value="public">Public</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Section</label>
+                                <input id="roster-field-section" type="text" placeholder="Profile" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Help Text</label>
+                                <textarea id="roster-field-help" rows="2" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700">Options</label>
+                                <textarea id="roster-field-options" rows="2" placeholder="One option per line for menu or checkbox fields" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"></textarea>
+                                <p class="text-xs text-gray-500 mt-1">Stored for menu and checkbox definitions.</p>
+                            </div>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input id="roster-field-required" type="checkbox" class="rounded text-indigo-600 focus:ring-indigo-500">
+                                <span>Required</span>
+                            </label>
+                            <button type="submit" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Save Field</button>
+                        </form>
+                    </div>
+                </section>
+
                 <div class="bg-white rounded-lg shadow-md overflow-hidden">
                     <div class="p-6 border-b border-gray-200 flex justify-between items-center">
                         <h2 class="text-xl font-bold">Current Roster</h2>
@@ -362,8 +429,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions } from './js/db.js?v=16';
-        import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=1';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions } from './js/db.js?v=17';
+        import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=12';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -381,6 +448,7 @@
         let editingPhotoUrl = null;
         let editingPlayerProfile = null;
         let rosterFieldDefinitions = [];
+        let rosterFieldDefinitionDrafts = [];
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -411,8 +479,7 @@
                 return;
             }
             currentTeam = team;
-            rosterFieldDefinitions = normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(teamId, team));
-            renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
+            await refreshRosterFieldDefinitions();
 
             // Fetch unread count and render banner
             let unreadCount = 0;
@@ -511,6 +578,88 @@
                 button.disabled = false;
                 button.textContent = 'Re-import Roster';
             }
+        }
+
+        async function refreshRosterFieldDefinitions() {
+            const rawFields = await getRosterFieldDefinitions(currentTeamId, currentTeam);
+            rosterFieldDefinitionDrafts = normalizeRosterFieldDefinitions(rawFields, { includeInactive: true });
+            rosterFieldDefinitions = rosterFieldDefinitionDrafts.filter((field) => field.active !== false);
+            renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
+            renderRosterFieldSettings();
+        }
+
+        function resetRosterFieldForm() {
+            document.getElementById('roster-field-form').reset();
+            document.getElementById('roster-field-key').value = '';
+            document.getElementById('roster-field-form-title').textContent = 'Add Field';
+            document.getElementById('cancel-roster-field-edit').classList.add('hidden');
+        }
+
+        function editRosterField(fieldKey) {
+            const field = rosterFieldDefinitionDrafts.find((item) => item.key === fieldKey);
+            if (!field) return;
+            document.getElementById('roster-field-key').value = field.key;
+            document.getElementById('roster-field-label').value = field.label || '';
+            document.getElementById('roster-field-type').value = field.type || 'text';
+            document.getElementById('roster-field-visibility').value = field.visibility || 'team';
+            document.getElementById('roster-field-section').value = field.section || '';
+            document.getElementById('roster-field-help').value = field.description || '';
+            document.getElementById('roster-field-options').value = (field.options || []).map((option) => option.label || option.value).join('\n');
+            document.getElementById('roster-field-required').checked = field.required === true;
+            document.getElementById('roster-field-form-title').textContent = 'Edit Field';
+            document.getElementById('cancel-roster-field-edit').classList.remove('hidden');
+        }
+
+        function renderRosterFieldSettings() {
+            const container = document.getElementById('roster-field-list');
+            if (!container) return;
+            if (rosterFieldDefinitionDrafts.length === 0) {
+                container.innerHTML = '<div class="rounded-lg border border-dashed border-gray-300 p-4 text-gray-500">No roster profile fields configured yet.</div>';
+                return;
+            }
+
+            container.innerHTML = rosterFieldDefinitionDrafts.map((field, index) => `
+                <div class="rounded-lg border ${field.active === false ? 'border-gray-200 bg-gray-50 opacity-70' : 'border-gray-200 bg-white'} p-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="font-semibold text-gray-900">${escapeHtml(field.label)}</div>
+                            <div class="text-xs text-gray-500 mt-1">
+                                ${escapeHtml(field.type)} · ${escapeHtml(field.visibility || 'team')}${field.required ? ' · Required' : ''}${field.section ? ` · ${escapeHtml(field.section)}` : ''}
+                                ${field.active === false ? ' · Disabled' : ''}
+                            </div>
+                            ${field.options?.length ? `<div class="text-xs text-gray-500 mt-1">Options: ${escapeHtml(field.options.map((option) => option.label || option.value).join(', '))}</div>` : ''}
+                        </div>
+                        <div class="flex flex-wrap justify-end gap-2 text-xs">
+                            <button type="button" class="move-roster-field px-2 py-1 border rounded ${index === 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-50'}" data-key="${field.key}" data-direction="up" ${index === 0 ? 'disabled' : ''}>↑</button>
+                            <button type="button" class="move-roster-field px-2 py-1 border rounded ${index === rosterFieldDefinitionDrafts.length - 1 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-50'}" data-key="${field.key}" data-direction="down" ${index === rosterFieldDefinitionDrafts.length - 1 ? 'disabled' : ''}>↓</button>
+                            <button type="button" class="edit-roster-field text-indigo-600 hover:text-indigo-800" data-key="${field.key}">Edit</button>
+                            ${field.active === false ? '' : `<button type="button" class="disable-roster-field text-amber-700 hover:text-amber-900" data-key="${field.key}">Disable</button>`}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('.edit-roster-field').forEach((button) => {
+                button.addEventListener('click', () => editRosterField(button.dataset.key));
+            });
+            document.querySelectorAll('.disable-roster-field').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    if (!confirm('Disable this field definition? Existing player data will be preserved.')) return;
+                    await disableRosterFieldDefinition(currentTeamId, button.dataset.key);
+                    await refreshRosterFieldDefinitions();
+                });
+            });
+            document.querySelectorAll('.move-roster-field').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const index = rosterFieldDefinitionDrafts.findIndex((field) => field.key === button.dataset.key);
+                    const swapIndex = button.dataset.direction === 'up' ? index - 1 : index + 1;
+                    if (index < 0 || swapIndex < 0 || swapIndex >= rosterFieldDefinitionDrafts.length) return;
+                    const reordered = [...rosterFieldDefinitionDrafts];
+                    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+                    await reorderRosterFieldDefinitions(currentTeamId, reordered);
+                    await refreshRosterFieldDefinitions();
+                });
+            });
         }
 
         async function loadRoster() {
@@ -906,6 +1055,41 @@
         }
 
         document.getElementById('cancel-edit').addEventListener('click', () => resetForm());
+        document.getElementById('new-roster-field-btn').addEventListener('click', () => resetRosterFieldForm());
+        document.getElementById('cancel-roster-field-edit').addEventListener('click', () => resetRosterFieldForm());
+        document.getElementById('roster-field-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const options = document.getElementById('roster-field-options').value
+                .split('\n')
+                .map((option) => option.trim())
+                .filter(Boolean);
+            const existingKey = document.getElementById('roster-field-key').value;
+            const currentSortOrder = existingKey
+                ? rosterFieldDefinitionDrafts.find((field) => field.key === existingKey)?.sortOrder
+                : rosterFieldDefinitionDrafts.length;
+            try {
+                if (document.getElementById('roster-field-type').value === 'menu' && options.length === 0) {
+                    throw new Error('Menu fields need at least one option.');
+                }
+                const payload = buildRosterFieldDefinitionPayload({
+                    key: existingKey || undefined,
+                    label: document.getElementById('roster-field-label').value,
+                    type: document.getElementById('roster-field-type').value,
+                    visibility: document.getElementById('roster-field-visibility').value,
+                    section: document.getElementById('roster-field-section').value,
+                    description: document.getElementById('roster-field-help').value,
+                    options,
+                    required: document.getElementById('roster-field-required').checked,
+                    active: true,
+                    sortOrder: Number.isFinite(Number(currentSortOrder)) ? Number(currentSortOrder) : rosterFieldDefinitionDrafts.length
+                });
+                await saveRosterFieldDefinition(currentTeamId, payload);
+                resetRosterFieldForm();
+                await refreshRosterFieldDefinitions();
+            } catch (error) {
+                alert(error?.message || 'Unable to save roster field.');
+            }
+        });
 
         document.getElementById('add-player-form').addEventListener('submit', async (e) => {
             e.preventDefault();
