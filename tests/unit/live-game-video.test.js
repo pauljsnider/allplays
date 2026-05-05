@@ -7,6 +7,7 @@ import {
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
     canAccessNativeCameraCapture,
+    resolveGameMediaHub,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
 } from '../../js/live-game-video.js';
@@ -110,6 +111,38 @@ describe('live game replay video helpers', () => {
                 videoUrl: 'https://video.example.com/clip-2',
                 players: [{ id: 'p1', name: 'p1' }]
             }
+        ]);
+    });
+
+    it('collects live stream, replay, and saved highlights for the media hub', () => {
+        const hub = resolveGameMediaHub({
+            team: {
+                streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk'
+            },
+            game: {
+                replayVideo: {
+                    url: 'https://cdn.example.com/game.mp4',
+                    publicUrl: 'https://video.example.com/game',
+                    title: 'Full replay',
+                    durationMs: 120_000
+                },
+                highlightClips: [
+                    { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
+                ]
+            }
+        });
+
+        expect(hub.liveStream).toMatchObject({
+            sourceUrl: 'https://www.youtube.com/embed/abcdefghijk?autoplay=1&mute=1',
+            publicUrl: 'https://www.youtube.com/watch?v=abcdefghijk'
+        });
+        expect(hub.replay).toMatchObject({
+            sourceUrl: 'https://cdn.example.com/game.mp4',
+            publicUrl: 'https://video.example.com/game',
+            title: 'Full replay'
+        });
+        expect(hub.highlights).toMatchObject([
+            { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
         ]);
     });
 

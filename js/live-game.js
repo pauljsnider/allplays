@@ -30,7 +30,7 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=3';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=4';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
@@ -177,6 +177,8 @@ const els = {
   nativeCameraStartBtn: q('#native-camera-start-btn'),
   nativeCameraStopBtn: q('#native-camera-stop-btn'),
   nativeCameraStatus: q('#native-camera-status'),
+  gameMediaHub: q('#game-media-hub'),
+  gameMediaHubContent: q('#game-media-hub-content'),
   attachClipModal: q('#attach-clip-modal'),
   attachClipForm: q('#attach-clip-form'),
   attachClipTitle: q('#attach-clip-title'),
@@ -399,6 +401,11 @@ function initNativeCameraControls() {
 function refreshVideoPanel({ force = false } = {}) {
   const nextPlayback = resolveVideoPlayback();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
+    state.videoPlayback = nextPlayback;
+    state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || hasMediaHubContent(state.videoPlayback?.mediaHub));
+    renderRecordedReplayTools();
+    renderGameMediaHub();
+    updateTabs();
     return false;
   }
   setupVideoPanel(nextPlayback);
@@ -419,8 +426,10 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   );
   state.videoPlayback = nextPlayback;
   const canUseNativeCamera = userCanUseNativeCamera();
+  const hasMediaHub = hasMediaHubContent(state.videoPlayback?.mediaHub);
   const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
-  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || canUseNativeCamera || hasGameClips);
+  const shouldShowVideoPanel = canUseNativeCamera || hasMediaHub || hasGameClips;
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || shouldShowVideoPanel);
   updateNativeCameraPanel();
   renderGameClips();
 
@@ -482,7 +491,6 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       iframe.classList.add('hidden');
     }
     els.recordedReplayTools?.classList.add('hidden');
-    const shouldShowVideoPanel = canUseNativeCamera || hasGameClips;
     els.videoPanel?.classList.toggle('hidden', !shouldShowVideoPanel);
     if (videoTab) videoTab.classList.toggle('hidden', !shouldShowVideoPanel);
     if (extLink) {
@@ -493,10 +501,96 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   }
 
   if (els.videoEmptyState) {
-    els.videoEmptyState.classList.toggle('hidden', state.videoPlayback?.mode !== 'none' || canUseNativeCamera || hasGameClips);
+    els.videoEmptyState.classList.toggle('hidden', state.videoPlayback?.mode !== 'none' || shouldShowVideoPanel);
   }
 
+  renderGameMediaHub();
   updateTabs();
+}
+
+function hasMediaHubContent(mediaHub) {
+  return Boolean(mediaHub?.liveStream || mediaHub?.replay || mediaHub?.highlights?.length);
+}
+
+function buildMediaHubHighlightUrl(clip) {
+  if (clip?.videoUrl) return clip.videoUrl;
+  if (!Number.isFinite(clip?.startMs) || !Number.isFinite(clip?.endMs)) return null;
+  return buildHighlightShareUrl({
+    origin: window.location.origin,
+    teamId: state.teamId,
+    gameId: state.gameId,
+    startMs: clip.startMs,
+    endMs: clip.endMs
+  });
+}
+
+function buildSafeMediaHubHighlightUrl(clip) {
+  const clipUrl = buildMediaHubHighlightUrl(clip);
+  return clipUrl && isSafeUrl(clipUrl) ? clipUrl : null;
+}
+
+function renderGameMediaHub() {
+  if (!els.gameMediaHub || !els.gameMediaHubContent) return;
+  const mediaHub = state.videoPlayback?.mediaHub || {};
+  if (!hasMediaHubContent(mediaHub)) {
+    els.gameMediaHub.classList.add('hidden');
+    els.gameMediaHubContent.innerHTML = '';
+    return;
+  }
+
+  const sections = [];
+  if (mediaHub.liveStream) {
+    sections.push(`
+      <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
+        <div class="text-[11px] uppercase tracking-[0.2em] text-teal/70">Live stream</div>
+        <div class="mt-1 flex items-center justify-between gap-3">
+          <span class="text-sm text-sand/75">External provider stream</span>
+          ${mediaHub.liveStream.publicUrl ? `<a href="${escapeHtml(mediaHub.liveStream.publicUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs text-teal hover:text-teal/80">${escapeHtml(mediaHub.liveStream.publicLabel || 'Open stream ↗')}</a>` : '<span class="text-xs text-sand/45">Embedded above</span>'}
+        </div>
+      </div>
+    `);
+  }
+  if (mediaHub.replay) {
+    const replayUrl = `live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}&replay=true`;
+    sections.push(`
+      <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
+        <div class="text-[11px] uppercase tracking-[0.2em] text-teal/70">Replay</div>
+        <div class="mt-1 flex items-center justify-between gap-3">
+          <span class="text-sm text-sand/75">${escapeHtml(mediaHub.replay.title || 'Recorded game replay')}</span>
+          <a href="${escapeHtml(replayUrl)}" class="text-xs text-teal hover:text-teal/80">Watch replay</a>
+        </div>
+      </div>
+    `);
+  }
+  if (mediaHub.highlights?.length) {
+    const highlights = mediaHub.highlights.map((clip, index) => {
+      const clipUrl = buildSafeMediaHubHighlightUrl(clip);
+      return `
+        <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</div>
+              <div class="text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</div>
+            </div>
+            <div class="flex shrink-0 gap-2">
+              ${clipUrl ? `<a href="${escapeHtml(clipUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs text-teal hover:text-teal/80">Play</a><button type="button" data-media-highlight-index="${index}" class="text-xs text-teal hover:text-teal/80">Copy</button>` : '<span class="text-xs text-sand/45">No link</span>'}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    sections.push(`
+      <div>
+        <div class="mb-2 text-[11px] uppercase tracking-[0.2em] text-teal/70">Saved highlights</div>
+        <div class="space-y-2">${highlights}</div>
+      </div>
+    `);
+  } else {
+    sections.push('<div class="rounded-lg border border-dashed border-teal/20 px-3 py-3 text-sm text-sand/50">No replay highlights have been saved for this game yet.</div>');
+  }
+
+  els.gameMediaHubContent.innerHTML = sections.join('');
+  els.gameMediaHub.classList.remove('hidden');
 }
 
 function formatVideoTimestamp(ms) {
@@ -797,9 +891,14 @@ async function saveHighlightClip() {
     };
     state.videoPlayback = {
       ...state.videoPlayback,
-      savedHighlights: nextHighlights
+      savedHighlights: nextHighlights,
+      mediaHub: {
+        ...(state.videoPlayback?.mediaHub || {}),
+        highlights: nextHighlights
+      }
     };
     renderRecordedReplayTools();
+    renderGameMediaHub();
     showToast('Highlight saved.');
   } catch (error) {
     console.warn('Failed to save highlight clip:', error);
@@ -966,6 +1065,25 @@ function initRecordedReplayControls() {
       }
       setSelectedTaggedPlayerIds(clip.taggedPlayerIds);
       applyHighlightSelection(clip, { autoplay: false });
+    });
+  }
+  if (els.gameMediaHubContent && !els.gameMediaHubContent.dataset.bound) {
+    els.gameMediaHubContent.dataset.bound = 'true';
+    els.gameMediaHubContent.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-media-highlight-index]');
+      if (!button) return;
+      const clip = state.videoPlayback?.mediaHub?.highlights?.[Number(button.dataset.mediaHighlightIndex)];
+      const clipUrl = buildSafeMediaHubHighlightUrl(clip);
+      if (!clipUrl) return;
+      const result = await shareOrCopy({
+        title: clip.title || 'Game highlight',
+        text: clip.title || 'Watch this highlight',
+        url: clipUrl,
+        clipboardText: `${clip.title || 'Game highlight'}\n${clipUrl}`
+      });
+      if (result.status === 'shared') showToast('Clip share sheet opened!');
+      if (result.status === 'copied') showToast('Clip link copied!');
+      if (result.status === 'failed') showToast('Failed to copy clip link.');
     });
   }
   if (els.gameClipsList && !els.gameClipsList.dataset.bound) {
