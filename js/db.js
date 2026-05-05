@@ -80,6 +80,7 @@ import {
     buildRegistrationRosterDecision,
     getRegistrationGuardianDrafts,
     getRegistrationPlayerDraft,
+    matchesRegistrationReviewStatus,
     normalizeRegistrationStatus,
     summarizeRegistration
 } from './registration-review.js?v=1';
@@ -928,7 +929,6 @@ export async function listTeamRegistrationForms(teamId) {
 export async function listTeamRegistrationReviews(teamId, formId, status = 'all') {
     if (!teamId || !formId) return [];
     const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formId}/registrations`));
-    const wantedStatus = String(status || 'all').toLowerCase();
     return sortRegistrationReviews(snapshot.docs.map((registrationDoc) => {
         const registration = {
             id: registrationDoc.id,
@@ -940,7 +940,7 @@ export async function listTeamRegistrationReviews(teamId, formId, status = 'all'
             ...registration,
             reviewSummary: summarizeRegistration(registration)
         };
-    })).filter((registration) => wantedStatus === 'all' || normalizeRegistrationStatus(registration.status) === wantedStatus);
+    })).filter((registration) => matchesRegistrationReviewStatus(registration, status));
 }
 
 async function getExistingGuardianUsers(guardians = []) {
@@ -996,6 +996,7 @@ export async function approveTeamRegistration(teamId, formId, registrationId, op
         registration,
         team,
         playerId: playerRef.id,
+        rosterDestinationType: existingPlayer ? 'existing-player' : 'new-player',
         reviewer: {
             userId: currentUser.uid,
             email: currentUser.email || '',
@@ -1040,23 +1041,6 @@ export async function approveTeamRegistration(teamId, formId, registrationId, op
             createdAt: now
         });
     }
-
-    existingGuardianUsers.forEach((user) => {
-        batch.set(doc(db, 'users', user.id), {
-            parentOf: arrayUnion({
-                teamId,
-                teamName: team.name || '',
-                playerId: playerRef.id,
-                playerName: playerUpdate.name || '',
-                playerNumber: playerUpdate.number || '',
-                relation: guardianLinks.find((guardian) => guardian.userId === user.id)?.relation || 'Guardian'
-            }),
-            parentTeamIds: arrayUnion(teamId),
-            parentPlayerKeys: arrayUnion(`${teamId}::${playerRef.id}`),
-            roles: arrayUnion('parent'),
-            updatedAt: now
-        }, { merge: true });
-    });
 
     batch.update(registrationRef, {
         ...decision.registrationUpdate,

@@ -3,6 +3,7 @@ import {
     buildRegistrationRosterDecision,
     getRegistrationGuardianDrafts,
     getRegistrationPlayerDraft,
+    matchesRegistrationReviewStatus,
     normalizeRegistrationStatus,
     summarizeRegistration
 } from '../../js/registration-review.js';
@@ -44,6 +45,16 @@ describe('registration review helpers', () => {
             playerNumber: '12',
             guardianLabel: 'pat@example.com'
         });
+    });
+
+    it('matches registration review status filters', () => {
+        expect(matchesRegistrationReviewStatus({ status: 'pending' }, 'pending')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ status: 'rejected' }, 'rejected')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ registrationApproved: true }, 'registration-approved')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ rosterApproved: true }, 'roster-approved')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ registrationApproved: false }, 'rejected')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ rosterApproved: false }, 'rejected')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ rosterApproved: false }, 'roster-approved')).toBe(false);
     });
 
     it('builds an auditable roster approval decision', () => {
@@ -89,6 +100,25 @@ describe('registration review helpers', () => {
                 playerId: 'player-1',
                 type: 'existing-player'
             }
+        });
+    });
+
+    it('records new roster players as new-player even after an id is assigned', () => {
+        const decision = buildRegistrationRosterDecision({
+            registration: {
+                id: 'reg-2',
+                formId: 'spring-2026',
+                player: { playerName: 'Riley Cruz' }
+            },
+            team: { id: 'team-1', name: 'Blue Jays' },
+            playerId: 'generated-player-id',
+            rosterDestinationType: 'new-player'
+        });
+
+        expect(decision.registrationUpdate.rosterDestination).toMatchObject({
+            teamId: 'team-1',
+            playerId: 'generated-player-id',
+            type: 'new-player'
         });
     });
 });

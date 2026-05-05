@@ -116,7 +116,25 @@ export function getRegistrationGuardianDrafts(registration = {}) {
     return [...deduped.values()];
 }
 
-export function buildRegistrationRosterDecision({ registration = {}, team = {}, playerId = '', reviewer = {}, now = null, decisionNote = '' } = {}) {
+export function matchesRegistrationReviewStatus(registration = {}, status = 'all') {
+    const wantedStatus = cleanString(status).toLowerCase() || 'all';
+    switch (wantedStatus) {
+        case 'all':
+            return true;
+        case 'registration-approved':
+            return registration.registrationApproved === true;
+        case 'roster-approved':
+            return registration.rosterApproved === true;
+        case 'rejected':
+            return normalizeRegistrationStatus(registration.status) === 'rejected' ||
+                registration.registrationApproved === false ||
+                registration.rosterApproved === false;
+        default:
+            return normalizeRegistrationStatus(registration.status) === wantedStatus;
+    }
+}
+
+export function buildRegistrationRosterDecision({ registration = {}, team = {}, playerId = '', rosterDestinationType = '', reviewer = {}, now = null, decisionNote = '' } = {}) {
     const playerDraft = getRegistrationPlayerDraft(registration);
     if (!playerDraft.name) {
         throw new Error('Registration is missing a player name.');
@@ -148,7 +166,7 @@ export function buildRegistrationRosterDecision({ registration = {}, team = {}, 
             rosterDestination: {
                 teamId: team.id || registration.teamId || '',
                 playerId: playerId || null,
-                type: playerId ? 'existing-player' : 'new-player'
+                type: rosterDestinationType || (playerId ? 'existing-player' : 'new-player')
             }
         }
     };
