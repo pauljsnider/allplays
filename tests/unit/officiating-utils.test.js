@@ -3,6 +3,7 @@ import {
   claimOfficiatingSlot,
   computeOfficiatingCoverageStatus,
   getAssignedOfficiatingSlots,
+  getOfficiatingAssignmentConflictWarnings,
   getOpenOfficiatingSlots,
   normalizeOfficiatingSlots,
   updateOfficiatingSlotResponse
@@ -77,5 +78,121 @@ describe('officiating assignment helpers', () => {
     expect(() => claimOfficiatingSlot([
       { id: 'slot-1', position: 'Referee', officialEmail: 'taken@example.com', status: 'pending' }
     ], 'slot-1', { uid: 'user-1' })).toThrow('already filled');
+  });
+
+  it('warns when the same official has overlapping or back-to-back assignments', () => {
+    const warnings = getOfficiatingAssignmentConflictWarnings({
+      id: 'game-new',
+      date: new Date('2026-05-04T10:00:00Z'),
+      opponent: 'Lions',
+      location: 'Field 1',
+      officiatingSlots: [
+        { position: 'Referee', officialEmail: 'Ref@Example.com', officialName: 'Jordan Ref', status: 'pending' }
+      ]
+    }, [
+      {
+        id: 'game-overlap',
+        date: new Date('2026-05-04T11:00:00Z'),
+        opponent: 'Tigers',
+        location: 'Field 2',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', officialName: 'Jordan Ref', status: 'accepted' }
+        ]
+      },
+      {
+        id: 'game-back-to-back',
+        date: new Date('2026-05-04T12:00:00Z'),
+        opponent: 'Bears',
+        location: 'Field 3',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', officialName: 'Jordan Ref', status: 'pending' }
+        ]
+      }
+    ]);
+
+    expect(warnings).toMatchObject([
+      {
+        officialName: 'Jordan Ref',
+        conflictType: 'overlap',
+        conflictingGameId: 'game-overlap',
+        conflictingGameLabel: 'vs. Tigers at Field 2'
+      },
+      {
+        officialName: 'Jordan Ref',
+        conflictType: 'back-to-back',
+        conflictingGameId: 'game-back-to-back',
+        conflictingGameLabel: 'vs. Bears at Field 3'
+      }
+    ]);
+  });
+
+  it('does not warn for different officials, ignored statuses, cancelled games, or the game being edited', () => {
+    const warnings = getOfficiatingAssignmentConflictWarnings({
+      id: 'game-1',
+      date: new Date('2026-05-04T10:00:00Z'),
+      opponent: 'Lions',
+      officiatingSlots: [
+        { position: 'Referee', officialEmail: 'ref@example.com', status: 'pending' }
+      ]
+    }, [
+      {
+        id: 'game-1',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Same game',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', status: 'pending' }
+        ]
+      },
+      {
+        id: 'game-2',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Different official',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'other@example.com', status: 'pending' }
+        ]
+      },
+      {
+        id: 'game-3',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Declined slot',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', status: 'declined' }
+        ]
+      },
+      {
+        id: 'game-4',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Cancelled game',
+        status: 'cancelled',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', status: 'accepted' }
+        ]
+      }
+    ], { editingGameId: 'game-1' });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('does not warn when the candidate game is cancelled', () => {
+    const warnings = getOfficiatingAssignmentConflictWarnings({
+      id: 'game-cancelled',
+      date: new Date('2026-05-04T10:00:00Z'),
+      opponent: 'Lions',
+      status: 'cancelled',
+      officiatingSlots: [
+        { position: 'Referee', officialEmail: 'ref@example.com', status: 'pending' }
+      ]
+    }, [
+      {
+        id: 'game-active',
+        date: new Date('2026-05-04T10:30:00Z'),
+        opponent: 'Tigers',
+        officiatingSlots: [
+          { position: 'Referee', officialEmail: 'ref@example.com', status: 'accepted' }
+        ]
+      }
+    ]);
+
+    expect(warnings).toEqual([]);
   });
 });
