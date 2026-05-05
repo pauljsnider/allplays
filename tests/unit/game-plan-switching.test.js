@@ -61,6 +61,9 @@ function buildHarness(overrides = {}) {
         'selected-game-info',
         'game-details',
         'save-status',
+        'save-status-text',
+        'save-status-dot',
+        'save-status-spinner',
         'save-plan-btn',
         'save-plan-note',
         'num-periods',
@@ -266,5 +269,19 @@ describe('game plan game switching', () => {
         const saveNote = document.getElementById('save-plan-note');
         expect(saveButton.disabled).toBe(false);
         expect(saveNote.classList.contains('hidden')).toBe(true);
+    });
+
+    it('shows a read-only save notice for shared tournament games', async () => {
+        const { harness, document } = buildHarness();
+
+        await harness.loadGame({
+            id: 'shared-game',
+            opponent: 'Wolves',
+            date: '2026-04-06T19:00:00.000Z',
+            isSharedGame: true
+        });
+
+        expect(document.getElementById('save-status').className).toContain('bg-amber-50');
+        expect(document.getElementById('save-status-text').textContent).toBe('Shared tournament games are read-only');
     });
 });

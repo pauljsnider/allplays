@@ -1,4 +1,5 @@
 const SUPPORTED_TYPES = new Set(['text', 'menu', 'checkbox', 'date']);
+const SUPPORTED_VISIBILITY = new Set(['public', 'team', 'parents', 'admins']);
 
 function slugify(value) {
     return String(value || '')
@@ -30,27 +31,51 @@ function normalizeOptions(options) {
         .filter(Boolean);
 }
 
-export function normalizeRosterFieldDefinitions(fields = []) {
+function normalizeVisibility(value) {
+    const normalized = String(value || 'team').trim().toLowerCase();
+    if (normalized === 'private' || normalized === 'admin') return 'admins';
+    if (normalized === 'family') return 'parents';
+    return SUPPORTED_VISIBILITY.has(normalized) ? normalized : 'team';
+}
+
+export function buildRosterFieldDefinitionPayload(field = {}, fallbackOrder = 0) {
+    const label = String(field.label || field.name || field.title || '').trim();
+    const key = String(field.key || field.id || slugify(label) || `field-${fallbackOrder + 1}`).trim();
+    if (!key || !label) {
+        throw new Error('Roster field label is required.');
+    }
+
+    const type = normalizeFieldType(field.type || field.fieldType);
+    const options = normalizeOptions(field.options || field.choices || field.values);
+
+    return {
+        key,
+        label,
+        type,
+        section: String(field.section || '').trim(),
+        required: field.required === true,
+        options,
+        description: String(field.description || field.helpText || '').trim(),
+        visibility: normalizeVisibility(field.visibility || field.defaultVisibility),
+        active: field.active !== false,
+        sortOrder: Number.isFinite(Number(field.sortOrder ?? field.order)) ? Number(field.sortOrder ?? field.order) : fallbackOrder
+    };
+}
+
+export function normalizeRosterFieldDefinitions(fields = [], options = {}) {
     if (!Array.isArray(fields)) return [];
+    const includeInactive = options.includeInactive === true;
 
     return fields
         .map((field, index) => {
             if (!field || typeof field !== 'object') return null;
-            const label = String(field.label || field.name || field.title || '').trim();
-            const key = String(field.key || field.id || slugify(label) || `field-${index + 1}`).trim();
-            if (!key || !label) return null;
-
-            return {
-                key,
-                label,
-                type: normalizeFieldType(field.type || field.fieldType),
-                required: field.required === true,
-                options: normalizeOptions(field.options || field.choices || field.values),
-                description: String(field.description || field.helpText || '').trim(),
-                sortOrder: Number.isFinite(Number(field.sortOrder ?? field.order)) ? Number(field.sortOrder ?? field.order) : index
-            };
+            try {
+                return buildRosterFieldDefinitionPayload(field, index);
+            } catch (e) {
+                return null;
+            }
         })
-        .filter(Boolean)
+        .filter((field) => field && (includeInactive || field.active !== false))
         .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
 }
 
