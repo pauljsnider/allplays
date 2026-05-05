@@ -216,7 +216,7 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame\n} from './db.js?v=15';",
+            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame\n} from './db.js?v=29';",
             'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, subscribeGame, updateGame } = deps.db;'
         )
         .replace(
@@ -242,6 +242,10 @@ function buildModuleSource() {
         .replace(
             /import \{ MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback \} from '\.\/live-game-video\.js\?v=\d+';/,
             'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+        )
+        .replace(
+            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
+            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
             "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
@@ -423,6 +427,12 @@ async function bootReplayPage({ replayEvents }) {
             createHighlightClipDraft: () => ({ startMs: 0, endMs: 0, title: '' }),
             resolveReplayVideoOptions: () => null,
             shouldReloadVideoPlayback: () => false
+        },
+        teamEntitlements: {
+            TEAM_PASS_FEATURES: {},
+            canAccessPremiumFanFeature: () => false,
+            getTeamEntitlementStatus: () => ({ isActive: false }),
+            resolveTeamEntitlementSeasonId: () => null
         },
         firebaseAi: {
             getAI: () => ({}),
