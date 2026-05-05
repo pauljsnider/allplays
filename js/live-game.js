@@ -490,6 +490,11 @@ function buildMediaHubHighlightUrl(clip) {
   });
 }
 
+function buildSafeMediaHubHighlightUrl(clip) {
+  const clipUrl = buildMediaHubHighlightUrl(clip);
+  return clipUrl && isSafeUrl(clipUrl) ? clipUrl : null;
+}
+
 function renderGameMediaHub() {
   if (!els.gameMediaHub || !els.gameMediaHubContent) return;
   const mediaHub = state.videoPlayback?.mediaHub || {};
@@ -525,7 +530,7 @@ function renderGameMediaHub() {
   }
   if (mediaHub.highlights?.length) {
     const highlights = mediaHub.highlights.map((clip, index) => {
-      const clipUrl = buildMediaHubHighlightUrl(clip);
+      const clipUrl = buildSafeMediaHubHighlightUrl(clip);
       return `
         <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
           <div class="flex items-start justify-between gap-3">
@@ -873,7 +878,7 @@ function initRecordedReplayControls() {
       const button = event.target.closest('[data-media-highlight-index]');
       if (!button) return;
       const clip = state.videoPlayback?.mediaHub?.highlights?.[Number(button.dataset.mediaHighlightIndex)];
-      const clipUrl = buildMediaHubHighlightUrl(clip);
+      const clipUrl = buildSafeMediaHubHighlightUrl(clip);
       if (!clipUrl) return;
       const result = await shareOrCopy({
         title: clip.title || 'Game highlight',
