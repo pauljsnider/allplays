@@ -2522,6 +2522,36 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
     return Array.from(feesByPath.values());
 }
 
+export async function getTeamFeeBatch(teamId, batchId) {
+    if (!teamId || !batchId) return null;
+    const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
+    const batchSnap = await getDoc(batchRef);
+    return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeRecipients(teamId, batchId) {
+    if (!teamId || !batchId) return [];
+    const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
+    const snapshot = await getDocs(recipientsRef);
+    return snapshot.docs
+        .map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }))
+        .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+}
+
+export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
+    if (!teamId || !batchId || !recipientId) {
+        throw new Error('Missing fee recipient context.');
+    }
+
+    const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
+    await updateDoc(recipientRef, {
+        ...updates,
+        teamId,
+        batchId,
+        updatedAt: serverTimestamp()
+    });
+}
+
 export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {
     if (!teamId) throw new Error('Team ID is required.');
     if (!feeDraft?.title) throw new Error('Fee title is required.');

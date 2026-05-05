@@ -453,6 +453,14 @@ service cloud.firestore {
         }
       }
 
+      match /feeBatches/{batchId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /feeRecipients/{recipientId} {
+          allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        }
+      }
+
       match /membershipRequests/{requestId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
