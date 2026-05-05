@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildTeamPassMarkup, getTeamPassAccess } from '../../js/team-pass.js';
+import {
+    buildTeamPassMarkup,
+    getTeamPassAccess,
+    normalizeTeamPassStatus,
+    readTeamPassStatus,
+    selectTeamPassRecord
+} from '../../js/team-pass.js';
 
 const TEAM = {
     id: 'team-1',
@@ -8,56 +14,129 @@ const TEAM = {
     adminEmails: ['admin@example.com']
 };
 
+function mockFirebaseForDocs(docs) {
+    return {
+        db: {},
+        collection: (_db, path) => ({ path }),
+        getDocs: async () => ({
+            docs: docs.map((data) => ({ data: () => data }))
+        })
+    };
+}
+
 describe('team pass UI helpers', () => {
-    it('allows coaches and admins to see the buy team pass entry point', () => {
+    it('treats coaches and admins as staff for the management panel', () => {
         expect(getTeamPassAccess({ uid: 'coach-1', coachOf: ['team-1'] }, TEAM)).toMatchObject({
-            isEligible: true,
-            label: 'Coach/Admin access'
+            isStaff: true,
+            canReadStatus: true,
+            label: 'Coach/Admin access',
+            mode: 'staff'
         });
 
         expect(getTeamPassAccess({ uid: 'admin-1', email: 'admin@example.com' }, TEAM)).toMatchObject({
-            isEligible: true,
-            label: 'Coach/Admin access'
+            isStaff: true,
+            canReadStatus: true,
+            label: 'Coach/Admin access',
+            mode: 'staff'
         });
     });
 
-    it('allows confirmed parents to see the buy team pass entry point', () => {
+    it('keeps parents and fans in read-only mode without staff metadata controls', () => {
         expect(getTeamPassAccess({ uid: 'parent-1', parentOf: [{ teamId: 'team-1', playerId: 'p1' }] }, TEAM)).toMatchObject({
-            isEligible: true,
-            label: 'Confirmed parent access'
+            isStaff: false,
+            canReadStatus: false,
+            label: 'Team member access',
+            mode: 'readonly'
         });
-    });
 
-    it('keeps non-eligible users in read-only mode', () => {
-        expect(getTeamPassAccess({ uid: 'fan-1', email: 'fan@example.com' }, TEAM)).toEqual({
-            isEligible: false,
+        expect(getTeamPassAccess({ uid: 'fan-1', email: 'fan@example.com' }, TEAM)).toMatchObject({
+            isStaff: false,
+            canReadStatus: false,
             label: 'Read-only preview',
             mode: 'readonly'
         });
     });
 
-    it('renders plan options and disabled checkout messaging', () => {
-        const markup = buildTeamPassMarkup({
-            team: TEAM,
-            access: { isEligible: true, label: 'Coach/Admin access' }
-        });
+    it('normalizes active, expired, revoked, and missing team pass states', () => {
+        const now = new Date('2026-05-05T00:00:00.000Z');
 
-        expect(markup).toContain('Buy Team Pass');
-        expect(markup).toContain('Plus Team Pass');
-        expect(markup).toContain('Premium Team Pass');
-        expect(markup).toContain('Season-scoped coverage');
-        expect(markup).toContain('disabled aria-disabled="true"');
-        expect(markup).toContain('Checkout is not connected yet');
+        expect(normalizeTeamPassStatus({
+            status: 'active',
+            tier: 'team-pass',
+            teamId: 'team-1',
+            expiresAt: '2026-12-31T00:00:00.000Z'
+        }, { team: TEAM, now })).toMatchObject({ status: 'active', label: 'Active' });
+
+        expect(normalizeTeamPassStatus({
+            status: 'active',
+            tier: 'team-pass',
+            teamId: 'team-1',
+            expiresAt: '2026-01-01T00:00:00.000Z'
+        }, { team: TEAM, now })).toMatchObject({ status: 'expired', label: 'Expired' });
+
+        expect(normalizeTeamPassStatus({
+            status: 'active',
+            tier: 'team-pass',
+            teamId: 'team-1',
+            revokedAt: '2026-04-01T00:00:00.000Z'
+        }, { team: TEAM, now })).toMatchObject({ status: 'revoked', label: 'Revoked' });
+
+        expect(normalizeTeamPassStatus(null, { team: TEAM, now })).toMatchObject({ status: 'missing', label: 'Missing' });
     });
 
-    it('renders non-eligible users as unable to purchase', () => {
+    it('selects an active Team Pass before older expired or revoked records', () => {
+        const pass = selectTeamPassRecord([
+            { status: 'revoked', tier: 'team-pass', teamId: 'team-1', updatedAt: '2026-05-04T00:00:00.000Z' },
+            { status: 'active', tier: 'team-pass', teamId: 'team-1', expiresAt: '2026-12-31T00:00:00.000Z', updatedAt: '2026-05-01T00:00:00.000Z' },
+            { status: 'active', tier: 'family-plan', teamId: 'team-1', updatedAt: '2026-05-05T00:00:00.000Z' }
+        ], { team: TEAM, now: new Date('2026-05-05T00:00:00.000Z') });
+
+        expect(pass).toMatchObject({ status: 'active', label: 'Active' });
+    });
+
+    it('reads raw team entitlement status only for staff access', async () => {
+        await expect(readTeamPassStatus({
+            team: TEAM,
+            access: { canReadStatus: true },
+            deps: { firebase: mockFirebaseForDocs([{ status: 'active', tier: 'team-pass', teamId: 'team-1' }]) }
+        })).resolves.toMatchObject({ status: 'active' });
+
+        await expect(readTeamPassStatus({
+            team: TEAM,
+            access: { canReadStatus: false },
+            deps: { firebase: mockFirebaseForDocs([{ status: 'active', tier: 'team-pass', teamId: 'team-1' }]) }
+        })).resolves.toMatchObject({ status: 'readonly' });
+    });
+
+    it('renders staff status metadata and missing checkout callout without checkout controls', () => {
         const markup = buildTeamPassMarkup({
             team: TEAM,
-            access: { isEligible: false, label: 'Read-only preview' }
+            access: { isStaff: true, label: 'Coach/Admin access' },
+            pass: { status: 'missing', label: 'Missing', expiresAt: null, updatedAt: null }
         });
 
-        expect(markup).toContain('Read-only preview');
-        expect(markup).toContain('Purchase unavailable');
-        expect(markup).toContain('coach, admin, or confirmed parent');
+        expect(markup).toContain('Team Pass management');
+        expect(markup).toContain('Current status');
+        expect(markup).toContain('Missing');
+        expect(markup).toContain('Covered team');
+        expect(markup).toContain('Blue Jays');
+        expect(markup).toContain('Expiration');
+        expect(markup).toContain('Last updated');
+        expect(markup).toContain('Checkout is not available yet');
+        expect(markup).not.toContain('Buy Team Pass');
+    });
+
+    it('renders read-only team access without staff metadata controls', () => {
+        const markup = buildTeamPassMarkup({
+            team: TEAM,
+            access: { isStaff: false, label: 'Team member access' },
+            pass: { status: 'readonly', label: 'Read-only' }
+        });
+
+        expect(markup).toContain('Read-only');
+        expect(markup).toContain('Team Pass access is managed by team staff');
+        expect(markup).not.toContain('Expiration');
+        expect(markup).not.toContain('Last updated');
+        expect(markup).not.toContain('Checkout is not available yet');
     });
 });

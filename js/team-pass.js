@@ -54,6 +54,54 @@ function escapeTeamPassHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+function normalizeString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeStatus(value) {
+    return normalizeString(value).toLowerCase();
+}
+
+function normalizeDateValue(value) {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
+    if (typeof value.toDate === 'function') {
+        const date = value.toDate();
+        return date instanceof Date && !Number.isNaN(date.getTime()) ? date : undefined;
+    }
+    if (typeof value.seconds === 'number') {
+        const date = new Date(value.seconds * 1000);
+        return Number.isNaN(date.getTime()) ? undefined : date;
+    }
+    if (typeof value === 'number' || typeof value === 'string') {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? undefined : date;
+    }
+    return undefined;
+}
+
+function getExpirationDate(data) {
+    if (!data || typeof data !== 'object') return null;
+    const fields = ['expiresAt', 'validUntil', 'endsAt', 'endAt'];
+    for (const field of fields) {
+        if (Object.prototype.hasOwnProperty.call(data, field)) {
+            return normalizeDateValue(data[field]);
+        }
+    }
+    return null;
+}
+
+function getUpdatedDate(data) {
+    if (!data || typeof data !== 'object') return null;
+    const fields = ['updatedAt', 'lastUpdatedAt', 'createdAt', 'purchasedAt'];
+    for (const field of fields) {
+        if (Object.prototype.hasOwnProperty.call(data, field)) {
+            return normalizeDateValue(data[field]);
+        }
+    }
+    return null;
+}
+
 function arrayIncludesTeamId(values, teamId) {
     return Array.isArray(values) && values.some((value) => {
         if (typeof value === 'string') return value === teamId;
@@ -61,32 +109,139 @@ function arrayIncludesTeamId(values, teamId) {
     });
 }
 
+function loadFirebase(deps = {}) {
+    if (deps.firebase) return deps.firebase;
+    return import('./firebase.js?v=11');
+}
+
+function dataFromSnapshot(docSnap) {
+    return typeof docSnap?.data === 'function' ? docSnap.data() : null;
+}
+
+function compareByUpdatedAtDesc(a, b) {
+    const aTime = getUpdatedDate(a)?.getTime?.() || 0;
+    const bTime = getUpdatedDate(b)?.getTime?.() || 0;
+    return bTime - aTime;
+}
+
 export function getTeamPassAccess(user, team) {
     const teamId = team?.id;
-    const isCoachOrAdmin = hasFullTeamAccess(user, team) || arrayIncludesTeamId(user?.coachOf, teamId);
-    const isConfirmedParent = arrayIncludesTeamId(user?.parentOf, teamId);
-    const isEligible = Boolean(user && teamId && (isCoachOrAdmin || isConfirmedParent));
+    const isStaff = hasFullTeamAccess(user, team) || arrayIncludesTeamId(user?.coachOf, teamId);
+    const isConfirmedParent = arrayIncludesTeamId(user?.parentOf, teamId) || arrayIncludesTeamId(user?.parentTeamIds, teamId);
 
-    if (isCoachOrAdmin) {
-        return { isEligible, label: 'Coach/Admin access', mode: 'eligible' };
+    if (isStaff) {
+        return { isStaff: true, canReadStatus: true, label: 'Coach/Admin access', mode: 'staff' };
     }
 
     if (isConfirmedParent) {
-        return { isEligible, label: 'Confirmed parent access', mode: 'eligible' };
+        return { isStaff: false, canReadStatus: false, label: 'Team member access', mode: 'readonly' };
     }
 
-    return { isEligible: false, label: 'Read-only preview', mode: 'readonly' };
+    return { isStaff: false, canReadStatus: false, label: 'Read-only preview', mode: 'readonly' };
 }
 
-export function buildTeamPassMarkup({ team = {}, access = { isEligible: false, label: 'Read-only preview' } } = {}) {
+export function normalizeTeamPassStatus(record, { team = {}, now = new Date() } = {}) {
+    if (!record || typeof record !== 'object') {
+        return { status: 'missing', label: 'Missing', record: null, expiresAt: null, updatedAt: null };
+    }
+
+    const rawStatus = normalizeStatus(record.status);
+    const expiresAt = getExpirationDate(record);
+    const updatedAt = getUpdatedDate(record);
+    const entitlementTeamId = normalizeString(record.teamId);
+    const isWrongTeam = entitlementTeamId && team?.id && entitlementTeamId !== team.id;
+    const isRevoked = rawStatus === 'revoked' || rawStatus === 'deleted' || record.revoked === true || record.isRevoked === true || Boolean(normalizeDateValue(record.revokedAt));
+    const isExpired = rawStatus === 'expired' || (expiresAt instanceof Date && expiresAt <= now);
+
+    if (isWrongTeam) {
+        return { status: 'missing', label: 'Missing', record: null, expiresAt: null, updatedAt: null };
+    }
+
+    if (isRevoked) {
+        return { status: 'revoked', label: 'Revoked', record, expiresAt, updatedAt };
+    }
+
+    if (isExpired) {
+        return { status: 'expired', label: 'Expired', record, expiresAt, updatedAt };
+    }
+
+    if (rawStatus === 'active') {
+        return { status: 'active', label: 'Active', record, expiresAt, updatedAt };
+    }
+
+    return { status: 'missing', label: 'Missing', record: null, expiresAt: null, updatedAt: null };
+}
+
+export function selectTeamPassRecord(records = [], { team = {}, now = new Date() } = {}) {
+    const candidates = (Array.isArray(records) ? records : [])
+        .filter((record) => {
+            if (!record || typeof record !== 'object') return false;
+            const tier = normalizeString(record.tier);
+            const entitlementTeamId = normalizeString(record.teamId);
+            return (!tier || tier === 'team-pass') && (!entitlementTeamId || entitlementTeamId === team?.id);
+        })
+        .sort(compareByUpdatedAtDesc);
+
+    const normalized = candidates.map((record) => normalizeTeamPassStatus(record, { team, now }));
+    return normalized.find((item) => item.status === 'active')
+        || normalized.find((item) => item.status === 'expired')
+        || normalized.find((item) => item.status === 'revoked')
+        || normalizeTeamPassStatus(null, { team, now });
+}
+
+export async function readTeamPassStatus({ team, access, deps = {} } = {}) {
+    if (!team?.id || !access?.canReadStatus) {
+        return { status: 'readonly', label: 'Read-only', record: null, expiresAt: null, updatedAt: null };
+    }
+
+    try {
+        const { db, collection, getDocs } = await loadFirebase(deps);
+        const snapshot = await getDocs(collection(db, `teams/${team.id}/entitlements`));
+        return selectTeamPassRecord(snapshot.docs.map(dataFromSnapshot), { team });
+    } catch (error) {
+        console.error('Unable to read Team Pass status:', error);
+        return { status: 'unavailable', label: 'Unavailable', record: null, expiresAt: null, updatedAt: null };
+    }
+}
+
+function formatDateForPanel(value) {
+    if (!(value instanceof Date)) return 'Not set';
+    return value.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function getStatusClasses(status) {
+    if (status === 'active') return 'bg-green-50 text-green-700 border-green-200';
+    if (status === 'expired') return 'bg-amber-50 text-amber-800 border-amber-200';
+    if (status === 'revoked') return 'bg-red-50 text-red-700 border-red-200';
+    if (status === 'unavailable') return 'bg-gray-50 text-gray-700 border-gray-200';
+    return 'bg-gray-50 text-gray-700 border-gray-200';
+}
+
+function getPanelCopy(status, access) {
+    if (!access?.isStaff) {
+        return 'Team Pass access is managed by team staff. You can view team content normally when your team access allows it.';
+    }
+    if (status === 'missing') {
+        return 'No Team Pass is configured for this team yet. Checkout is not available, so staff will need to configure the pass later.';
+    }
+    if (status === 'expired') {
+        return 'This Team Pass has expired. Checkout is not available, so renewal must be configured later.';
+    }
+    if (status === 'revoked') {
+        return 'This Team Pass has been revoked. This panel is informational only and does not grant or revoke access.';
+    }
+    if (status === 'active') {
+        return 'This team has an active Team Pass. This panel is informational only and does not grant or revoke access.';
+    }
+    return 'Team Pass status could not be verified right now. No entitlement changes were made.';
+}
+
+export function buildTeamPassMarkup({ team = {}, access = getTeamPassAccess(null, team), pass = { status: 'readonly', label: 'Read-only' } } = {}) {
     const teamName = escapeTeamPassHtml(team?.name || 'this team');
-    const ctaText = access.isEligible ? 'Buy Team Pass' : 'Purchase unavailable';
-    const ctaClasses = access.isEligible
-        ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-not-allowed'
-        : 'bg-gray-200 text-gray-500 cursor-not-allowed';
-    const helperText = access.isEligible
-        ? 'Checkout is not connected yet, so this button is intentionally disabled.'
-        : 'Sign in as a coach, admin, or confirmed parent to start purchase when checkout is configured.';
+    const status = pass?.status || 'readonly';
+    const label = escapeTeamPassHtml(pass?.label || 'Read-only');
+    const statusClasses = getStatusClasses(status);
+    const showStaffMetadata = access?.isStaff;
 
     return `
         <section id="team-pass" class="mb-8 bg-white rounded-2xl shadow-lg border border-primary-200 overflow-hidden">
@@ -94,38 +249,31 @@ export function buildTeamPassMarkup({ team = {}, access = { isEligible: false, l
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
                     <div class="max-w-3xl">
                         <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide bg-amber-100 text-amber-800 border border-amber-200 mb-4">
-                            Team-wide fan access
+                            Team Pass management
                         </div>
-                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900 mb-3">Buy Team Pass for ${teamName}</h2>
-                        <p class="text-gray-600 leading-relaxed">
-                            A Team Pass will cover fan-facing Plus or Premium features for the whole team for the selected season. One team purchase keeps families on the same access level without per-parent setup.
-                        </p>
-                        <div class="mt-4 flex flex-wrap gap-2 text-sm">
-                            <span class="inline-flex px-3 py-1 rounded-full bg-white border border-primary-100 text-primary-700 font-semibold">Season-scoped coverage</span>
-                            <span class="inline-flex px-3 py-1 rounded-full bg-white border border-primary-100 text-primary-700 font-semibold">Applies team-wide</span>
-                            <span class="inline-flex px-3 py-1 rounded-full bg-white border border-primary-100 text-primary-700 font-semibold">No charges today</span>
-                        </div>
+                        <h2 class="text-2xl md:text-3xl font-bold text-gray-900 mb-3">Team Pass for ${teamName}</h2>
+                        <p class="text-gray-600 leading-relaxed">${escapeTeamPassHtml(getPanelCopy(status, access))}</p>
                     </div>
-                    <div class="lg:w-72 bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
-                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Your access</div>
-                        <div class="text-lg font-bold text-gray-900">${escapeTeamPassHtml(access.label)}</div>
-                        <button type="button" disabled aria-disabled="true" class="mt-4 w-full inline-flex justify-center items-center px-4 py-2.5 rounded-lg text-sm font-bold transition ${ctaClasses}">
-                            ${ctaText}
-                        </button>
-                        <p class="mt-2 text-xs text-gray-500 leading-relaxed">${helperText}</p>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                    <div class="bg-white rounded-xl border border-gray-200 p-5">
-                        <h3 class="text-lg font-bold text-gray-900 mb-2">Plus Team Pass</h3>
-                        <p class="text-sm text-gray-600 leading-relaxed">Designed for core fan features such as enhanced live following, replay convenience, and season access for families.</p>
-                        <div class="mt-4 text-sm font-semibold text-gray-500">Checkout pending backend configuration</div>
-                    </div>
-                    <div class="bg-white rounded-xl border border-amber-200 p-5">
-                        <h3 class="text-lg font-bold text-gray-900 mb-2">Premium Team Pass</h3>
-                        <p class="text-sm text-gray-600 leading-relaxed">Designed for the full fan experience, including Premium fan capabilities when entitlement support is added later.</p>
-                        <div class="mt-4 text-sm font-semibold text-gray-500">Checkout pending backend configuration</div>
+                    <div class="lg:w-80 bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Current status</div>
+                        <div class="inline-flex items-center px-3 py-1 rounded-full text-sm font-bold border ${statusClasses}">${label}</div>
+                        <dl class="mt-4 space-y-3 text-sm">
+                            <div>
+                                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Covered team</dt>
+                                <dd class="mt-1 font-semibold text-gray-900">${teamName}</dd>
+                            </div>
+                            ${showStaffMetadata ? `
+                            <div>
+                                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Expiration</dt>
+                                <dd class="mt-1 text-gray-700">${escapeTeamPassHtml(formatDateForPanel(pass?.expiresAt))}</dd>
+                            </div>
+                            <div>
+                                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Last updated</dt>
+                                <dd class="mt-1 text-gray-700">${escapeTeamPassHtml(formatDateForPanel(pass?.updatedAt))}</dd>
+                            </div>
+                            ` : ''}
+                        </dl>
+                        ${showStaffMetadata && status === 'missing' ? '<div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800">Checkout is not available yet. Configure this Team Pass later when entitlement setup is ready.</div>' : ''}
                     </div>
                 </div>
             </div>
@@ -133,8 +281,10 @@ export function buildTeamPassMarkup({ team = {}, access = { isEligible: false, l
     `;
 }
 
-export function renderTeamPassCard(container, { user, team } = {}) {
+export async function renderTeamPassCard(container, { user, team, deps = {} } = {}) {
     if (!container) return;
     const access = getTeamPassAccess(user, team);
-    container.innerHTML = buildTeamPassMarkup({ team, access });
+    container.innerHTML = buildTeamPassMarkup({ team, access, pass: { status: 'loading', label: 'Loading' } });
+    const pass = await readTeamPassStatus({ team, access, deps });
+    container.innerHTML = buildTeamPassMarkup({ team, access, pass });
 }
