@@ -1,6 +1,6 @@
 import { escapeHtml } from './utils.js?v=8';
 import { getTeams } from './db.js?v=29';
-import { filterSearchableTeams } from './global-search-visibility.js?v=1';
+import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
 import {
     db,
     collectionGroup,
@@ -464,19 +464,20 @@ function openModal({ initialQuery = '' } = {}) {
                 return;
             }
 
-            const items = Array.from(byPath.values()).map((d) => {
+            const items = Array.from(byPath.values()).flatMap((d) => {
                 const data = d.data() || {};
                 const name = data.name || 'Player';
                 const number = data.number || '';
                 const { teamId, playerId } = parseTeamAndPlayerIdFromPath(d.ref.path);
+                if (!canUserDiscoverPlayerInSearch(teamId, modalState.teamsById, currentUser)) return [];
                 const teamName = modalState.teamsById.get(teamId)?.name || teamId || 'Team';
 
-                return {
+                return [{
                     kind: 'player',
                     title: `${number ? `#${number} ` : ''}${name}`,
                     subtitle: teamName,
                     href: `player.html#teamId=${encodeURIComponent(teamId)}&playerId=${encodeURIComponent(playerId)}`
-                };
+                }];
             });
 
             // Basic ranking: starts-with match on name/number, then shorter strings first.
@@ -533,6 +534,9 @@ function openModal({ initialQuery = '' } = {}) {
             modalState.teamsById = new Map((teams || []).map(t => [t.id, t]));
             modalState.activeIndex = 0;
             renderResults();
+            if ((modalState.input.value || '').trim().length >= 2) {
+                runPlayerSearch(modalState.input.value);
+            }
         } catch (e) {
             console.error('[GlobalSearch] Failed to load teams:', e);
             if (!modalState) return;
