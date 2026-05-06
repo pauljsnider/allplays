@@ -2733,6 +2733,10 @@
             }
 
             if (undoData && undoData.type === 'football_score') {
+                if (index !== 0) {
+                    alert('Undo football scoring entries from newest to oldest so the scoreboard stays accurate.');
+                    return;
+                }
                 const previousScore = undoData.previousScore || {};
                 homeScore = Math.max(0, Number(previousScore.homeScore) || 0);
                 awayScore = Math.max(0, Number(previousScore.awayScore) || 0);

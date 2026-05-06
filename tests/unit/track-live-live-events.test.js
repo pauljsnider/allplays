@@ -64,6 +64,7 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('points: scoringAction.points');
     expect(source).toContain('teamSide: context.possession');
     expect(source).toContain('previousScore');
+    expect(source).toContain("alert('Undo football scoring entries from newest to oldest so the scoreboard stays accurate.');");
     expect(source).toContain("logFootballScore(btn.dataset.footballScore)");
 
   });
