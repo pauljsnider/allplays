@@ -104,10 +104,6 @@ export async function getLocalAttractionSponsors() {
     return [];
 }
 
-export async function postChatMessage() {
-    return undefined;
-}
-
 export async function getAdSpaceSponsors() {
     return [];
 }
