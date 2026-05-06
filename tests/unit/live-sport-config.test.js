@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels, isGoalSport } from '../../js/live-sport-config.js';
+import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels, isFootballSport, isGoalSport } from '../../js/live-sport-config.js';
 
 describe('live sport config helpers', () => {
   it('returns basketball defaults when sport is missing or basketball', () => {
@@ -7,6 +7,13 @@ describe('live sport config helpers', () => {
     expect(getSportPeriodLabels()).toEqual(['Q1', 'Q2', 'Q3', 'Q4', 'OT']);
     expect(getDefaultLivePeriod({ sport: 'Basketball' })).toBe('Q1');
     expect(getSportPeriodLabels({ sport: 'Basketball' })).toEqual(['Q1', 'Q2', 'Q3', 'Q4', 'OT']);
+  });
+
+  it('recognizes football from game, team, or config labels', () => {
+    expect(isFootballSport({ sport: 'Football' })).toBe(true);
+    expect(isFootballSport({ game: { sport: 'Flag Football' } })).toBe(true);
+    expect(isFootballSport({ config: { baseType: 'Football' } })).toBe(true);
+    expect(isFootballSport({ sport: 'Basketball' })).toBe(false);
   });
 
   it('returns volleyball set labels by sport', () => {
