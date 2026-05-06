@@ -259,7 +259,8 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors } from './js/db.js?v=18';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage } from './js/db.js?v=18';
+        import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
@@ -272,8 +273,9 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
+        import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
-        import { renderTeamPassCard } from './js/team-pass.js?v=1';
+        import { renderTeamPassCard } from './js/team-pass.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -298,6 +300,7 @@
         let currentTeam = null;
         let currentTeamId = null;
         let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
+        let currentPlayers = [];
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -305,6 +308,7 @@
         let teamGames = [];
         let gamesById = {};
         let allScheduleEvents = [];
+        let adSpaceSponsors = [];
         let scheduleViewFilter = 'recent-results';
         let scheduleViewMode = 'list';
         let scheduleCalendarMonth = new Date().getMonth();
@@ -315,6 +319,7 @@
         window.setScheduleView = setScheduleView;
         window.navScheduleMonth = navScheduleMonth;
         window.submitTeamAvailabilityFromButton = submitTeamAvailabilityFromButton;
+        window.sendAvailabilityReminderFromButton = sendAvailabilityReminderFromButton;
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
@@ -407,11 +412,17 @@
                 .map((link) => link.playerId.trim())));
         }
 
+        function canSendAvailabilityReminders() {
+            return !!currentUser && (currentUser?.isAdmin || currentTeamAccessInfo?.accessLevel === 'full' || currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin');
+        }
+
         function renderTeamAvailabilityControls(game, isUpcoming) {
             if (!isUpcoming || game.isCancelled || !currentUser || !currentTeamAccessInfo?.hasAccess) return '';
             const hasMixedPlayerRsvps = game.myRsvp === 'mixed';
             const locked = !!game.availabilityLocked || hasMixedPlayerRsvps;
             const summary = formatRsvpSummary(game.rsvpSummary);
+            const reminderCount = Number(game.rsvpSummary?.notResponded || 0);
+            const canRemind = canSendAvailabilityReminders();
             const lockCopy = hasMixedPlayerRsvps
                 ? 'Player-specific RSVP responses differ. Update each player from the parent dashboard to avoid overwriting child-specific availability.'
                 : (locked ? `Availability locked ${formatAvailabilityCutoff(game.availabilityPreferences).toLowerCase()}.` : '');
@@ -426,6 +437,7 @@
                         <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
                         <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Not Going</button>
                     </div>
+                    ${canRemind ? `<button type="button" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="sendAvailabilityReminderFromButton(this)" class="mt-2 w-full px-3 py-1.5 text-xs font-semibold rounded-lg border border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100 transition">Send reminder to ${reminderCount} no-response ${reminderCount === 1 ? 'recipient' : 'recipients'}</button>` : ''}
                     ${lockCopy ? `<div class="mt-1 text-xs font-semibold text-amber-700">${escapeHtml(lockCopy)}</div>` : ''}
                     <div data-team-availability-status class="mt-1 text-xs text-gray-500"></div>
                 </div>
@@ -454,6 +466,91 @@
             } catch (err) {
                 if (status) status.textContent = err?.message || 'Unable to save availability.';
             }
+        }
+
+        async function sendAvailabilityReminderFromButton(btn) {
+            if (btn?.disabled || !canSendAvailabilityReminders()) return;
+            const teamId = btn?.dataset?.teamId || currentTeamId;
+            const gameId = btn?.dataset?.gameId || '';
+            const event = (allScheduleEvents || []).find((item) => item.type === 'db' && (item.gameId || item.id) === gameId);
+            if (!teamId || !gameId || !event || !currentUser) return;
+            const container = btn.closest('[data-team-availability-container]');
+            const status = container?.querySelector('[data-team-availability-status]');
+
+            try {
+                btn.disabled = true;
+                if (status) status.textContent = 'Checking non-responders...';
+                const rsvps = await getRsvps(teamId, gameId);
+                const recipients = buildAvailabilityReminderRecipients(currentPlayers, rsvps);
+                if (recipients.playerIds.length === 0) {
+                    if (status) status.textContent = 'Everyone has responded. No reminder sent.';
+                    return;
+                }
+                const confirmed = window.confirm(`Send an availability reminder for this event to ${recipients.recipientCount} no-response ${recipients.recipientCount === 1 ? 'recipient' : 'recipients'} covering ${recipients.playerCount} roster ${recipients.playerCount === 1 ? 'member' : 'members'}?`);
+                if (!confirmed) {
+                    if (status) status.textContent = 'Reminder cancelled.';
+                    return;
+                }
+                if (status) status.textContent = 'Sending reminder...';
+                await postChatMessage(teamId, {
+                    text: buildRsvpReminderMessage({
+                        eventType: event.isPractice ? 'practice' : 'game',
+                        title: event.title || event.opponent || (event.isPractice ? 'Practice' : 'Untitled event'),
+                        dateLabel: formatDate(event.date),
+                        missingCount: recipients.playerCount
+                    }),
+                    senderId: currentUser.uid,
+                    senderName: currentUser.displayName || currentUser.email || 'Coach',
+                    senderEmail: currentUser.email || null,
+                    senderPhotoUrl: currentUser.photoURL || null,
+                    ai: false,
+                    aiMeta: {
+                        type: 'availability-reminder',
+                        gameId,
+                        recipientPlayerIds: recipients.playerIds,
+                        recipientParentIds: recipients.parentIds,
+                        recipientParentEmails: recipients.parentEmails,
+                        playerCount: recipients.playerCount,
+                        recipientCount: recipients.recipientCount,
+                        sentBy: currentUser.uid,
+                        sentAt: new Date().toISOString()
+                    }
+                });
+                if (status) status.textContent = `Reminder sent to ${recipients.recipientCount} no-response ${recipients.recipientCount === 1 ? 'recipient' : 'recipients'}.`;
+            } catch (err) {
+                if (status) status.textContent = err?.message || 'Unable to send reminder.';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function renderSponsorAdPlacement(sponsor, context = 'schedule') {
+            if (!sponsor) return '';
+            const imageHtml = sponsor.imageUrl
+                ? `<img src="${escapeHtml(sponsor.imageUrl)}" alt="${escapeHtml(sponsor.name)}" class="h-16 w-16 rounded-xl object-cover bg-white/60 border border-white/60 flex-shrink-0">`
+                : '<div class="h-16 w-16 rounded-xl bg-white/60 border border-white/60 flex items-center justify-center text-primary-700 font-black text-2xl flex-shrink-0">★</div>';
+            const bodyHtml = `
+                <div class="flex items-center gap-4">
+                    ${imageHtml}
+                    <div class="min-w-0">
+                        <div class="text-[11px] font-bold uppercase tracking-[0.2em] text-primary-700">Tournament sponsor</div>
+                        <div class="text-base font-black text-gray-900 truncate">${escapeHtml(sponsor.name)}</div>
+                        ${sponsor.description ? `<div class="text-sm text-gray-600 line-clamp-2">${escapeHtml(sponsor.description)}</div>` : ''}
+                    </div>
+                </div>
+            `;
+            const className = context === 'standings'
+                ? 'block rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 via-white to-amber-50 p-4 shadow-sm hover:shadow-md transition'
+                : 'block rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 via-white to-amber-50 p-4 shadow-sm hover:shadow-md transition';
+            if (sponsor.websiteUrl) {
+                return `<a class="${className}" target="_blank" rel="noopener noreferrer" href="${escapeHtml(sponsor.websiteUrl)}" aria-label="Visit ${escapeHtml(sponsor.name)} sponsor website">${bodyHtml}</a>`;
+            }
+            return `<div class="${className}" aria-label="Tournament sponsor ${escapeHtml(sponsor.name)}">${bodyHtml}</div>`;
+        }
+
+        function getInlineSponsor(index) {
+            if (!Array.isArray(adSpaceSponsors) || adSpaceSponsors.length === 0) return null;
+            return adSpaceSponsors[index % adSpaceSponsors.length];
         }
 
         function renderLocalAttractionsSection(sponsors, loadError = null) {
@@ -492,6 +589,68 @@
                     </div>
                 </article>
             `).join('');
+        }
+
+        function readSponsorPromoState(teamId) {
+            try {
+                return JSON.parse(localStorage.getItem(`allplays:sponsor-promo:${teamId}`) || '{}') || {};
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function writeSponsorPromoState(teamId, state) {
+            try {
+                localStorage.setItem(`allplays:sponsor-promo:${teamId}`, JSON.stringify(state));
+            } catch (error) {
+                // Ignore storage failures; dismiss still removes the modal for this view.
+            }
+        }
+
+        function dismissSponsorPromo(teamId, sponsorId) {
+            const sixHoursMs = 6 * 60 * 60 * 1000;
+            writeSponsorPromoState(teamId, {
+                lastSponsorId: sponsorId || '',
+                nextEligibleAt: Date.now() + sixHoursMs
+            });
+            document.getElementById('sponsor-promo-modal')?.remove();
+        }
+
+        function maybeShowSponsorPromo(teamId, sponsors) {
+            if (!teamId || !Array.isArray(sponsors) || sponsors.length === 0) return;
+            const state = readSponsorPromoState(teamId);
+            if (Number(state.nextEligibleAt) > Date.now()) return;
+
+            const sponsor = selectRotatingSponsor(sponsors, state.lastSponsorId);
+            if (!sponsor) return;
+            const websiteUrl = normalizeExternalWebsiteUrl(sponsor.websiteUrl);
+            const linkHtml = websiteUrl
+                ? `<a class="inline-flex items-center justify-center rounded-full bg-primary-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-primary-700" target="_blank" rel="noopener noreferrer" href="${escapeHtml(websiteUrl)}">Visit sponsor</a>`
+                : '';
+            const imageHtml = sponsor.imageUrl
+                ? `<img src="${escapeHtml(sponsor.imageUrl)}" alt="${escapeHtml(sponsor.name)}" class="mx-auto h-28 w-28 rounded-3xl object-cover shadow-lg border border-white">`
+                : '<div class="mx-auto h-28 w-28 rounded-3xl bg-primary-100 text-primary-700 flex items-center justify-center text-5xl font-black shadow-lg">★</div>';
+
+            const modal = document.createElement('div');
+            modal.id = 'sponsor-promo-modal';
+            modal.className = 'fixed inset-0 z-[70] bg-gray-950/70 p-4 flex items-center justify-center';
+            modal.innerHTML = `
+                <div class="w-full max-w-md rounded-3xl bg-white p-6 text-center shadow-2xl border border-primary-100">
+                    <div class="text-[11px] font-black uppercase tracking-[0.25em] text-primary-700 mb-4">Tournament sponsor spotlight</div>
+                    ${imageHtml}
+                    <h2 class="mt-5 text-2xl font-black text-gray-900">${escapeHtml(sponsor.name)}</h2>
+                    ${sponsor.description ? `<p class="mt-3 text-sm text-gray-600 leading-relaxed">${escapeHtml(sponsor.description)}</p>` : ''}
+                    <div class="mt-6 flex flex-col sm:flex-row justify-center gap-3">
+                        ${linkHtml}
+                        <button id="sponsor-promo-dismiss" class="inline-flex items-center justify-center rounded-full border border-gray-300 px-5 py-2.5 text-sm font-bold text-gray-700 hover:bg-gray-50">Dismiss</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('sponsor-promo-dismiss')?.addEventListener('click', () => dismissSponsorPromo(teamId, sponsor.id));
+            modal.addEventListener('click', (event) => {
+                if (event.target === modal) dismissSponsorPromo(teamId, sponsor.id);
+            });
         }
 
         function renderNextGameBody(nextGame) {
@@ -614,7 +773,7 @@
 
             const metricLabel = team?.standingsConfig?.rankingMode === 'win_pct' ? 'PCT' : 'PTS';
             const currentTeamName = String(team?.name || '').trim();
-            content.innerHTML = pools.map((pool) => {
+            content.innerHTML = pools.map((pool, index) => {
                 const rows = Array.isArray(pool.rows) ? pool.rows : [];
                 const scheduledGameCount = Number(pool.scheduledGameCount) || 0;
                 const completedGameCount = Number(pool.gameCount) || 0;
@@ -627,7 +786,7 @@
                     ? 'No completed tournament games with scores yet. Final scores will populate this standings table.'
                     : 'No games are scheduled in this division or pool yet.';
 
-                return `
+                const standingsHtml = `
                     <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
                         <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
                             <div>
@@ -684,6 +843,8 @@
                         }
                     </div>
                 `;
+                const sponsor = getInlineSponsor(index);
+                return sponsor ? `${standingsHtml}${renderSponsorAdPlacement(sponsor, 'standings')}` : standingsHtml;
             }).join('');
 
             section.classList.remove('hidden');
@@ -1048,6 +1209,7 @@
                     : null;
 
                 teamGames = dbGames;
+                currentPlayers = players;
                 gamesById = {};
                 dbGames.forEach((game) => {
                     const id = game.id || game.gameId;
@@ -1183,6 +1345,13 @@
                         ? await fetchLeagueStandings(team.leagueUrl, { teamName: team.name })
                         : { ok: false, reason: 'missing-url', rows: [], match: null });
 
+                try {
+                    adSpaceSponsors = await getAdSpaceSponsors(teamId);
+                } catch (error) {
+                    console.error('Error loading sponsor ad placements:', error);
+                    adSpaceSponsors = [];
+                }
+
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
 
@@ -1271,6 +1440,7 @@
                     console.error('Error loading local attractions:', error);
                     renderLocalAttractionsSection([], error);
                 }
+                maybeShowSponsorPromo(teamId, adSpaceSponsors);
 
                 // Start countdown updates
                 if (nextGame) {
@@ -1733,12 +1903,13 @@
                 return;
             }
 
-            scheduleList.innerHTML = events.map(event => {
-                if (event.type === 'calendar') {
-                    return renderCalendarEvent(event);
-                } else {
-                    return renderDbGame(event);
-                }
+            scheduleList.innerHTML = events.map((event, index) => {
+                const eventHtml = event.type === 'calendar'
+                    ? renderCalendarEvent(event)
+                    : renderDbGame(event);
+                if ((index + 1) % 3 !== 0 || index === events.length - 1) return eventHtml;
+                const sponsor = getInlineSponsor(Math.floor(index / 3));
+                return sponsor ? `${eventHtml}${renderSponsorAdPlacement(sponsor, 'schedule')}` : eventHtml;
             }).join('');
         }
 
