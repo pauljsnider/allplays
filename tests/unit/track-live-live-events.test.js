@@ -45,6 +45,11 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('data-football-play="turnover"');
     expect(source).toContain('data-football-play="punt"');
     expect(source).toContain('data-football-play="kickoff"');
+    expect(source).toContain('data-football-score="touchdown"');
+    expect(source).toContain('data-football-score="field_goal"');
+    expect(source).toContain('data-football-score="safety"');
+    expect(source).toContain('data-football-score="pat_kick"');
+    expect(source).toContain('data-football-score="two_point_conversion"');
     expect(source).toContain("type: 'football_play'");
     expect(source).toContain('footballPlayType: playType');
     expect(source).toContain('liveFootballState: gameState.footballState');
@@ -54,6 +59,12 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('down: context.down');
     expect(source).toContain('distance: context.distance');
     expect(source).toContain('yardLine: context.yardLine');
+    expect(source).toContain("type: 'football_score'");
+    expect(source).toContain('footballScoringAction: action');
+    expect(source).toContain('points: scoringAction.points');
+    expect(source).toContain('teamSide: context.possession');
+    expect(source).toContain('previousScore');
+    expect(source).toContain("logFootballScore(btn.dataset.footballScore)");
 
   });
 });
