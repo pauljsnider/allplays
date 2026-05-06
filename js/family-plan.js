@@ -13,7 +13,7 @@ function normalizeStatus(value) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return Promise.resolve(deps.firebase);
-    return import('./firebase.js?v=10');
+    return import('./firebase.js?v=11');
 }
 
 function dataFromSnapshot(docSnap) {
@@ -138,7 +138,9 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
 
     const email = normalizeString(member?.email).toLowerCase();
     const displayName = normalizeString(member?.displayName);
-    if (!email) throw new Error('Enter an email for the pending family member.');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error('Enter a valid email for the pending family member.');
+    }
 
     const normalizedExisting = normalizeFamilyMembers(existingMembers);
     const duplicate = normalizedExisting.some((existing) => existing.status !== 'removed' && existing.email.toLowerCase() === email);

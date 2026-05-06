@@ -327,7 +327,7 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
         allow update: if isOwner(userId) &&
                       isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
         allow delete: if false;
       }
     }

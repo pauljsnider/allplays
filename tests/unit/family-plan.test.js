@@ -46,6 +46,12 @@ describe('family plan helpers', () => {
         })).rejects.toThrow('limited to 4');
     });
 
+    it('rejects malformed pending member email addresses', async () => {
+        await expect(addPendingFamilyMember('user-1', { email: 'invalid' }, {
+            existingMembers: []
+        })).rejects.toThrow('valid email');
+    });
+
     it('writes a pending family membership record for an available slot', async () => {
         const addDoc = vi.fn().mockResolvedValue({ id: 'member-1' });
         const firebase = {
@@ -111,6 +117,7 @@ describe('family plan helpers', () => {
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
         expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
         expect(rules).toContain('allow update: if isOwner(userId) &&');
+        expect(rules).toContain("affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt'])");
         expect(rules).toContain('allow delete: if false;');
     });
 });
