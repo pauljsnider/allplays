@@ -961,12 +961,18 @@
                 }
                 state.game = game;
 
-                const streamRsvp = String(team.streamAccessMode || '').toLowerCase() === 'confirmed_members'
+                const needsRsvpForScopedAccess = ['confirmed_members', 'all_confirmed'].includes(String(team.streamAccessMode || '').toLowerCase())
+                    || String(team.teamPermissions?.scorekeeping?.mode || '').toLowerCase() === 'all_confirmed';
+                const scopedRsvp = needsRsvpForScopedAccess
                     ? await getMyRsvp(teamId, resolvedGameId, state.user.uid).catch(() => null)
                     : null;
-                const accessInfo = getTeamAccessInfo(state.user, { ...team, id: teamId }, { game, rsvp: streamRsvp });
-                if (!accessInfo.hasAccess || (accessInfo.accessLevel !== 'full' && accessInfo.accessLevel !== 'stream')) {
-                    window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches,+admins,+and+approved+streaming+volunteers+only`;
+                const accessInfo = getTeamAccessInfo(state.user, { ...team, id: teamId }, { game, rsvp: scopedRsvp });
+                if (!accessInfo.hasAccess || !['full', 'scorekeep', 'stream'].includes(accessInfo.accessLevel)) {
+                    window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches,+admins,+approved+scorekeepers,+and+approved+streaming+volunteers+only`;
+                    return;
+                }
+                if (accessInfo.accessLevel === 'scorekeep') {
+                    renderLimitedScorekeepingAccess(accessInfo);
                     return;
                 }
                 if (accessInfo.accessLevel === 'stream') {
@@ -2453,6 +2459,49 @@ Respond ONLY with valid JSON.`;
             if (channelMatch) return `https://www.youtube.com/channel/${encodeURIComponent(channelMatch[1])}/live`;
             if (videoMatch) return `https://www.youtube.com/watch?v=${encodeURIComponent(videoMatch[1])}`;
             return '';
+        }
+
+
+        function getScorekeepingTrackerUrl() {
+            const config = state.game?.statTrackerConfigId && Array.isArray(state.configs)
+                ? state.configs.find((c) => c.id === state.game.statTrackerConfigId)
+                : null;
+            const baseType = String(config?.baseType || '').toLowerCase();
+            const page = baseType === 'basketball' ? 'track-basketball.html' : 'track.html';
+            return `${page}#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
+        }
+
+        function renderLimitedScorekeepingAccess(accessInfo) {
+            hideLoading();
+            const trackerUrl = getScorekeepingTrackerUrl();
+            const watchUrl = `live-game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}`;
+            renderTeamAdminBanner(document.getElementById('banner-container'), {
+                team: state.team,
+                teamId: state.teamId,
+                active: 'gameday',
+                accessLevel: accessInfo.accessLevel,
+                exitUrl: accessInfo.exitUrl
+            });
+            const gameTitle = state.game?.opponent ? `vs ${escapeHtml(state.game.opponent)}` : 'Scheduled event';
+            document.getElementById('game-subbanner')?.classList.add('hidden');
+            document.getElementById('pre-game-view')?.classList.add('hidden');
+            document.getElementById('game-day-view')?.classList.add('hidden');
+            document.getElementById('wrap-up-view')?.classList.add('hidden');
+            const main = document.createElement('main');
+            main.className = 'max-w-3xl mx-auto px-4 py-8';
+            main.innerHTML = `
+                <section class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-4">
+                    <div>
+                        <div class="text-xs font-semibold uppercase tracking-wide text-emerald-600">Scorekeeping access</div>
+                        <h1 class="text-2xl font-bold text-gray-900 mt-1">${gameTitle}</h1>
+                        <p class="text-sm text-gray-600 mt-2">You can start or continue live scorekeeping for this scheduled game. Roster management, schedule editing, team settings, and other coach/admin controls remain restricted.</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <a href="${trackerUrl}" class="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">Open scorekeeper</a>
+                        <a href="${watchUrl}" class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Open live viewer</a>
+                    </div>
+                </section>`;
+            document.getElementById('footer-container')?.before(main);
         }
 
         function renderLimitedStreamAccess(accessInfo) {
