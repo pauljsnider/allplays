@@ -5,6 +5,7 @@ import {
     buildScheduleChangeMessage,
     buildScheduleNotificationTargets,
     postScheduleNotificationTargets,
+    buildAvailabilityReminderRecipients,
     buildRsvpReminderMessage,
     buildNextReminderAt,
     buildScheduleNotificationMetadata
@@ -208,6 +209,57 @@ describe('schedule notification helpers', () => {
             ],
             errorMessage: 'network unavailable; network unavailable'
         });
+    });
+
+    it('targets only active roster players without an RSVP and their guardians', () => {
+        const players = [
+            { id: 'p1', name: 'A', parents: [{ userId: 'u1', email: 'one@example.com' }] },
+            { id: 'p2', name: 'B', parents: [{ userId: 'u2', email: 'two@example.com' }] },
+            { id: 'p3', name: 'C', parents: [{ userId: 'u2', email: 'two@example.com' }] },
+            { id: 'p4', name: 'D', active: false, parents: [{ userId: 'u4' }] }
+        ];
+        const rsvps = [
+            { userId: 'u1', playerIds: ['p1'], response: 'going' },
+            { userId: 'coach', playerId: 'p3', response: 'maybe' },
+            { userId: 'ignored', playerIds: ['p4'], response: 'not_responded' }
+        ];
+
+        expect(buildAvailabilityReminderRecipients(players, rsvps)).toEqual({
+            playerIds: ['p2'],
+            parentIds: ['u2'],
+            parentEmails: ['two@example.com'],
+            playerCount: 1,
+            recipientCount: 1
+        });
+    });
+
+    it('uses RSVP user links when RSVP rows omit player IDs', () => {
+        const players = [
+            { id: 'p1', parents: [{ userId: 'u1', email: 'one@example.com' }] },
+            { id: 'p2', parents: [{ userId: 'u2', email: 'two@example.com' }] }
+        ];
+        const rsvps = [
+            { userId: 'u1', response: 'going' }
+        ];
+
+        expect(buildAvailabilityReminderRecipients(players, rsvps)).toMatchObject({
+            playerIds: ['p2'],
+            parentIds: ['u2'],
+            parentEmails: ['two@example.com'],
+            playerCount: 1,
+            recipientCount: 1
+        });
+    });
+
+    it('counts roster players without guardians as direct recipients', () => {
+        const recipients = buildAvailabilityReminderRecipients([
+            { id: 'p1', parents: [] },
+            { id: 'p2', parents: [{ userId: 'u2' }] }
+        ], []);
+
+        expect(recipients.playerIds).toEqual(['p1', 'p2']);
+        expect(recipients.parentIds).toEqual(['u2']);
+        expect(recipients.recipientCount).toBe(2);
     });
 
     it('builds RSVP reminder messages for the no-response group', () => {
