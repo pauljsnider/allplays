@@ -46,18 +46,20 @@ describe('officiating notification records', () => {
         });
     });
 
-    it('creates rescheduled records for unchanged officials when the game time changes', () => {
+    it('creates rescheduled records for unchanged officials when the game schedule changes', () => {
         const records = buildOfficiatingAssignmentNotificationRecords({
             teamId: 'team-1',
             gameId: 'game-1',
             previousGame: {
                 date: new Date('2026-05-06T20:00:00Z'),
+                location: 'Field 2',
                 officiatingSlots: [
                     { id: 'slot-1', position: 'Umpire', officialUserId: 'official-1', status: 'accepted' }
                 ]
             },
             nextGame: {
-                date: new Date('2026-05-06T22:00:00Z'),
+                date: new Date('2026-05-06T20:00:00Z'),
+                location: 'Field 3',
                 officiatingSlots: [
                     { id: 'slot-1', position: 'Umpire', officialUserId: 'official-1', status: 'accepted' }
                 ]

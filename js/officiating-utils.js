@@ -1,4 +1,4 @@
-export const OFFICIATING_ASSIGNMENT_STATUSES = ['pending', 'accepted', 'declined', 'cant_make', 'open'];
+export const OFFICIATING_ASSIGNMENT_STATUSES = ['pending', 'accepted', 'declined', 'cant_make', 'needs_review', 'open'];
 
 export function normalizeOfficialEmail(email) {
     return String(email || '').trim().toLowerCase();
@@ -22,6 +22,11 @@ export function normalizeOfficiatingSlots(slots = []) {
                 ? requestedStatus
                 : (hasOfficial ? 'pending' : 'open');
 
+            const scheduleReviewRequired = slot?.scheduleReviewRequired === true
+                || slot?.needsReview === true
+                || slot?.rescheduled === true
+                || status === 'needs_review';
+
             return {
                 id: String(slot?.id || `slot-${index + 1}`).trim(),
                 position,
@@ -30,7 +35,10 @@ export function normalizeOfficiatingSlots(slots = []) {
                 officialName,
                 officialEmail,
                 status: hasOfficial ? (status === 'open' ? 'pending' : status) : 'open',
-                selfAssigned: slot?.selfAssigned === true
+                selfAssigned: slot?.selfAssigned === true,
+                scheduleReviewRequired,
+                scheduleReviewReason: scheduleReviewRequired ? String(slot?.scheduleReviewReason || 'Game schedule changed').trim() : '',
+                scheduleReviewMarkedAt: scheduleReviewRequired ? (slot?.scheduleReviewMarkedAt || null) : null
             };
         })
         .filter(Boolean);
@@ -50,6 +58,42 @@ function getDateMillis(dateValue) {
     const parsed = dateValue instanceof Date ? dateValue : new Date(dateValue);
     const millis = parsed.getTime();
     return Number.isNaN(millis) ? null : millis;
+}
+
+function normalizeLocation(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+export function hasOfficiatingScheduleChange(previousGame = null, nextGame = {}) {
+    if (!previousGame) return false;
+
+    const previousDateMillis = getDateMillis(previousGame.date);
+    const nextDateMillis = getDateMillis(nextGame.date);
+    const dateChanged = previousDateMillis !== null
+        && nextDateMillis !== null
+        && previousDateMillis !== nextDateMillis;
+    const locationChanged = normalizeLocation(previousGame.location) !== normalizeLocation(nextGame.location);
+
+    return dateChanged || locationChanged;
+}
+
+export function flagRescheduledOfficiatingSlots(previousGame = null, nextGame = {}, options = {}) {
+    const slots = normalizeOfficiatingSlots(nextGame.officiatingSlots || []);
+    if (!hasOfficiatingScheduleChange(previousGame, nextGame)) return slots;
+
+    const markedAt = options.markedAt || new Date().toISOString();
+    return slots.map((slot) => {
+        const hasAssignedOfficial = !!(slot.officialId || slot.officialUserId || slot.officialEmail || slot.officialName);
+        if (!hasAssignedOfficial || ['declined', 'cant_make', 'open'].includes(slot.status)) return slot;
+
+        return {
+            ...slot,
+            status: 'needs_review',
+            scheduleReviewRequired: true,
+            scheduleReviewReason: 'Game schedule changed',
+            scheduleReviewMarkedAt: markedAt
+        };
+    });
 }
 
 function getGameWindow(game = {}, defaultGameMinutes = 120) {
@@ -161,7 +205,13 @@ export function updateOfficiatingSlotResponse(slots = [], slotId, status) {
     const nextSlots = normalizeOfficiatingSlots(slots).map((slot) => {
         if (slot.id !== slotId) return slot;
         updated = true;
-        return { ...slot, status };
+        return {
+            ...slot,
+            status,
+            scheduleReviewRequired: false,
+            scheduleReviewReason: '',
+            scheduleReviewMarkedAt: null
+        };
     });
 
     if (!updated) throw new Error('Officiating slot not found');

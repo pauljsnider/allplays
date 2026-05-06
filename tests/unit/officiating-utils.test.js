@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   claimOfficiatingSlot,
   computeOfficiatingCoverageStatus,
+  flagRescheduledOfficiatingSlots,
   getAssignedOfficiatingSlots,
   getOfficiatingAssignmentConflictWarnings,
   getOpenOfficiatingSlots,
@@ -21,6 +22,33 @@ describe('officiating assignment helpers', () => {
       { position: 'AR1', status: 'open' }
     ]);
     expect(computeOfficiatingCoverageStatus(slots)).toBe('needs_attention');
+  });
+
+
+
+  it('flags staffed assignments as needing review when date, time, or location changes', () => {
+    const previousGame = {
+      date: new Date('2026-05-04T10:00:00Z'),
+      location: 'Field 1',
+      officiatingSlots: [
+        { id: 'slot-1', position: 'Referee', officialEmail: 'ref@example.com', status: 'accepted' },
+        { id: 'slot-2', position: 'AR1', status: 'open' }
+      ]
+    };
+
+    const slots = flagRescheduledOfficiatingSlots(previousGame, {
+      date: new Date('2026-05-04T10:00:00Z'),
+      location: 'Field 2',
+      officiatingSlots: previousGame.officiatingSlots
+    }, { markedAt: '2026-05-01T12:00:00.000Z' });
+
+    expect(slots[0]).toMatchObject({
+      status: 'needs_review',
+      scheduleReviewRequired: true,
+      scheduleReviewReason: 'Game schedule changed',
+      scheduleReviewMarkedAt: '2026-05-01T12:00:00.000Z'
+    });
+    expect(slots[1]).toMatchObject({ status: 'open', scheduleReviewRequired: false });
   });
 
   it('lets an assigned official accept and then mark cannot make it', () => {

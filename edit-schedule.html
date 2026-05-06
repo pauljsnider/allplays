@@ -894,13 +894,13 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=29';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=30';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
         import { checkAuth } from './js/auth.js?v=13';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { computeOfficiatingCoverageStatus, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=2';
-        import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=1';
+        import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=3';
+        import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=2';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
@@ -2688,7 +2688,8 @@
                 : (slotsOrGame.officiatingCoverageStatus || computeOfficiatingCoverageStatus(slots));
             const slotBadges = slots.map((slot) => {
                 const name = slot.officialName || slot.officialEmail || 'Open';
-                return `<span class="inline-block bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(slot.position)}:</b> ${escapeHtml(name)} · ${escapeHtml(getOfficiatingStatusLabel(slot.status))}</span>`;
+                const reviewBadge = slot.scheduleReviewRequired ? ' · <span class="font-semibold text-amber-700">Rescheduled, needs review</span>' : '';
+                return `<span class="inline-block bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(slot.position)}:</b> ${escapeHtml(name)} · ${escapeHtml(getOfficiatingStatusLabel(slot.status))}${reviewBadge}</span>`;
             }).join('');
             return `<div class="mt-1 text-xs text-indigo-800"><span class="inline-block ${getCoverageBadgeClass(coverageStatus)} rounded px-1.5 py-0.5 mr-1 mb-1 font-semibold">Officials: ${escapeHtml(getCoverageLabel(coverageStatus))}</span>${slotBadges}</div>`;
         }
@@ -2736,6 +2737,7 @@
                         <option value="accepted" ${slot.status === 'accepted' ? 'selected' : ''}>Accepted</option>
                         <option value="declined" ${slot.status === 'declined' ? 'selected' : ''}>Declined</option>
                         <option value="cant_make" ${slot.status === 'cant_make' ? 'selected' : ''}>Can't make it</option>
+                        <option value="needs_review" ${slot.status === 'needs_review' ? 'selected' : ''}>Needs review</option>
                         <option value="open" ${!slot.status || slot.status === 'open' ? 'selected' : ''}>Open</option>
                     </select>
                     <button type="button" class="remove-officiating-slot text-red-400 hover:text-red-600 text-lg font-bold">&times;</button>
@@ -2967,9 +2969,10 @@
                         eventDate: parsedGameDate
                     })
                 };
+                const previousGame = editingGameId ? (gamesCache[editingGameId] || null) : null;
+                gameData.officiatingSlots = flagRescheduledOfficiatingSlots(previousGame, gameData);
                 Object.assign(gameData, getOfficiatingAuthorizationFields(gameData.officiatingSlots));
                 gameData.officiatingCoverageStatus = computeOfficiatingCoverageStatus(gameData.officiatingSlots);
-                const previousGame = editingGameId ? (gamesCache[editingGameId] || null) : null;
 
                 if (!confirmOfficiatingAssignmentConflicts(gameData)) return;
 
