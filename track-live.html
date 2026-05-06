@@ -2151,6 +2151,10 @@
 
                             gameState.servingTeam = 'home';
                             resetBaseballScorekeepingState();
+                            if (!gameState.isBaseballScorekeeping) {
+                                gameState.currentPeriod = getDefaultLivePeriod({ team: currentTeam, config: currentConfig, game: currentGame });
+                                updateActivePeriodButtons();
+                            }
                             gameState.footballState = createFootballLiveState();
                             applyFootballStateToControls();
                             opponentPlayers.forEach((opp) => {
