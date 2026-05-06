@@ -285,7 +285,7 @@
             </section>
             <section class="wf-panel-section">
               <h2 class="wf-panel-title">Who can use this</h2>
-              <div class="wf-roles"><span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span></div>
+              <div class="wf-roles"><span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span> <span class="wf-role-chip">Scorekeeper</span></div>
             </section>
           </aside>
 
@@ -306,10 +306,11 @@
 <ul class="ml-6 list-disc space-y-1">
 <li>Coaches who enter live stats, manage periods, and handle substitutions.</li>
 <li>Admins who support tracking, verify final accuracy, and finalize report details.</li>
+<li>Delegated scorekeepers assigned by staff, or confirmed members when team scorekeeping access allows it.</li>
 </ul>
 <h2 id="prerequisites">Prerequisites</h2>
 <ul class="ml-6 list-disc space-y-1">
-<li>You are signed in as a coach or admin.</li>
+<li>You are signed in as a coach, admin, or approved scorekeeper for the scheduled game.</li>
 <li>You are opening a game event, not a practice.</li>
 <li>The game has a valid team and game context (<code>teamId</code> and <code>gameId</code>).</li>
 <li>A tracker configuration exists for the team.</li>
@@ -357,6 +358,7 @@
 <ul class="ml-6 list-disc space-y-1">
 <li>Coaches prioritize real-time event entry, period changes, substitutions, and notes.</li>
 <li>Admins verify opponent setup and score accuracy for final reporting.</li>
+<li>Delegated scorekeepers focus on live score entry and do not receive roster, schedule, or team settings access.</li>
 </ul>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Finish the game.</li>
@@ -395,9 +397,9 @@
 </ul>
 <p>Use it after the game when final stats are on a completed paper score sheet.</p>
 <ul class="ml-6 list-disc space-y-1">
-<li><strong>Can both coach and admin run this workflow?</strong></li>
+<li><strong>Can coaches, admins, and delegated scorekeepers run this workflow?</strong></li>
 </ul>
-<p>Yes. Both can track games. Admins usually lead final verification.</p>
+<p>Yes. Coaches and admins retain full access. Delegated scorekeepers can track scheduled games when they have scorekeeping permission, but team management remains restricted.</p>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>What happens after Save &amp; Complete?</strong></li>
 </ul>
