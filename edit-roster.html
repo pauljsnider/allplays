@@ -613,14 +613,19 @@
                 const plan = planRegistrationRosterImport({
                     sourcePlayers,
                     existingPlayers,
-                    source: getRegistrationSourceDescriptor(currentTeam)
+                    source: getRegistrationSourceDescriptor(currentTeam),
+                    fields: rosterFieldDefinitions
                 });
 
                 for (const operation of plan.operations) {
+                    let playerId = operation.playerId;
                     if (operation.type === 'update') {
-                        await updatePlayer(currentTeamId, operation.playerId, operation.payload);
+                        await updatePlayer(currentTeamId, playerId, operation.payload);
                     } else if (operation.type === 'add') {
-                        await addPlayer(currentTeamId, operation.payload);
+                        playerId = await addPlayer(currentTeamId, operation.payload);
+                    }
+                    if (operation.privateRosterFields) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
                     }
                 }
 
