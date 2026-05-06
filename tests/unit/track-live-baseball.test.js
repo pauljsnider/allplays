@@ -17,7 +17,7 @@ describe('track-live baseball scorekeeping wiring', () => {
         expect(source).toContain('const allPeriodLabels = getSportPeriodLabels');
         expect(source).toContain('? allPeriodLabels');
         expect(source).not.toContain('.slice(0, gameState.isBaseballScorekeeping ? 8 : 5)');
-        expect(source).toContain("teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping)");
+        expect(source).toContain("teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode)");
         expect(source).toContain('data-baseball-action="ball"');
         expect(source).toContain('data-baseball-action="homeRun"');
     });

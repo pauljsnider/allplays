@@ -1022,9 +1022,9 @@
             const period = periodButton?.getAttribute('data-period') || periodButton?.dataset.period;
             if (!period) return;
             gameState.currentPeriod = period;
-            updateVolleyballDisplay();
             updateBaseballPeriodFromLabel(period);
             updateActivePeriodButtons();
+            updateVolleyballDisplay();
             addLogEntry(`Period changed to ${period}`);
 
             if (gameState.isRunning) {
@@ -1041,24 +1041,22 @@
         }
 
         function applyLiveScorekeepingMode() {
-            const volleyballMode = isVolleyballGame();
             const baseballPanel = document.getElementById('baseballScorekeepingPanel');
             const volleyballPanel = document.getElementById('volleyballPanel');
             const genericPanels = document.getElementById('generic-stat-tracking');
             const teamStatsPanel = document.getElementById('teamStatsPanel');
             const opponentStatsPanel = document.getElementById('opponentStatsPanel');
             const isGoalSportMode = !!currentGoalSportProfile;
+            const volleyballMode = isVolleyballGame();
             if (baseballPanel) baseballPanel.classList.toggle('hidden', !gameState.isBaseballScorekeeping);
             if (volleyballPanel) volleyballPanel.classList.toggle('hidden', !volleyballMode);
-            if (genericPanels) genericPanels.classList.toggle('hidden', isGoalSportMode || volleyballMode);
-            if (teamStatsPanel) teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping);
-            if (opponentStatsPanel) opponentStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping);
+            if (genericPanels) genericPanels.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode);
+            if (teamStatsPanel) teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode);
+            if (opponentStatsPanel) opponentStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode);
             if (gameState.isBaseballScorekeeping) {
                 renderBaseballScorekeeping();
             }
-            if (volleyballMode) {
-                updateVolleyballDisplay();
-            }
+            updateVolleyballDisplay();
         }
 
         function renderBaseballScorekeeping() {
@@ -1166,8 +1164,9 @@
             const isGoalSportMode = !!currentGoalSportProfile;
             const goalPanel = document.getElementById('goal-sport-controls');
             const genericPanels = document.getElementById('generic-stat-tracking');
+            const volleyballMode = isVolleyballGame();
             goalPanel?.classList.toggle('hidden', !isGoalSportMode);
-            genericPanels?.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || isVolleyballGame());
+            genericPanels?.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode);
             if (!isGoalSportMode) return;
 
             const title = document.getElementById('goal-sport-title');
