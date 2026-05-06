@@ -101,7 +101,8 @@ describe('public registration flow', () => {
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
-        expect(rules).toContain('allow create: if isPublishedRegistrationForm');
+        expect(rules).toContain('allow create: if (');
+        expect(rules).toContain('isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data)');
         expect(rules).toContain("data.status == 'pending'");
         expect(rules).toContain('data.waiverAccepted == true');
         expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');

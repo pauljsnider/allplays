@@ -660,7 +660,7 @@
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=6';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, runTrackLiveResetPersistence } from './js/track-live-state.js?v=1';
-        import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels, resolveLiveSport } from './js/live-sport-config.js?v=2';
+        import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
         import { applyGoalSportScore, buildGoalSportEvent } from './js/live-scorekeeping-goal-sports.js?v=1';
 
         import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
@@ -714,6 +714,7 @@
             playerTimeouts: new Map(),
             opponentTimeout: null,
             baseballTimeout: null,
+            footballTimeout: null,
             liveFlagTimeout: null
         };
         let gameState = {
@@ -730,7 +731,8 @@
 
             servingTeam: 'home',
             isBaseballScorekeeping: false,
-            baseballState: createBaseballLiveState()
+            baseballState: createBaseballLiveState(),
+            footballState: createFootballLiveState()
         };
 
         function isVolleyballGame() {
@@ -900,6 +902,7 @@
                     homeScore,
                     awayScore
                 });
+                gameState.footballState = createFootballLiveState(game.liveFootballState || {});
 
                 const allPeriodLabels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig });
                 const periodLabels = gameState.isBaseballScorekeeping
@@ -914,7 +917,9 @@
                 }
                 gameState.currentPeriod = gameState.isBaseballScorekeeping
                     ? getBaseballPeriodLabel(gameState.baseballState)
-                    : periodLabels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+                    : (isFootballTrackingConfig() && (game.period || game.liveClockPeriod))
+                        ? (game.period || game.liveClockPeriod)
+                        : periodLabels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
                 updateActivePeriodButtons();
                 configureGoalSportControls();
                 updateVolleyballDisplay();
@@ -960,7 +965,7 @@
                 });
 
                 applyLiveScorekeepingMode();
-                if (!gameState.isBaseballScorekeeping) {
+                if (!gameState.isBaseballScorekeeping && !isFootballTrackingConfig()) {
                     renderStatsTable();
                     renderOpponentTable();
                 }
@@ -1027,6 +1032,11 @@
             updateVolleyballDisplay();
             addLogEntry(`Period changed to ${period}`);
 
+            if (isFootballTrackingConfig()) {
+                gameState.footballState = createFootballLiveState(gameState.footballState);
+                scheduleFootballStateSync();
+            }
+
             if (gameState.isRunning) {
                 broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'period_change',
@@ -1048,11 +1058,12 @@
             const opponentStatsPanel = document.getElementById('opponentStatsPanel');
             const isGoalSportMode = !!currentGoalSportProfile;
             const volleyballMode = isVolleyballGame();
+            const footballMode = isFootballTrackingConfig();
             if (baseballPanel) baseballPanel.classList.toggle('hidden', !gameState.isBaseballScorekeeping);
             if (volleyballPanel) volleyballPanel.classList.toggle('hidden', !volleyballMode);
-            if (genericPanels) genericPanels.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode);
-            if (teamStatsPanel) teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode);
-            if (opponentStatsPanel) opponentStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode);
+            if (genericPanels) genericPanels.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode || footballMode);
+            if (teamStatsPanel) teamStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode || footballMode);
+            if (opponentStatsPanel) opponentStatsPanel.classList.toggle('hidden', gameState.isBaseballScorekeeping || volleyballMode || footballMode);
             if (gameState.isBaseballScorekeeping) {
                 renderBaseballScorekeeping();
             }
@@ -1166,7 +1177,7 @@
             const genericPanels = document.getElementById('generic-stat-tracking');
             const volleyballMode = isVolleyballGame();
             goalPanel?.classList.toggle('hidden', !isGoalSportMode);
-            genericPanels?.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode);
+            genericPanels?.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode || isFootballTrackingConfig());
             if (!isGoalSportMode) return;
 
             const title = document.getElementById('goal-sport-title');
@@ -1235,9 +1246,33 @@
         }
 
         function isFootballTrackingConfig() {
-            const labels = [currentConfig?.baseType, currentConfig?.name, currentTeam?.sport, currentGame?.sport]
-                .map((value) => String(value || '').trim().toLowerCase());
-            return labels.some((label) => label === 'football' || label.includes('football'));
+            return isFootballSport({ game: currentGame, team: currentTeam, config: currentConfig });
+        }
+
+        function createFootballLiveState(source = {}) {
+            return {
+                possession: source.possession === 'away' ? 'away' : 'home',
+                down: ['1', '2', '3', '4'].includes(String(source.down)) ? String(source.down) : '1',
+                distance: String(source.distance ?? '10').trim() || '10',
+                yardLine: String(source.yardLine || '').trim()
+            };
+        }
+
+        function applyFootballStateToControls() {
+            const state = createFootballLiveState(gameState.footballState);
+            const possession = document.getElementById('football-possession');
+            const down = document.getElementById('football-down');
+            const distance = document.getElementById('football-distance');
+            const yardLine = document.getElementById('football-yard-line');
+            if (possession) possession.value = state.possession;
+            if (down) down.value = state.down;
+            if (distance) distance.value = state.distance;
+            if (yardLine) yardLine.value = state.yardLine;
+        }
+
+        function updateFootballStateFromControls() {
+            gameState.footballState = createFootballLiveState(getFootballContext());
+            scheduleFootballStateSync();
         }
 
         function setupFootballPlayPanel() {
@@ -1254,6 +1289,7 @@
                 if (homeOption) homeOption.textContent = currentTeam?.name || 'Home';
                 if (awayOption) awayOption.textContent = resolveOpponentDisplayName(currentGame);
             }
+            applyFootballStateToControls();
         }
 
         function getFootballOrdinal(value) {
@@ -1307,6 +1343,7 @@
             }
 
             const context = getFootballContext();
+            gameState.footballState = createFootballLiveState(context);
             const description = buildFootballPlayDescription(playType, context);
             await addLogEntry(description, {
                 type: 'football_play',
@@ -1336,7 +1373,9 @@
 
             if (['turnover', 'punt', 'kickoff'].includes(playType)) {
                 toggleFootballPossession();
+                gameState.footballState = createFootballLiveState(getFootballContext());
             }
+            scheduleFootballStateSync();
 
         }
 
@@ -1419,6 +1458,26 @@
             }, 500);
         }
 
+        function scheduleFootballStateSync() {
+            if (!currentTeamId || !currentGameId || !isFootballTrackingConfig()) return;
+            if (liveSync.footballTimeout) return;
+            liveSync.footballTimeout = setTimeout(async () => {
+                liveSync.footballTimeout = null;
+                try {
+                    await updateGame(currentTeamId, currentGameId, {
+                        liveFootballState: gameState.footballState,
+                        period: gameState.currentPeriod
+                    });
+                    if (currentGame) {
+                        currentGame.liveFootballState = gameState.footballState;
+                        currentGame.period = gameState.currentPeriod;
+                    }
+                } catch (error) {
+                    console.warn('Failed to sync football game state:', error);
+                }
+            }, 500);
+        }
+
         function schedulePlayerStatsSync(playerId) {
             if (!currentTeamId || !currentGameId || !playerId) return;
             if (liveSync.playerTimeouts.has(playerId)) return;
@@ -1479,6 +1538,10 @@
             if (liveSync.baseballTimeout) {
                 clearTimeout(liveSync.baseballTimeout);
                 liveSync.baseballTimeout = null;
+            }
+            if (liveSync.footballTimeout) {
+                clearTimeout(liveSync.footballTimeout);
+                liveSync.footballTimeout = null;
             }
             if (liveSync.liveFlagTimeout) {
                 clearTimeout(liveSync.liveFlagTimeout);
@@ -2088,6 +2151,12 @@
 
                             gameState.servingTeam = 'home';
                             resetBaseballScorekeepingState();
+                            if (!gameState.isBaseballScorekeeping) {
+                                gameState.currentPeriod = getDefaultLivePeriod({ team: currentTeam, config: currentConfig, game: currentGame });
+                                updateActivePeriodButtons();
+                            }
+                            gameState.footballState = createFootballLiveState();
+                            applyFootballStateToControls();
                             opponentPlayers.forEach((opp) => {
                                 const existing = gameState.opponentStats[opp.id] || {};
                                 gameState.opponentStats[opp.id] = {
@@ -2125,7 +2194,8 @@
                                                 period: gameState.currentPeriod,
                                                 liveLineup: resetLineup
                                             }),
-                                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {})
+                                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
+                                            ...(isFootballTrackingConfig() ? { liveFootballState: gameState.footballState } : {})
                                         }
                                     );
                                     currentGame.liveStatus = 'scheduled';
@@ -2153,7 +2223,7 @@
                             updateScoreDisplay();
                             renderGameLog();
                             renderBaseballScorekeeping();
-                            if (!gameState.isBaseballScorekeeping) {
+                            if (!gameState.isBaseballScorekeeping && !isFootballTrackingConfig()) {
                                 renderStatsTable();
                                 renderOpponentTable();
                             }
@@ -2189,6 +2259,7 @@
                 syncClockToGameDoc().catch(console.warn);
                 scheduleScoreSync();
                 scheduleBaseballStateSync();
+                scheduleFootballStateSync();
                 syncLiveLineup().catch(console.warn);
             }
         }
@@ -2212,7 +2283,7 @@
                 syncClockToGameDoc().catch(console.warn);
                 if (gameState.isBaseballScorekeeping) {
                     renderBaseballScorekeeping();
-                } else {
+                } else if (!isFootballTrackingConfig()) {
                     renderStatsTable();
                 }
             }
@@ -2246,6 +2317,8 @@
 
                 gameState.servingTeam = 'home';
                 resetBaseballScorekeepingState();
+                gameState.footballState = createFootballLiveState();
+                applyFootballStateToControls();
 
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
@@ -2267,11 +2340,12 @@
                     currentGame.servingTeam = 'home';
                     currentGame.opponentStats = {};
                     currentGame.liveBaseballState = gameState.isBaseballScorekeeping ? gameState.baseballState : null;
+                    currentGame.liveFootballState = isFootballTrackingConfig() ? gameState.footballState : null;
                 }
                 updateScoreDisplay();
                 renderGameLog();
                 renderBaseballScorekeeping();
-                if (!gameState.isBaseballScorekeeping) {
+                if (!gameState.isBaseballScorekeeping && !isFootballTrackingConfig()) {
                     renderStatsTable();
                     renderOpponentTable();
                 }
@@ -2303,7 +2377,8 @@
                                 liveLineup
                             }),
                             opponentStats: gameState.opponentStats,
-                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {})
+                            ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
+                            ...(isFootballTrackingConfig() ? { liveFootballState: gameState.footballState } : {})
                         });
                         if (currentGame) {
                             currentGame.liveHasData = false;
@@ -2313,6 +2388,7 @@
                             currentGame.servingTeam = 'home';
                             currentGame.opponentStats = gameState.opponentStats;
                             currentGame.liveBaseballState = gameState.isBaseballScorekeeping ? gameState.baseballState : null;
+                            currentGame.liveFootballState = isFootballTrackingConfig() ? gameState.footballState : null;
                         }
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     },
@@ -3006,7 +3082,8 @@ Write the match report now:`;
                     summary: summary,
                     status: 'completed',
                     opponentStats: gameState.opponentStats,
-                    ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {})
+                    ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
+                    ...(isFootballTrackingConfig() ? { liveFootballState: gameState.footballState } : {})
                 });
 
                 // Commit all writes in a single batch
@@ -3080,6 +3157,9 @@ Write the match report now:`;
                     console.warn('Failed to log football play:', error);
                 });
             });
+        });
+        ['football-possession', 'football-down', 'football-distance', 'football-yard-line'].forEach((id) => {
+            document.getElementById(id)?.addEventListener('change', updateFootballStateFromControls);
         });
         document.getElementById('live-note-add')?.addEventListener('click', addManualGameNote);
         document.getElementById('voice-note-btn')?.addEventListener('click', startVoiceNote);

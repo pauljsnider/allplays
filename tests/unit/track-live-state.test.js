@@ -85,6 +85,16 @@ describe('track live state helpers', () => {
     expect(payload.liveLineup.onCourt).toEqual(['p1']);
   });
 
+  it('includes default football game state for football resets only', () => {
+    expect(buildTrackLiveResetUpdate({
+      currentGame: { sport: 'Football' }
+    }).liveFootballState).toEqual({ possession: 'home', down: '1', distance: '10', yardLine: '' });
+
+    expect(buildTrackLiveResetUpdate({
+      currentGame: { sport: 'Soccer' }
+    }).liveFootballState).toBeUndefined();
+  });
+
   it('uses sport-specific default periods for non-basketball resets', () => {
     expect(buildTrackLiveResetUpdate({
       currentGame: { sport: 'Soccer' }

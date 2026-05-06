@@ -90,6 +90,12 @@ export function isGoalSport(options = {}) {
   return !!getGoalSportProfile(options);
 }
 
+export function isFootballSport({ sport = '', game = null, team = null, config = null } = {}) {
+  return [sport, game?.sport, team?.sport, config?.baseType, config?.name]
+    .map((candidate) => normalizeSport(candidate))
+    .some((candidate) => candidate === 'football' || candidate.includes('football'));
+}
+
 export function getSportPeriodLabels({ sport = '', periods = null, game = null, team = null, config = null } = {}) {
   const explicit = getExplicitPeriodLabels(periods || config?.periods || game?.periods);
   if (explicit.length) return explicit;
