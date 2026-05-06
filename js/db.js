@@ -53,7 +53,7 @@ import {
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
-import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
+import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
 import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import {
     decodeSharedGameSyntheticId,
@@ -416,12 +416,13 @@ export async function getTeam(teamId, options = {}) {
     }
 }
 
-export async function getLocalAttractionSponsors(teamId) {
+async function getPublishedSponsors(teamId) {
     if (!teamId) return [];
 
     const sponsorsRef = collection(db, `teams/${teamId}/sponsors`);
     const sponsorQueries = [
         query(sponsorsRef, where("status", "==", "published")),
+        query(sponsorsRef, where("status", "==", "active")),
         query(sponsorsRef, where("published", "==", true)),
         query(sponsorsRef, where("isPublished", "==", true))
     ];
@@ -429,7 +430,7 @@ export async function getLocalAttractionSponsors(teamId) {
     const successfulSnapshots = snapshots.filter((result) => result.status === 'fulfilled');
 
     if (successfulSnapshots.length === 0) {
-        throw snapshots[0]?.reason || new Error('Unable to load local attraction sponsors');
+        throw snapshots[0]?.reason || new Error('Unable to load sponsor placements');
     }
 
     const sponsorsById = new Map();
@@ -437,7 +438,15 @@ export async function getLocalAttractionSponsors(teamId) {
         result.value.docs.forEach(doc => sponsorsById.set(doc.id, { id: doc.id, ...doc.data() }));
     });
 
-    return normalizeLocalAttractionSponsors(Array.from(sponsorsById.values()));
+    return Array.from(sponsorsById.values());
+}
+
+export async function getLocalAttractionSponsors(teamId) {
+    return normalizeLocalAttractionSponsors(await getPublishedSponsors(teamId));
+}
+
+export async function getAdSpaceSponsors(teamId) {
+    return normalizeAdSpaceSponsors(await getPublishedSponsors(teamId));
 }
 
 export async function getUserTeams(userId, options = {}) {
