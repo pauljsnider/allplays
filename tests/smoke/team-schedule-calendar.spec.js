@@ -320,6 +320,16 @@ const TEAM_PASS_STUB = `
 export function renderTeamPassCard() {}
 `;
 
+const LOCAL_ATTRACTIONS_STUB = `
+export function normalizeExternalWebsiteUrl(value) {
+    return value || '';
+}
+
+export function selectRotatingSponsor(sponsors = []) {
+    return Array.isArray(sponsors) ? sponsors[0] || null : null;
+}
+`;
+
 async function mockTeamPageModules(page, scenario) {
     await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
         status: 200,
@@ -395,6 +405,11 @@ async function mockTeamPageModules(page, scenario) {
         status: 200,
         contentType: 'application/javascript',
         body: SCHEDULE_NOTIFICATIONS_STUB
+    }));
+    await page.route('**/js/local-attractions.js?v=2', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: LOCAL_ATTRACTIONS_STUB
     }));
     await page.route('**/js/premium-entitlements.js?v=1', (route) => route.fulfill({
         status: 200,
