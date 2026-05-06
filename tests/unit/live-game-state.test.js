@@ -273,4 +273,36 @@ describe('live game state helpers', () => {
     expect(result.shouldRenderPlayByPlay).toBe(true);
     expect(result.shouldCelebrateScore).toBe(true);
   });
+
+  it('treats football scoring events as scoreboard-changing play-by-play', () => {
+    const scoreEvent = {
+      id: 'football-score-1',
+      type: 'football_score',
+      footballScoringAction: 'touchdown',
+      points: 6,
+      teamSide: 'away',
+      isOpponent: true,
+      period: 'Q2',
+      gameClockMs: 90000,
+      homeScore: 7,
+      awayScore: 6,
+      description: 'Touchdown (6) | Wildcats | Q2'
+    };
+    const result = applyViewerEventToState({
+      events: [],
+      stats: {},
+      opponentStats: {},
+      homeScore: 7,
+      awayScore: 0,
+      period: 'Q2',
+      gameClockMs: 0
+    }, scoreEvent);
+
+    expect(result.state.homeScore).toBe(7);
+    expect(result.state.awayScore).toBe(6);
+    expect(result.state.events).toEqual([scoreEvent]);
+    expect(result.shouldRenderPlayByPlay).toBe(true);
+    expect(result.shouldRenderScoreboard).toBe(true);
+    expect(result.shouldCelebrateScore).toBe(true);
+  });
 });
