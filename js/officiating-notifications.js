@@ -1,4 +1,4 @@
-import { normalizeOfficiatingSlots } from './officiating-utils.js?v=1';
+import { hasOfficiatingScheduleChange, normalizeOfficiatingSlots } from './officiating-utils.js?v=3';
 
 function normalizeId(value) {
     return String(value || '').trim();
@@ -6,13 +6,6 @@ function normalizeId(value) {
 
 function normalizeEmail(value) {
     return String(value || '').trim().toLowerCase();
-}
-
-function toDateMillis(value) {
-    if (!value) return null;
-    const date = typeof value.toDate === 'function' ? value.toDate() : new Date(value);
-    const millis = date.getTime();
-    return Number.isFinite(millis) ? millis : null;
 }
 
 export function normalizeOfficiatingNotificationActor(actor = {}) {
@@ -92,9 +85,7 @@ export function buildOfficiatingAssignmentNotificationRecords({
     const nextSlots = normalizeOfficiatingSlots(nextGame.officiatingSlots || []);
     const previousSlots = normalizeOfficiatingSlots(previousGame?.officiatingSlots || []);
     const previousById = new Map(previousSlots.map((slot) => [slot.id, slot]));
-    const previousDateMillis = toDateMillis(previousGame?.date);
-    const nextDateMillis = toDateMillis(nextGame.date);
-    const wasRescheduled = previousGame && previousDateMillis !== null && nextDateMillis !== null && previousDateMillis !== nextDateMillis;
+    const wasRescheduled = hasOfficiatingScheduleChange(previousGame, nextGame);
 
     return nextSlots.flatMap((slot) => {
         if (!hasAssignedOfficial(slot)) return [];

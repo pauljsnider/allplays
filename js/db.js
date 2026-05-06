@@ -90,8 +90,8 @@ import {
     claimOfficiatingSlot,
     computeOfficiatingCoverageStatus,
     updateOfficiatingSlotResponse
-} from './officiating-utils.js?v=1';
-import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=1';
+} from './officiating-utils.js?v=3';
+import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=2';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
