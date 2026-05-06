@@ -232,6 +232,22 @@ service cloud.firestore {
       );
     }
 
+    function isOpenOfficiatingSelfAssignmentUpdate() {
+      return isSignedIn() &&
+             resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
+             request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'officiatingSlots',
+               'officiatingCoverageStatus',
+               'officiatingUpdatedAt',
+               'officiatingAuthorizedUserIds',
+               'officiatingAuthorizedEmails'
+             ]) &&
+             request.auth.uid in request.resource.data.get('officiatingAuthorizedUserIds', []) &&
+             (request.auth.token.email == null ||
+              request.auth.token.email.lower() in request.resource.data.get('officiatingAuthorizedEmails', []));
+    }
+
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
 
@@ -590,6 +606,7 @@ service cloud.firestore {
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId);
+        allow update: if isOpenOfficiatingSelfAssignmentUpdate();
 
         // Events subcollection
         match /events/{eventId} {

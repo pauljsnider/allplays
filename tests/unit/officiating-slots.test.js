@@ -14,6 +14,14 @@ function readOfficialsPage() {
     return readFileSync(new URL('../../officials.html', import.meta.url), 'utf8');
 }
 
+function readDbSource() {
+    return readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+}
+
+function readFirestoreRules() {
+    return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+}
+
 describe('officiating slots', () => {
     it('normalizes officials and fills slot display names from the directory', () => {
         const officials = normalizeOfficialsDirectory([
@@ -69,5 +77,18 @@ describe('officiating slots', () => {
         expect(editSource).toContain('Needs review');
         expect(officialsSource).toContain('Game rescheduled, please review');
         expect(officialsSource).toContain("['pending', 'needs_review'].includes(slot.status)");
+    });
+
+    it('allows signed-in officials to claim open self-assignment slots through Firestore rules', () => {
+        const dbSource = readDbSource();
+        const rules = readFirestoreRules();
+
+        expect(dbSource).toContain('export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser)');
+        expect(dbSource).toContain('officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds)');
+        expect(dbSource).toContain('officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)');
+        expect(rules).toContain('function isOpenOfficiatingSelfAssignmentUpdate()');
+        expect(rules).toContain("resource.data.get('officiatingSelfAssignmentEnabled', false) == true");
+        expect(rules).toContain("'officiatingAuthorizedUserIds'");
+        expect(rules).toContain('allow update: if isOpenOfficiatingSelfAssignmentUpdate();');
     });
 });
