@@ -2,6 +2,12 @@
 
 Team owners and team admins can manage roster operations for their teams. Global admins retain platform-wide access through the Admin Dashboard.
 
+## Registration form setup
+
+Global admins can open `admin.html`, choose a team, and use **Registration forms** to create or edit season, camp, or team-program forms. Each form stores title, description, program type, season, participant fields, guardian fields, waiver text, fee display amount, and draft/published status under `teams/{teamId}/registrationForms/{formId}`.
+
+Published forms show a copyable `registration.html?teamId=...&formId=...` URL in the admin UI. Draft forms remain editable but are not readable or submittable by parents because public registration reads and pending submission writes require a published form in Firestore rules.
+
 ## Registration review
 
 Registration submissions are reviewed from `edit-roster.html` for the team. Admins can filter a registration form by pending, approved, rejected, or all submissions.

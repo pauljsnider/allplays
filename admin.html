@@ -260,6 +260,81 @@
             </div>
         </div>
 
+        <div id="registration-forms-modal" class="hidden fixed inset-0 z-50 overflow-y-auto bg-gray-900/50 px-4 py-8">
+            <div class="mx-auto max-w-4xl rounded-xl bg-white shadow-xl">
+                <div class="flex items-start justify-between border-b border-gray-200 p-5">
+                    <div>
+                        <p class="text-sm font-semibold uppercase tracking-wide text-primary-600">Registration setup</p>
+                        <h2 class="text-2xl font-bold text-gray-900"><span id="registration-team-name">Team</span> forms</h2>
+                        <p class="mt-1 text-sm text-gray-600">Create draft or published parent registration links without checkout or roster automation.</p>
+                    </div>
+                    <button onclick="window.closeRegistrationFormsAdmin()" class="rounded px-2 py-1 text-gray-500 hover:bg-gray-100" aria-label="Close registration form setup">✕</button>
+                </div>
+                <div class="grid gap-6 p-5 lg:grid-cols-2">
+                    <section>
+                        <div class="mb-3 flex items-center justify-between">
+                            <h3 class="font-semibold text-gray-900">Existing forms</h3>
+                            <button onclick="window.startRegistrationFormAdmin()" class="rounded bg-primary-600 px-3 py-2 text-sm font-semibold text-white hover:bg-primary-700">New form</button>
+                        </div>
+                        <div id="registration-forms-list" class="space-y-3">
+                            <p class="text-sm text-gray-500">Select a team to load forms.</p>
+                        </div>
+                    </section>
+
+                    <form id="registration-form-editor" class="hidden space-y-4 rounded border border-gray-200 p-4">
+                        <input type="hidden" id="registration-form-id">
+                        <div>
+                            <label for="registration-title" class="block text-sm font-medium text-gray-700">Title</label>
+                            <input id="registration-title" required class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="Spring Soccer Registration">
+                        </div>
+                        <div>
+                            <label for="registration-description" class="block text-sm font-medium text-gray-700">Description</label>
+                            <textarea id="registration-description" rows="2" class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="Who this registration is for and what parents should expect"></textarea>
+                        </div>
+                        <div class="grid gap-4 sm:grid-cols-3">
+                            <div>
+                                <label for="registration-program-type" class="block text-sm font-medium text-gray-700">Program</label>
+                                <select id="registration-program-type" class="mt-1 w-full rounded border border-gray-300 p-2">
+                                    <option value="season">Season</option>
+                                    <option value="camp">Camp</option>
+                                    <option value="team">Team program</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="registration-season" class="block text-sm font-medium text-gray-700">Season</label>
+                                <input id="registration-season" class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="Spring 2026">
+                            </div>
+                            <div>
+                                <label for="registration-fee" class="block text-sm font-medium text-gray-700">Fee amount</label>
+                                <input id="registration-fee" type="number" min="0" step="0.01" class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="125.00">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="registration-participant-fields" class="block text-sm font-medium text-gray-700">Participant fields</label>
+                            <textarea id="registration-participant-fields" rows="3" class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="Participant name&#10;Birthdate"></textarea>
+                            <p class="mt-1 text-xs text-gray-500">One field per line or comma. Fields are required on the public form.</p>
+                        </div>
+                        <div>
+                            <label for="registration-guardian-fields" class="block text-sm font-medium text-gray-700">Guardian fields</label>
+                            <textarea id="registration-guardian-fields" rows="3" class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="Guardian name&#10;Guardian email&#10;Guardian phone"></textarea>
+                        </div>
+                        <div>
+                            <label for="registration-waiver" class="block text-sm font-medium text-gray-700">Waiver text</label>
+                            <textarea id="registration-waiver" rows="4" required class="mt-1 w-full rounded border border-gray-300 p-2" placeholder="Waiver and acknowledgement text parents must accept"></textarea>
+                        </div>
+                        <div>
+                            <label for="registration-status" class="block text-sm font-medium text-gray-700">Status</label>
+                            <select id="registration-status" class="mt-1 w-full rounded border border-gray-300 p-2">
+                                <option value="draft">Save as draft</option>
+                                <option value="published">Publish and show link</option>
+                            </select>
+                        </div>
+                        <p id="registration-form-message" class="text-sm text-gray-600"></p>
+                        <button type="submit" class="w-full rounded bg-primary-600 px-4 py-2 font-semibold text-white hover:bg-primary-700">Save registration form</button>
+                    </form>
+                </div>
+            </div>
+        </div>
     </main>
 
     <div id="footer-container"></div>
