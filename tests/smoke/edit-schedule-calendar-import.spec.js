@@ -76,6 +76,7 @@ export async function getOfficials() { return []; }
 export async function addOfficial() { return 'official-created'; }
 export async function updateOfficial() {}
 export async function deleteOfficial() {}
+export async function createOfficiatingAssignmentNotificationRecords() { return []; }
 `,
     '/js/utils.js': `
 const state = () => window.__editScheduleTestState || {};
