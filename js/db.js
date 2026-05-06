@@ -896,6 +896,13 @@ export async function updatePlayer(teamId, playerId, playerData) {
     await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
 }
 
+export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}) {
+    await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+        rosterFields,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+}
+
 export async function deletePlayer(teamId, playerId) {
     await updateDoc(doc(db, `teams/${teamId}/players`, playerId), {
         active: false,

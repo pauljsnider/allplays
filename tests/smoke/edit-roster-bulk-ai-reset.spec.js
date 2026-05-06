@@ -17,6 +17,7 @@ export async function uploadPlayerPhoto() {
     return 'https://example.test/photo.png';
 }
 export async function updatePlayer() {}
+export async function setPlayerPrivateRosterProfileFields() {}
 export async function inviteParent() {
     return {};
 }
