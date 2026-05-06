@@ -3,8 +3,11 @@ import {
     MAX_HIGHLIGHT_CLIP_MS,
     buildHighlightShareUrl,
     createHighlightClipDraft,
+    normalizeGameClipRecords,
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
+    canAccessNativeCameraCapture,
+    resolveGameMediaHub,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
 } from '../../js/live-game-video.js';
@@ -111,6 +114,38 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
+    it('collects live stream, replay, and saved highlights for the media hub', () => {
+        const hub = resolveGameMediaHub({
+            team: {
+                streamEmbedUrl: 'https://www.youtube.com/embed/abcdefghijk'
+            },
+            game: {
+                replayVideo: {
+                    url: 'https://cdn.example.com/game.mp4',
+                    publicUrl: 'https://video.example.com/game',
+                    title: 'Full replay',
+                    durationMs: 120_000
+                },
+                highlightClips: [
+                    { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
+                ]
+            }
+        });
+
+        expect(hub.liveStream).toMatchObject({
+            sourceUrl: 'https://www.youtube.com/embed/abcdefghijk?autoplay=1&mute=1',
+            publicUrl: 'https://www.youtube.com/watch?v=abcdefghijk'
+        });
+        expect(hub.replay).toMatchObject({
+            sourceUrl: 'https://cdn.example.com/game.mp4',
+            publicUrl: 'https://video.example.com/game',
+            title: 'Full replay'
+        });
+        expect(hub.highlights).toMatchObject([
+            { title: 'Big save', startMs: 15_000, endMs: 35_000, videoUrl: 'https://video.example.com/clip' }
+        ]);
+    });
+
     it('preserves normalized player tags on saved highlights', () => {
         const clip = createHighlightClipDraft({
             title: 'Drive and dish',
@@ -162,6 +197,164 @@ describe('live game replay video helpers', () => {
         ]);
     });
 
+    it('normalizes score-linked game clip records for playable cards', () => {
+        const clips = normalizeGameClipRecords({
+            clips: [
+                {
+                    id: 'clip-1',
+                    title: 'Go-ahead three',
+                    videoUrl: 'https://cdn.example.com/clip-1.mp4',
+                    playDescription: 'Mia hits from the corner',
+                    scoreContext: 'Home 42, Away 40',
+                    period: 'Q4',
+                    playerIds: ['p1']
+                },
+                {
+                    id: 'hidden-clip',
+                    url: 'https://cdn.example.com/hidden.mp4',
+                    hidden: true
+                },
+                {
+                    id: 'unsafe-clip',
+                    url: 'javascript:alert(1)'
+                }
+            ]
+        }, {
+            players: [{ id: 'p1', name: 'Mia Chen', number: '12' }]
+        });
+
+        expect(clips).toHaveLength(1);
+        expect(clips[0]).toMatchObject({
+            id: 'clip-1',
+            title: 'Go-ahead three',
+            playDescription: 'Mia hits from the corner',
+            scoreContext: 'Home 42, Away 40',
+            period: 'Q4',
+            players: ['#12 Mia Chen'],
+            url: 'https://cdn.example.com/clip-1.mp4'
+        });
+        expect(clips[0].downloadName).toBe('Go_ahead_three.mp4');
+    });
+
+    it('exposes the video tab model for games with no stream or clips', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {},
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('none');
+        expect(options.hasVideo).toBe(false);
+        expect(options.gameClips).toEqual([]);
+    });
+
+    it('normalizes attached scored play clips for the video tab', () => {
+        const clips = normalizeSavedHighlightClips({
+            highlightClips: [
+                {
+                    id: 'clip-1',
+                    type: 'score-linked',
+                    title: 'Corner three',
+                    caption: 'Big shot',
+                    mediaUrl: 'https://cdn.example.com/clip.mp4',
+                    playEventId: 'event-1',
+                    selectedPlayerIds: ['player-1'],
+                    scoreContext: { homeScore: 21, awayScore: 18 }
+                }
+            ]
+        });
+
+        expect(clips).toEqual([
+            expect.objectContaining({
+                id: 'clip-1',
+                type: 'score-linked',
+                title: 'Corner three',
+                mediaUrl: 'https://cdn.example.com/clip.mp4',
+                playEventId: 'event-1',
+                selectedPlayerIds: ['player-1'],
+                scoreContext: { homeScore: 21, awayScore: 18 }
+            })
+        ]);
+    });
+
+    it('shows attached clips as video playback when no replay video exists', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('recorded');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toBe('https://cdn.example.com/putback.mp4');
+        expect(options.savedHighlights).toHaveLength(1);
+        expect(options.gameClips).toEqual([]);
+    });
+
+    it('keeps the live embed visible over attached clips while a game is active', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'dQw4w9WgXcQ'
+            },
+            game: {
+                liveStatus: 'live',
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
+    it('keeps the live embed visible during active replay links with attached clips', () => {
+        const options = resolveReplayVideoOptions({
+            team: {
+                youtubeVideoId: 'dQw4w9WgXcQ'
+            },
+            game: {
+                liveStatus: 'live',
+                replayVideo: {
+                    url: 'https://cdn.example.com/games/game-1.mp4',
+                    durationMs: 180_000
+                },
+                highlightClips: [
+                    {
+                        type: 'score-linked',
+                        title: 'Putback',
+                        mediaUrl: 'https://cdn.example.com/putback.mp4'
+                    }
+                ]
+            },
+            isReplay: true,
+            clipStartMs: 10_000,
+            clipEndMs: 25_000
+        });
+
+        expect(options.mode).toBe('embed');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toContain('youtube.com/embed/dQw4w9WgXcQ');
+        expect(options.clipStartMs).toBeNull();
+        expect(options.clipEndMs).toBeNull();
+        expect(options.savedHighlights).toHaveLength(1);
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',
@@ -198,5 +391,52 @@ describe('live game replay video helpers', () => {
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live456?autoplay=1&mute=1' }
         )).toBe(true);
+    });
+});
+
+
+describe('native camera capture authorization', () => {
+    const scheduledGame = { status: 'scheduled' };
+
+    it('allows team owners and admins on scheduled games', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'owner-1', email: 'owner@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: scheduledGame
+        })).toBe(true);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'coach-2', email: 'Coach@Example.com' },
+            team: { ownerId: 'owner-1', adminEmails: ['coach@example.com'] },
+            game: scheduledGame
+        })).toBe(true);
+    });
+
+    it('allows explicitly approved media contributors by uid or email', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'streamer-1', email: 'helper@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [], mediaContributorUids: ['streamer-1'] },
+            game: scheduledGame
+        })).toBe(true);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'helper-2', email: 'Helper@Example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: { ...scheduledGame, mediaContributorEmails: ['helper@example.com'] }
+        })).toBe(true);
+    });
+
+    it('blocks regular viewers and ended games', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'viewer-1', email: 'viewer@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: scheduledGame
+        })).toBe(false);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'owner-1', email: 'owner@example.com' },
+            team: { ownerId: 'owner-1', adminEmails: [] },
+            game: { status: 'completed' }
+        })).toBe(false);
     });
 });

@@ -103,6 +103,44 @@ describe('live tracker finish completion plan', () => {
     ]);
   });
 
+  it('preserves video timestamp metadata on persisted scoring events', () => {
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 2,
+      requestedAway: 0,
+      liveHome: 2,
+      liveAway: 0,
+      scoreLogIsComplete: true,
+      log: [
+        {
+          text: 'Home layup',
+          clock: '01:20',
+          period: 'Q1',
+          ts: 11,
+          undoData: {
+            type: 'stat',
+            statKey: 'PTS',
+            value: 2,
+            isOpponent: false,
+            playerId: 'p1',
+            videoTimestampCaptureActive: true,
+            streamRelativeTimestampMs: 12345,
+            videoTimestampUnavailableReason: null
+          }
+        }
+      ],
+      columns: ['PTS'],
+      roster: [],
+      statsByPlayerId: {},
+      opponentEntries: []
+    });
+
+    expect(plan.eventWrites[0].data).toMatchObject({
+      videoTimestampCaptureActive: true,
+      streamRelativeTimestampMs: 12345,
+      videoTimestampUnavailableReason: null
+    });
+  });
+
   it('builds a mailto hop before returning to the game page when recap email is enabled', () => {
     const plan = buildFinishCompletionPlan({
       requestedHome: 7,

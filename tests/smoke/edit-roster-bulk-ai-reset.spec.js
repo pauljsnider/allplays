@@ -30,6 +30,9 @@ export async function getUnreadChatCount() {
 export async function getRosterFieldDefinitions() {
     return [];
 }
+export async function saveRosterFieldDefinition() {}
+export async function disableRosterFieldDefinition() {}
+export async function reorderRosterFieldDefinitions() {}
 export async function listTeamParentMembershipRequests() {
     return [];
 }
@@ -120,7 +123,7 @@ export function getGenerativeModel() {
 async function mockEditRosterDependencies(page) {
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
-    await page.route('**/js/auth.js?v=12', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/team-access.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
@@ -130,7 +133,9 @@ async function mockEditRosterDependencies(page) {
 async function openBulkAiTab(page, baseURL) {
     await mockEditRosterDependencies(page);
     await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#team-name-display')).toHaveText('Test Team');
     await page.click('#tab-bulk-ai');
+    await expect(page.locator('#content-bulk-ai')).toBeVisible();
 }
 
 async function uploadRosterImage(page) {

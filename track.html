@@ -273,13 +273,14 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query } from './js/db.js?v=15';
-        import { db } from './js/firebase.js?v=10';
-        import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=10';
+        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './js/db.js?v=29';
+        import { db } from './js/firebase.js?v=11';
+        import { writeBatch, doc, setDoc, addDoc } from './js/firebase.js?v=11';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=12';
+        import { checkAuth } from './js/auth.js?v=13';
         import { isAISummaryEnabled, applyAISummaryAvailability } from './js/track-ai-summary.js';
         import { resolveSummaryRecipient } from './js/live-tracker-email.js?v=1';
+        import { hasScorekeepingTeamAccess } from './js/team-access.js?v=2';
         import { commitStandardTrackerFinishData } from './js/track-finish.js?v=1';
         import { getApp } from './js/vendor/firebase-app.js';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
@@ -356,6 +357,16 @@
                 if (game.type === 'practice') {
                     alert('Practice events cannot be tracked. Use game tracking for games only.');
                     window.location.href = `edit-schedule.html#teamId=${teamId}`;
+                    return;
+                }
+
+                const needsScorekeepingRsvp = String(team?.teamPermissions?.scorekeeping?.mode || '').toLowerCase() === 'all_confirmed';
+                const scorekeepingRsvp = needsScorekeepingRsvp
+                    ? await getMyRsvp(teamId, gameId, currentUser.uid).catch(() => null)
+                    : null;
+                if (!hasScorekeepingTeamAccess(currentUser, { ...team, id: teamId }, game, scorekeepingRsvp)) {
+                    alert('You do not have scorekeeping access for this game.');
+                    window.location.href = `team.html#teamId=${teamId}`;
                     return;
                 }
 

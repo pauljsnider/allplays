@@ -92,6 +92,14 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('renderTeamScheduleNotificationSettings(currentTeam);');
     });
 
+    it('preserves scheduled reminder state when sending RSVP reminder audit updates', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain("'scheduleNotifications.lastAction': 'rsvp_reminder'");
+        expect(source).toContain("'scheduleNotifications.lastRsvpReminderCount': missingCount");
+        expect(source).not.toContain("action: 'rsvp_reminder',\n                            sent: true");
+    });
+
     it('uses the submitted linked-opponent state for counterpart notifications', () => {
         const source = readEditSchedule();
 

@@ -1,13 +1,14 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query } from './db.js?v=15';
-import { db } from './firebase.js?v=10';
+import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=29';
+import { db } from './firebase.js?v=11';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=12';
-import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=10';
+import { checkAuth } from './auth.js?v=13';
+import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=11';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=3';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
+import { hasScorekeepingTeamAccess } from './team-access.js?v=2';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1339,6 +1340,16 @@ async function init() {
     if (game.type === 'practice') {
       alert('Practice events cannot be tracked.');
       window.location.href = `edit-schedule.html#teamId=${teamId}`;
+      return;
+    }
+
+    const needsScorekeepingRsvp = String(team?.teamPermissions?.scorekeeping?.mode || '').toLowerCase() === 'all_confirmed';
+    const scorekeepingRsvp = needsScorekeepingRsvp
+      ? await getMyRsvp(teamId, gameId, currentUser.uid).catch(() => null)
+      : null;
+    if (!hasScorekeepingTeamAccess(currentUser, { ...team, id: teamId }, game, scorekeepingRsvp)) {
+      alert('You do not have scorekeeping access for this game.');
+      window.location.href = `team.html#teamId=${teamId}`;
       return;
     }
 

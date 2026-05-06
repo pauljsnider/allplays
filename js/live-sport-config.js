@@ -60,6 +60,8 @@ function getSportDefaults(sport) {
   if (goalProfile) return [...goalProfile.periodLabels];
 
   switch (normalizeSport(sport)) {
+    case 'volleyball':
+      return ['Set 1', 'Set 2', 'Set 3', 'Set 4', 'Set 5'];
     case 'baseball':
     case 'softball':
       return ['T1', 'B1', 'T2', 'B2', 'T3', 'B3', 'T4', 'B4', 'T5', 'B5', 'T6', 'B6', 'T7', 'B7'];

@@ -33,4 +33,24 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('isOpponent: event.isOpponent');
     expect(source).toContain('buildGoalSportEvent({');
   });
+
+  it('includes bounded football play logging with down-distance context', () => {
+    const source = readTrackLive();
+
+    expect(source).toContain('id="football-play-panel"');
+    expect(source).toContain('data-football-play="rush"');
+    expect(source).toContain('data-football-play="pass_complete"');
+    expect(source).toContain('data-football-play="incomplete_pass"');
+    expect(source).toContain('data-football-play="penalty"');
+    expect(source).toContain('data-football-play="turnover"');
+    expect(source).toContain('data-football-play="punt"');
+    expect(source).toContain('data-football-play="kickoff"');
+    expect(source).toContain("type: 'football_play'");
+    expect(source).toContain('footballPlayType: playType');
+    expect(source).toContain('possession: context.possession');
+    expect(source).toContain('down: context.down');
+    expect(source).toContain('distance: context.distance');
+    expect(source).toContain('yardLine: context.yardLine');
+
+  });
 });
