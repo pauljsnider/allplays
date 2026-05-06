@@ -26,6 +26,10 @@ function readGlobalConfig() {
         : {};
 }
 
+function readWindowGlobal(name) {
+    return typeof window !== 'undefined' ? window[name] : undefined;
+}
+
 function normalizeFirebaseConfig(rawConfig) {
     if (!rawConfig || typeof rawConfig !== 'object') {
         return null;
@@ -62,7 +66,7 @@ async function fetchFirebaseConfigFromHosting() {
 export async function resolvePrimaryFirebaseConfig() {
     const globalConfig = readGlobalConfig();
     const inlineConfig = normalizeFirebaseConfig(
-        globalConfig.firebase || globalConfig.firebasePrimary || window.ALLPLAYS_FIREBASE_CONFIG
+        globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
     );
     if (inlineConfig) {
         return inlineConfig;
@@ -79,7 +83,7 @@ export async function resolvePrimaryFirebaseConfig() {
 export function resolveImageFirebaseConfig() {
     const globalConfig = readGlobalConfig();
     const imageConfig = normalizeFirebaseConfig(
-        globalConfig.firebaseImages || globalConfig.firebaseImage || window.ALLPLAYS_FIREBASE_IMAGE_CONFIG
+        globalConfig.firebaseImages || globalConfig.firebaseImage || readWindowGlobal('ALLPLAYS_FIREBASE_IMAGE_CONFIG')
     );
     if (imageConfig) {
         return imageConfig;

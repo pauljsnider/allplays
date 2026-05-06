@@ -1,6 +1,6 @@
-import { getTeams, getAllUsers, deleteTeam } from './db.js?v=15';
+import { getTeams, getAllUsers, deleteTeam } from './db.js?v=29';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=12';
+import { checkAuth } from './auth.js?v=13';
 
 let allTeams = [];
 let allUsers = [];
@@ -59,7 +59,7 @@ async function loadGameStats() {
     // Load games from all teams
     const gamesPromises = allTeams.map(async (team) => {
         try {
-            const { getGames } = await import('./db.js?v=15');
+            const { getGames } = await import('./db.js?v=29');
             const games = await getGames(team.id);
             return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
         } catch (e) {

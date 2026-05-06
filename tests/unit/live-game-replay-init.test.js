@@ -216,8 +216,8 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame\n} from './db.js?v=15';",
-            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, subscribeGame, updateGame } = deps.db;'
+            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=29';",
+            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, subscribeGame, updateGame, uploadGameClip } = deps.db;'
         )
         .replace(
             "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';",
@@ -226,6 +226,14 @@ function buildModuleSource() {
         .replace(
             "import { computePanelVisibility } from './live-stream-utils.js?v=1';",
             'const { computePanelVisibility } = deps.liveStreamUtils;'
+        )
+        .replace(
+            "import { hasFullTeamAccess } from './team-access.js?v=1';",
+            'const { hasFullTeamAccess } = deps.teamAccess;'
+        )
+        .replace(
+            "import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';",
+            'const { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } = deps.gameClips;'
         )
         .replace(
             /import\s+\{\s*checkAuth\s*\}\s+from\s+'\.\/auth\.js\?v=\d+';/,
@@ -240,8 +248,12 @@ function buildModuleSource() {
             'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs } = deps.liveGameReplay;'
         )
         .replace(
-            /import \{ MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback \} from '\.\/live-game-video\.js\?v=\d+';/,
-            'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+            /import\s+\{\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildHighlightShareUrl,\s*canAccessNativeCameraCapture,\s*createHighlightClipDraft,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
+            'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+        )
+        .replace(
+            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
+            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
             "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
@@ -337,7 +349,8 @@ async function bootReplayPage({ replayEvents }) {
             getLiveReactions: async () => [],
             getConfigs: async () => [],
             subscribeGame: () => () => {},
-            updateGame: async () => {}
+            updateGame: async () => {},
+            uploadGameClip: async () => ({ url: '' })
         },
         utils: {
             getUrlParams: () => ({ teamId: 'T1', gameId: 'G1', replay: 'true' }),
@@ -354,6 +367,12 @@ async function bootReplayPage({ replayEvents }) {
                 showVideoTab: false,
                 showExternalLink: false
             })
+        },
+        teamAccess: { hasFullTeamAccess: () => false },
+        gameClips: {
+            buildScoreLinkedClipRecord: () => ({}),
+            isScoredPlayEvent: () => false,
+            validateGameClipFile: () => {}
         },
         auth: {
             checkAuth(callback) {
@@ -420,9 +439,16 @@ async function bootReplayPage({ replayEvents }) {
         liveGameVideo: {
             MAX_HIGHLIGHT_CLIP_MS: 60000,
             buildHighlightShareUrl: () => '',
+            canAccessNativeCameraCapture: () => false,
             createHighlightClipDraft: () => ({ startMs: 0, endMs: 0, title: '' }),
             resolveReplayVideoOptions: () => null,
             shouldReloadVideoPlayback: () => false
+        },
+        teamEntitlements: {
+            TEAM_PASS_FEATURES: {},
+            canAccessPremiumFanFeature: () => false,
+            getTeamEntitlementStatus: () => ({ isActive: false }),
+            resolveTeamEntitlementSeasonId: () => null
         },
         firebaseAi: {
             getAI: () => ({}),
