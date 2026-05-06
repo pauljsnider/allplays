@@ -38,6 +38,14 @@ export async function listTeamParentMembershipRequests() {
 }
 export async function approveParentMembershipRequest() {}
 export async function denyParentMembershipRequest() {}
+export async function listTeamRegistrationForms() {
+    return [];
+}
+export async function listTeamRegistrationReviews() {
+    return [];
+}
+export async function approveTeamRegistration() {}
+export async function rejectTeamRegistration() {}
 `;
 
 const UTILS_STUB = `
