@@ -72,6 +72,10 @@ export async function getUnreadChatCounts() {
     return {};
 }
 
+export async function postChatMessage() {
+    return undefined;
+}
+
 export async function getUserProfile() {
     return null;
 }
