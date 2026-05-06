@@ -44,6 +44,12 @@ describe('player video clips tab', () => {
                 gameClips: [
                     { id: 'clip-4', playerId: 'player-1', title: 'Corner three', videoUrl: 'https://video.example.com/clip-4.mp4', thumbnailUrl: 'https://video.example.com/thumb.jpg' },
                     { id: 'clip-5', playerId: 'player-1', title: 'Unsafe', videoUrl: 'javascript:alert(1)' }
+                ],
+                clipMetadata: [
+                    { id: 'clip-6', playerIds: ['player-1'], title: 'Metadata three', playDescription: 'Three pointer', startMs: 10000, endMs: 35000 }
+                ],
+                clips: [
+                    { id: 'clip-7', taggedPlayerIds: ['player-1'], title: 'Saved replay clip', startMs: 40000, endMs: 52000 }
                 ]
             }
         ], { teamId: 'team-1', playerId: 'player-1' });
@@ -56,6 +62,24 @@ describe('player video clips tab', () => {
                 playLabel: 'Highlight',
                 url: 'https://video.example.com/clip-4.mp4',
                 thumbnailUrl: 'https://video.example.com/thumb.jpg',
+                gameLabel: 'Tigers'
+            },
+            {
+                id: 'clip-6',
+                title: 'Metadata three',
+                gameDate: '4/25/2026',
+                playLabel: 'Three pointer',
+                url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=10000&clipEnd=35000',
+                thumbnailUrl: 'https://cdn.example.com/poster.jpg',
+                gameLabel: 'Tigers'
+            },
+            {
+                id: 'clip-7',
+                title: 'Saved replay clip',
+                gameDate: '4/25/2026',
+                playLabel: 'Highlight',
+                url: 'live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=40000&clipEnd=52000',
+                thumbnailUrl: 'https://cdn.example.com/poster.jpg',
                 gameLabel: 'Tigers'
             },
             {
