@@ -91,6 +91,7 @@ import {
     computeOfficiatingCoverageStatus,
     updateOfficiatingSlotResponse
 } from './officiating-utils.js?v=1';
+import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=1';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -4213,23 +4214,65 @@ export async function cancelGame(teamId, gameId, userId) {
 // Officiating Assignments
 // ============================================
 
+export async function createOfficiatingAssignmentNotificationRecords(teamId, records = []) {
+    if (!teamId || !Array.isArray(records) || records.length === 0) return [];
+
+    const collectionRef = collection(db, `teams/${teamId}/officiatingNotifications`);
+    const writeResults = await Promise.allSettled(records.map((record) => addDoc(collectionRef, {
+        ...record,
+        timestamp: record.timestamp || Timestamp.now(),
+        createdAt: Timestamp.now()
+    })));
+    const failures = writeResults.filter((result) => result.status === 'rejected');
+    if (failures.length) {
+        throw new Error(failures[0].reason?.message || 'Failed to create officiating notification record');
+    }
+    return writeResults.map((result) => result.value.id);
+}
+
+async function tryCreateOfficiatingAssignmentNotificationRecords(teamId, records = []) {
+    try {
+        await createOfficiatingAssignmentNotificationRecords(teamId, records);
+    } catch (error) {
+        console.warn('Officiating assignment notification creation failed:', error);
+    }
+}
+
 export async function respondToOfficiatingAssignment(teamId, gameId, slotId, status) {
     const docRef = getGameDocRef(teamId, gameId);
+    let notificationRecord = null;
     await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(docRef);
         if (!snap.exists()) throw new Error('Game not found');
         const game = snap.data() || {};
         const officiatingSlots = updateOfficiatingSlotResponse(game.officiatingSlots || [], slotId, status);
+        const updatedSlot = officiatingSlots.find((slot) => slot.id === slotId) || null;
+        if (updatedSlot) {
+            notificationRecord = buildOfficiatingNotificationRecord({
+                teamId,
+                gameId,
+                game,
+                slot: updatedSlot,
+                event: status === 'declined' || status === 'cant_make' ? 'declined' : 'accepted',
+                status,
+                recipientType: 'assigner',
+                actor: auth.currentUser || {},
+                timestamp: Timestamp.now()
+            });
+        }
         transaction.update(docRef, {
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
             officiatingUpdatedAt: Timestamp.now()
         });
     });
+
+    await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
 export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser) {
     const docRef = getGameDocRef(teamId, gameId);
+    let notificationRecord = null;
     await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(docRef);
         if (!snap.exists()) throw new Error('Game not found');
@@ -4242,12 +4285,28 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
             email: official?.email || '',
             displayName: official?.displayName || official?.email || 'Official'
         });
+        const updatedSlot = officiatingSlots.find((slot) => slot.id === slotId) || null;
+        if (updatedSlot) {
+            notificationRecord = buildOfficiatingNotificationRecord({
+                teamId,
+                gameId,
+                game: { ...game, officiatingSlots },
+                slot: updatedSlot,
+                event: 'self_assigned',
+                status: updatedSlot.status,
+                recipientType: 'assigner',
+                actor: official || {},
+                timestamp: Timestamp.now()
+            });
+        }
         transaction.update(docRef, {
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
             officiatingUpdatedAt: Timestamp.now()
         });
     });
+
+    await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
 // ============================================

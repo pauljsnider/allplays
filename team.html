@@ -259,7 +259,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors } from './js/db.js?v=18';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage } from './js/db.js?v=18';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -273,8 +273,9 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
+        import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
-        import { renderTeamPassCard } from './js/team-pass.js?v=1';
+        import { renderTeamPassCard } from './js/team-pass.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -299,6 +300,7 @@
         let currentTeam = null;
         let currentTeamId = null;
         let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
+        let currentPlayers = [];
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -317,6 +319,7 @@
         window.setScheduleView = setScheduleView;
         window.navScheduleMonth = navScheduleMonth;
         window.submitTeamAvailabilityFromButton = submitTeamAvailabilityFromButton;
+        window.sendAvailabilityReminderFromButton = sendAvailabilityReminderFromButton;
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
@@ -409,11 +412,17 @@
                 .map((link) => link.playerId.trim())));
         }
 
+        function canSendAvailabilityReminders() {
+            return !!currentUser && (currentUser?.isAdmin || currentTeamAccessInfo?.accessLevel === 'full' || currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin');
+        }
+
         function renderTeamAvailabilityControls(game, isUpcoming) {
             if (!isUpcoming || game.isCancelled || !currentUser || !currentTeamAccessInfo?.hasAccess) return '';
             const hasMixedPlayerRsvps = game.myRsvp === 'mixed';
             const locked = !!game.availabilityLocked || hasMixedPlayerRsvps;
             const summary = formatRsvpSummary(game.rsvpSummary);
+            const reminderCount = Number(game.rsvpSummary?.notResponded || 0);
+            const canRemind = canSendAvailabilityReminders();
             const lockCopy = hasMixedPlayerRsvps
                 ? 'Player-specific RSVP responses differ. Update each player from the parent dashboard to avoid overwriting child-specific availability.'
                 : (locked ? `Availability locked ${formatAvailabilityCutoff(game.availabilityPreferences).toLowerCase()}.` : '');
@@ -428,6 +437,7 @@
                         <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'maybe')" class="rsvp-btn rsvp-maybe flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'maybe' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-white text-yellow-700 border-yellow-300 hover:bg-yellow-50')}">Maybe</button>
                         <button ${locked ? 'disabled aria-disabled="true"' : ''} data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="submitTeamAvailabilityFromButton(this, 'not_going')" class="rsvp-btn rsvp-not-going flex-1 px-2 py-1.5 text-xs font-semibold rounded-lg border transition ${locked ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : (game.myRsvp === 'not_going' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50')}">Not Going</button>
                     </div>
+                    ${canRemind ? `<button type="button" data-team-id="${escapeAttr(currentTeamId)}" data-game-id="${escapeAttr(game.gameId || game.id)}" onclick="sendAvailabilityReminderFromButton(this)" class="mt-2 w-full px-3 py-1.5 text-xs font-semibold rounded-lg border border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100 transition">Send reminder to ${reminderCount} no-response ${reminderCount === 1 ? 'recipient' : 'recipients'}</button>` : ''}
                     ${lockCopy ? `<div class="mt-1 text-xs font-semibold text-amber-700">${escapeHtml(lockCopy)}</div>` : ''}
                     <div data-team-availability-status class="mt-1 text-xs text-gray-500"></div>
                 </div>
@@ -455,6 +465,62 @@
                 renderScheduleFromControls();
             } catch (err) {
                 if (status) status.textContent = err?.message || 'Unable to save availability.';
+            }
+        }
+
+        async function sendAvailabilityReminderFromButton(btn) {
+            if (btn?.disabled || !canSendAvailabilityReminders()) return;
+            const teamId = btn?.dataset?.teamId || currentTeamId;
+            const gameId = btn?.dataset?.gameId || '';
+            const event = (allScheduleEvents || []).find((item) => item.type === 'db' && (item.gameId || item.id) === gameId);
+            if (!teamId || !gameId || !event || !currentUser) return;
+            const container = btn.closest('[data-team-availability-container]');
+            const status = container?.querySelector('[data-team-availability-status]');
+
+            try {
+                btn.disabled = true;
+                if (status) status.textContent = 'Checking non-responders...';
+                const rsvps = await getRsvps(teamId, gameId);
+                const recipients = buildAvailabilityReminderRecipients(currentPlayers, rsvps);
+                if (recipients.playerIds.length === 0) {
+                    if (status) status.textContent = 'Everyone has responded. No reminder sent.';
+                    return;
+                }
+                const confirmed = window.confirm(`Send an availability reminder for this event to ${recipients.recipientCount} no-response ${recipients.recipientCount === 1 ? 'recipient' : 'recipients'} covering ${recipients.playerCount} roster ${recipients.playerCount === 1 ? 'member' : 'members'}?`);
+                if (!confirmed) {
+                    if (status) status.textContent = 'Reminder cancelled.';
+                    return;
+                }
+                if (status) status.textContent = 'Sending reminder...';
+                await postChatMessage(teamId, {
+                    text: buildRsvpReminderMessage({
+                        eventType: event.isPractice ? 'practice' : 'game',
+                        title: event.title || event.opponent || (event.isPractice ? 'Practice' : 'Untitled event'),
+                        dateLabel: formatDate(event.date),
+                        missingCount: recipients.playerCount
+                    }),
+                    senderId: currentUser.uid,
+                    senderName: currentUser.displayName || currentUser.email || 'Coach',
+                    senderEmail: currentUser.email || null,
+                    senderPhotoUrl: currentUser.photoURL || null,
+                    ai: false,
+                    aiMeta: {
+                        type: 'availability-reminder',
+                        gameId,
+                        recipientPlayerIds: recipients.playerIds,
+                        recipientParentIds: recipients.parentIds,
+                        recipientParentEmails: recipients.parentEmails,
+                        playerCount: recipients.playerCount,
+                        recipientCount: recipients.recipientCount,
+                        sentBy: currentUser.uid,
+                        sentAt: new Date().toISOString()
+                    }
+                });
+                if (status) status.textContent = `Reminder sent to ${recipients.recipientCount} no-response ${recipients.recipientCount === 1 ? 'recipient' : 'recipients'}.`;
+            } catch (err) {
+                if (status) status.textContent = err?.message || 'Unable to send reminder.';
+            } finally {
+                btn.disabled = false;
             }
         }
 
@@ -1143,6 +1209,7 @@
                     : null;
 
                 teamGames = dbGames;
+                currentPlayers = players;
                 gamesById = {};
                 dbGames.forEach((game) => {
                     const id = game.id || game.gameId;

@@ -176,6 +176,72 @@ export async function postScheduleNotificationTargets({
     };
 }
 
+function uniqueNonEmptyStrings(values) {
+    return Array.from(new Set((Array.isArray(values) ? values : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)));
+}
+
+function normalizeRsvpResponse(response) {
+    return ['going', 'maybe', 'not_going'].includes(response) ? response : 'not_responded';
+}
+
+function getRsvpPlayerIds(rsvp) {
+    const directIds = uniqueNonEmptyStrings(rsvp?.playerIds);
+    if (directIds.length) return directIds;
+    return uniqueNonEmptyStrings([rsvp?.playerId, rsvp?.childId]);
+}
+
+function getPlayerParentUserIds(player) {
+    return uniqueNonEmptyStrings([
+        ...(Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.userId) : []),
+        player?.parentUserId,
+        player?.guardianUserId
+    ]);
+}
+
+export function buildAvailabilityReminderRecipients(players, rsvps) {
+    const activePlayers = (Array.isArray(players) ? players : [])
+        .filter((player) => player?.active !== false && String(player?.id || '').trim());
+    const playerIdsByParentUserId = new Map();
+    activePlayers.forEach((player) => {
+        getPlayerParentUserIds(player).forEach((userId) => {
+            const existing = playerIdsByParentUserId.get(userId) || [];
+            existing.push(String(player.id));
+            playerIdsByParentUserId.set(userId, existing);
+        });
+    });
+    const respondedPlayerIds = new Set();
+
+    (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
+        if (normalizeRsvpResponse(rsvp?.response) === 'not_responded') return;
+        const rsvpPlayerIds = getRsvpPlayerIds(rsvp);
+        const fallbackPlayerIds = rsvpPlayerIds.length ? [] : (playerIdsByParentUserId.get(String(rsvp?.userId || '').trim()) || []);
+        [...rsvpPlayerIds, ...fallbackPlayerIds].forEach((playerId) => respondedPlayerIds.add(playerId));
+    });
+
+    const nonRespondingPlayers = activePlayers.filter((player) => !respondedPlayerIds.has(String(player.id)));
+    const playerIds = uniqueNonEmptyStrings(nonRespondingPlayers.map((player) => player.id));
+    const parentIds = uniqueNonEmptyStrings(nonRespondingPlayers.flatMap((player) => (
+        getPlayerParentUserIds(player)
+    )));
+    const parentEmails = uniqueNonEmptyStrings(nonRespondingPlayers.flatMap((player) => (
+        Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.email) : []
+    )));
+    const rosterDirectRecipientCount = playerIds.filter((playerId) => {
+        const player = nonRespondingPlayers.find((candidate) => String(candidate.id) === playerId);
+        return !Array.isArray(player?.parents) || player.parents.length === 0;
+    }).length;
+
+    return {
+        playerIds,
+        parentIds,
+        parentEmails,
+        playerCount: playerIds.length,
+        recipientCount: parentIds.length + rosterDirectRecipientCount
+    };
+}
+
 export function buildRsvpReminderMessage({
     eventType,
     title,

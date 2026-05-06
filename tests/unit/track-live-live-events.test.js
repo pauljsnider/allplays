@@ -47,6 +47,9 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('data-football-play="kickoff"');
     expect(source).toContain("type: 'football_play'");
     expect(source).toContain('footballPlayType: playType');
+    expect(source).toContain('liveFootballState: gameState.footballState');
+    expect(source).toContain('scheduleFootballStateSync()');
+    expect(source).toContain("genericPanels.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode || footballMode)");
     expect(source).toContain('possession: context.possession');
     expect(source).toContain('down: context.down');
     expect(source).toContain('distance: context.distance');

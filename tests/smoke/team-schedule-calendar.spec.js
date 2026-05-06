@@ -268,8 +268,62 @@ export function getTeamAccessInfo() {
 }
 `;
 
+const TOURNAMENT_STANDINGS_STUB = `
+export function computeTournamentPoolStandings() {
+    return [];
+}
+`;
+
+const ROSTER_FIELD_PRIVACY_STUB = `
+export function getVisibleRosterFieldValues() {
+    return {};
+}
+`;
+
+const AVAILABILITY_PREFERENCES_STUB = `
+export function buildAvailabilityNoteRows() {
+    return [];
+}
+
+export function formatAvailabilityCutoff() {
+    return 'No cutoff';
+}
+
+export function isAvailabilityLocked() {
+    return false;
+}
+
+export function normalizeAvailabilityPreferences(preferences = {}) {
+    return {
+        cutoffMinutesBeforeStart: 0,
+        noteVisibility: 'admins',
+        ...preferences
+    };
+}
+`;
+
+const SCHEDULE_NOTIFICATIONS_STUB = `
+export function buildAvailabilityReminderRecipients() {
+    return [];
+}
+
+export function buildRsvpReminderMessage() {
+    return '';
+}
+`;
+
 const TEAM_PASS_STUB = `
 export function renderTeamPassCard() {}
+`;
+
+const LOCAL_ATTRACTIONS_STUB = `
+export function normalizeExternalWebsiteUrl(value) {
+    return value || '';
+}
+
+export function selectRotatingSponsor(sponsors = []) {
+    return Array.isArray(sponsors) ? sponsors[0] || null : null;
+}
 `;
 
 async function mockTeamPageModules(page, scenario) {
@@ -328,7 +382,37 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: TEAM_ADMIN_BANNER_STUB
     }));
-    await page.route('**/js/team-pass.js?v=1', (route) => route.fulfill({
+    await page.route('**/js/tournament-standings.js?v=3', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: TOURNAMENT_STANDINGS_STUB
+    }));
+    await page.route('**/js/roster-field-privacy.js', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: ROSTER_FIELD_PRIVACY_STUB
+    }));
+    await page.route('**/js/availability-preferences.js?v=1', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: AVAILABILITY_PREFERENCES_STUB
+    }));
+    await page.route('**/js/schedule-notifications.js?v=4', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: SCHEDULE_NOTIFICATIONS_STUB
+    }));
+    await page.route('**/js/local-attractions.js?v=2', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: LOCAL_ATTRACTIONS_STUB
+    }));
+    await page.route('**/js/premium-entitlements.js?v=1', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
+    }));
+    await page.route('**/js/team-pass.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: TEAM_PASS_STUB
