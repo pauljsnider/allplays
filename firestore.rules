@@ -573,6 +573,16 @@ service cloud.firestore {
         allow read, write: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // In-app audit records for officiating assignment lifecycle changes.
+      match /officiatingNotifications/{notificationId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                      (isSignedIn() && resource.data.recipientOfficialUserId == request.auth.uid) ||
+                      (isSignedIn() && request.auth.token.email != null &&
+                       resource.data.recipientOfficialEmail == request.auth.token.email.lower());
+        allow create: if isTeamOwnerOrAdmin(teamId);
+        allow update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Games subcollection
       match /games/{gameId} {
         allow read: if true;  // Public game data
