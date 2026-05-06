@@ -298,6 +298,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const values = {};
         let name = '';
         let number = '';
+        const hasNumberColumn = mappings.some((mapping) => mapping.type === 'number');
         mappings.forEach((mapping) => {
             const rawValue = row[mapping.index] ?? '';
             if (mapping.type === 'name') name = String(rawValue || '').trim();
@@ -339,7 +340,8 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
                 ...publicValues
             }
         };
-        const payload = { name, number, profile };
+        const payload = { name, profile };
+        if (hasNumberColumn) payload.number = number;
         const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
         operations.push(existing
             ? { type: 'update', playerId: existing.id, payload, privateRosterFields }

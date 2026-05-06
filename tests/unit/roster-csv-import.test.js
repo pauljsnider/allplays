@@ -38,6 +38,26 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('preserves existing jersey numbers when the CSV omits the number header', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            existingPlayers: [{ id: 'p1', name: 'Avery Lee', number: '3', profile: { customFields: { grade: '5' } } }],
+            csvText: 'Name,Grade\nAvery Lee,6'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            playerId: 'p1',
+            payload: {
+                name: 'Avery Lee',
+                profile: { customFields: { grade: '6' } }
+            }
+        });
+        expect(plan.operations[0].payload).not.toHaveProperty('number');
+    });
+
     it('accepts configured field keys as headers and rejects unknown headers', () => {
         const valid = planRosterCsvImport({ fields, csvText: 'playerName,jersey,throwsRight\nAvery Lee,4,true' });
         expect(valid.errors).toEqual([]);
