@@ -10,6 +10,12 @@ function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function firstNonEmptyObject(...values) {
+    return values
+        .map(asObject)
+        .find((value) => Object.keys(value).length > 0) || {};
+}
+
 function normalizeAnswerKey(value) {
     return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
@@ -90,8 +96,22 @@ function normalizeContacts(value) {
 }
 
 function getRegistrationAnswerSources(sourcePlayer = {}) {
-    const submitted = asObject(sourcePlayer.submittedData || sourcePlayer.submission || sourcePlayer.payload || sourcePlayer.formData || sourcePlayer.answers || sourcePlayer.data);
-    const playerSource = asObject(sourcePlayer.player || sourcePlayer.playerData || sourcePlayer.athlete || submitted.player || submitted.playerData || submitted.athlete);
+    const submitted = firstNonEmptyObject(
+        sourcePlayer.submittedData,
+        sourcePlayer.submission,
+        sourcePlayer.payload,
+        sourcePlayer.formData,
+        sourcePlayer.answers,
+        sourcePlayer.data
+    );
+    const playerSource = firstNonEmptyObject(
+        sourcePlayer.player,
+        sourcePlayer.playerData,
+        sourcePlayer.athlete,
+        submitted.player,
+        submitted.playerData,
+        submitted.athlete
+    );
     return [
         asObject(sourcePlayer.rosterFieldValues),
         asObject(sourcePlayer.customFields),

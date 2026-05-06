@@ -173,6 +173,40 @@ describe('registration roster import planning', () => {
         });
     });
 
+    it('falls back past empty registration wrappers when mapping configured roster fields', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            fields: [{ key: 'grade', label: 'Grade', type: 'text', visibility: 'team' }],
+            sourcePlayers: [
+                {
+                    externalPlayerId: 'ext-1',
+                    name: 'Avery Lee',
+                    submittedData: {},
+                    player: {},
+                    payload: {
+                        athlete: {
+                            customFields: { Grade: '7' }
+                        }
+                    }
+                }
+            ],
+            existingPlayers: [
+                {
+                    id: 'player-1',
+                    name: 'Avery Lee',
+                    profile: { customFields: { note: 'keep' } },
+                    sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+                }
+            ]
+        });
+
+        expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 1, fieldsSkipped: 0 });
+        expect(plan.operations[0].payload.profile.customFields).toEqual({
+            grade: '7',
+            note: 'keep'
+        });
+    });
+
     it('skips blank, unsupported, and invalid configured roster field answers without failing import', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
