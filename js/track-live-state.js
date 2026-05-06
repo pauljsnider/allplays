@@ -42,6 +42,7 @@ export function buildTrackLiveResetUpdate({
     liveStatus: 'scheduled',
     liveHasData: false,
     liveResetAt,
+    servingTeam: 'home',
     opponent: currentGame?.opponent,
     opponentTeamId: currentGame?.opponentTeamId || '',
     opponentTeamName: currentGame?.opponentTeamName || '',
