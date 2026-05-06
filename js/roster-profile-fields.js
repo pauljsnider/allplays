@@ -86,11 +86,19 @@ export function getRosterProfileValues(player = {}) {
 export function validateRosterProfileValues(fields = [], values = {}) {
     const errors = [];
     fields.forEach((field) => {
-        if (!field.required) return;
         const value = values?.[field.key];
         const missing = field.type === 'checkbox' ? value !== true : String(value ?? '').trim() === '';
-        if (missing) {
+        if (field.required && missing) {
             errors.push(`${field.label} is required.`);
+            return;
+        }
+        if (missing) return;
+        if (field.type === 'menu' && (field.options || []).length > 0) {
+            const valid = (field.options || []).some((option) => String(option.value) === String(value));
+            if (!valid) errors.push(`${field.label} must be one of the configured options.`);
+        }
+        if (field.type === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+            errors.push(`${field.label} must use YYYY-MM-DD format.`);
         }
     });
     return errors;
@@ -110,6 +118,236 @@ export function collectRosterProfileValues(container, fields = []) {
         values[field.key] = coerceRosterProfileValue(field, field.type === 'checkbox' ? input.checked : input.value);
     });
     return values;
+}
+
+
+function normalizeHeaderKey(value) {
+    return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function parseCsvRows(csvText = '') {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let inQuotes = false;
+    const text = String(csvText || '').replace(/^\uFEFF/, '');
+
+    for (let i = 0; i < text.length; i += 1) {
+        const char = text[i];
+        const next = text[i + 1];
+        if (char === '"') {
+            if (inQuotes && next === '"') {
+                cell += '"';
+                i += 1;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (char === ',' && !inQuotes) {
+            row.push(cell);
+            cell = '';
+        } else if ((char === '\n' || char === '\r') && !inQuotes) {
+            if (char === '\r' && next === '\n') i += 1;
+            row.push(cell);
+            if (row.some((value) => String(value || '').trim() !== '')) rows.push(row);
+            row = [];
+            cell = '';
+        } else {
+            cell += char;
+        }
+    }
+
+    row.push(cell);
+    if (row.some((value) => String(value || '').trim() !== '')) rows.push(row);
+    return rows;
+}
+
+function parseCheckboxValue(value) {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === '') return false;
+    if (['true', 'yes', 'y', '1', 'checked', 'x'].includes(normalized)) return true;
+    if (['false', 'no', 'n', '0', 'unchecked'].includes(normalized)) return false;
+    return null;
+}
+
+function parseRosterCsvFieldValue(field, rawValue) {
+    const value = String(rawValue ?? '').trim();
+    if (value === '') return { value: field.type === 'checkbox' ? false : '' };
+
+    if (field.type === 'checkbox') {
+        const parsed = parseCheckboxValue(value);
+        if (parsed === null) return { error: `${field.label} must be yes/no.` };
+        return { value: parsed };
+    }
+
+    if (field.type === 'date') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { error: `${field.label} must use YYYY-MM-DD format.` };
+        const date = new Date(`${value}T00:00:00Z`);
+        if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+            return { error: `${field.label} must be a valid date.` };
+        }
+        return { value };
+    }
+
+    if (field.type === 'menu') {
+        const option = (field.options || []).find((item) =>
+            String(item.value || '').trim().toLowerCase() === value.toLowerCase() ||
+            String(item.label || '').trim().toLowerCase() === value.toLowerCase()
+        );
+        if (!option) {
+            const choices = (field.options || []).map((item) => item.label || item.value).filter(Boolean).join(', ');
+            return { error: `${field.label} must be one of: ${choices}.` };
+        }
+        return { value: option.value };
+    }
+
+    return { value };
+}
+
+function isAdminOnlyRosterField(field = {}) {
+    const visibility = String(field.visibility || '').trim().toLowerCase();
+    return ['admin', 'admins', 'private', 'restricted'].includes(visibility);
+}
+
+export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
+    const publicValues = {};
+    const privateValues = {};
+    fields.forEach((field) => {
+        if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
+        if (isAdminOnlyRosterField(field)) {
+            privateValues[field.key] = values[field.key];
+        } else {
+            publicValues[field.key] = values[field.key];
+        }
+    });
+    return { publicValues, privateValues };
+}
+
+function getExistingPlayersByName(existingPlayers = []) {
+    const byName = new Map();
+    existingPlayers.forEach((player) => {
+        const key = String(player?.name || '').trim().toLowerCase();
+        if (!key) return;
+        if (!byName.has(key)) byName.set(key, []);
+        byName.get(key).push(player);
+    });
+    return byName;
+}
+
+export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers = [] } = {}) {
+    const errors = [];
+    const normalizedFields = normalizeRosterFieldDefinitions(fields);
+    const rows = parseCsvRows(csvText);
+    if (rows.length === 0) return { errors: ['CSV is empty.'], operations: [] };
+
+    const headers = rows[0].map((header) => String(header || '').trim());
+    const fieldByHeader = new Map();
+    normalizedFields.forEach((field) => {
+        fieldByHeader.set(normalizeHeaderKey(field.key), field);
+        fieldByHeader.set(normalizeHeaderKey(field.label), field);
+    });
+
+    const coreAliases = new Map([
+        ['name', 'name'],
+        ['player', 'name'],
+        ['playername', 'name'],
+        ['athlete', 'name'],
+        ['athletename', 'name'],
+        ['number', 'number'],
+        ['jersey', 'number'],
+        ['jerseynumber', 'number'],
+        ['uniformnumber', 'number'],
+        ['no', 'number']
+    ]);
+
+    const mappings = headers.map((header, index) => {
+        const normalized = normalizeHeaderKey(header);
+        if (!normalized) return { index, type: 'blank' };
+        const core = coreAliases.get(normalized);
+        if (core) return { index, type: core, label: header };
+        const field = fieldByHeader.get(normalized);
+        if (field) return { index, type: 'field', field, label: header };
+        return { index, type: 'unknown', label: header };
+    });
+
+    if (!mappings.some((mapping) => mapping.type === 'name')) {
+        errors.push('CSV must include a player name header.');
+    }
+
+    const seenTypes = new Set();
+    const seenFields = new Set();
+    mappings.forEach((mapping) => {
+        if (mapping.type === 'unknown') {
+            errors.push(`Unknown CSV header "${mapping.label}". Use Name, Number, or a configured roster field label/key.`);
+        } else if (mapping.type === 'name' || mapping.type === 'number') {
+            if (seenTypes.has(mapping.type)) errors.push(`Duplicate ${mapping.type === 'name' ? 'name' : 'number'} header.`);
+            seenTypes.add(mapping.type);
+        } else if (mapping.type === 'field') {
+            if (seenFields.has(mapping.field.key)) errors.push(`Duplicate roster field header for ${mapping.field.label}.`);
+            seenFields.add(mapping.field.key);
+        }
+    });
+
+    if (errors.length) return { errors, operations: [] };
+
+    const existingByName = getExistingPlayersByName(existingPlayers);
+    const operations = [];
+    rows.slice(1).forEach((row, rowIndex) => {
+        const rowNumber = rowIndex + 2;
+        if (!row.some((value) => String(value || '').trim() !== '')) return;
+
+        const values = {};
+        let name = '';
+        let number = '';
+        mappings.forEach((mapping) => {
+            const rawValue = row[mapping.index] ?? '';
+            if (mapping.type === 'name') name = String(rawValue || '').trim();
+            if (mapping.type === 'number') number = String(rawValue || '').trim();
+            if (mapping.type === 'field') values[mapping.field.key] = rawValue;
+        });
+
+        if (!name) errors.push(`Row ${rowNumber}: player name is required.`);
+
+        const parsedValues = {};
+        normalizedFields.forEach((field) => {
+            if (!Object.prototype.hasOwnProperty.call(values, field.key)) return;
+            const parsed = parseRosterCsvFieldValue(field, values[field.key]);
+            if (parsed.error) {
+                errors.push(`Row ${rowNumber}: ${parsed.error}`);
+            } else {
+                parsedValues[field.key] = parsed.value;
+            }
+        });
+
+        validateRosterProfileValues(normalizedFields, parsedValues).forEach((error) => {
+            errors.push(`Row ${rowNumber}: ${error}`);
+        });
+
+        if (!name) return;
+        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues);
+        const matches = existingByName.get(name.toLowerCase()) || [];
+        if (matches.length > 1) {
+            errors.push(`Row ${rowNumber}: multiple existing players named ${name}; update this player manually.`);
+            return;
+        }
+
+        const existing = matches[0];
+        const existingProfile = existing?.profile || {};
+        const profile = {
+            ...existingProfile,
+            customFields: {
+                ...(existingProfile.customFields || {}),
+                ...publicValues
+            }
+        };
+        const payload = { name, number, profile };
+        const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
+        operations.push(existing
+            ? { type: 'update', playerId: existing.id, payload, privateRosterFields }
+            : { type: 'add', payload, privateRosterFields });
+    });
+
+    if (errors.length) return { errors, operations: [] };
+    return { errors: [], operations };
 }
 
 function createBaseField(field) {

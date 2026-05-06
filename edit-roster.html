@@ -69,6 +69,9 @@
                         <button id="tab-add-player" class="flex-1 px-4 py-3 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50">
                             Add Player
                         </button>
+                        <button id="tab-csv-import" class="flex-1 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
+                            CSV Import
+                        </button>
                         <button id="tab-bulk-ai" class="flex-1 px-4 py-3 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-50">
                             ✨ Bulk AI Update
                         </button>
@@ -114,6 +117,31 @@
                             class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Add
                             Player</button>
                     </form>
+                    </div>
+
+                    <!-- CSV Import Tab Content -->
+                    <div id="content-csv-import" class="p-6 hidden">
+                        <div class="mb-3">
+                            <h2 class="text-xl font-bold">CSV Roster Import</h2>
+                            <p class="text-sm text-gray-600">Upload or paste a CSV with Name, Number, and roster field label/key columns. Unknown headers and invalid field values are rejected before anything is saved.</p>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Upload CSV (optional)</label>
+                                <input type="file" id="roster-csv-file" accept=".csv,text/csv"
+                                    class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">CSV data</label>
+                                <textarea id="roster-csv-input" rows="8"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm font-mono"
+                                    placeholder="Name,Number,Grade,Throws Right&#10;Avery Lee,4,6,yes"></textarea>
+                            </div>
+                            <button id="import-csv-btn" type="button"
+                                class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Import CSV</button>
+                            <div id="csv-import-status" class="hidden rounded-md border p-3 text-sm"></div>
+                        </div>
                     </div>
 
                     <!-- Bulk AI Update Tab Content -->
@@ -452,8 +480,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration } from './js/db.js?v=29';
-        import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration } from './js/db.js?v=30';
+        import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=13';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -1152,14 +1180,82 @@
             renderRosterProfileFields(document.getElementById('roster-profile-fields'), rosterFieldDefinitions);
         }
 
+        function activateRosterTab(tabName) {
+            ['add-player', 'csv-import', 'bulk-ai'].forEach((name) => {
+                const tab = document.getElementById(`tab-${name}`);
+                const content = document.getElementById(`content-${name}`);
+                const active = name === tabName;
+                tab.classList.toggle('text-indigo-600', active);
+                tab.classList.toggle('border-b-2', active);
+                tab.classList.toggle('border-indigo-600', active);
+                tab.classList.toggle('bg-indigo-50', active);
+                tab.classList.toggle('text-gray-600', !active);
+                content.classList.toggle('hidden', !active);
+            });
+        }
+
+        function renderCsvImportStatus(messages = [], tone = 'info') {
+            const status = document.getElementById('csv-import-status');
+            if (!status) return;
+            status.classList.remove('hidden', 'border-red-200', 'bg-red-50', 'text-red-800', 'border-green-200', 'bg-green-50', 'text-green-800', 'border-gray-200', 'bg-gray-50', 'text-gray-800');
+            const classes = tone === 'error'
+                ? ['border-red-200', 'bg-red-50', 'text-red-800']
+                : tone === 'success'
+                    ? ['border-green-200', 'bg-green-50', 'text-green-800']
+                    : ['border-gray-200', 'bg-gray-50', 'text-gray-800'];
+            status.classList.add(...classes);
+            status.innerHTML = Array.isArray(messages)
+                ? `<ul class="list-disc pl-5 space-y-1">${messages.map((message) => `<li>${escapeHtml(message)}</li>`).join('')}</ul>`
+                : escapeHtml(String(messages || ''));
+        }
+
+        async function handleRosterCsvImport() {
+            const csvText = document.getElementById('roster-csv-input').value;
+            const button = document.getElementById('import-csv-btn');
+            const currentPlayers = await getPlayers(currentTeamId, { includeInactive: true });
+            const plan = planRosterCsvImport({
+                csvText,
+                fields: rosterFieldDefinitions,
+                existingPlayers: currentPlayers
+            });
+
+            if (plan.errors.length) {
+                renderCsvImportStatus(plan.errors, 'error');
+                return;
+            }
+            if (plan.operations.length === 0) {
+                renderCsvImportStatus('No CSV rows to import.', 'info');
+                return;
+            }
+            if (!confirm(`Import ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}?`)) return;
+
+            try {
+                button.disabled = true;
+                button.textContent = 'Importing...';
+                for (const operation of plan.operations) {
+                    let playerId = operation.playerId;
+                    if (operation.type === 'update') {
+                        await updatePlayer(currentTeamId, playerId, operation.payload);
+                    } else {
+                        playerId = await addPlayer(currentTeamId, operation.payload);
+                    }
+                    if (operation.privateRosterFields) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    }
+                }
+                renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.`, 'success');
+                await loadRoster();
+            } catch (error) {
+                console.error('CSV roster import failed:', error);
+                renderCsvImportStatus(error?.message || 'CSV roster import failed.', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Import CSV';
+            }
+        }
+
         function startEditPlayer(player) {
-            // Switch to Add Player tab
-            document.getElementById('tab-add-player').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-add-player').classList.remove('text-gray-600');
-            document.getElementById('tab-bulk-ai').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-bulk-ai').classList.add('text-gray-600');
-            document.getElementById('content-add-player').classList.remove('hidden');
-            document.getElementById('content-bulk-ai').classList.add('hidden');
+            activateRosterTab('add-player');
 
             editingPlayerId = player.id;
             editingPhotoUrl = player.photoUrl || null;
@@ -1292,29 +1388,16 @@
         let proposedOperations = [];
 
         // Tab switching
-        document.getElementById('tab-add-player').addEventListener('click', () => {
-            // Update tab styles
-            document.getElementById('tab-add-player').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-add-player').classList.remove('text-gray-600');
-            document.getElementById('tab-bulk-ai').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-bulk-ai').classList.add('text-gray-600');
+        document.getElementById('tab-add-player').addEventListener('click', () => activateRosterTab('add-player'));
+        document.getElementById('tab-csv-import').addEventListener('click', () => activateRosterTab('csv-import'));
+        document.getElementById('tab-bulk-ai').addEventListener('click', () => activateRosterTab('bulk-ai'));
 
-            // Show/hide content
-            document.getElementById('content-add-player').classList.remove('hidden');
-            document.getElementById('content-bulk-ai').classList.add('hidden');
+        document.getElementById('roster-csv-file').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            document.getElementById('roster-csv-input').value = await file.text();
         });
-
-        document.getElementById('tab-bulk-ai').addEventListener('click', () => {
-            // Update tab styles
-            document.getElementById('tab-bulk-ai').classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-bulk-ai').classList.remove('text-gray-600');
-            document.getElementById('tab-add-player').classList.remove('text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            document.getElementById('tab-add-player').classList.add('text-gray-600');
-
-            // Show/hide content
-            document.getElementById('content-bulk-ai').classList.remove('hidden');
-            document.getElementById('content-add-player').classList.add('hidden');
-        });
+        document.getElementById('import-csv-btn').addEventListener('click', () => handleRosterCsvImport());
 
         // Image preview handler
         document.getElementById('roster-image-input').addEventListener('change', (e) => {
