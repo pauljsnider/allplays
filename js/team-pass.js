@@ -62,6 +62,12 @@ function normalizeStatus(value) {
     return normalizeString(value).toLowerCase();
 }
 
+function resolveTeamPassSeasonId(team = {}, now = new Date()) {
+    const explicitSeason = team.currentSeasonId || team.seasonId || team.season;
+    if (explicitSeason) return String(explicitSeason).trim();
+    return String(now.getUTCFullYear());
+}
+
 function normalizeDateValue(value) {
     if (!value) return null;
     if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
@@ -173,20 +179,21 @@ export function normalizeTeamPassStatus(record, { team = {}, now = new Date() } 
 }
 
 export function selectTeamPassRecord(records = [], { team = {}, now = new Date() } = {}) {
+    const currentSeasonId = resolveTeamPassSeasonId(team, now);
     const candidates = (Array.isArray(records) ? records : [])
         .filter((record) => {
             if (!record || typeof record !== 'object') return false;
             const tier = normalizeString(record.tier);
             const entitlementTeamId = normalizeString(record.teamId);
-            return (!tier || tier === 'team-pass') && (!entitlementTeamId || entitlementTeamId === team?.id);
+            const seasonId = normalizeString(record.seasonId || record.season);
+            return (!tier || tier === 'team-pass') &&
+                (!entitlementTeamId || entitlementTeamId === team?.id) &&
+                (!currentSeasonId || seasonId === currentSeasonId);
         })
         .sort(compareByUpdatedAtDesc);
 
     const normalized = candidates.map((record) => normalizeTeamPassStatus(record, { team, now }));
-    return normalized.find((item) => item.status === 'active')
-        || normalized.find((item) => item.status === 'expired')
-        || normalized.find((item) => item.status === 'revoked')
-        || normalizeTeamPassStatus(null, { team, now });
+    return normalized[0] || normalizeTeamPassStatus(null, { team, now });
 }
 
 export async function readTeamPassStatus({ team, access, deps = {} } = {}) {

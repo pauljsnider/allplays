@@ -10,6 +10,7 @@ import {
 const TEAM = {
     id: 'team-1',
     name: 'Blue Jays',
+    currentSeasonId: '2026',
     ownerId: 'owner-1',
     adminEmails: ['admin@example.com']
 };
@@ -84,21 +85,22 @@ describe('team pass UI helpers', () => {
         expect(normalizeTeamPassStatus(null, { team: TEAM, now })).toMatchObject({ status: 'missing', label: 'Missing' });
     });
 
-    it('selects an active Team Pass before older expired or revoked records', () => {
+    it('selects the newest Team Pass record for the current season', () => {
         const pass = selectTeamPassRecord([
-            { status: 'revoked', tier: 'team-pass', teamId: 'team-1', updatedAt: '2026-05-04T00:00:00.000Z' },
-            { status: 'active', tier: 'team-pass', teamId: 'team-1', expiresAt: '2026-12-31T00:00:00.000Z', updatedAt: '2026-05-01T00:00:00.000Z' },
-            { status: 'active', tier: 'family-plan', teamId: 'team-1', updatedAt: '2026-05-05T00:00:00.000Z' }
+            { status: 'active', tier: 'team-pass', teamId: 'team-1', seasonId: '2025', updatedAt: '2026-05-05T00:00:00.000Z' },
+            { status: 'active', tier: 'team-pass', teamId: 'team-1', seasonId: '2026', expiresAt: '2026-12-31T00:00:00.000Z', updatedAt: '2026-05-01T00:00:00.000Z' },
+            { status: 'revoked', tier: 'team-pass', teamId: 'team-1', seasonId: '2026', updatedAt: '2026-05-04T00:00:00.000Z' },
+            { status: 'active', tier: 'family-plan', teamId: 'team-1', seasonId: '2026', updatedAt: '2026-05-06T00:00:00.000Z' }
         ], { team: TEAM, now: new Date('2026-05-05T00:00:00.000Z') });
 
-        expect(pass).toMatchObject({ status: 'active', label: 'Active' });
+        expect(pass).toMatchObject({ status: 'revoked', label: 'Revoked' });
     });
 
     it('reads raw team entitlement status only for staff access', async () => {
         await expect(readTeamPassStatus({
             team: TEAM,
             access: { canReadStatus: true },
-            deps: { firebase: mockFirebaseForDocs([{ status: 'active', tier: 'team-pass', teamId: 'team-1' }]) }
+            deps: { firebase: mockFirebaseForDocs([{ status: 'active', tier: 'team-pass', teamId: 'team-1', seasonId: '2026' }]) }
         })).resolves.toMatchObject({ status: 'active' });
 
         await expect(readTeamPassStatus({
