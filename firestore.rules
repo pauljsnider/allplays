@@ -118,6 +118,20 @@ service cloud.firestore {
       return hasIncentivePlayerLink(data);
     }
 
+    function isFamilyMembershipPayloadValid(data, userId) {
+      return data.keys().hasAll(['email', 'status', 'organizerUserId']) &&
+             data.organizerUserId == userId &&
+             data.email is string &&
+             data.status in ['pending', 'active', 'removed'];
+    }
+
+    function isFamilyMembershipRemoval(data, userId) {
+      return data.keys().hasAll(['email', 'status', 'organizerUserId']) &&
+             data.organizerUserId == userId &&
+             data.email is string &&
+             data.status == 'removed';
+    }
+
     function isTeamFeeRecipientForCurrentParent(data, teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       let playerId = data.get('playerId', '');
@@ -306,6 +320,15 @@ service cloud.firestore {
       match /entitlements/{entitlementId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
         allow write: if isGlobalAdmin();
+      }
+
+      match /familyMemberships/{memberId} {
+        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
+        allow update: if isOwner(userId) &&
+                      isFamilyMembershipRemoval(request.resource.data, userId) &&
+                      request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+        allow delete: if false;
       }
     }
 

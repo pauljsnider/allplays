@@ -128,6 +128,10 @@
             <!-- Right Column: Combined Schedule -->
             <div class="lg:col-span-2">
 
+                <div id="family-plan-card" class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden mb-6">
+                    <div class="p-6 text-center text-gray-500 text-sm">Loading Family Plan...</div>
+                </div>
+
                 <div id="team-fees-card" class="hidden bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden mb-6">
                     <div class="p-6 border-b border-gray-100 bg-gray-50">
                         <h2 class="text-xl font-bold text-gray-900">Team Fees</h2>
@@ -310,6 +314,7 @@
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=2';
+        import { renderFamilyPlanSection } from './js/family-plan.js?v=1';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -866,6 +871,7 @@
                 await ensureParentTeamAccess(user.uid, teamIds);
                 const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
                 renderTeamChats(data.children, unreadCounts);
+                await renderFamilyPlanSection(document.getElementById('family-plan-card'), user);
                 await loadParentTeamFees(user.uid, data.children);
                 queueParentDashboardHydration(data.children, user.uid);
 
