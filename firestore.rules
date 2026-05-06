@@ -497,18 +497,25 @@ service cloud.firestore {
       }
 
       match /entitlements/{entitlementId} {
-        // Raw entitlement documents include billing provider metadata.
-        // Parents need a derived yes/no premium state, not direct access to Stripe identifiers.
-        allow read: if isTeamOwnerOrAdmin(teamId);
-        allow write: if isGlobalAdmin();
-      }
-
-      match /feeBatches/{batchId} {
-        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
-
-        match /feeRecipients/{recipientId} {
-          allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
-        }
+        // Public fan pages may read safe team-pass state, but raw billing/provider
+        // metadata stays limited to team admins.
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+          (
+            resource.data.teamId == teamId &&
+            resource.data.seasonId is string &&
+            resource.data.tier == 'team-pass' &&
+            resource.data.status in ['active', 'inactive', 'expired', 'cancelled'] &&
+            !resource.data.keys().hasAny([
+              'stripeCustomerId', 'stripeSubscriptionId', 'stripePaymentIntentId',
+              'providerCustomerId', 'providerSubscriptionId', 'billingEmail'
+            ])
+          );
+        allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.teamId == teamId &&
+          request.resource.data.seasonId is string &&
+          request.resource.data.tier == 'team-pass' &&
+          request.resource.data.status in ['active', 'inactive', 'expired', 'cancelled'];
+        allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       match /membershipRequests/{requestId} {
