@@ -13,11 +13,14 @@ import {
   getLiveReactions,
   getConfigs,
   subscribeGame,
-  updateGame
-} from './db.js?v=15';
+  updateGame,
+  uploadGameClip
+} from './db.js?v=29';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
+import { hasFullTeamAccess } from './team-access.js?v=1';
+import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=12';
+import { checkAuth } from './auth.js?v=13';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import {
   buildReplaySessionState,
@@ -27,7 +30,7 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=3';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=4';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
@@ -86,10 +89,12 @@ const state = {
   scoringRun: { team: null, points: 0 },
   lastRunAnnounced: 0,
   hasVideoStream: false,
+  nativeCameraStream: null,
   lastResetAt: 0,
   videoPlayback: null,
   clipStartMs: null,
-  clipEndMs: null
+  clipEndMs: null,
+  selectedClipEvent: null
 };
 
 const els = {
@@ -162,7 +167,28 @@ const els = {
   highlightSetEnd: q('#highlight-set-end'),
   highlightShareBtn: q('#highlight-share-btn'),
   highlightSaveBtn: q('#highlight-save-btn'),
-  savedHighlightsList: q('#saved-highlights-list')
+  savedHighlightsList: q('#saved-highlights-list'),
+  videoEmptyState: q('#video-empty-state'),
+  gameClipsSection: q('#game-clips-section'),
+  gameClipsList: q('#game-clips-list'),
+  nativeCameraPanel: q('#native-camera-panel'),
+  nativeCameraPreview: q('#native-camera-preview'),
+  nativeCameraPlaceholder: q('#native-camera-placeholder'),
+  nativeCameraStartBtn: q('#native-camera-start-btn'),
+  nativeCameraStopBtn: q('#native-camera-stop-btn'),
+  nativeCameraStatus: q('#native-camera-status'),
+  gameMediaHub: q('#game-media-hub'),
+  gameMediaHubContent: q('#game-media-hub-content'),
+  attachClipModal: q('#attach-clip-modal'),
+  attachClipForm: q('#attach-clip-form'),
+  attachClipTitle: q('#attach-clip-title'),
+  attachClipCaption: q('#attach-clip-caption'),
+  attachClipUrl: q('#attach-clip-url'),
+  attachClipFile: q('#attach-clip-file'),
+  attachClipPlayers: q('#attach-clip-players'),
+  attachClipError: q('#attach-clip-error'),
+  attachClipCancel: q('#attach-clip-cancel'),
+  attachClipSubmit: q('#attach-clip-submit')
 };
 
 const mentionState = { active: false, atPos: null };
@@ -218,6 +244,10 @@ function updateShareButton() {
   }
 }
 
+function canAttachScoreLinkedClips() {
+  return hasFullTeamAccess(state.user, state.team);
+}
+
 function initTabs() {
   els.mobileTabs.forEach(tab => {
     tab.addEventListener('click', () => {
@@ -258,15 +288,124 @@ function resolveVideoPlayback() {
   return resolveReplayVideoOptions({
     team: state.team,
     game: state.game,
+    players: state.players,
     isReplay: state.isReplay,
     clipStartMs: state.clipStartMs,
     clipEndMs: state.clipEndMs
   });
 }
 
+function userCanUseNativeCamera() {
+  return canAccessNativeCameraCapture({
+    user: state.user,
+    team: state.team,
+    game: state.game
+  });
+}
+
+function setNativeCameraStatus(message, tone = 'muted') {
+  if (!els.nativeCameraStatus) return;
+  els.nativeCameraStatus.textContent = message;
+  els.nativeCameraStatus.classList.toggle('text-coral', tone === 'error');
+  els.nativeCameraStatus.classList.toggle('text-teal', tone === 'success');
+  els.nativeCameraStatus.classList.toggle('text-sand/55', tone === 'muted');
+}
+
+function stopNativeCameraPreview() {
+  if (state.nativeCameraStream) {
+    state.nativeCameraStream.getTracks().forEach(track => track.stop());
+    state.nativeCameraStream = null;
+  }
+  if (els.nativeCameraPreview) {
+    els.nativeCameraPreview.pause();
+    els.nativeCameraPreview.srcObject = null;
+    els.nativeCameraPreview.classList.add('hidden');
+  }
+  els.nativeCameraPlaceholder?.classList.remove('hidden');
+  els.nativeCameraStopBtn?.classList.add('hidden');
+  els.nativeCameraStartBtn?.removeAttribute('disabled');
+}
+
+function updateNativeCameraPanel() {
+  const canUseNativeCamera = userCanUseNativeCamera();
+  els.nativeCameraPanel?.classList.toggle('hidden', !canUseNativeCamera);
+  if (!canUseNativeCamera) {
+    stopNativeCameraPreview();
+    return;
+  }
+  if (!state.nativeCameraStream) {
+    setNativeCameraStatus('Camera and microphone permission required. Native preview is separate from YouTube/Twitch playback.');
+  }
+}
+
+function getNativeCameraRecoveryMessage(error) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return 'Camera access is unavailable in this browser. Use a modern mobile browser over HTTPS and try again.';
+  }
+  if (error?.name === 'NotAllowedError' || error?.name === 'SecurityError') {
+    return 'Camera or microphone permission was denied. Allow camera and microphone access in your browser settings, then try again.';
+  }
+  if (error?.name === 'NotFoundError' || error?.name === 'OverconstrainedError') {
+    return 'No usable camera or microphone was found. Check that the device is connected and not already in use.';
+  }
+  return 'Camera access failed. Check browser permissions, close other apps using the camera, and try again.';
+}
+
+async function startNativeCameraPreview() {
+  if (!userCanUseNativeCamera()) return;
+  stopNativeCameraPreview();
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setNativeCameraStatus(getNativeCameraRecoveryMessage(), 'error');
+    return;
+  }
+
+  try {
+    els.nativeCameraStartBtn?.setAttribute('disabled', 'disabled');
+    setNativeCameraStatus('Requesting camera and microphone access...');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: true
+    });
+    state.nativeCameraStream = stream;
+    if (els.nativeCameraPreview) {
+      els.nativeCameraPreview.srcObject = stream;
+      els.nativeCameraPreview.classList.remove('hidden');
+      await els.nativeCameraPreview.play().catch(() => {});
+    }
+    els.nativeCameraPlaceholder?.classList.add('hidden');
+    els.nativeCameraStopBtn?.classList.remove('hidden');
+    els.nativeCameraStartBtn?.removeAttribute('disabled');
+    setNativeCameraStatus('Native camera preview active. Local verification only, no broadcast or recording.', 'success');
+  } catch (error) {
+    console.warn('Native camera preview failed:', error);
+    stopNativeCameraPreview();
+    setNativeCameraStatus(getNativeCameraRecoveryMessage(error), 'error');
+  }
+}
+
+function initNativeCameraControls() {
+  if (els.nativeCameraStartBtn && !els.nativeCameraStartBtn.dataset.bound) {
+    els.nativeCameraStartBtn.dataset.bound = 'true';
+    els.nativeCameraStartBtn.addEventListener('click', startNativeCameraPreview);
+  }
+  if (els.nativeCameraStopBtn && !els.nativeCameraStopBtn.dataset.bound) {
+    els.nativeCameraStopBtn.dataset.bound = 'true';
+    els.nativeCameraStopBtn.addEventListener('click', () => {
+      stopNativeCameraPreview();
+      setNativeCameraStatus('Native camera preview stopped.');
+    });
+  }
+  window.addEventListener('pagehide', stopNativeCameraPreview, { once: true });
+}
+
 function refreshVideoPanel({ force = false } = {}) {
   const nextPlayback = resolveVideoPlayback();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
+    state.videoPlayback = nextPlayback;
+    state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || hasMediaHubContent(state.videoPlayback?.mediaHub));
+    renderRecordedReplayTools();
+    renderGameMediaHub();
+    updateTabs();
     return false;
   }
   setupVideoPanel(nextPlayback);
@@ -279,9 +418,20 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const iframe = document.getElementById('youtube-stream-iframe');
   const recordedVideo = els.recordedReplayVideo;
   const previousPlayback = state.videoPlayback;
-  const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
+  const previousMode = previousPlayback?.mode || 'none';
+  const nextMode = nextPlayback?.mode || 'none';
+  const shouldReloadPlayback = previousMode !== nextMode || (
+    (nextMode === 'embed' || nextMode === 'recorded') &&
+    (previousPlayback?.sourceUrl || '') !== (nextPlayback?.sourceUrl || '')
+  );
   state.videoPlayback = nextPlayback;
-  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo);
+  const canUseNativeCamera = userCanUseNativeCamera();
+  const hasMediaHub = hasMediaHubContent(state.videoPlayback?.mediaHub);
+  const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
+  const shouldShowVideoPanel = canUseNativeCamera || hasMediaHub || hasGameClips;
+  state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || shouldShowVideoPanel);
+  updateNativeCameraPanel();
+  renderGameClips();
 
   if (state.videoPlayback?.mode === 'recorded') {
     if (iframe) {
@@ -341,16 +491,106 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       iframe.classList.add('hidden');
     }
     els.recordedReplayTools?.classList.add('hidden');
-    els.videoPanel?.classList.add('hidden');
-    if (videoTab) videoTab.classList.add('hidden');
+    els.videoPanel?.classList.toggle('hidden', !shouldShowVideoPanel);
+    if (videoTab) videoTab.classList.toggle('hidden', !shouldShowVideoPanel);
     if (extLink) {
       extLink.classList.add('hidden');
       extLink.removeAttribute('href');
     }
-    if (state.activeTab === 'video') state.activeTab = 'plays';
+    if (state.activeTab === 'video' && !shouldShowVideoPanel) state.activeTab = 'plays';
   }
 
+  if (els.videoEmptyState) {
+    els.videoEmptyState.classList.toggle('hidden', state.videoPlayback?.mode !== 'none' || shouldShowVideoPanel);
+  }
+
+  renderGameMediaHub();
   updateTabs();
+}
+
+function hasMediaHubContent(mediaHub) {
+  return Boolean(mediaHub?.liveStream || mediaHub?.replay || mediaHub?.highlights?.length);
+}
+
+function buildMediaHubHighlightUrl(clip) {
+  if (clip?.videoUrl) return clip.videoUrl;
+  if (!Number.isFinite(clip?.startMs) || !Number.isFinite(clip?.endMs)) return null;
+  return buildHighlightShareUrl({
+    origin: window.location.origin,
+    teamId: state.teamId,
+    gameId: state.gameId,
+    startMs: clip.startMs,
+    endMs: clip.endMs
+  });
+}
+
+function buildSafeMediaHubHighlightUrl(clip) {
+  const clipUrl = buildMediaHubHighlightUrl(clip);
+  return clipUrl && isSafeUrl(clipUrl) ? clipUrl : null;
+}
+
+function renderGameMediaHub() {
+  if (!els.gameMediaHub || !els.gameMediaHubContent) return;
+  const mediaHub = state.videoPlayback?.mediaHub || {};
+  if (!hasMediaHubContent(mediaHub)) {
+    els.gameMediaHub.classList.add('hidden');
+    els.gameMediaHubContent.innerHTML = '';
+    return;
+  }
+
+  const sections = [];
+  if (mediaHub.liveStream) {
+    sections.push(`
+      <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
+        <div class="text-[11px] uppercase tracking-[0.2em] text-teal/70">Live stream</div>
+        <div class="mt-1 flex items-center justify-between gap-3">
+          <span class="text-sm text-sand/75">External provider stream</span>
+          ${mediaHub.liveStream.publicUrl ? `<a href="${escapeHtml(mediaHub.liveStream.publicUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs text-teal hover:text-teal/80">${escapeHtml(mediaHub.liveStream.publicLabel || 'Open stream ↗')}</a>` : '<span class="text-xs text-sand/45">Embedded above</span>'}
+        </div>
+      </div>
+    `);
+  }
+  if (mediaHub.replay) {
+    const replayUrl = `live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(state.gameId)}&replay=true`;
+    sections.push(`
+      <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
+        <div class="text-[11px] uppercase tracking-[0.2em] text-teal/70">Replay</div>
+        <div class="mt-1 flex items-center justify-between gap-3">
+          <span class="text-sm text-sand/75">${escapeHtml(mediaHub.replay.title || 'Recorded game replay')}</span>
+          <a href="${escapeHtml(replayUrl)}" class="text-xs text-teal hover:text-teal/80">Watch replay</a>
+        </div>
+      </div>
+    `);
+  }
+  if (mediaHub.highlights?.length) {
+    const highlights = mediaHub.highlights.map((clip, index) => {
+      const clipUrl = buildSafeMediaHubHighlightUrl(clip);
+      return `
+        <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <div class="text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</div>
+              <div class="text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</div>
+            </div>
+            <div class="flex shrink-0 gap-2">
+              ${clipUrl ? `<a href="${escapeHtml(clipUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs text-teal hover:text-teal/80">Play</a><button type="button" data-media-highlight-index="${index}" class="text-xs text-teal hover:text-teal/80">Copy</button>` : '<span class="text-xs text-sand/45">No link</span>'}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    sections.push(`
+      <div>
+        <div class="mb-2 text-[11px] uppercase tracking-[0.2em] text-teal/70">Saved highlights</div>
+        <div class="space-y-2">${highlights}</div>
+      </div>
+    `);
+  } else {
+    sections.push('<div class="rounded-lg border border-dashed border-teal/20 px-3 py-3 text-sm text-sand/50">No replay highlights have been saved for this game yet.</div>');
+  }
+
+  els.gameMediaHubContent.innerHTML = sections.join('');
+  els.gameMediaHub.classList.remove('hidden');
 }
 
 function formatVideoTimestamp(ms) {
@@ -478,6 +718,12 @@ function renderSavedHighlights() {
     const tags = taggedNames.length
       ? `<span class="mt-2 flex flex-wrap gap-1">${taggedNames.map(name => `<span class="rounded-full border border-teal/25 px-2 py-0.5 text-[11px] text-teal">${escapeHtml(name)}</span>`).join('')}</span>`
       : '';
+    const score = clip.scoreContext && Number.isFinite(clip.scoreContext.homeScore) && Number.isFinite(clip.scoreContext.awayScore)
+      ? `${clip.scoreContext.homeScore}-${clip.scoreContext.awayScore}`
+      : '';
+    const meta = clip.mediaUrl
+      ? [score, clip.caption || 'Attached scored play clip'].filter(Boolean).join(' · ')
+      : `${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}`;
 
     return `
       <button
@@ -487,7 +733,7 @@ function renderSavedHighlights() {
       >
         <span>
           <span class="block text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</span>
-          <span class="block text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</span>
+          <span class="block text-xs text-sand/55">${escapeHtml(meta)}</span>
           ${tags}
         </span>
         <span class="text-xs text-teal">Load</span>
@@ -496,19 +742,72 @@ function renderSavedHighlights() {
   }).join('');
 }
 
+function renderGameClips() {
+  if (!els.gameClipsList) return;
+  const clips = state.videoPlayback?.gameClips || [];
+  if (!clips.length) {
+    els.gameClipsList.innerHTML = '<div class="rounded-lg border border-dashed border-teal/20 px-3 py-4 text-sm text-sand/50">No clips for this game yet.</div>';
+    return;
+  }
+
+  els.gameClipsList.innerHTML = clips.map((clip, index) => `
+    <article class="rounded-xl border border-teal/20 bg-ink/45 p-3">
+      <video class="w-full rounded-lg bg-black" controls playsinline preload="metadata" src="${escapeHtml(clip.url)}"${clip.posterUrl ? ` poster="${escapeHtml(clip.posterUrl)}"` : ''}></video>
+      <div class="mt-3 space-y-1">
+        <h3 class="text-sm font-semibold text-sand">${escapeHtml(clip.title || `Clip ${index + 1}`)}</h3>
+        ${clip.playDescription ? `<p class="text-sm text-sand/75">${escapeHtml(clip.playDescription)}</p>` : ''}
+        <div class="flex flex-wrap gap-2 text-xs text-sand/55">
+          ${clip.scoreContext ? `<span class="rounded-full border border-teal/20 px-2 py-1">${escapeHtml(clip.scoreContext)}</span>` : ''}
+          ${clip.period ? `<span class="rounded-full border border-teal/20 px-2 py-1">${escapeHtml(clip.period)}</span>` : ''}
+          ${clip.players.length ? `<span class="rounded-full border border-teal/20 px-2 py-1">${escapeHtml(clip.players.join(', '))}</span>` : ''}
+        </div>
+      </div>
+      <div class="mt-3 flex flex-wrap gap-2 text-xs">
+        <button type="button" data-game-clip-action="share" data-game-clip-index="${index}" class="rounded-lg bg-teal px-3 py-2 font-medium text-ink">Share</button>
+        <a href="${escapeHtml(clip.url)}" download="${escapeHtml(clip.downloadName || 'game-clip.mp4')}" class="rounded-lg border border-teal/25 px-3 py-2 font-medium text-sand hover:bg-ink/80">Download</a>
+        <button type="button" data-game-clip-action="copy" data-game-clip-index="${index}" class="rounded-lg border border-teal/25 px-3 py-2 font-medium text-sand hover:bg-ink/80">Copy link</button>
+      </div>
+    </article>
+  `).join('');
+}
+
+async function handleGameClipAction(action, clip) {
+  if (!clip) return;
+  if (action === 'copy' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(clip.url);
+      showToast('Clip link copied!');
+      return;
+    } catch (error) {
+      console.warn('Failed to copy clip link directly:', error);
+    }
+  }
+
+  const result = await shareOrCopy({
+    title: clip.title || 'Game clip',
+    text: clip.playDescription || clip.scoreContext || 'Watch this game clip',
+    url: clip.url,
+    clipboardText: action === 'copy' ? clip.url : `${clip.title || 'Game clip'}\n${clip.url}`
+  });
+  if (result.status === 'shared') showToast('Clip share sheet opened!');
+  if (result.status === 'copied') showToast('Clip link copied!');
+  if (result.status === 'failed') showToast('Failed to share clip.');
+}
+
 function renderRecordedReplayTools() {
   if (state.videoPlayback?.mode !== 'recorded') {
     els.recordedReplayTools?.classList.add('hidden');
     return;
   }
 
+  const hasAttachedClipsOnly = (state.videoPlayback?.savedHighlights || []).some(clip => clip.mediaUrl) && !Number.isFinite(state.videoPlayback?.durationMs);
   const durationMs = getCurrentReplayVideoDurationMs();
   const defaultClipEndMs = Number.isFinite(durationMs)
     ? Math.min(durationMs, MAX_HIGHLIGHT_CLIP_MS)
     : MAX_HIGHLIGHT_CLIP_MS;
 
   if (els.recordedReplayMeta) {
-    const pieces = ['Create a highlight clip up to 60 seconds.'];
+    const pieces = [hasAttachedClipsOnly ? 'Attached score-linked clips are available below.' : 'Create a highlight clip up to 60 seconds.'];
     if (state.videoPlayback.title) {
       pieces.unshift(state.videoPlayback.title);
     }
@@ -520,11 +819,20 @@ function renderRecordedReplayTools() {
 
   if (els.highlightStartInput && document.activeElement !== els.highlightStartInput) {
     els.highlightStartInput.value = `${Math.round((state.videoPlayback.clipStartMs ?? 0) / 1000)}`;
+    els.highlightStartInput.disabled = hasAttachedClipsOnly;
   }
   if (els.highlightEndInput && document.activeElement !== els.highlightEndInput) {
     els.highlightEndInput.value = `${Math.round((state.videoPlayback.clipEndMs ?? defaultClipEndMs) / 1000)}`;
+    els.highlightEndInput.disabled = hasAttachedClipsOnly;
   }
   renderHighlightPlayerTagOptions();
+  if (els.highlightPlayerTags) {
+    els.highlightPlayerTags.disabled = hasAttachedClipsOnly || !state.players.length;
+  }
+  els.highlightSetStart?.classList.toggle('hidden', hasAttachedClipsOnly);
+  els.highlightSetEnd?.classList.toggle('hidden', hasAttachedClipsOnly);
+  els.highlightShareBtn?.classList.toggle('hidden', hasAttachedClipsOnly);
+  els.highlightSaveBtn?.classList.toggle('hidden', hasAttachedClipsOnly);
   if (els.recordedReplayTools) {
     els.recordedReplayTools.classList.remove('hidden');
   }
@@ -570,7 +878,7 @@ async function saveHighlightClip() {
     ...(state.videoPlayback?.savedHighlights || []).filter(clip => clip.startMs !== draft.startMs || clip.endMs !== draft.endMs || clip.title !== draft.title),
     draft
   ]
-    .sort((a, b) => a.startMs - b.startMs)
+    .sort((a, b) => (a.startMs ?? 0) - (b.startMs ?? 0))
     .slice(-12);
 
   try {
@@ -583,14 +891,92 @@ async function saveHighlightClip() {
     };
     state.videoPlayback = {
       ...state.videoPlayback,
-      savedHighlights: nextHighlights
+      savedHighlights: nextHighlights,
+      mediaHub: {
+        ...(state.videoPlayback?.mediaHub || {}),
+        highlights: nextHighlights
+      }
     };
     renderRecordedReplayTools();
+    renderGameMediaHub();
     showToast('Highlight saved.');
   } catch (error) {
     console.warn('Failed to save highlight clip:', error);
     await shareHighlightClip(draft);
     showToast('Save unavailable for this account. Clip link copied.');
+  }
+}
+
+function openAttachClipModal(event) {
+  if (!canAttachScoreLinkedClips() || !isScoredPlayEvent(event)) return;
+  state.selectedClipEvent = event;
+  if (els.attachClipTitle) els.attachClipTitle.value = event.description || '';
+  if (els.attachClipCaption) els.attachClipCaption.value = '';
+  if (els.attachClipUrl) els.attachClipUrl.value = '';
+  if (els.attachClipFile) els.attachClipFile.value = '';
+  if (els.attachClipError) els.attachClipError.textContent = '';
+  if (els.attachClipPlayers) {
+    const selected = new Set([event.playerId].filter(Boolean));
+    els.attachClipPlayers.innerHTML = state.players.map((player) => `
+      <label class="flex items-center gap-2 rounded-lg border border-teal/15 px-2 py-1 text-xs text-sand/75">
+        <input type="checkbox" value="${escapeHtml(player.id)}" ${selected.has(player.id) ? 'checked' : ''}>
+        <span>${escapeHtml([player.number ? `#${player.number}` : '', player.name || player.fullName || 'Player'].filter(Boolean).join(' '))}</span>
+      </label>
+    `).join('');
+  }
+  els.attachClipModal?.classList.remove('hidden');
+}
+
+function closeAttachClipModal() {
+  state.selectedClipEvent = null;
+  els.attachClipModal?.classList.add('hidden');
+}
+
+async function submitAttachedClip(event) {
+  event.preventDefault();
+  if (!state.selectedClipEvent || !canAttachScoreLinkedClips()) return;
+  if (els.attachClipError) els.attachClipError.textContent = '';
+  if (els.attachClipSubmit) els.attachClipSubmit.disabled = true;
+
+  try {
+    const file = els.attachClipFile?.files?.[0] || null;
+    const externalUrl = String(els.attachClipUrl?.value || '').trim();
+    let media = null;
+    if (file) {
+      validateGameClipFile(file);
+      media = await uploadGameClip(state.teamId, state.gameId, file);
+    } else if (externalUrl) {
+      media = { url: externalUrl, source: 'external' };
+    } else {
+      throw new Error('Choose a video file or enter an external video URL.');
+    }
+
+    const selectedPlayerIds = Array.from(els.attachClipPlayers?.querySelectorAll('input:checked') || []).map(input => input.value);
+    const clip = buildScoreLinkedClipRecord({
+      teamId: state.teamId,
+      gameId: state.gameId,
+      event: state.selectedClipEvent,
+      playerIds: selectedPlayerIds,
+      title: els.attachClipTitle?.value || '',
+      caption: els.attachClipCaption?.value || '',
+      media,
+      createdBy: state.user?.uid || null
+    });
+    const nextHighlights = [
+      ...(Array.isArray(state.game?.highlightClips) ? state.game.highlightClips : []),
+      clip
+    ].slice(-24);
+
+    await updateGame(state.teamId, state.gameId, { highlightClips: nextHighlights });
+    state.game = { ...state.game, highlightClips: nextHighlights };
+    refreshVideoPanel({ force: true });
+    closeAttachClipModal();
+    showToast('Clip attached to scored play.');
+  } catch (error) {
+    console.warn('Failed to attach scored play clip:', error);
+    if (els.attachClipError) els.attachClipError.textContent = error?.message || 'Unable to attach clip.';
+  } finally {
+    if (els.attachClipSubmit) els.attachClipSubmit.disabled = false;
   }
 }
 
@@ -654,12 +1040,68 @@ function initRecordedReplayControls() {
       if (!button) return;
       const clip = state.videoPlayback?.savedHighlights?.[Number(button.dataset.highlightIndex)];
       if (!clip) return;
+      if (clip.mediaUrl) {
+        state.clipStartMs = null;
+        state.clipEndMs = null;
+        state.videoPlayback = {
+          ...(state.videoPlayback || {}),
+          sourceUrl: clip.mediaUrl,
+          publicUrl: clip.mediaUrl,
+          title: clip.title || state.videoPlayback?.title || null,
+          durationMs: null,
+          clipStartMs: null,
+          clipEndMs: null
+        };
+        syncHighlightUrl(null, null);
+        if (els.recordedReplayVideo) {
+          els.recordedReplayVideo.src = clip.mediaUrl;
+          els.recordedReplayVideo.load();
+        }
+        renderRecordedReplayTools();
+        return;
+      }
       if (els.highlightTitleInput) {
         els.highlightTitleInput.value = clip.title || '';
       }
       setSelectedTaggedPlayerIds(clip.taggedPlayerIds);
       applyHighlightSelection(clip, { autoplay: false });
     });
+  }
+  if (els.gameMediaHubContent && !els.gameMediaHubContent.dataset.bound) {
+    els.gameMediaHubContent.dataset.bound = 'true';
+    els.gameMediaHubContent.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-media-highlight-index]');
+      if (!button) return;
+      const clip = state.videoPlayback?.mediaHub?.highlights?.[Number(button.dataset.mediaHighlightIndex)];
+      const clipUrl = buildSafeMediaHubHighlightUrl(clip);
+      if (!clipUrl) return;
+      const result = await shareOrCopy({
+        title: clip.title || 'Game highlight',
+        text: clip.title || 'Watch this highlight',
+        url: clipUrl,
+        clipboardText: `${clip.title || 'Game highlight'}\n${clipUrl}`
+      });
+      if (result.status === 'shared') showToast('Clip share sheet opened!');
+      if (result.status === 'copied') showToast('Clip link copied!');
+      if (result.status === 'failed') showToast('Failed to copy clip link.');
+    });
+  }
+  if (els.gameClipsList && !els.gameClipsList.dataset.bound) {
+    els.gameClipsList.dataset.bound = 'true';
+    els.gameClipsList.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-game-clip-action]');
+      if (!button) return;
+      const clip = state.videoPlayback?.gameClips?.[Number(button.dataset.gameClipIndex)];
+      await handleGameClipAction(button.dataset.gameClipAction, clip);
+    });
+  }
+  if (els.attachClipCancel && !els.attachClipCancel.dataset.bound) {
+    els.attachClipCancel.dataset.bound = 'true';
+    els.attachClipCancel.addEventListener('click', closeAttachClipModal);
+  }
+  if (els.attachClipForm && !els.attachClipForm.dataset.bound) {
+    els.attachClipForm.dataset.bound = 'true';
+    els.attachClipForm.addEventListener('submit', submitAttachedClip);
   }
 }
 
@@ -716,6 +1158,7 @@ function renderPlayByPlay(event, isNew = false) {
   const isSystemEvent = ['clock_pause', 'clock_start', 'period_change', 'undo', 'log_remove', 'clock_sync'].includes(event.type);
   const sideClass = isSystemEvent ? 'border-slate' : (event.isOpponent ? 'event-away' : 'event-home');
   card.className = `bg-slate/50 rounded-lg p-3 border-l-4 ${sideClass} ${isNew ? 'event-slide' : ''}`;
+  if (event.id) card.dataset.eventId = event.id;
   const opponentLabel = [
     event.opponentPlayerNumber ? `#${escapeHtml(event.opponentPlayerNumber)}` : '',
     event.opponentPlayerName ? escapeHtml(event.opponentPlayerName) : ''
@@ -744,15 +1187,31 @@ function renderPlayByPlay(event, isNew = false) {
         ${event.playerName ? `<p class="text-sand/60 text-sm">#${escapeHtml(event.playerNumber || '')} ${escapeHtml(event.playerName)}</p>` : ''}
         ${event.isOpponent && (event.opponentPlayerName || event.opponentPlayerNumber) ? `<p class="text-sand/60 text-sm">${opponentLabel}</p>` : ''}
       </div>
-      ${scoringBadge}
+      <div class="flex flex-col items-end gap-2">
+        ${scoringBadge}
+        ${canAttachScoreLinkedClips() && isScoredPlayEvent(event) ? `
+          <button type="button" data-attach-clip-event-id="${escapeHtml(event.id || '')}" class="rounded-lg border border-teal/25 px-2 py-1 text-xs text-teal hover:bg-ink/80">Attach clip</button>
+        ` : ''}
+      </div>
     </div>
   `;
+
+  const attachButton = card.querySelector('[data-attach-clip-event-id]');
+  if (attachButton) {
+    attachButton.addEventListener('click', () => openAttachClipModal(event));
+  }
 
   els.playsFeed.insertBefore(card, els.playsFeed.firstChild);
   if (keepAtTop) els.playsFeed.scrollTop = 0;
   while (els.playsFeed.children.length > 60) {
     els.playsFeed.removeChild(els.playsFeed.lastChild);
   }
+}
+
+function rerenderPlayFeed() {
+  if (!els.playsFeed || !state.events.length) return;
+  els.playsFeed.innerHTML = '';
+  state.events.slice(-60).forEach((event) => renderPlayByPlay(event, false));
 }
 
 function renderStats() {
@@ -1789,6 +2248,7 @@ async function init() {
   initReactions();
   initReplayControls();
   initRecordedReplayControls();
+  initNativeCameraControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
@@ -1833,6 +2293,8 @@ async function init() {
       if (els.chatAnonNotice) els.chatAnonNotice.classList.add('hidden');
       closeAnonNameEditor();
     }
+    rerenderPlayFeed();
+    refreshVideoPanel({ force: true });
   }, { skipEmailVerificationCheck: true });
 
   if (state.isReplay) {

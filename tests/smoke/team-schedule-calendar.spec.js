@@ -308,6 +308,10 @@ export function buildRsvpReminderMessage() {
 }
 `;
 
+const TEAM_PASS_STUB = `
+export function renderTeamPassCard() {}
+`;
+
 async function mockTeamPageModules(page, scenario) {
     await page.route('https://www.googletagmanager.com/**', (route) => route.fulfill({
         status: 200,
@@ -349,12 +353,12 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: SEASON_RECORD_STUB
     }));
-    await page.route('**/js/auth.js?v=12', (route) => route.fulfill({
+    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: AUTH_STUB
     }));
-    await page.route('**/js/firebase.js?v=10', (route) => route.fulfill({
+    await page.route('**/js/firebase.js?v=11', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: FIREBASE_STUB
@@ -383,6 +387,16 @@ async function mockTeamPageModules(page, scenario) {
         status: 200,
         contentType: 'application/javascript',
         body: SCHEDULE_NOTIFICATIONS_STUB
+    }));
+    await page.route('**/js/premium-entitlements.js?v=1', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
+    }));
+    await page.route('**/js/team-pass.js?v=1', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: TEAM_PASS_STUB
     }));
 }
 

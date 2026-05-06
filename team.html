@@ -58,6 +58,9 @@
             </div>
         </div>
 
+        <!-- Team Pass entry point -->
+        <div id="team-pass-container"></div>
+
         <!-- Season Overview Cards -->
         <div id="season-overview" class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
             <!-- Loading placeholders -->
@@ -256,20 +259,22 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, postChatMessage } from './js/db.js?v=17';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, postChatMessage } from './js/db.js?v=18';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=12';
-        import { collection, getDocs } from "./js/firebase.js?v=10";
-        import { db } from './js/firebase.js?v=10';
+        import { checkAuth } from './js/auth.js?v=13';
+        import { collection, getDocs } from "./js/firebase.js?v=11";
+        import { db } from './js/firebase.js?v=11';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
         import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
+        import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
+        import { renderTeamPassCard } from './js/team-pass.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1171,6 +1176,10 @@
                 }
 
                 renderAvailabilitySettings(team);
+                renderTeamPassCard(document.getElementById('team-pass-container'), {
+                    user: currentUser,
+                    team: { ...team, id: teamId }
+                });
 
                 const seasonLabels = listSeasonLabels(dbGames);
                 if (!seasonLabels.length) {
@@ -1340,6 +1349,12 @@
 
                 // Render Team Advanced Stats
                 const teamAdvancedStatsDiv = document.getElementById('team-advanced-stats');
+                const teamPremiumEntitlement = await readTeamPremiumEntitlement({
+                    teamId,
+                    user: currentUser,
+                    teamAccessInfo: currentTeamAccessInfo
+                });
+                if (!renderPremiumGateState(teamAdvancedStatsDiv, { state: teamPremiumEntitlement.state, scope: 'team' })) {
                 if (completedGames.length >= 3) {
                     // Calculate win/loss trend (recent vs earlier)
                     const sortedGames = [...completedGames].sort((a, b) => {
@@ -1503,6 +1518,7 @@
                         </div>
                         ${teamAdvancedStatsDiv.innerHTML}
                     `;
+                }
                 }
 
                 // Render Roster

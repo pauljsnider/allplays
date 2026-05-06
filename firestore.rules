@@ -28,6 +28,41 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+
+    function hasConfirmedGameRsvp(teamId, gameId) {
+      let rsvpPath = /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rsvps/$(request.auth.uid);
+      return exists(rsvpPath) &&
+             get(rsvpPath).data.get('response', get(rsvpPath).data.get('status', '')) in ['going', 'yes', 'confirmed', 'attending'];
+    }
+
+    function canScorekeepGame(teamId, gameId) {
+      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let permission = team.get('teamPermissions', {}).get('scorekeeping', {});
+      let mode = permission.get('mode', '');
+      return isSignedIn() &&
+             !isTeamOwnerOrAdmin(teamId) &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
+             (
+               (mode == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)) ||
+               (mode == 'selected' && request.auth.uid in permission.get('memberIds', []))
+             );
+    }
+
+    function keepsScorekeeperGameLifecycleVisible() {
+      return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
+             request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
+    }
+
+    function isScorekeepingGameUpdate(teamId, gameId) {
+      return canScorekeepGame(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'homeScore', 'awayScore', 'summary', 'status', 'liveStatus', 'opponentStats',
+               'completedAt', 'completedBy', 'completedByName', 'updatedAt'
+             ]) &&
+             keepsScorekeeperGameLifecycleVisible();
+    }
+
     // Check if user is a parent for a specific player.
     // IMPORTANT: must validate both teamId AND playerId (least privilege).
     // Uses denormalized key `${teamId}::${playerId}` in users.parentPlayerKeys.
@@ -83,16 +118,26 @@ service cloud.firestore {
       return hasIncentivePlayerLink(data);
     }
 
-    function isTeamFeeRecipientForCurrentParent(data) {
+    function isTeamFeeRecipientForCurrentParent(data, teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
-      let playerKey = data.get('playerKey', data.get('teamId', '') + "::" + data.get('playerId', ''));
+      let playerId = data.get('playerId', '');
+      let playerKey = data.get('playerKey', teamId + "::" + playerId);
+      let hasTeamLink = isParentForTeam(teamId) ||
+                        (playerId is string && isParentForPlayer(teamId, playerId)) ||
+                        (playerKey is string &&
+                         exists(userPath) &&
+                         playerKey in get(userPath).data.get('parentPlayerKeys', []));
+      let hasRecipientMatch = data.get('parentUserId', '') == request.auth.uid ||
+                              data.get('accountUserId', '') == request.auth.uid ||
+                              data.get('userId', '') == request.auth.uid ||
+                              (playerKey is string &&
+                               exists(userPath) &&
+                               playerKey in get(userPath).data.get('parentPlayerKeys', []));
       return isSignedIn() &&
-             (
-               data.get('parentUserId', '') == request.auth.uid ||
-               data.get('accountUserId', '') == request.auth.uid ||
-               data.get('userId', '') == request.auth.uid ||
-               (exists(userPath) && playerKey in get(userPath).data.get('parentPlayerKeys', []))
-             );
+             data.keys().hasAll(['teamId']) &&
+             data.teamId == teamId &&
+             hasTeamLink &&
+             hasRecipientMatch;
     }
 
     function isPublishedSponsor(data) {
@@ -257,6 +302,11 @@ service cloud.firestore {
       match /notificationDevices/{deviceId} {
         allow read, write: if isOwner(userId) || isGlobalAdmin();
       }
+
+      match /entitlements/{entitlementId} {
+        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow write: if isGlobalAdmin();
+      }
     }
 
 	    // Access codes - allow public read for validation during signup
@@ -294,18 +344,23 @@ service cloud.firestore {
     }
 
     // Collection group rule for assigned team fee recipient records.
-    // Parents can only read records tied directly to their account or linked players.
+    // Parents can only read records tied to a team they are linked to and directly assigned recipients.
     match /{path=**}/feeRecipients/{recipientId} {
-      allow read: if isTeamFeeRecipientForCurrentParent(resource.data) ||
-                     (resource.data.get('teamId', '') is string &&
-                      isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
-      allow create: if request.resource.data.get('teamId', '') is string &&
-                       isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
-      allow update: if resource.data.get('teamId', '') is string &&
-                       request.resource.data.get('teamId', '') == resource.data.get('teamId', '') &&
-                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
-      allow delete: if resource.data.get('teamId', '') is string &&
-                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
+      allow read: if resource.data.keys().hasAll(['teamId']) &&
+                     resource.data.teamId is string &&
+                     (isTeamFeeRecipientForCurrentParent(resource.data, resource.data.teamId) ||
+                      isTeamOwnerOrAdmin(resource.data.teamId));
+      allow create: if request.resource.data.keys().hasAll(['teamId']) &&
+                       request.resource.data.teamId is string &&
+                       isTeamOwnerOrAdmin(request.resource.data.teamId);
+      allow update: if resource.data.keys().hasAll(['teamId']) &&
+                       request.resource.data.keys().hasAll(['teamId']) &&
+                       resource.data.teamId is string &&
+                       request.resource.data.teamId == resource.data.teamId &&
+                       isTeamOwnerOrAdmin(resource.data.teamId);
+      allow delete: if resource.data.keys().hasAll(['teamId']) &&
+                       resource.data.teamId is string &&
+                       isTeamOwnerOrAdmin(resource.data.teamId);
     }
 
     // Collection group rule for assigned team fee recipient records.
@@ -438,6 +493,21 @@ service cloud.firestore {
         }
       }
 
+      match /entitlements/{entitlementId} {
+        // Raw entitlement documents include billing provider metadata.
+        // Parents need a derived yes/no premium state, not direct access to Stripe identifiers.
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow write: if isGlobalAdmin();
+      }
+
+      match /feeBatches/{batchId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /feeRecipients/{recipientId} {
+          allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        }
+      }
+
       match /membershipRequests/{requestId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
                        (isSignedIn() && resource.data.requesterUserId == request.auth.uid);
@@ -474,32 +544,28 @@ service cloud.firestore {
       match /games/{gameId} {
         allow read: if true;  // Public game data
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
-        allow update: if isTeamOwnerOrAdmin(teamId) || (isOfficialForGame() && isOfficialGameUpdate());
+        allow update: if isTeamOwnerOrAdmin(teamId) ||
+                        (isOfficialForGame() && isOfficialGameUpdate()) ||
+                        isScorekeepingGameUpdate(teamId, gameId);
 
         // Events subcollection
         match /events/{eventId} {
           allow read: if true;
-          allow write: if isSignedIn() &&
-                          (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
-                           (request.auth.token.email != null &&
-                            request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
-                            isGlobalAdmin());
+          allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow delete: if isTeamOwnerOrAdmin(teamId);
         }
 
         // Aggregated stats subcollection
         match /aggregatedStats/{statId} {
           allow read: if true;
-          allow write: if isSignedIn() &&
-                          (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
-                           (request.auth.token.email != null &&
-                            request.auth.token.email.lower() in get(/databases/$(database)/documents/teams/$(teamId)).data.get('adminEmails', [])) ||
-                            isGlobalAdmin());
+          allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow delete: if isTeamOwnerOrAdmin(teamId);
         }
 
         // Live Events subcollection - for real-time game broadcasting
         match /liveEvents/{eventId} {
           allow read: if true;  // Public read for viewers
-          allow create: if isTeamOwnerOrAdmin(teamId);  // Only stat tracker can write
+          allow create: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);  // Stat tracker writes
           allow update, delete: if false;  // Events are immutable
         }
 
@@ -681,6 +747,26 @@ service cloud.firestore {
       match /practiceTemplates/{templateId} {
         allow read: if isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      // Offline/manual team fee batches. No payment processing data is stored here.
+      match /feeBatches/{batchId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /feeRecipients/{recipientId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) ||
+                         isTeamFeeRecipientForCurrentParent(resource.data, teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId) &&
+                           request.resource.data.teamId == teamId &&
+                           request.resource.data.batchId == batchId;
+          allow update: if isTeamOwnerOrAdmin(teamId) &&
+                           resource.data.teamId == teamId &&
+                           request.resource.data.teamId == teamId &&
+                           request.resource.data.batchId == batchId;
+          allow delete: if isTeamOwnerOrAdmin(teamId) &&
+                           resource.data.teamId == teamId;
+        }
       }
 
       // Chat messages subcollection
