@@ -53,7 +53,7 @@ import {
     buildSharedScheduleDetachUpdate
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
-import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
+import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
 import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import {
     decodeSharedGameSyntheticId,
@@ -76,6 +76,14 @@ import {
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import {
+    buildRegistrationRosterDecision,
+    getRegistrationGuardianDrafts,
+    getRegistrationPlayerDraft,
+    matchesRegistrationReviewStatus,
+    normalizeRegistrationStatus,
+    summarizeRegistration
+} from './registration-review.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import {
@@ -408,12 +416,13 @@ export async function getTeam(teamId, options = {}) {
     }
 }
 
-export async function getLocalAttractionSponsors(teamId) {
+async function getPublishedSponsors(teamId) {
     if (!teamId) return [];
 
     const sponsorsRef = collection(db, `teams/${teamId}/sponsors`);
     const sponsorQueries = [
         query(sponsorsRef, where("status", "==", "published")),
+        query(sponsorsRef, where("status", "==", "active")),
         query(sponsorsRef, where("published", "==", true)),
         query(sponsorsRef, where("isPublished", "==", true))
     ];
@@ -421,7 +430,7 @@ export async function getLocalAttractionSponsors(teamId) {
     const successfulSnapshots = snapshots.filter((result) => result.status === 'fulfilled');
 
     if (successfulSnapshots.length === 0) {
-        throw snapshots[0]?.reason || new Error('Unable to load local attraction sponsors');
+        throw snapshots[0]?.reason || new Error('Unable to load sponsor placements');
     }
 
     const sponsorsById = new Map();
@@ -429,7 +438,15 @@ export async function getLocalAttractionSponsors(teamId) {
         result.value.docs.forEach(doc => sponsorsById.set(doc.id, { id: doc.id, ...doc.data() }));
     });
 
-    return normalizeLocalAttractionSponsors(Array.from(sponsorsById.values()));
+    return Array.from(sponsorsById.values());
+}
+
+export async function getLocalAttractionSponsors(teamId) {
+    return normalizeLocalAttractionSponsors(await getPublishedSponsors(teamId));
+}
+
+export async function getAdSpaceSponsors(teamId) {
+    return normalizeAdSpaceSponsors(await getPublishedSponsors(teamId));
 }
 
 export async function getUserTeams(userId, options = {}) {
@@ -900,6 +917,169 @@ export async function reactivatePlayer(teamId, playerId) {
         deactivatedAt: deleteField(),
         updatedAt: Timestamp.now()
     });
+}
+
+function sortRegistrationReviews(registrations = []) {
+    return [...registrations].sort((a, b) => {
+        const aTime = a?.submittedAt?.toMillis ? a.submittedAt.toMillis() : (a?.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a?.submittedAt || a?.createdAt || 0).getTime());
+        const bTime = b?.submittedAt?.toMillis ? b.submittedAt.toMillis() : (b?.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b?.submittedAt || b?.createdAt || 0).getTime());
+        return bTime - aTime;
+    });
+}
+
+export async function listTeamRegistrationForms(teamId) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
+    return snapshot.docs
+        .map((formDoc) => ({ id: formDoc.id, ...formDoc.data() }))
+        .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
+}
+
+export async function listTeamRegistrationReviews(teamId, formId, status = 'all') {
+    if (!teamId || !formId) return [];
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formId}/registrations`));
+    return sortRegistrationReviews(snapshot.docs.map((registrationDoc) => {
+        const registration = {
+            id: registrationDoc.id,
+            formId,
+            teamId,
+            ...registrationDoc.data()
+        };
+        return {
+            ...registration,
+            reviewSummary: summarizeRegistration(registration)
+        };
+    })).filter((registration) => matchesRegistrationReviewStatus(registration, status));
+}
+
+async function getExistingGuardianUsers(guardians = []) {
+    const lookups = guardians
+        .map((guardian) => guardian.email)
+        .filter(Boolean)
+        .map(async (email) => getUserByEmail(email).catch(() => null));
+    return (await Promise.all(lookups)).filter(Boolean);
+}
+
+export async function approveTeamRegistration(teamId, formId, registrationId, options = {}) {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to approve registrations');
+    }
+    if (!teamId || !formId || !registrationId) {
+        throw new Error('Team, form, and registration are required');
+    }
+
+    const registrationRef = doc(db, `teams/${teamId}/registrationForms/${formId}/registrations`, registrationId);
+    const teamRef = doc(db, 'teams', teamId);
+    const [registrationSnap, teamSnap] = await Promise.all([
+        getDoc(registrationRef),
+        getDoc(teamRef)
+    ]);
+    if (!registrationSnap.exists()) throw new Error('Registration not found');
+    if (!teamSnap.exists()) throw new Error('Team not found');
+
+    const registration = { id: registrationId, formId, teamId, ...registrationSnap.data() };
+    if (normalizeRegistrationStatus(registration.status) !== 'pending') {
+        throw new Error('Only pending registrations can be approved');
+    }
+
+    const team = { id: teamId, ...teamSnap.data() };
+    const guardians = getRegistrationGuardianDrafts(registration);
+    const existingGuardianUsers = await getExistingGuardianUsers(guardians);
+    const existingGuardianByEmail = new Map(existingGuardianUsers.map((user) => [String(user.email || '').toLowerCase(), user]));
+    const now = Timestamp.now();
+    let playerRef = null;
+    let existingPlayer = null;
+    const selectedPlayerId = String(options.playerId || registration.linkedPlayerId || registration.playerId || '').trim();
+
+    if (selectedPlayerId) {
+        playerRef = doc(db, `teams/${teamId}/players`, selectedPlayerId);
+        const playerSnap = await getDoc(playerRef);
+        if (!playerSnap.exists()) throw new Error('Selected player not found');
+        existingPlayer = { id: playerSnap.id, ...playerSnap.data() };
+    } else {
+        playerRef = doc(collection(db, `teams/${teamId}/players`));
+    }
+
+    const decision = buildRegistrationRosterDecision({
+        registration,
+        team,
+        playerId: playerRef.id,
+        rosterDestinationType: existingPlayer ? 'existing-player' : 'new-player',
+        reviewer: {
+            userId: currentUser.uid,
+            email: currentUser.email || '',
+            name: currentUser.displayName || currentUser.email || 'Admin'
+        },
+        now,
+        decisionNote: options.decisionNote || ''
+    });
+    const playerDraft = getRegistrationPlayerDraft(registration);
+    assertNoSensitivePlayerFields(playerDraft);
+
+    const guardianLinks = guardians.map((guardian) => {
+        const user = guardian.email ? existingGuardianByEmail.get(guardian.email) : null;
+        return {
+            userId: user?.id || null,
+            email: guardian.email || user?.email || '',
+            name: guardian.name || user?.fullName || user?.displayName || guardian.email || 'Guardian',
+            relation: guardian.relation || 'Guardian',
+            phone: guardian.phone || '',
+            linkedAt: now,
+            source: 'registration'
+        };
+    });
+    const existingParents = Array.isArray(existingPlayer?.parents) ? existingPlayer.parents : [];
+    const existingParentKeys = new Set(existingParents.map((parent) => parent?.userId || parent?.email).filter(Boolean));
+    const mergedParents = [
+        ...existingParents,
+        ...guardianLinks.filter((guardian) => !existingParentKeys.has(guardian.userId || guardian.email))
+    ];
+
+    const batch = writeBatch(db);
+    const playerUpdate = {
+        ...decision.player,
+        parents: mergedParents,
+        updatedAt: now
+    };
+    if (existingPlayer) {
+        batch.set(playerRef, playerUpdate, { merge: true });
+    } else {
+        batch.set(playerRef, {
+            ...playerUpdate,
+            createdAt: now
+        });
+    }
+
+    batch.update(registrationRef, {
+        ...decision.registrationUpdate,
+        linkedPlayerId: playerRef.id,
+        guardianLinks,
+        updatedAt: now
+    });
+    await batch.commit();
+
+    return { success: true, playerId: playerRef.id, linkedGuardians: guardianLinks.length };
+}
+
+export async function rejectTeamRegistration(teamId, formId, registrationId, decisionNote = '') {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to reject registrations');
+    }
+    if (!teamId || !formId || !registrationId) {
+        throw new Error('Team, form, and registration are required');
+    }
+    const now = Timestamp.now();
+    await updateDoc(doc(db, `teams/${teamId}/registrationForms/${formId}/registrations`, registrationId), {
+        status: 'rejected',
+        decidedAt: now,
+        decidedBy: currentUser.uid,
+        decidedByName: currentUser.displayName || currentUser.email || 'Admin',
+        decisionNote: String(decisionNote || '').trim(),
+        updatedAt: now
+    });
+    return { success: true };
 }
 
 /**

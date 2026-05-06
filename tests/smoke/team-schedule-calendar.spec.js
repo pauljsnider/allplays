@@ -72,6 +72,10 @@ export async function getUnreadChatCounts() {
     return {};
 }
 
+export async function postChatMessage() {
+    return undefined;
+}
+
 export async function getUserProfile() {
     return null;
 }
@@ -102,6 +106,10 @@ export async function getLocalAttractionSponsors() {
 
 export async function postChatMessage() {
     return undefined;
+}
+
+export async function getAdSpaceSponsors() {
+    return [];
 }
 `;
 }
@@ -393,7 +401,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: 'export async function readTeamPremiumEntitlement() { return null; } export function renderPremiumGateState() {}'
     }));
-    await page.route('**/js/team-pass.js?v=1', (route) => route.fulfill({
+    await page.route('**/js/team-pass.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: TEAM_PASS_STUB

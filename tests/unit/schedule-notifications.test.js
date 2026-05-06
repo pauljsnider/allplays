@@ -233,6 +233,24 @@ describe('schedule notification helpers', () => {
         });
     });
 
+    it('uses RSVP user links when RSVP rows omit player IDs', () => {
+        const players = [
+            { id: 'p1', parents: [{ userId: 'u1', email: 'one@example.com' }] },
+            { id: 'p2', parents: [{ userId: 'u2', email: 'two@example.com' }] }
+        ];
+        const rsvps = [
+            { userId: 'u1', response: 'going' }
+        ];
+
+        expect(buildAvailabilityReminderRecipients(players, rsvps)).toMatchObject({
+            playerIds: ['p2'],
+            parentIds: ['u2'],
+            parentEmails: ['two@example.com'],
+            playerCount: 1,
+            recipientCount: 1
+        });
+    });
+
     it('counts roster players without guardians as direct recipients', () => {
         const recipients = buildAvailabilityReminderRecipients([
             { id: 'p1', parents: [] },

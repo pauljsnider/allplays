@@ -285,6 +285,29 @@
                         </tbody>
                     </table>
                 </div>
+
+                <div class="mt-6 bg-white rounded-lg shadow-md overflow-hidden">
+                    <div class="p-6 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                        <div>
+                            <h2 class="text-xl font-bold">Registration Review</h2>
+                            <p class="text-sm text-gray-500">Approve submitted registrations into this roster or retain rejected submissions for audit.</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <select id="registration-form-filter" class="rounded-md border-gray-300 shadow-sm border p-2 text-sm min-w-48">
+                                <option value="">No registration forms</option>
+                            </select>
+                            <select id="registration-status-filter" class="rounded-md border-gray-300 shadow-sm border p-2 text-sm">
+                                <option value="pending">Pending</option>
+                                <option value="approved">Approved</option>
+                                <option value="rejected">Rejected</option>
+                                <option value="all">All</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="registration-review-list" class="p-6 space-y-3">
+                        <p class="text-sm text-gray-500">Loading registrations...</p>
+                    </div>
+                </div>
             </div>
         </div>
     </main>
@@ -429,7 +452,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions } from './js/db.js?v=29';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration } from './js/db.js?v=29';
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=13';
@@ -449,6 +472,8 @@
         let editingPlayerProfile = null;
         let rosterFieldDefinitions = [];
         let rosterFieldDefinitionDrafts = [];
+        let registrationForms = [];
+        let selectedRegistrationFormId = '';
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -492,6 +517,11 @@
 
             document.getElementById('team-name-display').textContent = team.name;
             renderRegistrationRosterImport(team);
+            document.getElementById('registration-form-filter').addEventListener('change', (event) => {
+                selectedRegistrationFormId = event.target.value;
+                loadRegistrationReviews();
+            });
+            document.getElementById('registration-status-filter').addEventListener('change', () => loadRegistrationReviews());
             loadRoster();
         }
 
@@ -662,13 +692,119 @@
             });
         }
 
+        function renderRegistrationFormFilter() {
+            const select = document.getElementById('registration-form-filter');
+            if (!registrationForms.length) {
+                select.innerHTML = '<option value="">No registration forms</option>';
+                selectedRegistrationFormId = '';
+                return;
+            }
+            select.innerHTML = registrationForms.map((form) => `
+                <option value="${escapeHtml(form.id)}" ${form.id === selectedRegistrationFormId ? 'selected' : ''}>
+                    ${escapeHtml(form.name || form.title || form.id)}
+                </option>
+            `).join('');
+        }
+
+        function formatRegistrationDate(value) {
+            const date = value?.toDate ? value.toDate() : (value ? new Date(value) : null);
+            return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : 'Unknown date';
+        }
+
+        async function loadRegistrationReviews() {
+            const container = document.getElementById('registration-review-list');
+            if (!selectedRegistrationFormId) {
+                container.innerHTML = '<p class="text-sm text-gray-500">No registration forms configured for this team.</p>';
+                return;
+            }
+            const status = document.getElementById('registration-status-filter').value;
+            container.innerHTML = '<p class="text-sm text-gray-500">Loading registrations...</p>';
+            try {
+                const registrations = await listTeamRegistrationReviews(currentTeamId, selectedRegistrationFormId, status);
+                if (!registrations.length) {
+                    container.innerHTML = '<p class="text-sm text-gray-500">No registrations match this filter.</p>';
+                    return;
+                }
+                container.innerHTML = registrations.map((registration) => {
+                    const summary = registration.reviewSummary || {};
+                    const statusLabel = summary.status || registration.status || 'pending';
+                    const statusClass = statusLabel === 'approved'
+                        ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                        : (statusLabel === 'rejected' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200');
+                    return `
+                        <div class="rounded-lg border border-gray-200 p-4" data-registration-id="${escapeHtml(registration.id)}">
+                            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                                <div>
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <h3 class="font-semibold text-gray-900">${escapeHtml(summary.playerName || 'Unnamed player')}</h3>
+                                        ${summary.playerNumber ? `<span class="text-xs text-gray-500">#${escapeHtml(summary.playerNumber)}</span>` : ''}
+                                        <span class="text-xs font-semibold px-2 py-0.5 rounded-full border ${statusClass}">${escapeHtml(statusLabel)}</span>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">Guardian: ${escapeHtml(summary.guardianLabel || 'Not provided')}</p>
+                                    <p class="text-xs text-gray-500">Submitted: ${formatRegistrationDate(summary.submittedAt)}</p>
+                                    ${registration.linkedPlayerId ? `<p class="text-xs text-emerald-700 mt-1">Linked player: ${escapeHtml(registration.linkedPlayerId)}</p>` : ''}
+                                    ${registration.decisionNote ? `<p class="text-xs text-gray-600 mt-1">Decision note: ${escapeHtml(registration.decisionNote)}</p>` : ''}
+                                </div>
+                                ${statusLabel === 'pending' ? `
+                                    <div class="flex items-center gap-2">
+                                        <button type="button" class="approve-registration-btn text-xs font-semibold px-3 py-2 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" data-registration-id="${escapeHtml(registration.id)}">Approve to roster</button>
+                                        <button type="button" class="reject-registration-btn text-xs font-semibold px-3 py-2 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100" data-registration-id="${escapeHtml(registration.id)}">Reject</button>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                document.querySelectorAll('.approve-registration-btn').forEach((button) => {
+                    button.addEventListener('click', async (event) => {
+                        const registrationId = event.currentTarget.dataset.registrationId;
+                        if (!registrationId || !confirm('Approve this registration and create or update the roster record?')) return;
+                        try {
+                            event.currentTarget.disabled = true;
+                            await approveTeamRegistration(currentTeamId, selectedRegistrationFormId, registrationId);
+                            await loadRoster();
+                        } catch (err) {
+                            console.error('Error approving registration', err);
+                            alert('Error approving registration: ' + (err?.message || 'Please try again.'));
+                            event.currentTarget.disabled = false;
+                        }
+                    });
+                });
+                document.querySelectorAll('.reject-registration-btn').forEach((button) => {
+                    button.addEventListener('click', async (event) => {
+                        const registrationId = event.currentTarget.dataset.registrationId;
+                        if (!registrationId || !confirm('Reject this registration? Submitted data will be retained.')) return;
+                        try {
+                            event.currentTarget.disabled = true;
+                            await rejectTeamRegistration(currentTeamId, selectedRegistrationFormId, registrationId);
+                            await loadRegistrationReviews();
+                        } catch (err) {
+                            console.error('Error rejecting registration', err);
+                            alert('Error rejecting registration: ' + (err?.message || 'Please try again.'));
+                            event.currentTarget.disabled = false;
+                        }
+                    });
+                });
+            } catch (err) {
+                console.error('Error loading registration reviews', err);
+                container.innerHTML = `<p class="text-sm text-red-600">Unable to load registrations: ${escapeHtml(err?.message || 'Please try again.')}</p>`;
+            }
+        }
+
         async function loadRoster() {
-            const [players, games, allUsers, membershipRequests] = await Promise.all([
+            const [players, games, allUsers, membershipRequests, forms] = await Promise.all([
                 getPlayers(currentTeamId, { includeInactive: true }),
                 getGames(currentTeamId),
                 getAllUsers(),
-                listTeamParentMembershipRequests(currentTeamId)
+                listTeamParentMembershipRequests(currentTeamId),
+                listTeamRegistrationForms(currentTeamId)
             ]);
+            registrationForms = forms || [];
+            if (!selectedRegistrationFormId && registrationForms.length > 0) {
+                selectedRegistrationFormId = registrationForms[0].id;
+            }
+            renderRegistrationFormFilter();
+            await loadRegistrationReviews();
             const latestGameId = [...games].sort((a, b) => {
                 const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
                 const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);

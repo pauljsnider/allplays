@@ -89,9 +89,13 @@ describe('premium entitlement helpers', () => {
         })).resolves.toMatchObject({ state: 'locked' });
     });
 
-    it('restricts parent reads of raw team entitlement billing metadata', () => {
+    it('keeps raw team entitlement billing metadata out of public reads', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
-        expect(rules).toMatch(/match \/teams\/\{teamId\}[\s\S]*match \/entitlements\/\{entitlementId\} \{\s*\/\/ Raw entitlement documents include billing provider metadata\.[\s\S]*allow read: if isTeamOwnerOrAdmin\(teamId\);\s*allow write: if isGlobalAdmin\(\);\s*\}/);
+        expect(rules).toContain('match /entitlements/{entitlementId}');
+        expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) ||');
+        expect(rules).toContain("resource.data.tier == 'team-pass'");
+        expect(rules).toContain("!resource.data.keys().hasAny([");
+        expect(rules).toContain("'stripeCustomerId'");
     });
 
     it('unlocks player premium for the current user with a valid account record', async () => {

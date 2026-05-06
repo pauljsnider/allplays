@@ -1,4 +1,4 @@
-import { getDefaultLivePeriod } from './live-sport-config.js';
+import { getDefaultLivePeriod, isFootballSport } from './live-sport-config.js';
 
 export function summarizePersistedTrackingState({
   eventsCount = 0,
@@ -33,7 +33,7 @@ export function buildTrackLiveResetUpdate({
 } = {}) {
   const onCourt = Array.isArray(liveLineup?.onCourt) ? [...liveLineup.onCourt] : [];
   const bench = Array.isArray(liveLineup?.bench) ? [...liveLineup.bench] : [];
-  return {
+  const resetUpdate = {
     homeScore: 0,
     awayScore: 0,
     period: period || getDefaultLivePeriod({ game: currentGame, config: currentConfig }),
@@ -48,6 +48,12 @@ export function buildTrackLiveResetUpdate({
     opponentTeamName: currentGame?.opponentTeamName || '',
     opponentTeamPhoto: currentGame?.opponentTeamPhoto || ''
   };
+
+  if (isFootballSport({ game: currentGame, config: currentConfig })) {
+    resetUpdate.liveFootballState = { possession: 'home', down: '1', distance: '10', yardLine: '' };
+  }
+
+  return resetUpdate;
 }
 
 export async function runTrackLiveResetPersistence({
