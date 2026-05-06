@@ -115,7 +115,7 @@ function escapeRegex(value) {
 
 function replaceNamedImportByModulePath(source, modulePath, replacement) {
   const pattern = new RegExp(
-    `import\\s*\\{[\\s\\S]*?\\}\\s*from\\s*['"]${escapeRegex(modulePath)}(?:\\?v=[^'"]+)?['"];?\\s*`
+    `import\\s*\\{[^}]*\\}\\s*from\\s*['"]${escapeRegex(modulePath)}(?:\\?v=[^'"]+)?['"];?\\s*`
   );
   return replaceImport(source, pattern, replacement);
 }
@@ -198,6 +198,11 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     rewritten,
     './live-tracker-chat-unread.js',
     'const { advanceLiveChatUnreadState } = deps.liveTrackerChatUnread;'
+  );
+  rewritten = replaceNamedImportByModulePath(
+    rewritten,
+    './live-stream-utils.js',
+    'const { buildVideoTimestampMetadata, hasConfiguredLiveStream } = deps.liveStreamUtils;'
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -334,6 +339,10 @@ async function bootLiveTracker({ updateGame }) {
     },
     liveTrackerChatUnread: {
       advanceLiveChatUnreadState: state => state
+    },
+    liveStreamUtils: {
+      buildVideoTimestampMetadata: () => ({}),
+      hasConfiguredLiveStream: () => false
     },
     liveGameState: {
       resolveLiveStatConfig: () => null,
