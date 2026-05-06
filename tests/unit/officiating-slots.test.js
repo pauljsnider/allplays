@@ -10,6 +10,10 @@ function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 }
 
+function readOfficialsPage() {
+    return readFileSync(new URL('../../officials.html', import.meta.url), 'utf8');
+}
+
 describe('officiating slots', () => {
     it('normalizes officials and fills slot display names from the directory', () => {
         const officials = normalizeOfficialsDirectory([
@@ -54,5 +58,16 @@ describe('officiating slots', () => {
         expect(source).toContain('Officiating assignment conflict warning:');
         expect(source).toContain('${renderOfficiatingSummary(game.officiatingSlots)}');
         expect(source).toContain('assignments: getAssignmentsFromForm()');
+    });
+
+    it('surfaces rescheduled officiating assignments to assigners and officials', () => {
+        const editSource = readEditSchedule();
+        const officialsSource = readOfficialsPage();
+
+        expect(editSource).toContain('flagRescheduledOfficiatingSlots(previousGame, gameData)');
+        expect(editSource).toContain('Rescheduled, needs review');
+        expect(editSource).toContain('Needs review');
+        expect(officialsSource).toContain('Game rescheduled, please review');
+        expect(officialsSource).toContain("['pending', 'needs_review'].includes(slot.status)");
     });
 });
