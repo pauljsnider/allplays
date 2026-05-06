@@ -556,10 +556,7 @@ service cloud.firestore {
                       (isSignedIn() && resource.data.recipientOfficialUserId == request.auth.uid) ||
                       (isSignedIn() && request.auth.token.email != null &&
                        resource.data.recipientOfficialEmail == request.auth.token.email.lower());
-        allow create: if isTeamOwnerOrAdmin(teamId) ||
-                         (isSignedIn() &&
-                          request.resource.data.type == 'officiating_assignment' &&
-                          request.resource.data.actorUserId == request.auth.uid);
+        allow create: if isTeamOwnerOrAdmin(teamId);
         allow update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
