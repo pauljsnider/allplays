@@ -1,11 +1,21 @@
 import { getTeams, getAllUsers, deleteTeam } from './db.js?v=29';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=10';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=13';
+import {
+    adminRegistrationDefaults,
+    buildAdminRegistrationFormPayload,
+    formatFieldLabels,
+    getAdminRegistrationShareUrl,
+    validateAdminRegistrationFormPayload
+} from './admin-registration-forms.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
 let currentUser = null; // Declare currentUser
 let showInactiveTeams = false;
+let activeRegistrationTeam = null;
+let activeRegistrationForms = [];
 
 function isTeamActive(team) {
     return team?.active !== false;
@@ -215,6 +225,7 @@ function renderTeams(teams) {
                 ${team.createdAt?.toDate ? team.createdAt.toDate().toLocaleDateString() : '-'}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                <button onclick="window.openRegistrationFormsAdmin('${team.id}')" class="text-indigo-600 hover:text-indigo-900 mr-4">Registration forms</button>
                 <a href="edit-team.html?teamId=${team.id}" class="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
                 <button onclick="window.deleteTeamAdmin('${team.id}', '${escapeHtml(team.name.replace(/'/g, "\\'"))}')" class="text-red-600 hover:text-red-900">Delete</button>
             </td>
@@ -270,6 +281,123 @@ window.deleteTeamAdmin = async function (teamId, teamName) {
     }
 };
 
+window.openRegistrationFormsAdmin = async function (teamId) {
+    activeRegistrationTeam = allTeams.find(team => team.id === teamId) || null;
+    if (!activeRegistrationTeam) return;
+
+    document.getElementById('registration-team-name').textContent = activeRegistrationTeam.name || 'Team';
+    document.getElementById('registration-form-editor').classList.add('hidden');
+    document.getElementById('registration-forms-modal').classList.remove('hidden');
+    await loadRegistrationFormsForActiveTeam();
+};
+
+window.closeRegistrationFormsAdmin = function () {
+    document.getElementById('registration-forms-modal').classList.add('hidden');
+};
+
+window.startRegistrationFormAdmin = function (formId = '') {
+    const form = activeRegistrationForms.find(item => item.id === formId) || {};
+    const editor = document.getElementById('registration-form-editor');
+    document.getElementById('registration-form-id').value = form.id || '';
+    document.getElementById('registration-title').value = form.programName || form.title || '';
+    document.getElementById('registration-description').value = form.description || '';
+    document.getElementById('registration-program-type').value = form.programType || 'season';
+    document.getElementById('registration-season').value = form.season || '';
+    document.getElementById('registration-fee').value = Number(form.feeAmountCents || 0) / 100;
+    document.getElementById('registration-participant-fields').value = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
+    document.getElementById('registration-guardian-fields').value = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
+    document.getElementById('registration-waiver').value = form.waiverText || '';
+    document.getElementById('registration-status').value = form.status === 'published' || form.published === true ? 'published' : 'draft';
+    document.getElementById('registration-form-message').textContent = '';
+    editor.classList.remove('hidden');
+};
+
+window.copyRegistrationLinkAdmin = async function (teamId, formId) {
+    const url = getAdminRegistrationShareUrl(teamId, formId, window.location.origin);
+    await navigator.clipboard.writeText(url);
+    document.getElementById('registration-form-message').textContent = 'Registration link copied.';
+};
+
+async function loadRegistrationFormsForActiveTeam() {
+    const list = document.getElementById('registration-forms-list');
+    list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
+    const snapshot = await getDocs(collection(db, `teams/${activeRegistrationTeam.id}/registrationForms`));
+    activeRegistrationForms = snapshot.docs
+        .map(formDoc => ({ id: formDoc.id, ...formDoc.data() }))
+        .sort((a, b) => String(a.programName || a.title || '').localeCompare(String(b.programName || b.title || '')));
+    renderRegistrationFormsList();
+}
+
+function renderRegistrationFormsList() {
+    const list = document.getElementById('registration-forms-list');
+    if (!activeRegistrationForms.length) {
+        list.innerHTML = '<p class="text-sm text-gray-500">No registration forms yet.</p>';
+        return;
+    }
+
+    list.innerHTML = activeRegistrationForms.map(form => {
+        const published = form.status === 'published' || form.published === true;
+        const link = getAdminRegistrationShareUrl(activeRegistrationTeam.id, form.id, window.location.origin);
+        return `
+            <div class="rounded border border-gray-200 p-3">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="font-semibold text-gray-900">${escapeHtml(form.programName || form.title || 'Untitled form')}</p>
+                        <p class="text-xs text-gray-500">${escapeHtml(form.programType || 'season')} • ${published ? 'Published' : 'Draft'}</p>
+                    </div>
+                    <button onclick="window.startRegistrationFormAdmin('${form.id}')" class="text-sm text-indigo-600 hover:text-indigo-800">Edit</button>
+                </div>
+                ${published ? `<div class="mt-2 rounded bg-green-50 p-2 text-xs text-green-800 break-all">${escapeHtml(link)} <button onclick="window.copyRegistrationLinkAdmin('${activeRegistrationTeam.id}', '${form.id}')" class="ml-2 font-semibold underline">Copy</button></div>` : '<p class="mt-2 text-xs text-gray-500">Publish to generate a parent-facing registration link.</p>'}
+            </div>
+        `;
+    }).join('');
+}
+
+async function saveRegistrationForm(event) {
+    event.preventDefault();
+    if (!activeRegistrationTeam) return;
+
+    const formId = document.getElementById('registration-form-id').value;
+    const payload = buildAdminRegistrationFormPayload({
+        title: document.getElementById('registration-title').value,
+        description: document.getElementById('registration-description').value,
+        programType: document.getElementById('registration-program-type').value,
+        season: document.getElementById('registration-season').value,
+        feeAmount: document.getElementById('registration-fee').value,
+        participantFieldsText: document.getElementById('registration-participant-fields').value,
+        guardianFieldsText: document.getElementById('registration-guardian-fields').value,
+        waiverText: document.getElementById('registration-waiver').value,
+        status: document.getElementById('registration-status').value
+    }, { teamId: activeRegistrationTeam.id });
+    const errors = validateAdminRegistrationFormPayload(payload);
+    const message = document.getElementById('registration-form-message');
+    if (errors.length) {
+        message.textContent = errors.join(' ');
+        return;
+    }
+
+    if (formId) {
+        await updateDoc(doc(db, `teams/${activeRegistrationTeam.id}/registrationForms`, formId), {
+            ...payload,
+            updatedAt: serverTimestamp(),
+            updatedBy: currentUser.uid
+        });
+    } else {
+        const formRef = doc(collection(db, `teams/${activeRegistrationTeam.id}/registrationForms`));
+        await setDoc(formRef, {
+            ...payload,
+            createdAt: serverTimestamp(),
+            createdBy: currentUser.uid,
+            updatedAt: serverTimestamp(),
+            updatedBy: currentUser.uid
+        });
+    }
+
+    message.textContent = payload.published ? 'Registration form saved and published.' : 'Registration form saved as draft.';
+    await loadRegistrationFormsForActiveTeam();
+    document.getElementById('registration-form-editor').classList.add('hidden');
+}
+
 function setupTabs() {
     const tabs = ['dashboard', 'teams', 'users'];
     tabs.forEach(tab => {
@@ -293,6 +421,8 @@ function setupTabs() {
 }
 
 function setupSearch() {
+    document.getElementById('registration-form-editor').addEventListener('submit', saveRegistrationForm);
+
     const inactiveToggle = document.getElementById('filter-inactive-teams');
     if (inactiveToggle) {
         inactiveToggle.addEventListener('change', (e) => {
