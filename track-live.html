@@ -387,6 +387,47 @@
             </div>
         </div>
 
+        <!-- Football Play Logging -->
+        <div id="football-play-panel" class="track-panel p-3 mb-3 space-y-3 hidden">
+            <div>
+                <h3 class="font-bold text-sm text-teal">Football Play Log</h3>
+                <p class="text-[11px] text-sand/60">Log common offense, turnover, punt, kickoff, and penalty plays with down-distance context.</p>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <label class="text-[11px] text-sand/70">Possession
+                    <select id="football-possession" class="mt-1 w-full bg-ink/60 border border-teal/30 rounded px-2 py-2 text-sand text-xs">
+                        <option value="home">Home</option>
+                        <option value="away">Away</option>
+                    </select>
+                </label>
+                <label class="text-[11px] text-sand/70">Down
+                    <select id="football-down" class="mt-1 w-full bg-ink/60 border border-teal/30 rounded px-2 py-2 text-sand text-xs">
+                        <option value="1">1st</option>
+                        <option value="2">2nd</option>
+                        <option value="3">3rd</option>
+                        <option value="4">4th</option>
+                    </select>
+                </label>
+                <label class="text-[11px] text-sand/70">Distance
+                    <input id="football-distance" type="number" min="0" inputmode="numeric" value="10"
+                        class="mt-1 w-full bg-ink/60 border border-teal/30 rounded px-2 py-2 text-sand text-xs">
+                </label>
+                <label class="text-[11px] text-sand/70">Yard line
+                    <input id="football-yard-line" type="text" placeholder="Own 25"
+                        class="mt-1 w-full bg-ink/60 border border-teal/30 rounded px-2 py-2 text-sand text-xs">
+                </label>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <button type="button" class="football-play-btn bg-teal text-ink rounded px-2 py-2 text-xs font-semibold hover:bg-teal/80" data-football-play="rush">Rush</button>
+                <button type="button" class="football-play-btn bg-teal text-ink rounded px-2 py-2 text-xs font-semibold hover:bg-teal/80" data-football-play="pass_complete">Complete pass</button>
+                <button type="button" class="football-play-btn bg-slate border border-teal/30 text-sand rounded px-2 py-2 text-xs font-semibold hover:bg-ink" data-football-play="incomplete_pass">Incomplete pass</button>
+                <button type="button" class="football-play-btn bg-gold text-ink rounded px-2 py-2 text-xs font-semibold hover:bg-gold/80" data-football-play="penalty">Penalty</button>
+                <button type="button" class="football-play-btn bg-coral text-white rounded px-2 py-2 text-xs font-semibold hover:bg-coral/80" data-football-play="turnover">Turnover</button>
+                <button type="button" class="football-play-btn bg-slate border border-teal/30 text-sand rounded px-2 py-2 text-xs font-semibold hover:bg-ink" data-football-play="punt">Punt</button>
+                <button type="button" class="football-play-btn bg-slate border border-teal/30 text-sand rounded px-2 py-2 text-xs font-semibold hover:bg-ink" data-football-play="kickoff">Kickoff</button>
+            </div>
+        </div>
+
         <!-- Live Notes -->
         <div class="track-panel p-3 mb-3 space-y-2">
             <div class="flex items-center justify-between gap-2">
@@ -741,6 +782,7 @@
                 });
                 gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ team: currentTeam, config: currentConfig });
                 configureGoalSportControls();
+                setupFootballPlayPanel();
 
                 // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
@@ -880,6 +922,112 @@
 
             if (scorerInput) scorerInput.value = '';
             if (noteInput) noteInput.value = '';
+        }
+
+        function isFootballTrackingConfig() {
+            const labels = [currentConfig?.baseType, currentConfig?.name, currentTeam?.sport, currentGame?.sport]
+                .map((value) => String(value || '').trim().toLowerCase());
+            return labels.some((label) => label === 'football' || label.includes('football'));
+        }
+
+        function setupFootballPlayPanel() {
+            const panel = document.getElementById('football-play-panel');
+            if (!panel) return;
+            const enabled = isFootballTrackingConfig();
+            panel.classList.toggle('hidden', !enabled);
+            if (!enabled) return;
+
+            const possession = document.getElementById('football-possession');
+            if (possession) {
+                const homeOption = possession.querySelector('option[value="home"]');
+                const awayOption = possession.querySelector('option[value="away"]');
+                if (homeOption) homeOption.textContent = currentTeam?.name || 'Home';
+                if (awayOption) awayOption.textContent = resolveOpponentDisplayName(currentGame);
+            }
+        }
+
+        function getFootballOrdinal(value) {
+            return { '1': '1st', '2': '2nd', '3': '3rd', '4': '4th' }[String(value)] || `${value}th`;
+        }
+
+        function getFootballContext() {
+            const possession = document.getElementById('football-possession')?.value || 'home';
+            const down = document.getElementById('football-down')?.value || '1';
+            const distance = String(document.getElementById('football-distance')?.value || '').trim();
+            const yardLine = String(document.getElementById('football-yard-line')?.value || '').trim();
+            return {
+                possession,
+                possessionLabel: possession === 'away' ? resolveOpponentDisplayName(currentGame) : (currentTeam?.name || 'Home'),
+                down,
+                downLabel: getFootballOrdinal(down),
+                distance,
+                yardLine
+            };
+        }
+
+        function buildFootballPlayDescription(playType, context) {
+            const labels = {
+                rush: 'Rush',
+                pass_complete: 'Complete pass',
+                incomplete_pass: 'Incomplete pass',
+                penalty: 'Penalty',
+                turnover: 'Turnover',
+                punt: 'Punt',
+                kickoff: 'Kickoff'
+            };
+            const contextParts = [
+                context.possessionLabel,
+                `${context.downLabel} & ${context.distance || '?'}`,
+                context.yardLine ? `at ${context.yardLine}` : ''
+            ].filter(Boolean);
+            return `${labels[playType] || 'Football play'} | ${contextParts.join(' · ')}`;
+        }
+
+        function toggleFootballPossession() {
+            const possession = document.getElementById('football-possession');
+            if (!possession) return;
+            possession.value = possession.value === 'away' ? 'home' : 'away';
+        }
+
+        async function logFootballPlay(playType) {
+            if (!isFootballTrackingConfig()) return;
+            if (!gameState.isRunning && gameState.elapsed === 0) {
+                alert('Please start the game timer before recording football plays.');
+                return;
+            }
+
+            const context = getFootballContext();
+            const description = buildFootballPlayDescription(playType, context);
+            await addLogEntry(description, {
+                type: 'football_play',
+                playType,
+                possession: context.possession,
+                down: context.down,
+                distance: context.distance,
+                yardLine: context.yardLine
+            });
+
+            broadcastLiveEvent(currentTeamId, currentGameId, {
+                type: 'football_play',
+                footballPlayType: playType,
+                possession: context.possession,
+                down: context.down,
+                distance: context.distance,
+                yardLine: context.yardLine,
+                period: gameState.currentPeriod,
+                gameClockMs: gameState.elapsed,
+                homeScore,
+                awayScore,
+                isOpponent: context.possession === 'away',
+                description,
+                createdBy: currentUser?.uid || null
+            }).catch(console.warn);
+            scheduleLiveHasData();
+
+            if (['turnover', 'punt', 'kickoff'].includes(playType)) {
+                toggleFootballPossession();
+            }
+
         }
 
         function formatFieldTime(ms) {
@@ -2463,6 +2611,13 @@ Write the match report now:`;
             }
         });
         document.getElementById('cancelBtn').addEventListener('click', cancelGame);
+        document.querySelectorAll('.football-play-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                logFootballPlay(btn.dataset.footballPlay).catch((error) => {
+                    console.warn('Failed to log football play:', error);
+                });
+            });
+        });
         document.getElementById('live-note-add')?.addEventListener('click', addManualGameNote);
         document.getElementById('voice-note-btn')?.addEventListener('click', startVoiceNote);
         document.getElementById('record-home-goal')?.addEventListener('click', () => recordGoalSportGoal('home'));
