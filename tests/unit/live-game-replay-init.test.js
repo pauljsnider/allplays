@@ -256,6 +256,10 @@ function buildModuleSource() {
             'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
+            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
+            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
+        )
+        .replace(
             "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
             'const { getAI, getGenerativeModel, GoogleAIBackend } = deps.firebaseAi;'
         )
