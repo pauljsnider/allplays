@@ -17,6 +17,10 @@ let showInactiveTeams = false;
 let activeRegistrationTeam = null;
 let activeRegistrationForms = [];
 
+function inlineJsString(value) {
+    return escapeHtml(JSON.stringify(String(value || '')));
+}
+
 function isTeamActive(team) {
     return team?.active !== false;
 }
@@ -225,9 +229,9 @@ function renderTeams(teams) {
                 ${team.createdAt?.toDate ? team.createdAt.toDate().toLocaleDateString() : '-'}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                <button onclick="window.openRegistrationFormsAdmin('${team.id}')" class="text-indigo-600 hover:text-indigo-900 mr-4">Registration forms</button>
+                <button onclick="window.openRegistrationFormsAdmin(${inlineJsString(team.id)})" class="text-indigo-600 hover:text-indigo-900 mr-4">Registration forms</button>
                 <a href="edit-team.html?teamId=${team.id}" class="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
-                <button onclick="window.deleteTeamAdmin('${team.id}', '${escapeHtml(team.name.replace(/'/g, "\\'"))}')" class="text-red-600 hover:text-red-900">Delete</button>
+                <button onclick="window.deleteTeamAdmin(${inlineJsString(team.id)}, ${inlineJsString(team.name)})" class="text-red-600 hover:text-red-900">Delete</button>
             </td>
         </tr>
     `).join('');
@@ -314,18 +318,37 @@ window.startRegistrationFormAdmin = function (formId = '') {
 
 window.copyRegistrationLinkAdmin = async function (teamId, formId) {
     const url = getAdminRegistrationShareUrl(teamId, formId, window.location.origin);
-    await navigator.clipboard.writeText(url);
-    document.getElementById('registration-form-message').textContent = 'Registration link copied.';
+    const message = document.getElementById('registration-form-message');
+    try {
+        await navigator.clipboard.writeText(url);
+        message.textContent = 'Registration link copied.';
+    } catch (error) {
+        console.error('Failed to copy registration link:', error);
+        message.textContent = `Unable to copy automatically. Use this link: ${url}`;
+    }
 };
 
 async function loadRegistrationFormsForActiveTeam() {
+    const team = activeRegistrationTeam;
+    const teamId = team?.id;
+    if (!teamId) return;
+
     const list = document.getElementById('registration-forms-list');
     list.innerHTML = '<p class="text-sm text-gray-500">Loading registration forms...</p>';
-    const snapshot = await getDocs(collection(db, `teams/${activeRegistrationTeam.id}/registrationForms`));
-    activeRegistrationForms = snapshot.docs
-        .map(formDoc => ({ id: formDoc.id, ...formDoc.data() }))
-        .sort((a, b) => String(a.programName || a.title || '').localeCompare(String(b.programName || b.title || '')));
-    renderRegistrationFormsList();
+    try {
+        const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
+        if (activeRegistrationTeam?.id !== teamId) return;
+
+        activeRegistrationForms = snapshot.docs
+            .map(formDoc => ({ id: formDoc.id, ...formDoc.data() }))
+            .sort((a, b) => String(a.programName || a.title || '').localeCompare(String(b.programName || b.title || '')));
+        renderRegistrationFormsList();
+    } catch (error) {
+        console.error('Error loading registration forms:', error);
+        if (activeRegistrationTeam?.id === teamId) {
+            list.innerHTML = '<p class="text-sm text-red-600">Failed to load registration forms. Please try again.</p>';
+        }
+    }
 }
 
 function renderRegistrationFormsList() {
@@ -338,6 +361,8 @@ function renderRegistrationFormsList() {
     list.innerHTML = activeRegistrationForms.map(form => {
         const published = form.status === 'published' || form.published === true;
         const link = getAdminRegistrationShareUrl(activeRegistrationTeam.id, form.id, window.location.origin);
+        const teamIdArg = inlineJsString(activeRegistrationTeam.id);
+        const formIdArg = inlineJsString(form.id);
         return `
             <div class="rounded border border-gray-200 p-3">
                 <div class="flex items-start justify-between gap-3">
@@ -345,9 +370,9 @@ function renderRegistrationFormsList() {
                         <p class="font-semibold text-gray-900">${escapeHtml(form.programName || form.title || 'Untitled form')}</p>
                         <p class="text-xs text-gray-500">${escapeHtml(form.programType || 'season')} • ${published ? 'Published' : 'Draft'}</p>
                     </div>
-                    <button onclick="window.startRegistrationFormAdmin('${form.id}')" class="text-sm text-indigo-600 hover:text-indigo-800">Edit</button>
+                    <button onclick="window.startRegistrationFormAdmin(${formIdArg})" class="text-sm text-indigo-600 hover:text-indigo-800">Edit</button>
                 </div>
-                ${published ? `<div class="mt-2 rounded bg-green-50 p-2 text-xs text-green-800 break-all">${escapeHtml(link)} <button onclick="window.copyRegistrationLinkAdmin('${activeRegistrationTeam.id}', '${form.id}')" class="ml-2 font-semibold underline">Copy</button></div>` : '<p class="mt-2 text-xs text-gray-500">Publish to generate a parent-facing registration link.</p>'}
+                ${published ? `<div class="mt-2 rounded bg-green-50 p-2 text-xs text-green-800 break-all">${escapeHtml(link)} <button onclick="window.copyRegistrationLinkAdmin(${teamIdArg}, ${formIdArg})" class="ml-2 font-semibold underline">Copy</button></div>` : '<p class="mt-2 text-xs text-gray-500">Publish to generate a parent-facing registration link.</p>'}
             </div>
         `;
     }).join('');
@@ -357,6 +382,7 @@ async function saveRegistrationForm(event) {
     event.preventDefault();
     if (!activeRegistrationTeam) return;
 
+    const teamId = activeRegistrationTeam.id;
     const formId = document.getElementById('registration-form-id').value;
     const payload = buildAdminRegistrationFormPayload({
         title: document.getElementById('registration-title').value,
@@ -368,7 +394,7 @@ async function saveRegistrationForm(event) {
         guardianFieldsText: document.getElementById('registration-guardian-fields').value,
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
-    }, { teamId: activeRegistrationTeam.id });
+    }, { teamId });
     const errors = validateAdminRegistrationFormPayload(payload);
     const message = document.getElementById('registration-form-message');
     if (errors.length) {
@@ -376,26 +402,34 @@ async function saveRegistrationForm(event) {
         return;
     }
 
-    if (formId) {
-        await updateDoc(doc(db, `teams/${activeRegistrationTeam.id}/registrationForms`, formId), {
-            ...payload,
-            updatedAt: serverTimestamp(),
-            updatedBy: currentUser.uid
-        });
-    } else {
-        const formRef = doc(collection(db, `teams/${activeRegistrationTeam.id}/registrationForms`));
-        await setDoc(formRef, {
-            ...payload,
-            createdAt: serverTimestamp(),
-            createdBy: currentUser.uid,
-            updatedAt: serverTimestamp(),
-            updatedBy: currentUser.uid
-        });
+    try {
+        if (formId) {
+            await updateDoc(doc(db, `teams/${teamId}/registrationForms`, formId), {
+                ...payload,
+                updatedAt: serverTimestamp(),
+                updatedBy: currentUser.uid
+            });
+        } else {
+            const formRef = doc(collection(db, `teams/${teamId}/registrationForms`));
+            await setDoc(formRef, {
+                ...payload,
+                createdAt: serverTimestamp(),
+                createdBy: currentUser.uid,
+                updatedAt: serverTimestamp(),
+                updatedBy: currentUser.uid
+            });
+        }
+    } catch (error) {
+        console.error('Error saving registration form:', error);
+        message.textContent = 'Failed to save registration form. Please try again.';
+        return;
     }
 
     message.textContent = payload.published ? 'Registration form saved and published.' : 'Registration form saved as draft.';
-    await loadRegistrationFormsForActiveTeam();
-    document.getElementById('registration-form-editor').classList.add('hidden');
+    if (activeRegistrationTeam?.id === teamId) {
+        await loadRegistrationFormsForActiveTeam();
+        document.getElementById('registration-form-editor').classList.add('hidden');
+    }
 }
 
 function setupTabs() {

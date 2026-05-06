@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import {
     buildAdminRegistrationFormPayload,
+    fieldLabelsToDefinitions,
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
 } from '../../js/admin-registration-forms.js';
@@ -62,6 +63,15 @@ describe('admin registration form setup', () => {
         );
     });
 
+    it('infers date inputs only from date-specific labels', () => {
+        expect(fieldLabelsToDefinitions(['Birthdate', 'Start date', 'Update notes', 'Candidate info'])).toEqual([
+            { id: 'field_1', label: 'Birthdate', type: 'date', required: true, options: [] },
+            { id: 'field_2', label: 'Start date', type: 'date', required: true, options: [] },
+            { id: 'field_3', label: 'Update notes', type: 'text', required: true, options: [] },
+            { id: 'field_4', label: 'Candidate info', type: 'text', required: true, options: [] }
+        ]);
+    });
+
     it('wires the admin dashboard to create, edit, publish, and copy registration links', () => {
         const adminPage = fs.readFileSync('admin.html', 'utf8');
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
@@ -72,9 +82,13 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('registration-waiver');
         expect(adminPage).toContain('Publish and show link');
         expect(adminJs).toContain('window.openRegistrationFormsAdmin');
-        expect(adminJs).toContain('teams/${activeRegistrationTeam.id}/registrationForms');
+        expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
+        expect(adminJs).toContain('if (activeRegistrationTeam?.id !== teamId) return;');
+        expect(adminJs).toContain('teams/${teamId}/registrationForms');
         expect(adminJs).toContain('setDoc(formRef');
-        expect(adminJs).toContain('updateDoc(doc(db, `teams/${activeRegistrationTeam.id}/registrationForms`, formId)');
+        expect(adminJs).toContain('updateDoc(doc(db, `teams/${teamId}/registrationForms`, formId)');
+        expect(adminJs).toContain('try {');
+        expect(adminJs).toContain('inlineJsString');
         expect(adminJs).toContain('copyRegistrationLinkAdmin');
     });
 });

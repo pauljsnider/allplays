@@ -78,7 +78,7 @@ function inferFieldType(label) {
     const normalized = String(label || '').toLowerCase();
     if (normalized.includes('email')) return 'email';
     if (normalized.includes('phone')) return 'tel';
-    if (normalized.includes('birth') || normalized.includes('date')) return 'date';
+    if (/\b(date|birth|dob)\b/.test(normalized) || normalized.includes('birthdate')) return 'date';
     return 'text';
 }
 
