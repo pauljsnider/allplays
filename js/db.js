@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=10';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=3';
+} from './firebase.js?v=11';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
@@ -54,6 +54,7 @@ import {
 } from './shared-schedule-sync.js';
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeLocalAttractionSponsors } from './local-attractions.js?v=1';
+import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -313,6 +314,46 @@ export async function deleteUploadedChatAttachments(attachments = []) {
     const failure = results.find((result) => result.status === 'rejected');
     if (failure) {
         throw failure.reason;
+    }
+}
+
+export async function uploadGameClip(teamId, gameId, file) {
+    await requireImageAuth();
+
+    const ts = Date.now();
+    const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
+    const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
+
+    try {
+        const storageRef = ref(imageStorage, clipPath);
+        const snapshot = await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(snapshot.ref);
+        return {
+            url,
+            path: clipPath,
+            name: file.name || null,
+            type: file.type || null,
+            size: Number.isFinite(file.size) ? file.size : null,
+            source: 'upload'
+        };
+    } catch (error) {
+        const code = error?.code || '';
+        if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
+            console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
+            const fallbackPath = `game-clips/${ts}_${teamId}_${gameId}_${safeName}`;
+            const fallbackRef = ref(storage, fallbackPath);
+            const fallbackSnapshot = await uploadBytes(fallbackRef, file);
+            const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
+            return {
+                url: fallbackUrl,
+                path: fallbackPath,
+                name: file.name || null,
+                type: file.type || null,
+                size: Number.isFinite(file.size) ? file.size : null,
+                source: 'upload'
+            };
+        }
+        throw error;
     }
 }
 
@@ -687,16 +728,60 @@ function assertNoSensitivePlayerFields(playerData) {
 export async function getRosterFieldDefinitions(teamId, team = null) {
     const teamFields = team?.rosterFields || team?.rosterProfileFields || team?.playerProfileFields || team?.customRosterFields || [];
 
+    const fieldsByKey = new Map();
+    if (Array.isArray(teamFields)) {
+        teamFields.forEach((field, index) => {
+            try {
+                const normalized = buildRosterFieldDefinitionPayload(field, index);
+                fieldsByKey.set(normalized.key, { ...field, key: normalized.key });
+            } catch (e) {
+                // Skip malformed legacy team-level definitions.
+            }
+        });
+    }
+
     try {
         const snapshot = await getDocs(collection(db, `teams/${teamId}/rosterFields`));
-        if (!snapshot.empty) {
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        }
+        snapshot.docs.forEach((docSnap) => {
+            fieldsByKey.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+        });
     } catch (e) {
         console.warn('Failed to load roster field definitions from subcollection:', e);
     }
 
-    return Array.isArray(teamFields) ? teamFields : [];
+    return Array.from(fieldsByKey.values());
+}
+
+export async function saveRosterFieldDefinition(teamId, field) {
+    const payload = buildRosterFieldDefinitionPayload(field);
+    const fieldRef = doc(db, `teams/${teamId}/rosterFields`, payload.key);
+    await setDoc(fieldRef, {
+        ...payload,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+    return { id: payload.key, ...payload };
+}
+
+export async function disableRosterFieldDefinition(teamId, fieldId) {
+    await setDoc(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+        key: fieldId,
+        active: false,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+}
+
+export async function reorderRosterFieldDefinitions(teamId, fields = []) {
+    const batch = writeBatch(db);
+    fields.forEach((field, index) => {
+        const fieldId = field.id || field.key;
+        if (!fieldId) return;
+        batch.set(doc(db, `teams/${teamId}/rosterFields`, fieldId), {
+            key: fieldId,
+            sortOrder: index,
+            updatedAt: Timestamp.now()
+        }, { merge: true });
+    });
+    await batch.commit();
 }
 
 export async function getOfficials(teamId) {
@@ -1279,6 +1364,11 @@ export async function addGame(teamId, gameData) {
         }
     }
     return docRef.id;
+}
+
+export async function saveGamePlan(teamId, gameId, gamePlan) {
+    const docRef = getTeamGameDocRef(teamId, gameId);
+    await updateDoc(docRef, { gamePlan });
 }
 
 export async function updateGame(teamId, gameId, gameData) {
@@ -2439,12 +2529,15 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
         const [teamId, playerId] = key.split('::');
         return { teamId, playerId };
     });
+    const teamIds = [...new Set(childLinks.map((child) => child.teamId).filter(Boolean))];
 
     const recipientsRef = collectionGroup(db, 'feeRecipients');
     const queries = [
-        query(recipientsRef, where('parentUserId', '==', userId)),
-        query(recipientsRef, where('accountUserId', '==', userId)),
-        query(recipientsRef, where('userId', '==', userId)),
+        ...teamIds.flatMap((teamId) => [
+            query(recipientsRef, where('teamId', '==', teamId), where('parentUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('accountUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('userId', '==', userId))
+        ]),
         ...childLinks.map((child) => query(
             recipientsRef,
             where('teamId', '==', child.teamId),
@@ -2468,6 +2561,88 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
     });
 
     return Array.from(feesByPath.values());
+}
+
+export async function getTeamFeeBatch(teamId, batchId) {
+    if (!teamId || !batchId) return null;
+    const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
+    const batchSnap = await getDoc(batchRef);
+    return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeRecipients(teamId, batchId) {
+    if (!teamId || !batchId) return [];
+    const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
+    const snapshot = await getDocs(recipientsRef);
+    return snapshot.docs
+        .map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }))
+        .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+}
+
+export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
+    if (!teamId || !batchId || !recipientId) {
+        throw new Error('Missing fee recipient context.');
+    }
+
+    const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
+    await updateDoc(recipientRef, {
+        ...updates,
+        teamId,
+        batchId,
+        updatedAt: serverTimestamp()
+    });
+}
+
+export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {
+    if (!teamId) throw new Error('Team ID is required.');
+    if (!feeDraft?.title) throw new Error('Fee title is required.');
+    if (!feeDraft?.amountCents || feeDraft.amountCents <= 0) throw new Error('Fee amount is required.');
+    if (!feeDraft?.dueDate) throw new Error('Due date is required.');
+    if (!recipients.length) throw new Error('At least one recipient is required.');
+
+    const batchRef = doc(collection(db, `teams/${teamId}/feeBatches`));
+    const write = writeBatch(db);
+    const now = serverTimestamp();
+    const collectionMode = 'offline_manual';
+    const offlinePaymentInstructions = feeDraft.offlinePaymentInstructions || 'Collect payment outside ALL PLAYS. No online payment is processed.';
+
+    write.set(batchRef, {
+        teamId,
+        title: feeDraft.title,
+        amountCents: feeDraft.amountCents,
+        dueDate: feeDraft.dueDate,
+        notes: feeDraft.notes || '',
+        recipientCount: recipients.length,
+        status: 'open',
+        collectionMode,
+        offlinePaymentInstructions,
+        createdBy: user.uid || null,
+        createdByEmail: user.email || user.profileEmail || null,
+        createdAt: now,
+        updatedAt: now
+    });
+
+    recipients.forEach((recipient) => {
+        if (!recipient.playerId) return;
+        const recipientRef = doc(db, `teams/${teamId}/feeBatches/${batchRef.id}/feeRecipients/${recipient.playerId}`);
+        write.set(recipientRef, {
+            ...recipient,
+            batchId: batchRef.id,
+            teamId,
+            feeTitle: feeDraft.title,
+            amountCents: feeDraft.amountCents,
+            dueDate: feeDraft.dueDate,
+            notes: feeDraft.notes || '',
+            status: 'unpaid',
+            collectionMode,
+            offlinePaymentInstructions,
+            createdAt: now,
+            updatedAt: now
+        });
+    });
+
+    await write.commit();
+    return { id: batchRef.id };
 }
 
 export async function getParentDashboardData(userId) {
@@ -4280,9 +4455,47 @@ export async function getRsvps(teamId, gameId) {
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-export async function getMyRsvp(teamId, gameId, userId) {
-    const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, userId);
-    const snap = await getDoc(rsvpRef);
+export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
+    const rsvpCollectionPath = `teams/${teamId}/games/${gameId}/rsvps`;
+    const linkedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const directRsvpRef = doc(db, rsvpCollectionPath, userId);
+
+    if (linkedPlayerIds.length === 0) {
+        const snap = await getDoc(directRsvpRef);
+        return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    }
+
+    const [directResult, ...overrideResults] = await Promise.allSettled([
+        getDoc(directRsvpRef),
+        ...linkedPlayerIds.map((playerId) => getDoc(doc(db, rsvpCollectionPath, buildCoachOverrideRsvpDocId(userId, playerId))))
+    ]);
+
+    const overrideRsvps = overrideResults
+        .filter((result) => result.status === 'fulfilled' && result.value.exists())
+        .map((result) => ({ id: result.value.id, ...result.value.data() }));
+
+    if (overrideRsvps.length > 0) {
+        const responses = Array.from(new Set(overrideRsvps.map((rsvp) => normalizeRsvpResponse(rsvp.response))));
+        if (responses.length === 1) {
+            return {
+                id: `${userId}__linkedPlayers`,
+                userId,
+                playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+                response: responses[0],
+                playerRsvps: overrideRsvps
+            };
+        }
+        return {
+            id: `${userId}__linkedPlayers`,
+            userId,
+            playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+            response: 'mixed',
+            playerRsvps: overrideRsvps
+        };
+    }
+
+    if (directResult.status === 'rejected') throw directResult.reason;
+    const snap = directResult.value;
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 

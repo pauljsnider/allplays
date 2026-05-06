@@ -1,7 +1,7 @@
 # Parent Role Design
 
 ## Current Roles & Flows
-- Public/unauthenticated: read-only public teams/games/players.
+- Public/unauthenticated: read-only public teams/games/players, plus published registration forms and pending public registration submissions.
 - Coach: team owner or listed in `teams.adminEmails`; can manage teams/roster/games.
 - Global admin: `users.isAdmin == true`; full access via UI + Firestore rules.
 - Signup gated by access codes; profiles live in `users/{uid}`; `isAdmin` checked in `js/auth.js`, `js/utils.js`, roster/config/schedule pages.
@@ -34,7 +34,7 @@
 - Invite: `edit-roster.html` adds "Invite Parent" per player; coach enters email + relation; show code to share/copy; display parent connections with status badges.
 - Add player: optional parent email field on the single-player form; store as pending parent entry (no invite required). If provided, coach can still send/trigger an invite later.
 - Bulk AI/image upload: allow optional parent email in parsed rows (e.g. `#12 Sarah Jones G parent:sarah@example.com` or `Sarah Jones - 12 (parent sarah@example.com)`); if missing, leave blank.
-- Signup/Login: `login.html` surfaces code role/team/player; parent signup requires code; on success go to parent dashboard.
+- Signup/Login: `login.html` surfaces code role/team/player; parent signup requires code; on success go to parent dashboard. Published self-serve program links use `registration.html?teamId={teamId}&formId={formId}` so a guardian can submit participant and guardian fields plus waiver acceptance without creating an account or entering an activation code.
 - Parent dashboard (`parent-dashboard.html`):
   - Linked players list and team chats
   - Schedule filters: `All Upcoming`, `Upcoming Games`, `Upcoming Practices`, `Past Events`
@@ -48,8 +48,14 @@
 - One-time backfill: set `roles:['coach']` for existing users; `roles:['coach','admin']` when `isAdmin == true`.
 - Existing access codes default to `role:'coach'` if role missing.
 
+## Public Registration Forms
+- Coaches/admins manage published registration form documents at `teams/{teamId}/registrationForms/{formId}`.
+- `registration.html` reads only published forms by direct link and writes new records under `teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}` with `status: 'pending'`.
+- Public submissions are intentionally limited to form field values, explicit waiver acceptance, fee/program snapshot data, and submission metadata. Online payments, document upload, discounting, and auto-roster placement remain separate follow-up flows.
+
 ## Testing Ideas
 - Parent signup with valid/invalid code; cannot sign up without code.
+- Published registration link loads without login/code, requires required participant/guardian fields and waiver acceptance, then creates a pending registration.
 - Parent login sees only linked player(s); no edit buttons; Firestore rejects writes.
 - Parent My Teams view shows one action button per team card.
 - Coach invites parent; status flips pending->active after signup.

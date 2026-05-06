@@ -50,6 +50,8 @@ describe('officiating slots', () => {
         expect(source).toContain('createOfficiatingAssignmentNotificationRecords');
         expect(source).toContain('buildOfficiatingAssignmentNotificationRecords');
         expect(source).toContain('await createScheduleOfficiatingNotificationRecords({');
+        expect(source).toContain('confirmOfficiatingAssignmentConflicts(gameData)');
+        expect(source).toContain('Officiating assignment conflict warning:');
         expect(source).toContain('${renderOfficiatingSummary(game.officiatingSlots)}');
         expect(source).toContain('assignments: getAssignmentsFromForm()');
     });

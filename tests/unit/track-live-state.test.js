@@ -56,6 +56,7 @@ describe('track live state helpers', () => {
       liveStatus: 'scheduled',
       liveHasData: false,
       liveResetAt: 1700000000000,
+      servingTeam: 'home',
       opponent: 'Lions',
       opponentTeamId: 'opp-team-1',
       opponentTeamName: 'Lions Academy',
