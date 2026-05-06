@@ -131,6 +131,8 @@ export function collectPlayerVideoClips(games = [], { teamId = '', playerId = ''
         const rawClips = [
             ...(Array.isArray(game.gameClips) ? game.gameClips : []),
             ...(Array.isArray(game.highlightClips) ? game.highlightClips : []),
+            ...(Array.isArray(game.clipMetadata) ? game.clipMetadata : []),
+            ...(Array.isArray(game.clips) ? game.clips : []),
             ...(Array.isArray(game.videoClips) ? game.videoClips : []),
             ...(Array.isArray(game.replayVideo?.highlights) ? game.replayVideo.highlights : []),
             ...(Array.isArray(game.replayHighlights) ? game.replayHighlights : [])
