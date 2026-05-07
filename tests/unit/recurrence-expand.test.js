@@ -156,6 +156,60 @@ describe('expandRecurrence interval guardrails', () => {
     expect(dates).not.toContain('2026-02-18');
   });
 
+  it('preserves overnight end day offset when expanding occurrences', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-07T12:00:00Z'));
+
+    const master = {
+      id: 'series-overnight-weekly',
+      isSeriesMaster: true,
+      date: new Date(2026, 4, 7, 23, 0),
+      startTime: '23:00',
+      endTime: '01:00',
+      endDayOffset: 1,
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['TH'],
+        count: 2
+      }
+    };
+
+    const occurrences = expandRecurrence(master, 14);
+    expect(occurrences[0].date.getFullYear()).toBe(2026);
+    expect(occurrences[0].date.getMonth()).toBe(4);
+    expect(occurrences[0].date.getDate()).toBe(7);
+    expect(occurrences[0].date.getHours()).toBe(23);
+    expect(occurrences[0].end.getFullYear()).toBe(2026);
+    expect(occurrences[0].end.getMonth()).toBe(4);
+    expect(occurrences[0].end.getDate()).toBe(8);
+    expect(occurrences[0].end.getHours()).toBe(1);
+    expect(occurrences[0].end.getTime()).toBeGreaterThan(occurrences[0].date.getTime());
+  });
+
+  it('infers overnight end date for legacy recurring payloads without an offset', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-07T12:00:00Z'));
+
+    const master = {
+      id: 'series-overnight-legacy',
+      isSeriesMaster: true,
+      date: new Date(2026, 4, 7, 23, 0),
+      startTime: '23:00',
+      endTime: '01:00',
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['TH'],
+        count: 1
+      }
+    };
+
+    const [occurrence] = expandRecurrence(master, 14);
+    expect(occurrence.end.getDate()).toBe(8);
+    expect(occurrence.end.getTime()).toBeGreaterThan(occurrence.date.getTime());
+  });
+
   it('does not resurface finite weekly series after recurrence count is exhausted before window start', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-01T12:00:00Z'));

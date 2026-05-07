@@ -32,6 +32,7 @@ describe('edit schedule practice recurrence payload', () => {
         expect(result.seriesId).toBe(deleteSentinel);
         expect(result.startTime).toBe(deleteSentinel);
         expect(result.endTime).toBe(deleteSentinel);
+        expect(result.endDayOffset).toBe(deleteSentinel);
         expect(result.exDates).toBe(deleteSentinel);
         expect(result.overrides).toBe(deleteSentinel);
     });
@@ -66,12 +67,42 @@ describe('edit schedule practice recurrence payload', () => {
         expect(result.seriesId).toBe('series-existing');
         expect(result.startTime).toBe('17:00');
         expect(result.endTime).toBe('18:30');
+        expect(result.endDayOffset).toBe(0);
         expect(result.recurrence).toEqual({
             freq: 'weekly',
             interval: 2,
             byDays: ['MO', 'WE'],
             count: 8
         });
+    });
+
+    it('stores overnight recurring practice end day offset', () => {
+        const practiceData = {
+            title: 'Late Practice'
+        };
+
+        const result = applyPracticeRecurrenceFields({
+            practiceData,
+            isRecurring: true,
+            recurrenceConfig: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['TH'],
+                endType: 'count',
+                countValue: '4'
+            },
+            startDate: createLocalDate(2026, 4, 7, 23, 0),
+            endDate: createLocalDate(2026, 4, 8, 1, 0),
+            Timestamp: { fromDate: (value) => value },
+            deleteField: () => {
+                throw new Error('deleteField should not be used for recurring series creation');
+            },
+            generateSeriesId: () => 'series-overnight'
+        });
+
+        expect(result.startTime).toBe('23:00');
+        expect(result.endTime).toBe('01:00');
+        expect(result.endDayOffset).toBe(1);
     });
 
     it('wires the practice submit flow through the shared recurrence payload helper', () => {
