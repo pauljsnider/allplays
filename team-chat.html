@@ -99,6 +99,20 @@
 
             <!-- Composer -->
             <div class="p-4 border-t border-gray-200 bg-gray-50">
+                <div id="recipient-picker" class="hidden mb-3 rounded-xl border border-gray-200 bg-white p-3">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <label for="recipient-target" class="block text-xs font-semibold uppercase tracking-wide text-gray-500">Send to</label>
+                            <select id="recipient-target" class="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                <option value="full_team">Full team</option>
+                                <option value="staff">Staff only</option>
+                                <option value="individuals">Selected members</option>
+                            </select>
+                        </div>
+                        <div id="recipient-summary" class="text-sm text-gray-700 sm:text-right">Audience: Full team</div>
+                    </div>
+                    <div id="recipient-list" class="hidden mt-3 max-h-44 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100"></div>
+                </div>
                 <div class="flex gap-2 items-start">
                     <div class="relative flex-1">
                         <div class="flex items-center gap-1 w-full rounded-lg border border-gray-300 bg-white px-2 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500">
@@ -369,6 +383,9 @@
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
         const reactionUserNameCache = new Map();
+        let recipientOptions = [];
+        let selectedRecipientTarget = 'full_team';
+        let selectedRecipientIds = new Set();
         const reactionLongPress = {
             timer: null,
             key: null,
@@ -429,6 +446,9 @@
                 }
 
                 canModerate = canModerateChat(userWithProfile, currentTeam);
+                if (canModerate) {
+                    await loadRecipientOptions();
+                }
 
                 // Render team navigation banner with appropriate access level
                 const accessLevel = canModerate ? 'full' : 'parent';
@@ -440,6 +460,7 @@
                     accessLevel,
                     exitUrl
                 });
+                renderRecipientPicker();
 
                 // Load messages (real-time)
                 startRealtimeUpdates();
@@ -980,6 +1001,129 @@
             }).join('');
 
             preview.classList.remove('hidden');
+        }
+
+        function getRecipientOptionId(kind, value) {
+            return `${kind}:${String(value || '').trim()}`;
+        }
+
+        function getRecipientOptionLabel(option) {
+            return option.detail ? `${option.name} (${option.detail})` : option.name;
+        }
+
+        async function loadRecipientOptions() {
+            try {
+                const players = await getPlayers(teamId);
+                const options = [];
+                players.forEach((player) => {
+                    if (!player?.id) return;
+                    const number = player.number !== undefined && player.number !== null && String(player.number).trim() !== ''
+                        ? `#${player.number}`
+                        : 'Roster';
+                    options.push({
+                        id: getRecipientOptionId('player', player.id),
+                        name: player.name || `Player ${player.id.slice(0, 6)}`,
+                        detail: number
+                    });
+                    (Array.isArray(player.parents) ? player.parents : []).forEach((parent) => {
+                        const parentKey = parent?.userId || parent?.email || '';
+                        if (!parentKey) return;
+                        const parentName = parent.name || parent.fullName || parent.email || 'Guardian';
+                        options.push({
+                            id: getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey),
+                            name: parentName,
+                            detail: player.name ? `Guardian for ${player.name}` : 'Guardian'
+                        });
+                    });
+                });
+                const uniqueById = new Map();
+                options.forEach((option) => uniqueById.set(option.id, option));
+                recipientOptions = Array.from(uniqueById.values())
+                    .sort((a, b) => getRecipientOptionLabel(a).localeCompare(getRecipientOptionLabel(b)));
+            } catch (error) {
+                console.warn('Failed to load chat recipient options:', error);
+                recipientOptions = [];
+            }
+        }
+
+        function buildRecipientTargetMetadata() {
+            if (selectedRecipientTarget === 'staff') {
+                return {
+                    targetType: 'staff',
+                    recipientIds: [],
+                    targetRole: 'staff'
+                };
+            }
+            if (selectedRecipientTarget === 'individuals' && selectedRecipientIds.size > 0) {
+                return {
+                    targetType: 'individuals',
+                    recipientIds: Array.from(selectedRecipientIds).sort(),
+                    targetRole: null
+                };
+            }
+            return {
+                targetType: 'full_team',
+                recipientIds: [],
+                targetRole: null
+            };
+        }
+
+        function getRecipientSummaryText() {
+            const target = buildRecipientTargetMetadata();
+            if (target.targetType === 'staff') {
+                return 'Audience: Staff only';
+            }
+            if (target.targetType === 'individuals') {
+                const selected = recipientOptions.filter((option) => selectedRecipientIds.has(option.id));
+                if (selected.length === 0) {
+                    return 'Audience: Full team (no selected members yet)';
+                }
+                if (selected.length <= 3) {
+                    return `Audience: ${selected.map(getRecipientOptionLabel).join(', ')}`;
+                }
+                return `Audience: ${selected.slice(0, 3).map(getRecipientOptionLabel).join(', ')} +${selected.length - 3} more`;
+            }
+            return 'Audience: Full team';
+        }
+
+        function renderRecipientPicker() {
+            const picker = document.getElementById('recipient-picker');
+            const summary = document.getElementById('recipient-summary');
+            const list = document.getElementById('recipient-list');
+            const select = document.getElementById('recipient-target');
+            if (!picker || !summary || !list || !select) return;
+
+            if (!canModerate) {
+                picker.classList.add('hidden');
+                return;
+            }
+
+            picker.classList.remove('hidden');
+            select.value = selectedRecipientTarget;
+            summary.textContent = getRecipientSummaryText();
+
+            if (selectedRecipientTarget !== 'individuals') {
+                list.classList.add('hidden');
+                list.innerHTML = '';
+                return;
+            }
+
+            list.classList.remove('hidden');
+            if (recipientOptions.length === 0) {
+                list.innerHTML = '<div class="px-3 py-2 text-sm text-gray-500">No roster or community members are available yet.</div>';
+                return;
+            }
+
+            list.innerHTML = recipientOptions.map((option) => `
+                <label class="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-gray-50">
+                    <input type="checkbox" data-recipient-id="${escapeHtml(option.id)}" ${selectedRecipientIds.has(option.id) ? 'checked' : ''}
+                        class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                    <span class="min-w-0 flex-1">
+                        <span class="block truncate text-sm font-medium text-gray-800">${escapeHtml(option.name)}</span>
+                        ${option.detail ? `<span class="block truncate text-xs text-gray-500">${escapeHtml(option.detail)}</span>` : ''}
+                    </span>
+                </label>
+            `).join('');
         }
 
         function updateComposerState() {
@@ -1762,6 +1906,23 @@
                 if (!actionButton) return;
                 handleGalleryMediaAction(actionButton);
             });
+            document.getElementById('recipient-target').addEventListener('change', (event) => {
+                selectedRecipientTarget = event.target.value || 'full_team';
+                if (selectedRecipientTarget !== 'individuals') {
+                    selectedRecipientIds = new Set();
+                }
+                renderRecipientPicker();
+            });
+            document.getElementById('recipient-list').addEventListener('change', (event) => {
+                const recipientId = event.target?.dataset?.recipientId;
+                if (!recipientId) return;
+                if (event.target.checked) {
+                    selectedRecipientIds.add(recipientId);
+                } else {
+                    selectedRecipientIds.delete(recipientId);
+                }
+                renderRecipientPicker();
+            });
 
             // Enter key to send
             document.getElementById('message-input').addEventListener('keypress', (e) => {
@@ -1931,7 +2092,8 @@
                     senderName: currentUserProfile?.fullName || null,
                     senderEmail: currentUser.email,
                     senderPhotoUrl: currentUserProfile?.photoUrl || null,
-                    attachments: mediaPayloads
+                    attachments: mediaPayloads,
+                    ...buildRecipientTargetMetadata()
                 });
 
                 input.value = '';
