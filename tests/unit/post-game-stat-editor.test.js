@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
     buildCompletedGamePlayerStatsPayload,
     getPostGameEditorNextIndex,
+    resolvePostGameEditorDidNotPlay,
     resolvePostGameStatFields
 } from '../../js/post-game-stat-editor.js';
 
@@ -48,6 +49,20 @@ describe('post-game stat editor helpers', () => {
         });
     });
 
+    it('keeps an unsaved DNP checkbox change ahead of the persisted row value', () => {
+        expect(resolvePostGameEditorDidNotPlay({
+            playerId: 'p1',
+            didNotPlayMap: { p1: true },
+            pendingDidNotPlayMap: { p1: false }
+        })).toBe(false);
+
+        expect(resolvePostGameEditorDidNotPlay({
+            playerId: 'p2',
+            didNotPlayMap: { p2: false },
+            pendingDidNotPlayMap: { p2: true }
+        })).toBe(true);
+    });
+
     it('steps through the roster for save and next or previous actions', () => {
         expect(getPostGameEditorNextIndex(0, 'previous', 4)).toBe(0);
         expect(getPostGameEditorNextIndex(0, 'next', 4)).toBe(1);
@@ -60,6 +75,7 @@ describe('post-game stat editor helpers', () => {
 
         expect(pageSource).toContain('id="edit-stats-btn"');
         expect(pageSource).toContain('id="stats-save-next-btn"');
+        expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
     });
 });
