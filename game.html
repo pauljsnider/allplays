@@ -656,6 +656,8 @@
                     empty.classList.add('hidden');
                     preview.classList.add('hidden');
                     fileInput.value = '';
+                    uploadBtn.classList.add('hidden');
+                    removeBtn?.classList.remove('hidden');
                     status.textContent = 'Saved.';
                 } catch (error) {
                     console.error('Stat sheet upload failed:', error);
