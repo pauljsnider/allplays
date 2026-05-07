@@ -21,6 +21,116 @@ const STATUS_META = {
     }
 };
 
+
+function getFirstDefined(...values) {
+    return values.find((value) => value !== undefined && value !== null && value !== '');
+}
+
+function getFeeLineItems(fee) {
+    const rawItems = getFirstDefined(fee?.lineItems, fee?.invoiceLineItems, fee?.invoiceItems, fee?.items);
+    return Array.isArray(rawItems) ? rawItems.filter(Boolean) : [];
+}
+
+function getFeeInstallments(fee) {
+    const rawInstallments = getFirstDefined(fee?.installments, fee?.installmentSchedule, fee?.paymentSchedule, fee?.scheduledPayments);
+    return Array.isArray(rawInstallments) ? rawInstallments.filter(Boolean) : [];
+}
+
+function getFeeBalanceCents(fee) {
+    return getFirstDefined(fee?.balanceDueCents, fee?.remainingBalanceCents, fee?.amountDueCents);
+}
+
+function getFeeCheckoutUrl(fee) {
+    return getFirstDefined(fee?.checkoutUrl, fee?.checkoutURL, fee?.paymentLink, fee?.paymentLinkUrl, fee?.paymentUrl);
+}
+
+function formatCents(value) {
+    const cents = Number(value);
+    if (!Number.isFinite(cents)) return '';
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD'
+    }).format(cents / 100);
+}
+
+function formatInvoiceQuantity(item) {
+    const quantity = Number(item?.quantity ?? item?.qty);
+    return Number.isFinite(quantity) && quantity > 0 ? quantity : null;
+}
+
+function formatInstallmentStatus(installment) {
+    const status = String(installment?.status || '').trim().toLowerCase();
+    if (installment?.paid === true || status === 'paid' || installment?.paidAt) return 'Paid';
+    if (status === 'canceled' || status === 'cancelled') return 'Canceled';
+    if (status === 'adjusted') return 'Adjusted';
+    return 'Unpaid';
+}
+
+function renderInvoiceLineItems(fee) {
+    const lineItems = getFeeLineItems(fee);
+    if (!lineItems.length) return '';
+
+    const rows = lineItems.map((item) => {
+        const description = getFirstDefined(item?.description, item?.title, item?.name, item?.label, 'Fee line item');
+        const quantity = formatInvoiceQuantity(item);
+        const amount = formatCents(getFirstDefined(item?.amountCents, item?.totalCents, item?.unitAmountCents, item?.priceCents));
+        const details = [
+            quantity ? `Qty ${escapeHtml(quantity)}` : '',
+            item?.dueDate || item?.dueAt ? `Due ${escapeHtml(formatParentFeeDueDate(item.dueDate || item.dueAt))}` : ''
+        ].filter(Boolean).join(' · ');
+
+        return `
+            <div class="flex items-start justify-between gap-3 py-2 border-t border-gray-100 first:border-t-0">
+                <div>
+                    <div class="font-medium text-gray-900">${escapeHtml(description)}</div>
+                    ${details ? `<div class="text-xs text-gray-500 mt-0.5">${details}</div>` : ''}
+                </div>
+                <div class="font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(amount || 'Amount not set')}</div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">Invoice line items</div>
+            ${rows}
+        </div>
+    `;
+}
+
+function renderInstallmentSchedule(fee) {
+    const installments = getFeeInstallments(fee);
+    if (!installments.length) return '';
+
+    const rows = installments.map((installment, index) => {
+        const label = getFirstDefined(installment?.label, installment?.title, installment?.name, `Installment ${index + 1}`);
+        const dueDate = formatParentFeeDueDate(installment?.dueDate || installment?.dueAt);
+        const amount = formatCents(getFirstDefined(installment?.amountCents, installment?.dueAmountCents, installment?.balanceDueCents));
+        const status = formatInstallmentStatus(installment);
+        const statusClass = status === 'Paid'
+            ? 'bg-green-100 text-green-800 border-green-200'
+            : 'bg-red-100 text-red-800 border-red-200';
+
+        return `
+            <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 sm:items-center py-2 border-t border-gray-100 first:border-t-0">
+                <div>
+                    <div class="font-medium text-gray-900">${escapeHtml(label)}</div>
+                    <div class="text-xs text-gray-500">Due ${escapeHtml(dueDate)}</div>
+                </div>
+                <div class="font-semibold text-gray-900 sm:text-right">${escapeHtml(amount || 'Amount not set')}</div>
+                <span class="inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-xs font-bold ${statusClass}">${escapeHtml(status)}</span>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">Installment schedule</div>
+            ${rows}
+        </div>
+    `;
+}
+
 function escapeHtml(value) {
     return String(value ?? '')
         .replace(/&/g, '&amp;')
@@ -54,12 +164,7 @@ export function getParentFeeStatusMeta(status) {
 
 export function formatParentFeeAmount(fee) {
     const raw = fee?.amountDueCents ?? fee?.adjustedAmountCents ?? fee?.amountCents ?? fee?.amount;
-    const cents = Number(raw);
-    if (!Number.isFinite(cents)) return 'Amount not set';
-    return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: 'USD'
-    }).format(cents / 100);
+    return formatCents(raw) || 'Amount not set';
 }
 
 export function formatParentFeeDueDate(value) {
@@ -81,7 +186,9 @@ export function normalizeParentFeeRecord(fee) {
         status: normalizeParentFeeStatus(fee?.status),
         dueDate: fee?.dueDate || fee?.dueAt || null,
         notes: fee?.notes || fee?.feeNotes || '',
-        offlinePaymentInstructions: fee?.offlinePaymentInstructions || fee?.paymentInstructions || ''
+        offlinePaymentInstructions: fee?.offlinePaymentInstructions || fee?.paymentInstructions || '',
+        balanceDueCents: getFeeBalanceCents(fee),
+        checkoutUrl: getFeeCheckoutUrl(fee)
     };
 }
 
@@ -109,6 +216,14 @@ export function renderParentTeamFees(fees) {
         const instructions = fee.offlinePaymentInstructions
             ? `<p class="text-sm text-gray-700 mt-2"><span class="font-semibold">Offline payment:</span> ${escapeHtml(fee.offlinePaymentInstructions)}</p>`
             : '';
+        const balance = fee.balanceDueCents !== undefined && fee.balanceDueCents !== null
+            ? `<div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Balance</div><div class="font-bold text-gray-900">${escapeHtml(formatCents(fee.balanceDueCents) || 'Amount not set')}</div></div>`
+            : '';
+        const lineItems = renderInvoiceLineItems(fee);
+        const installmentSchedule = renderInstallmentSchedule(fee);
+        const payLink = fee.checkoutUrl
+            ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay</a>`
+            : '';
 
         return `
             <div class="rounded-xl border border-gray-200 border-l-4 ${meta.accentClass} bg-white p-4 shadow-sm">
@@ -120,7 +235,10 @@ export function renderParentTeamFees(fees) {
                             ${playerLine}
                         </div>
                     </div>
-                    <span class="self-start inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${meta.badgeClass}">${meta.label}</span>
+                    <div class="flex flex-col sm:items-end gap-2">
+                        <span class="self-start sm:self-end inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${meta.badgeClass}">${meta.label}</span>
+                        ${payLink}
+                    </div>
                 </div>
                 <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                     <div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
@@ -131,7 +249,10 @@ export function renderParentTeamFees(fees) {
                         <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Due date</div>
                         <div class="font-bold text-gray-900">${escapeHtml(formatParentFeeDueDate(fee.dueDate))}</div>
                     </div>
+                    ${balance}
                 </div>
+                ${lineItems}
+                ${installmentSchedule}
                 ${notes}
                 ${instructions}
             </div>

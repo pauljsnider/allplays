@@ -79,4 +79,48 @@ describe('parent dashboard team fees', () => {
             process.env.TZ = previousTimeZone;
         }
     });
+
+    it('renders invoice line items, balances, and installment schedules', () => {
+        const html = renderParentTeamFees([
+            {
+                title: 'Spring team invoice',
+                amountCents: 30000,
+                balanceDueCents: 20000,
+                lineItems: [
+                    { description: 'Uniform kit', quantity: 1, amountCents: 12500 },
+                    { name: 'Tournament entry', amountCents: 17500, dueDate: '2026-06-15' }
+                ],
+                installmentSchedule: [
+                    { label: 'Deposit', dueDate: '2026-06-01', amountCents: 10000, paid: true },
+                    { label: 'Final payment', dueDate: '2026-07-01', amountCents: 20000, status: 'unpaid' }
+                ]
+            }
+        ]);
+
+        expect(html).toContain('Invoice line items');
+        expect(html).toContain('Uniform kit');
+        expect(html).toContain('Qty 1');
+        expect(html).toContain('Tournament entry');
+        expect(html).toContain('Due Jun 15, 2026');
+        expect(html).toContain('Balance');
+        expect(html).toContain('$200.00');
+        expect(html).toContain('Installment schedule');
+        expect(html).toContain('Deposit');
+        expect(html).toContain('Final payment');
+        expect(html).toContain('Paid');
+        expect(html).toContain('Unpaid');
+    });
+
+    it('only renders a Pay action when a checkout or payment link exists', () => {
+        const manualOnlyHtml = renderParentTeamFees([
+            { title: 'Manual collection', amountCents: 1000 }
+        ]);
+        const checkoutHtml = renderParentTeamFees([
+            { title: 'Online collection', amountCents: 1000, checkoutUrl: 'https://pay.example/checkout' }
+        ]);
+
+        expect(manualOnlyHtml).not.toContain('>Pay</a>');
+        expect(checkoutHtml).toContain('>Pay</a>');
+        expect(checkoutHtml).toContain('https://pay.example/checkout');
+    });
 });
