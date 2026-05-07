@@ -76,6 +76,7 @@ import {
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
     getRegistrationGuardianDrafts,
@@ -4957,4 +4958,31 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
     return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+}
+
+export async function getPublicTrackingItems(teamId) {
+    const snap = await getDocs(query(collection(db, `teams/${teamId}/trackingItems`), where('public', '==', true)));
+    return snap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter(isPublicTrackingItem);
+}
+
+export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
+    const uniquePlayerIds = Array.from(new Set((Array.isArray(playerIds) ? playerIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)));
+    if (uniquePlayerIds.length === 0) return [];
+
+    const snapshots = await Promise.all(uniquePlayerIds.map((playerId) => (
+        getDocs(query(
+            collection(db, `teams/${teamId}/memberTracking`),
+            where('playerId', '==', playerId),
+            where('public', '==', true)
+        ))
+    )));
+
+    return snapshots.flatMap((snap) => snap.docs.map((docSnap) => normalizeTrackingStatus({
+        id: docSnap.id,
+        ...docSnap.data()
+    })));
 }
