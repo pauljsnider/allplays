@@ -4,6 +4,7 @@ const RECURRENCE_FIELD_KEYS = [
     'seriesId',
     'startTime',
     'endTime',
+    'endDayOffset',
     'exDates',
     'overrides'
 ];
@@ -38,8 +39,14 @@ export function applyPracticeRecurrenceFields({
         practiceData.seriesId = editingPracticeId
             ? (editingSeriesId || practiceData.seriesId || generateSeriesId())
             : generateSeriesId();
+        const startDay = new Date(startDate);
+        const endDay = new Date(endDate);
+        startDay.setHours(0, 0, 0, 0);
+        endDay.setHours(0, 0, 0, 0);
+
         practiceData.startTime = startDate.toTimeString().slice(0, 5);
         practiceData.endTime = endDate.toTimeString().slice(0, 5);
+        practiceData.endDayOffset = Math.max(0, Math.round((endDay.getTime() - startDay.getTime()) / 86400000));
         practiceData.recurrence = {
             freq,
             interval,
