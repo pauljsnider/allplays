@@ -893,6 +893,38 @@
             return '';
         }
 
+        function getRegistrationProviderDetails(team, teamId) {
+            const source = team?.registrationSource || team?.registrationProvider || {};
+            const provider = String(source.provider || source.providerName || '').trim();
+            const externalTeamId = String(source.externalTeamId || '').trim();
+            const copiedTeamId = String(source.teamId || teamId || '').trim();
+            const lastSyncStatus = String(source.lastSyncStatus || source.syncStatus || '').trim();
+            if (!provider && !externalTeamId && !lastSyncStatus) {
+                return null;
+            }
+            return { provider, externalTeamId, copiedTeamId, lastSyncStatus };
+        }
+
+        function registrationProviderHtml(team, teamId) {
+            const details = getRegistrationProviderDetails(team, teamId);
+            if (!details) return '';
+            const rows = [
+                ['Provider', details.provider],
+                ['External Team ID', details.externalTeamId],
+                ['Team ID', details.copiedTeamId],
+                ['Last Sync Status', details.lastSyncStatus]
+            ].filter(([, value]) => value);
+            return `<div class="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
+                <div class="text-xs font-bold uppercase tracking-wide text-blue-700 mb-2">Registration Provider</div>
+                <div class="grid gap-2 sm:grid-cols-2">
+                    ${rows.map(([label, value]) => `<div class="rounded-lg bg-white border border-blue-100 px-3 py-2">
+                        <div class="text-[11px] font-semibold uppercase tracking-wide text-gray-500">${escapeHtml(label)}</div>
+                        <div class="mt-1 text-sm font-semibold text-gray-900 break-all">${escapeHtml(value)}</div>
+                    </div>`).join('')}
+                </div>
+            </div>`;
+        }
+
         function toDateSafe(value) {
             if (!value) return null;
             const d = value?.toDate ? value.toDate() : new Date(value);
@@ -1323,6 +1355,7 @@
                                 ${streamLinkHtml(team)}
                             </div>
                             ${team.description ? `<p class="text-gray-600 leading-relaxed">${escapeHtml(team.description)}</p>` : ''}
+                            ${registrationProviderHtml(team, teamId)}
                         </div>
                     </div>
                 `;
