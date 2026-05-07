@@ -168,4 +168,15 @@ describe('game-day page wiring', () => {
     expect(source).toContain("import { getPeriodsForFormation, normalizeActivePeriod } from './js/game-day-periods.js?v=1';");
     expect(source).toContain('state.activePeriodGD = normalizeActivePeriod(periods, state.activePeriodGD);');
   });
+
+  it('renders game-day period controls from formation periods instead of hard-coded halves', () => {
+    const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+    expect(source).toContain('id="gd-period-tabs"');
+    expect(source).toContain('periods.forEach((period) => {');
+    expect(source).toContain("button.addEventListener('click', () => window.setActivePeriod(period));");
+    expect(source).toContain('state.activePeriodGD = normalizeActivePeriod(periods, period);');
+    expect(source).not.toContain("onclick=\"setActivePeriod('H1')\"");
+    expect(source).not.toContain("onclick=\"setActivePeriod('H2')\"");
+  });
 });
