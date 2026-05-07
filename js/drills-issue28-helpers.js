@@ -25,6 +25,15 @@ function escapeHtmlAttr(value) {
         .replace(/>/g, '&gt;');
 }
 
+function decodeHtmlUrlCandidate(value) {
+    return String(value)
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>');
+}
+
 function isValidHostname(hostname) {
     if (!hostname) return false;
     const lower = hostname.toLowerCase();
@@ -64,7 +73,7 @@ function splitTrailingPunctuation(match) {
 function linkifyEscapedText(escapedText, linkClass) {
     return escapedText.replace(URL_CANDIDATE_RE, (match) => {
         const { candidate, trailing } = splitTrailingPunctuation(match);
-        const normalizedUrl = normalizeSafeHttpUrl(candidate);
+        const normalizedUrl = normalizeSafeHttpUrl(decodeHtmlUrlCandidate(candidate));
         if (!normalizedUrl) return match;
         const safeHref = escapeHtmlAttr(normalizedUrl);
         const safeLabel = sanitizeInlineCapture(candidate);

@@ -184,6 +184,18 @@
             assertContains(html, '<a href="https://youtube.com/watch?v=abc"', 'URL should be a link');
         });
 
+        test('URL with multiple query parameters preserves href semantics', () => {
+            const html = parseMarkdown('Watch https://example.com/watch?v=1&list=abc for reference', escapeHtml);
+            assertContains(html, '<a href="https://example.com/watch?v=1&amp;list=abc"', 'Href should escape ampersand exactly once');
+            assertNotContains(html, '&amp;amp;list=abc', 'Href must not double-escape ampersand query parameters');
+        });
+
+        test('linkifySafeText preserves multi-parameter URL href semantics', () => {
+            const html = linkifySafeText('Notes https://example.com/watch?v=1&list=abc', escapeHtml);
+            assertContains(html, '<a href="https://example.com/watch?v=1&amp;list=abc"', 'Href should preserve list query parameter');
+            assertNotContains(html, '&amp;amp;list=abc', 'Safe text linkification must not double-escape ampersands');
+        });
+
         test('Malformed URL candidate is not linkified', () => {
             const html = parseMarkdown('Bad URL https://example..com/path should stay text', escapeHtml);
             assertNotContains(html, '<a href=', 'Malformed hostname should not become a link');
@@ -192,7 +204,7 @@
 
         test('URL with encoded quote cannot break href attribute', () => {
             const html = parseMarkdown('Safe link https://example.com?a=1"onclick="alert(1)', escapeHtml);
-            assertContains(html, '<a href="https://example.com/?a=1&amp;quot;onclick=&amp;quot;alert(1"', 'Href should remain escaped and bounded');
+            assertContains(html, '<a href="https://example.com/?a=1%22onclick=%22alert(1"', 'Href should remain escaped and bounded');
             assertNotContains(html, 'onclick="alert(1)"', 'Raw attribute breakout must not appear');
         });
 
