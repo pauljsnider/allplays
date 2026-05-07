@@ -36,8 +36,16 @@
 
             <div class="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
                 <section class="rounded-2xl bg-white p-6 shadow-md">
-                    <h2 class="text-xl font-bold text-gray-900">New Shared Matchup</h2>
-                    <p class="mt-2 text-sm text-gray-600">Both teams must belong to the same organization grouping you opened this screen from.</p>
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-900">Organization Schedule</h2>
+                            <p class="mt-2 text-sm text-gray-600">Create one shared matchup or bulk import head-to-head games for this organization grouping.</p>
+                        </div>
+                        <div class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 text-sm font-semibold" role="tablist" aria-label="Organization schedule mode">
+                            <button id="single-matchup-tab" type="button" class="rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm" aria-selected="true">Single Matchup</button>
+                            <button id="bulk-import-tab" type="button" class="rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900" aria-selected="false">Bulk Import</button>
+                        </div>
+                    </div>
 
                     <form id="organization-game-form" class="mt-6 space-y-4">
                         <div class="grid gap-4 md:grid-cols-2">
@@ -86,6 +94,29 @@
                             </button>
                         </div>
                     </form>
+
+                    <div id="organization-bulk-import-panel" class="hidden mt-6 space-y-5 border-t border-gray-100 pt-6">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-900">Bulk Import Head-to-Head Games</h3>
+                            <p class="mt-2 text-sm text-gray-600">Download the template and team list, fill in exact home and away team names, then preview validation before importing.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button id="download-organization-schedule-template" type="button" class="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Download CSV Template</button>
+                            <button id="download-organization-team-list" type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Download Team List CSV</button>
+                        </div>
+                        <div>
+                            <label for="organization-schedule-csv-input" class="block text-sm font-medium text-gray-700">Completed Schedule CSV</label>
+                            <input id="organization-schedule-csv-input" type="file" accept=".csv,text/csv" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p id="organization-csv-file-meta" class="hidden mt-2 text-xs text-gray-500"></p>
+                        </div>
+                        <div id="organization-csv-errors" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"></div>
+                        <div id="organization-csv-preview-summary" class="hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700"></div>
+                        <div id="organization-csv-preview-list" class="space-y-2"></div>
+                        <div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
+                            <p class="text-xs text-gray-500">Importing creates shared games through the same mirror flow used by single matchup publishing.</p>
+                            <button id="import-organization-csv-btn" type="button" disabled class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-300">Import Validated Games</button>
+                        </div>
+                    </div>
                 </section>
 
                 <aside class="rounded-2xl bg-white p-6 shadow-md">
@@ -110,21 +141,34 @@
 
     <script type="module">
         import { addGame, getTeam, getUserTeamsWithAccess } from './js/db.js?v=29';
+        import { parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=13';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { Timestamp } from './js/firebase.js?v=11';
         import {
+            buildOrganizationScheduleCsvTemplate,
+            buildOrganizationScheduleImportPreview,
             buildOrganizationSharedGamePayload,
             getOrganizationTeams,
+            inferOrganizationScheduleCsvMapping,
             validateOrganizationMatchup
-        } from './js/organization-schedule.js?v=1';
+        } from './js/organization-schedule.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
         const accessAlert = document.getElementById('organization-access-alert');
         const successAlert = document.getElementById('organization-success');
         const form = document.getElementById('organization-game-form');
+        const singleTab = document.getElementById('single-matchup-tab');
+        const bulkTab = document.getElementById('bulk-import-tab');
+        const bulkPanel = document.getElementById('organization-bulk-import-panel');
+        const csvInput = document.getElementById('organization-schedule-csv-input');
+        const csvFileMeta = document.getElementById('organization-csv-file-meta');
+        const csvErrors = document.getElementById('organization-csv-errors');
+        const csvPreviewSummary = document.getElementById('organization-csv-preview-summary');
+        const csvPreviewList = document.getElementById('organization-csv-preview-list');
+        const importCsvButton = document.getElementById('import-organization-csv-btn');
         const homeTeamSelect = document.getElementById('homeTeamId');
         const awayTeamSelect = document.getElementById('awayTeamId');
         const publishButton = document.getElementById('publish-shared-matchup-btn');
@@ -135,6 +179,124 @@
         let currentUser = null;
         let anchorTeam = null;
         let organizationTeams = [];
+        let accessibleTeams = [];
+        let organizationCsvState = { fileName: '', preview: null };
+
+
+        function showScheduleMode(mode) {
+            const isBulk = mode === 'bulk';
+            form.classList.toggle('hidden', isBulk);
+            bulkPanel.classList.toggle('hidden', !isBulk);
+            singleTab.className = isBulk
+                ? 'rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900'
+                : 'rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm';
+            bulkTab.className = isBulk
+                ? 'rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm'
+                : 'rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900';
+            singleTab.setAttribute('aria-selected', String(!isBulk));
+            bulkTab.setAttribute('aria-selected', String(isBulk));
+        }
+
+        function disableScheduleInputs() {
+            form.classList.add('hidden');
+            bulkPanel.classList.add('hidden');
+            singleTab.disabled = true;
+            bulkTab.disabled = true;
+        }
+
+        function downloadCsvFile(filename, text) {
+            const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function escapeCsvValue(value) {
+            const text = String(value || '');
+            if (/[",\n\r]/.test(text)) {
+                return `"${text.replace(/"/g, '""')}"`;
+            }
+            return text;
+        }
+
+        function showOrganizationCsvErrors(errors = []) {
+            if (!errors.length) {
+                csvErrors.className = 'hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800';
+                csvErrors.replaceChildren();
+                return;
+            }
+            csvErrors.className = 'rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800';
+            const list = document.createElement('ul');
+            list.className = 'list-disc space-y-1 pl-5';
+            errors.forEach((error) => {
+                const item = document.createElement('li');
+                item.textContent = error;
+                list.appendChild(item);
+            });
+            csvErrors.replaceChildren(list);
+        }
+
+        function renderOrganizationCsvPreview(preview) {
+            csvPreviewList.replaceChildren();
+            importCsvButton.disabled = true;
+
+            if (!preview || preview.errors.length > 0) {
+                csvPreviewSummary.className = 'hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
+                showOrganizationCsvErrors(preview?.errors || []);
+                return;
+            }
+
+            showOrganizationCsvErrors([]);
+            csvPreviewSummary.className = 'rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
+            csvPreviewSummary.textContent = `${preview.validRows.length} valid row(s), ${preview.invalidRows.length} row(s) with validation errors.`;
+
+            preview.rows.forEach((row) => {
+                const card = document.createElement('div');
+                card.className = row.valid
+                    ? 'rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm'
+                    : 'rounded-lg border border-red-200 bg-red-50 p-3 text-sm';
+
+                const title = document.createElement('div');
+                title.className = 'font-semibold text-gray-900';
+                title.textContent = `Row ${row.rowNumber}: ${row.raw.homeTeamName || 'Home team'} vs ${row.raw.awayTeamName || 'Away team'}`;
+
+                const detail = document.createElement('div');
+                detail.className = 'mt-1 text-gray-700';
+                detail.textContent = `${row.normalized.gameDate || row.raw.gameDate || 'No date'} · ${row.normalized.location || 'No location'}`;
+
+                card.append(title, detail);
+                if (row.errors.length > 0) {
+                    const list = document.createElement('ul');
+                    list.className = 'mt-2 list-disc space-y-1 pl-5 text-red-800';
+                    row.errors.forEach((error) => {
+                        const item = document.createElement('li');
+                        item.textContent = error;
+                        list.appendChild(item);
+                    });
+                    card.appendChild(list);
+                }
+                csvPreviewList.appendChild(card);
+            });
+
+            importCsvButton.disabled = preview.rows.length === 0 || preview.invalidRows.length > 0;
+        }
+
+        function resetOrganizationCsvState() {
+            organizationCsvState = { fileName: '', preview: null };
+            csvInput.value = '';
+            csvFileMeta.className = 'hidden mt-2 text-xs text-gray-500';
+            csvFileMeta.textContent = '';
+            csvPreviewSummary.className = 'hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
+            csvPreviewSummary.textContent = '';
+            csvPreviewList.replaceChildren();
+            showOrganizationCsvErrors([]);
+            importCsvButton.disabled = true;
+        }
 
         function setAlert(message, variant = 'error') {
             if (!message) {
@@ -205,18 +367,18 @@
             anchorTeam = await getTeam(teamId);
             if (!anchorTeam) {
                 setAlert('That team could not be loaded.');
-                form.classList.add('hidden');
+                disableScheduleInputs();
                 return;
             }
 
             const accessInfo = getTeamAccessInfo(currentUser, anchorTeam);
             if (!accessInfo.hasAccess || accessInfo.accessLevel !== 'full') {
                 setAlert('You do not have organization schedule access for this team.');
-                form.classList.add('hidden');
+                disableScheduleInputs();
                 return;
             }
 
-            const accessibleTeams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
+            accessibleTeams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
             organizationTeams = getOrganizationTeams({
                 accessibleTeams,
                 organizationOwnerId: anchorTeam.ownerId
@@ -227,13 +389,131 @@
 
             if (organizationTeams.length < 2) {
                 setAlert('You need at least two teams in the same organization to create a shared matchup.', 'warning');
-                form.classList.add('hidden');
+                disableScheduleInputs();
                 return;
             }
 
             renderTeamOptions(homeTeamSelect, organizationTeams, anchorTeam.id);
             renderTeamOptions(awayTeamSelect, organizationTeams, organizationTeams.find((team) => team.id !== anchorTeam.id)?.id || organizationTeams[0]?.id);
+            resetOrganizationCsvState();
         }
+
+
+
+        singleTab.addEventListener('click', () => showScheduleMode('single'));
+        bulkTab.addEventListener('click', () => showScheduleMode('bulk'));
+
+        document.getElementById('download-organization-schedule-template').addEventListener('click', () => {
+            downloadCsvFile('allplays-organization-schedule-template.csv', buildOrganizationScheduleCsvTemplate());
+        });
+
+        document.getElementById('download-organization-team-list').addEventListener('click', () => {
+            const rows = [
+                ['Team Name', 'Team ID'],
+                ...organizationTeams.map((team) => [team.name, team.id])
+            ];
+            downloadCsvFile('allplays-organization-team-list.csv', `${rows.map((row) => row.map(escapeCsvValue).join(',')).join('\n')}\n`);
+        });
+
+        csvInput.addEventListener('change', async (event) => {
+            const file = event.target.files?.[0];
+            organizationCsvState = { fileName: '', preview: null };
+            csvPreviewList.replaceChildren();
+            showOrganizationCsvErrors([]);
+            importCsvButton.disabled = true;
+
+            if (!file) {
+                resetOrganizationCsvState();
+                return;
+            }
+
+            try {
+                const parsed = parseCsvText(await file.text());
+                const mapping = inferOrganizationScheduleCsvMapping(parsed.headers);
+                const preview = buildOrganizationScheduleImportPreview({
+                    rows: parsed.rows,
+                    mapping,
+                    organizationTeams,
+                    accessibleTeams,
+                    organizationOwnerId: anchorTeam?.ownerId
+                });
+                organizationCsvState = { fileName: file.name, preview };
+                csvFileMeta.textContent = `${file.name}: ${parsed.rows.length} row(s), ${parsed.headers.length} column(s)`;
+                csvFileMeta.className = 'mt-2 text-xs text-gray-500';
+                renderOrganizationCsvPreview(preview);
+            } catch (error) {
+                console.error('Organization CSV import parse failed:', error);
+                showOrganizationCsvErrors(['Could not read the CSV file. Please upload a valid UTF-8 CSV export.']);
+            }
+        });
+
+        importCsvButton.addEventListener('click', async () => {
+            const preview = organizationCsvState.preview;
+            if (!preview?.rows.length) {
+                showOrganizationCsvErrors(['Preview a CSV before importing.']);
+                return;
+            }
+            if (preview.invalidRows.length > 0) {
+                showOrganizationCsvErrors(['Fix all validation errors before importing.']);
+                return;
+            }
+
+            const successfulRows = [];
+            const failedRows = [];
+            try {
+                importCsvButton.disabled = true;
+                importCsvButton.textContent = 'Importing…';
+
+                for (const row of preview.validRows) {
+                    try {
+                        const gameData = buildOrganizationSharedGamePayload({
+                            awayTeam: row.awayTeam,
+                            gameDate: row.normalized.gameDate,
+                            location: row.normalized.location,
+                            arrivalTime: row.normalized.arrivalTime,
+                            notes: row.normalized.notes,
+                            Timestamp
+                        });
+                        await addGame(row.homeTeam.id, {
+                            ...gameData,
+                            createdVia: 'organizationScheduleCsvImport',
+                            organizationScheduleImport: {
+                                fileName: organizationCsvState.fileName,
+                                rowNumber: row.rowNumber,
+                                homeTeamId: row.homeTeam.id,
+                                awayTeamId: row.awayTeam.id,
+                                importedBy: currentUser?.uid || null,
+                                importedByEmail: currentUser?.email || null,
+                                importedAt: Timestamp.now()
+                            }
+                        });
+                        successfulRows.push(row);
+                    } catch (error) {
+                        console.error(`Organization CSV import failed for row ${row.rowNumber}:`, error);
+                        failedRows.push({ ...row, errors: [`Import failed: ${error.message}`] });
+                    }
+                }
+
+                if (failedRows.length > 0) {
+                    organizationCsvState.preview = {
+                        errors: [],
+                        rows: failedRows,
+                        validRows: [],
+                        invalidRows: failedRows
+                    };
+                    renderOrganizationCsvPreview(organizationCsvState.preview);
+                    showOrganizationCsvErrors([`Imported ${successfulRows.length} row(s). ${failedRows.length} row(s) failed and remain below for review.`]);
+                    return;
+                }
+
+                resetOrganizationCsvState();
+                successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+                successAlert.textContent = `Imported ${successfulRows.length} shared matchup${successfulRows.length === 1 ? '' : 's'}. Coaches can view them from each team schedule.`;
+            } finally {
+                importCsvButton.textContent = 'Import Validated Games';
+                importCsvButton.disabled = !!organizationCsvState.preview?.invalidRows?.length || !organizationCsvState.preview?.rows?.length;
+            }
+        });
 
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
