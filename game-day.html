@@ -288,12 +288,7 @@
                     <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                         <div class="flex items-center justify-between mb-3">
                             <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">On Field</div>
-                            <div class="flex gap-2">
-                                <button onclick="setActivePeriod('H1')" id="gd-h1-btn"
-                                    class="px-2 py-0.5 rounded text-xs font-semibold bg-primary-100 text-primary-700">H1</button>
-                                <button onclick="setActivePeriod('H2')" id="gd-h2-btn"
-                                    class="px-2 py-0.5 rounded text-xs font-semibold text-gray-500 hover:bg-gray-100">H2</button>
-                            </div>
+                            <div class="flex gap-2" id="gd-period-tabs"></div>
                         </div>
                         <div id="field-diagram-container">
                             <div class="text-xs text-gray-400">No players assigned for this period</div>
@@ -1971,24 +1966,45 @@ Respond ONLY with valid JSON.`;
             }
         }
 
+        function getGDPeriodButtonClass(isActive) {
+            return isActive
+                ? 'px-2 py-0.5 rounded text-xs font-semibold bg-primary-100 text-primary-700'
+                : 'px-2 py-0.5 rounded text-xs font-semibold text-gray-500 hover:bg-gray-100';
+        }
+
+        function updateGDPeriodButtonStates(periods) {
+            periods.forEach((period) => {
+                const button = document.querySelector(`#gd-period-tabs [data-period="${period}"]`);
+                if (button) {
+                    button.className = getGDPeriodButtonClass(period === state.activePeriodGD);
+                }
+            });
+            document.getElementById('gd-period-chip').textContent = state.activePeriodGD;
+        }
+
         function renderGDPeriodTabs() {
             const periods = state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
             state.activePeriodGD = normalizeActivePeriod(periods, state.activePeriodGD);
-            document.getElementById('gd-h1-btn').textContent = periods[0];
-            document.getElementById('gd-h2-btn').textContent = periods[1] || 'H2';
+
+            const container = document.getElementById('gd-period-tabs');
+            container.innerHTML = '';
+            periods.forEach((period) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.id = `gd-${period.toLowerCase()}-btn`;
+                button.dataset.period = period;
+                button.textContent = period;
+                button.className = getGDPeriodButtonClass(period === state.activePeriodGD);
+                button.addEventListener('click', () => window.setActivePeriod(period));
+                container.appendChild(button);
+            });
+            document.getElementById('gd-period-chip').textContent = state.activePeriodGD;
         }
 
         window.setActivePeriod = function(period) {
-            state.activePeriodGD = period;
             const periods = state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
-            document.getElementById('gd-h1-btn').className =
-                period === periods[0]
-                    ? 'px-2 py-0.5 rounded text-xs font-semibold bg-primary-100 text-primary-700'
-                    : 'px-2 py-0.5 rounded text-xs font-semibold text-gray-500 hover:bg-gray-100';
-            document.getElementById('gd-h2-btn').className =
-                period === periods[1]
-                    ? 'px-2 py-0.5 rounded text-xs font-semibold bg-primary-100 text-primary-700'
-                    : 'px-2 py-0.5 rounded text-xs font-semibold text-gray-500 hover:bg-gray-100';
+            state.activePeriodGD = normalizeActivePeriod(periods, period);
+            updateGDPeriodButtonStates(periods);
             renderOnFieldList();
             populateSubDropdowns();
         };
