@@ -52,9 +52,17 @@ describe('roster profile fields', () => {
         ]);
     });
 
-    it('loads existing custom field values from the structured profile object', () => {
+    it('loads existing custom field values from all persisted roster profile shapes', () => {
         expect(getRosterProfileValues({ profile: { customFields: { position: 'Guard' } } })).toEqual({ position: 'Guard' });
         expect(getRosterProfileValues({ customFields: { position: 'Forward' } })).toEqual({ position: 'Forward' });
+        expect(getRosterProfileValues({ rosterFieldValues: { grade: '6' } })).toEqual({ grade: '6' });
+    });
+
+    it('uses editable profile custom fields over imported roster field values', () => {
+        expect(getRosterProfileValues({
+            rosterFieldValues: { grade: '6', position: 'Forward' },
+            profile: { customFields: { position: 'Guard' } }
+        })).toEqual({ grade: '6', position: 'Guard' });
     });
 
     it('builds persisted roster field definitions with visibility and menu options', () => {
