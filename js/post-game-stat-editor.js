@@ -35,6 +35,17 @@ function normalizeNumericInput(value) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+export function resolvePostGameEditorDidNotPlay({
+    playerId = '',
+    didNotPlayMap = {},
+    pendingDidNotPlayMap = {}
+} = {}) {
+    if (Object.prototype.hasOwnProperty.call(pendingDidNotPlayMap || {}, playerId)) {
+        return pendingDidNotPlayMap[playerId] === true;
+    }
+    return didNotPlayMap?.[playerId] === true;
+}
+
 export function buildCompletedGamePlayerStatsPayload({
     player = {},
     statFields = [],
