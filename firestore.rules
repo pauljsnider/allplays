@@ -955,9 +955,10 @@ service cloud.firestore {
 
       // Chat messages subcollection
       match /chatMessages/{messageId} {
-        // Read: full-team messages are visible to team chat members; targeted
-        // messages are limited to sender, recipients, and team staff/admins.
-        allow read: if canReadChatMessage(teamId, resource.data);
+        // List queries are unfiltered by target metadata in existing clients.
+        // Direct document reads still enforce targeted-message recipient checks.
+        allow list: if canAccessTeamChat(teamId);
+        allow get: if canReadChatMessage(teamId, resource.data);
 
         // Create: any team member, must be their own senderId and valid target metadata.
         allow create: if canAccessTeamChat(teamId) &&

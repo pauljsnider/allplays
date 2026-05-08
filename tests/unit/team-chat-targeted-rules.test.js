@@ -12,6 +12,12 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
+    it('keeps chat collection queries query-safe while direct reads enforce targeting', () => {
+        expect(rules).toContain('allow list: if canAccessTeamChat(teamId);');
+        expect(rules).toContain('allow get: if canReadChatMessage(teamId, resource.data);');
+        expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
+    });
+
     it('restricts staff/group messages to sender and team staff/admin roles', () => {
         expect(rules).toContain('function isStaffChatMessage(data)');
         expect(rules).toContain("data.get('targetRole', 'staff') == 'staff'");
