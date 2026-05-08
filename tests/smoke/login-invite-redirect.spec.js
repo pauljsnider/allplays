@@ -46,7 +46,8 @@ async function mockInviteLoginModules(page, options = {}) {
                 callback(null);
             }
 
-            export async function loginWithGoogle() {
+            export async function loginWithGoogle(activationCode) {
+                window.__googleActivationCode = activationCode;
                 return null;
             }
 
@@ -149,4 +150,23 @@ test('google redirect login mode keeps existing admin invites on accept-invite',
     });
 
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34&type=admin$/);
+});
+
+test('signup hash opens signup mode and passes activation code to Google signup', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page);
+
+    await page.goto(buildUrl(baseURL, '/login.html#signup'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await expect(page.locator('#confirm-password-field')).toBeVisible();
+    await expect(page.locator('#activation-code-field')).toBeVisible();
+    await expect(page.locator('#forgot-password-link')).toBeHidden();
+
+    await page.locator('#activation-code').fill('ab12cd34');
+    await page.locator('#google-btn').click();
+
+    await expect.poll(() => page.evaluate(() => window.__googleActivationCode)).toBe('AB12CD34');
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('postGoogleAuthMode'))).toBe('signup');
 });

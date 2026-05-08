@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createLoginRedirectCoordinator, createLoginAuthStateManager } from '../../js/login-page.js';
+import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode } from '../../js/login-page.js';
 
 function createCoordinator({
     search = '?code=ab12cd34&type=parent',
@@ -35,6 +35,27 @@ function createCoordinator({
 
     return { coordinator, windowObject };
 }
+
+describe('login page initial mode', () => {
+    it('initializes signup mode for public #signup hash links', () => {
+        expect(shouldInitializeSignupMode({
+            windowObject: { location: { hash: '#signup' } }
+        })).toBe(true);
+    });
+
+    it('initializes signup mode for activation code invite links', () => {
+        expect(shouldInitializeSignupMode({
+            windowObject: { location: { hash: '' } },
+            urlCodeParam: 'ab12cd34'
+        })).toBe(true);
+    });
+
+    it('keeps login mode for ordinary login links', () => {
+        expect(shouldInitializeSignupMode({
+            windowObject: { location: { hash: '' } }
+        })).toBe(false);
+    });
+});
 
 describe('login page redirect coordination', () => {
     it('treats invite type values case-insensitively when code is present', () => {
