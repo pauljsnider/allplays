@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     filterTrackingItemsForAdminList,
     isTrackingItemAdmin,
     normalizeTrackingItemDraft,
     normalizeTrackingItemStatus
 } from '../../js/tracking-items-admin.js';
+
+function readFirestoreRules() {
+    return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+}
 
 describe('tracking items admin helpers', () => {
     it('normalizes draft metadata and defaults active private items', () => {
@@ -57,5 +62,14 @@ describe('tracking items admin helpers', () => {
         expect(isTrackingItemAdmin(team, { isAdmin: true })).toBe(true);
         expect(isTrackingItemAdmin(team, { uid: 'moderator-1' }, () => true)).toBe(true);
         expect(isTrackingItemAdmin(team, { email: 'parent@example.com' })).toBe(false);
+    });
+
+    it('keeps public tracking item reads scoped to team members in Firestore rules', () => {
+        const rules = readFirestoreRules();
+
+        expect(rules).toContain('function canReadPublicTrackingItem(teamId, data)');
+        expect(rules).toContain('isActivePublicTrackingItem(data) &&');
+        expect(rules).toContain('(isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId))');
+        expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || canReadPublicTrackingItem(teamId, resource.data);');
     });
 });

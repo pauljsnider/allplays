@@ -172,6 +172,11 @@ service cloud.firestore {
              data.get('active', true) != false;
     }
 
+    function canReadPublicTrackingItem(teamId, data) {
+      return isActivePublicTrackingItem(data) &&
+             (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId));
+    }
+
     function isTrackingItemPayloadValid(teamId, data) {
       return data.keys().hasOnly([
                'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
@@ -586,7 +591,7 @@ service cloud.firestore {
       }
 
       match /trackingItems/{itemId} {
-        allow read: if isTeamOwnerOrAdmin(teamId) || isActivePublicTrackingItem(resource.data);
+        allow read: if isTeamOwnerOrAdmin(teamId) || canReadPublicTrackingItem(teamId, resource.data);
         allow create: if isTeamOwnerOrAdmin(teamId) &&
                       isTrackingItemPayloadValid(teamId, request.resource.data) &&
                       hasTrackingItemCreateAudit(request.resource.data);
