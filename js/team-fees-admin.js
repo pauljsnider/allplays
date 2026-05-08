@@ -116,6 +116,8 @@ export function summarizeFeeRecipients(recipients = []) {
     const summary = {
         totalAssignedCents: 0,
         totalPaidCents: 0,
+        totalAdjustedCents: 0,
+        totalCanceledCents: 0,
         totalOutstandingCents: 0,
         counts: {
             paid: 0,
@@ -129,9 +131,13 @@ export function summarizeFeeRecipients(recipients = []) {
         const status = normalizeFeeStatus(recipient?.status);
         const balance = getRecipientBalanceCents(recipient);
         const paid = getRecipientPaidCents(recipient);
+        const assigned = Number(recipient?.amountCents ?? recipient?.originalAmountCents ?? recipient?.assignedAmountCents ?? balance);
+        const assignedCents = Number.isFinite(assigned) ? Math.max(0, assigned) : 0;
         summary.counts[status] += 1;
-        summary.totalAssignedCents += status === 'canceled' ? 0 : balance;
+        summary.totalAssignedCents += assignedCents;
         summary.totalPaidCents += paid;
+        summary.totalCanceledCents += status === 'canceled' ? assignedCents : 0;
+        summary.totalAdjustedCents += status === 'adjusted' ? Math.max(0, assignedCents - balance) : 0;
         summary.totalOutstandingCents += status === 'paid' || status === 'canceled' ? 0 : Math.max(0, balance - paid);
     });
 
@@ -147,15 +153,19 @@ export function formatFeeCurrency(cents) {
     }).format(amount / 100);
 }
 
-export function buildManualPaymentUpdate({ amount, date, note, actorId }) {
+export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentStatus }) {
     const amountPaidCents = toFeeCents(amount);
     if (amountPaidCents === null || amountPaidCents <= 0) {
         throw new Error('Enter a manual payment amount greater than $0.');
     }
     if (!date) throw new Error('Enter a manual payment date.');
 
+    const currentBalance = Number(currentBalanceCents);
+    const isPaidInFull = Number.isFinite(currentBalance) ? amountPaidCents >= Math.max(0, currentBalance) : true;
+    const status = isPaidInFull ? 'paid' : normalizeFeeStatus(currentStatus) === 'adjusted' ? 'adjusted' : 'unpaid';
+
     return {
-        status: 'paid',
+        status,
         amountPaidCents,
         paidAt: date,
         manualPayment: {
@@ -249,6 +259,8 @@ function renderSummary(container, recipients) {
     const cards = [
         ['Total assigned', formatFeeCurrency(summary.totalAssignedCents)],
         ['Total paid', formatFeeCurrency(summary.totalPaidCents)],
+        ['Adjusted', formatFeeCurrency(summary.totalAdjustedCents)],
+        ['Canceled', formatFeeCurrency(summary.totalCanceledCents)],
         ['Outstanding', formatFeeCurrency(summary.totalOutstandingCents)],
         ['Status counts', `${summary.counts.paid} paid · ${summary.counts.unpaid} unpaid · ${summary.counts.adjusted} adjusted · ${summary.counts.canceled} canceled`]
     ];
@@ -270,18 +282,20 @@ function renderRecipients(container, countEl, recipients) {
     container.innerHTML = recipients.map((recipient) => {
         const name = escapeHtml(getRecipientDisplayName(recipient));
         const status = getStatusLabel(recipient.status);
+        const assigned = formatFeeCurrency(recipient.amountCents ?? recipient.originalAmountCents ?? recipient.assignedAmountCents ?? 0);
         const balance = formatFeeCurrency(getRecipientBalanceCents(recipient));
         const paid = formatFeeCurrency(getRecipientPaidCents(recipient));
+        const outstanding = formatFeeCurrency(recipient.status === 'paid' || recipient.status === 'canceled' ? 0 : Math.max(0, getRecipientBalanceCents(recipient) - getRecipientPaidCents(recipient)));
         const note = recipient.manualPayment?.note || recipient.adjustment?.note || recipient.canceled?.note || recipient.notes || '';
         return `
-            <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}">
+            <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}" data-balance-cents="${getRecipientBalanceCents(recipient)}" data-status="${escapeHtml(normalizeFeeStatus(recipient.status))}">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="font-bold text-gray-900">${name}</h3>
                             <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-700">${status}</span>
                         </div>
-                        <div class="mt-1 text-sm text-gray-500">Balance ${balance} · Paid ${paid}</div>
+                        <div class="mt-1 text-sm text-gray-500">Assigned ${assigned} · Balance ${balance} · Paid ${paid} · Outstanding ${outstanding}</div>
                         ${note ? `<p class="mt-2 text-sm text-gray-600">${escapeHtml(note)}</p>` : ''}
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3 w-full lg:max-w-4xl">
@@ -444,7 +458,7 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
 
         try {
             if (form.dataset.action === 'paid') {
-                updates = buildManualPaymentUpdate({ ...data, actorId: user.uid });
+                updates = buildManualPaymentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentStatus: article?.dataset?.status });
             } else if (form.dataset.action === 'adjust') {
                 updates = buildBalanceAdjustmentUpdate({ ...data, actorId: user.uid });
             } else {
