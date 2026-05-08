@@ -32,6 +32,7 @@ function buildGetAllEvents(overrides = {}) {
         normalizeAvailabilityPreferences: () => ({ cutoffMinutesBeforeStart: 0, noteVisibility: 'admins' }),
         buildAvailabilityNoteRows: () => [],
         getRsvps: async () => [],
+        canManageTeamAvailability: () => false,
         currentTeamAccessInfo: null,
         currentUser: null,
         ...overrides
@@ -48,6 +49,7 @@ function buildGetAllEvents(overrides = {}) {
             normalizeAvailabilityPreferences,
             buildAvailabilityNoteRows,
             getRsvps,
+            canManageTeamAvailability,
             currentTeamAccessInfo,
             currentUser
         } = deps;
