@@ -194,6 +194,45 @@ service cloud.firestore {
              data.get('published', false) == true;
     }
 
+    function isActivePublicTrackingItem(data) {
+      return data.get('visibility', 'private') == 'public' &&
+             data.get('status', 'active') == 'active' &&
+             data.get('archived', false) != true &&
+             data.get('active', true) != false;
+    }
+
+    function canReadPublicTrackingItem(teamId, data) {
+      return isActivePublicTrackingItem(data) &&
+             (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId));
+    }
+
+    function isTrackingItemPayloadValid(teamId, data) {
+      return data.keys().hasOnly([
+               'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
+               'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+             ]) &&
+             data.teamId == teamId &&
+             data.name is string &&
+             data.name.size() > 0 &&
+             data.name.size() <= 120 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+             data.visibility in ['private', 'public'] &&
+             data.status in ['active', 'archived'] &&
+             data.active is bool &&
+             data.archived is bool &&
+             ((data.status == 'active' && data.active == true && data.archived == false) ||
+              (data.status == 'archived' && data.active == false && data.archived == true));
+    }
+
+    function hasTrackingItemCreateAudit(data) {
+      return data.createdBy == request.auth.uid &&
+             data.updatedBy == request.auth.uid;
+    }
+
+    function hasTrackingItemUpdateAudit(data) {
+      return data.updatedBy == request.auth.uid;
+    }
+
     function hasOnlyFlatStringValues(data) {
       return data is map &&
              data.keys().size() <= 20 &&
@@ -588,6 +627,19 @@ service cloud.firestore {
                           (isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data) &&
                            isPendingRegistrationPayloadValid(teamId, formId, request.resource.data));
         }
+      }
+
+      match /trackingItems/{itemId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || canReadPublicTrackingItem(teamId, resource.data);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                      isTrackingItemPayloadValid(teamId, request.resource.data) &&
+                      hasTrackingItemCreateAudit(request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                      isTrackingItemPayloadValid(teamId, request.resource.data) &&
+                      request.resource.data.createdBy == resource.data.createdBy &&
+                      request.resource.data.createdAt == resource.data.createdAt &&
+                      hasTrackingItemUpdateAudit(request.resource.data);
+        allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       match /entitlements/{entitlementId} {
