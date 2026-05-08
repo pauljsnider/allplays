@@ -3422,6 +3422,85 @@ export async function getUnreadChatCounts(userId, teamIds) {
     return counts;
 }
 
+
+function normalizeGameDateValue(value) {
+    if (!value) return null;
+    if (typeof value?.toDate === 'function') return value.toDate();
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function compareGamesByDateAsc(a, b) {
+    const aDate = normalizeGameDateValue(a?.date);
+    const bDate = normalizeGameDateValue(b?.date);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate - bDate;
+}
+
+function compareGamesByDateDesc(a, b) {
+    return compareGamesByDateAsc(b, a);
+}
+
+function getSharedHomepageTeamIds(sharedGame) {
+    return Array.from(new Set([
+        sharedGame?.homeTeamId,
+        sharedGame?.awayTeamId,
+        ...(Array.isArray(sharedGame?.teamIds) ? sharedGame.teamIds : [])
+    ].filter(Boolean)));
+}
+
+async function projectSharedHomepageGame(sharedGame, shouldIncludeTeam) {
+    const teamIds = getSharedHomepageTeamIds(sharedGame);
+
+    for (const teamId of teamIds) {
+        const teamSnap = await getDoc(doc(db, 'teams', teamId));
+        if (!teamSnap.exists()) {
+            continue;
+        }
+
+        const team = { id: teamSnap.id, ...teamSnap.data() };
+        if (!shouldIncludeTeam(team)) {
+            continue;
+        }
+
+        const projectedGame = projectSharedGameForTeam(sharedGame, teamId);
+        if (!projectedGame) {
+            continue;
+        }
+
+        return {
+            ...projectedGame,
+            team
+        };
+    }
+
+    return null;
+}
+
+async function getSharedHomepageGames(queryConstraints, shouldIncludeTeam, maxResults) {
+    const sharedGamesRef = collectionGroup(db, 'sharedGames');
+    const snapshot = await getDocs(query(sharedGamesRef, ...queryConstraints));
+    const games = [];
+
+    for (const docSnap of snapshot.docs) {
+        const sharedGame = normalizeSharedGameSnapshot(docSnap);
+        const projectedGame = await projectSharedHomepageGame(sharedGame, shouldIncludeTeam);
+        if (!projectedGame) {
+            continue;
+        }
+
+        games.push(projectedGame);
+        if (maxResults && games.length >= maxResults) {
+            break;
+        }
+    }
+
+    return games;
+}
+
 // ============ LIVE GAME EVENTS ============
 
 /**
@@ -3720,11 +3799,22 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         }
     }
 
-    games.sort((a, b) => {
-        const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-        const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
-        return aDate - bDate;
-    });
+    try {
+        const sharedGames = await getSharedHomepageGames([
+            ...queryConstraints,
+            limitQuery(fetchBatchSize)
+        ], shouldIncludeTeamInLiveOrUpcoming);
+        games.push(...sharedGames.filter((game) => {
+            return game.type !== 'practice'
+                && game.status !== 'completed'
+                && game.status !== 'cancelled'
+                && game.liveStatus !== 'completed';
+        }));
+    } catch (error) {
+        console.warn('Could not load shared upcoming live games:', error?.message || error);
+    }
+
+    games.sort(compareGamesByDateAsc);
 
     return games.slice(0, limitCount);
 }
@@ -4183,6 +4273,15 @@ export async function getLiveGamesNow() {
         games.push(gameData);
     }
 
+    try {
+        const sharedGames = await getSharedHomepageGames([
+            where('liveStatus', '==', 'live')
+        ], shouldIncludeTeamInLiveOrUpcoming);
+        games.push(...sharedGames);
+    } catch (error) {
+        console.warn('Could not load shared live games:', error?.message || error);
+    }
+
     return games;
 }
 
@@ -4192,14 +4291,17 @@ export async function getLiveGamesNow() {
 export async function getRecentLiveTrackedGames(limitCount = 6) {
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    const gamesRef = collectionGroup(db, 'games');
-    const q = query(
-        gamesRef,
+    const recentQueryConstraints = [
         where('liveStatus', '==', 'completed'),
         where('date', '>=', Timestamp.fromDate(oneWeekAgo)),
         orderBy('date', 'desc'),
         limitQuery(limitCount)
+    ];
+
+    const gamesRef = collectionGroup(db, 'games');
+    const q = query(
+        gamesRef,
+        ...recentQueryConstraints
     );
 
     const snapshot = await getDocs(q);
@@ -4221,7 +4323,16 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
         games.push(gameData);
     }
 
-    return games;
+    try {
+        const sharedGames = await getSharedHomepageGames(recentQueryConstraints, shouldIncludeTeamInReplay, limitCount);
+        games.push(...sharedGames);
+    } catch (error) {
+        console.warn('Could not load shared replay games:', error?.message || error);
+    }
+
+    games.sort(compareGamesByDateDesc);
+
+    return games.slice(0, limitCount);
 }
 
 // ============================================
