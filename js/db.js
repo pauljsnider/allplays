@@ -4365,10 +4365,17 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
                 timestamp: Timestamp.now()
             });
         }
+        const officiatingAuthorizedUserIds = new Set(game.officiatingAuthorizedUserIds || []);
+        const officiatingAuthorizedEmails = new Set(game.officiatingAuthorizedEmails || []);
+        if (official?.uid) officiatingAuthorizedUserIds.add(official.uid);
+        if (official?.email) officiatingAuthorizedEmails.add(String(official.email).trim().toLowerCase());
+
         transaction.update(docRef, {
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now()
+            officiatingUpdatedAt: Timestamp.now(),
+            officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds),
+            officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)
         });
     });
 
