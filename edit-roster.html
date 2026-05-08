@@ -532,6 +532,7 @@
         let trackingItems = [];
         let selectedTrackingItemId = '';
         let latestRosterPlayers = [];
+        let trackingStatusRenderToken = 0;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -633,7 +634,10 @@
             const summaryEl = document.getElementById('tracking-status-summary');
             if (!container || !summaryEl) return;
 
-            const selectedItem = trackingItems.find((item) => item.id === selectedTrackingItemId);
+            const renderToken = ++trackingStatusRenderToken;
+            const trackingItemId = selectedTrackingItemId;
+            const rosterPlayers = [...latestRosterPlayers];
+            const selectedItem = trackingItems.find((item) => item.id === trackingItemId);
             if (!selectedItem) {
                 summaryEl.textContent = 'No tracking item selected.';
                 container.innerHTML = '<p class="text-sm text-gray-500">Add or select a tracking item to edit roster completion.</p>';
@@ -641,8 +645,11 @@
             }
 
             container.innerHTML = '<p class="text-sm text-gray-500">Loading roster tracking statuses...</p>';
-            const statuses = await listTeamTrackingStatuses(currentTeamId, selectedTrackingItemId);
-            const rows = mergeTrackingStatusRows(latestRosterPlayers, statuses);
+            const statuses = await listTeamTrackingStatuses(currentTeamId, trackingItemId);
+            if (renderToken !== trackingStatusRenderToken || trackingItemId !== selectedTrackingItemId) {
+                return;
+            }
+            const rows = mergeTrackingStatusRows(rosterPlayers, statuses);
             const summary = summarizeTrackingStatus(rows);
             summaryEl.textContent = `${summary.complete} of ${summary.total} complete for ${selectedItem.title || 'selected item'} (${summary.incomplete} incomplete).`;
 
@@ -667,19 +674,19 @@
             document.querySelectorAll('.tracking-status-toggle').forEach((input) => {
                 input.addEventListener('change', async (event) => {
                     const checkbox = event.currentTarget;
-                    const player = latestRosterPlayers.find((item) => item.id === checkbox.dataset.playerId);
+                    const player = rosterPlayers.find((item) => item.id === checkbox.dataset.playerId);
                     if (!player) return;
                     checkbox.disabled = true;
                     try {
                         const payload = buildTrackingStatusPayload({
                             teamId: currentTeamId,
-                            itemId: selectedTrackingItemId,
+                            itemId: trackingItemId,
                             player,
                             complete: checkbox.checked,
                             actorId: currentUser.uid,
                             actorEmail: currentUser.email
                         });
-                        await setTeamTrackingStatus(currentTeamId, selectedTrackingItemId, player.id, payload);
+                        await setTeamTrackingStatus(currentTeamId, trackingItemId, player.id, payload);
                         await renderTrackingStatusMatrix();
                     } catch (error) {
                         console.error('Error saving tracking status', error);
