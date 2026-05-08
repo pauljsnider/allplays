@@ -88,6 +88,9 @@ describe('officiating slots', () => {
         expect(dbSource).toContain('officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)');
         expect(rules).toContain('function isOpenOfficiatingSelfAssignmentUpdate()');
         expect(rules).toContain("resource.data.get('officiatingSelfAssignmentEnabled', false) == true");
+        expect(rules).toContain('function isOnlyAddingCurrentOfficialAuthorization()');
+        expect(rules).toContain("nextUserIds.hasOnly(previousUserIds + [request.auth.uid])");
+        expect(rules).toContain("nextEmails.hasOnly(previousEmails + [callerEmail])");
         expect(rules).toContain("'officiatingAuthorizedUserIds'");
         expect(rules).toContain('allow update: if isOpenOfficiatingSelfAssignmentUpdate();');
     });

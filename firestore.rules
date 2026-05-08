@@ -232,6 +232,24 @@ service cloud.firestore {
       );
     }
 
+    function isOnlyAddingCurrentOfficialAuthorization() {
+      let previousUserIds = resource.data.get('officiatingAuthorizedUserIds', []);
+      let nextUserIds = request.resource.data.get('officiatingAuthorizedUserIds', []);
+      let previousEmails = resource.data.get('officiatingAuthorizedEmails', []);
+      let nextEmails = request.resource.data.get('officiatingAuthorizedEmails', []);
+      let callerEmail = request.auth.token.email != null ? request.auth.token.email.lower() : '';
+      return nextUserIds.hasAll(previousUserIds) &&
+             nextUserIds.hasOnly(previousUserIds + [request.auth.uid]) &&
+             request.auth.uid in nextUserIds &&
+             nextEmails.hasAll(previousEmails) &&
+             (
+               (callerEmail == '' && nextEmails.hasOnly(previousEmails)) ||
+               (callerEmail != '' &&
+                nextEmails.hasOnly(previousEmails + [callerEmail]) &&
+                callerEmail in nextEmails)
+             );
+    }
+
     function isOpenOfficiatingSelfAssignmentUpdate() {
       return isSignedIn() &&
              resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
@@ -243,9 +261,7 @@ service cloud.firestore {
                'officiatingAuthorizedUserIds',
                'officiatingAuthorizedEmails'
              ]) &&
-             request.auth.uid in request.resource.data.get('officiatingAuthorizedUserIds', []) &&
-             (request.auth.token.email == null ||
-              request.auth.token.email.lower() in request.resource.data.get('officiatingAuthorizedEmails', []));
+             isOnlyAddingCurrentOfficialAuthorization();
     }
 
     function canAccessTeamChat(teamId) {
