@@ -488,7 +488,7 @@
         import { checkAuth } from './js/auth.js?v=13';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=3';
         import { buildRotationPlanFromGamePlan } from './js/game-plan-interop.js';
-        import { getPeriodsForFormation, normalizeActivePeriod } from './js/game-day-periods.js?v=1';
+        import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=1';
         import {
             buildLineupDraftPayload,
             buildLineupPublishPayload,
@@ -1968,7 +1968,7 @@ Respond ONLY with valid JSON.`;
 
         function getGameDayPeriods() {
             const plannedPeriods = Object.keys(state.rotationPlan || {});
-            if (plannedPeriods.length) return plannedPeriods;
+            if (plannedPeriods.length) return sortSubstitutionPeriods(plannedPeriods);
             return state.formationId ? getPeriods(state.formationId) : ['H1', 'H2'];
         }
 
