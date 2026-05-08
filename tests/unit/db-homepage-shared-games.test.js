@@ -5,6 +5,10 @@ function readDbSource() {
     return readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 }
 
+function readFirestoreIndexes() {
+    return JSON.parse(readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8'));
+}
+
 function getFunctionSource(source, functionName) {
     const start = source.indexOf(`export async function ${functionName}`);
     expect(start).toBeGreaterThanOrEqual(0);
@@ -33,5 +37,15 @@ describe('homepage shared game discovery queries', () => {
         expect(replaySource).toContain('getSharedHomepageGames(recentQueryConstraints, shouldIncludeTeamInReplay, limitCount)');
         expect(replaySource).toContain('games.sort(compareGamesByDateDesc)');
         expect(replaySource).toContain('return games.slice(0, limitCount)');
+    });
+
+    it('declares sharedGames composite indexes used by homepage collection group queries', () => {
+        const indexConfig = readFirestoreIndexes();
+        const sharedGameIndexes = indexConfig.indexes
+            .filter((index) => index.collectionGroup === 'sharedGames')
+            .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order || field.arrayConfig}`).join(','));
+
+        expect(sharedGameIndexes).toContain('type:ASCENDING,date:ASCENDING');
+        expect(sharedGameIndexes).toContain('liveStatus:ASCENDING,date:DESCENDING');
     });
 });
