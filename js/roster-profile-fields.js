@@ -80,7 +80,12 @@ export function normalizeRosterFieldDefinitions(fields = [], options = {}) {
 }
 
 export function getRosterProfileValues(player = {}) {
-    return player?.profile?.customFields || player?.profile?.rosterFields || player?.customFields || {};
+    return {
+        ...(player?.rosterFieldValues || {}),
+        ...(player?.customFields || {}),
+        ...(player?.profile?.rosterFields || {}),
+        ...(player?.profile?.customFields || {})
+    };
 }
 
 export function validateRosterProfileValues(fields = [], values = {}) {

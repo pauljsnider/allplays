@@ -1,0 +1,44 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+function readRepoFile(relativePath) {
+    return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
+
+describe('team chat recipient targets', () => {
+    it('exposes recipient options and audience summary in the composer', () => {
+        const html = readRepoFile('team-chat.html');
+
+        expect(html).toContain('id="recipient-picker"');
+        expect(html).toContain('id="recipient-target"');
+        expect(html).toContain('<option value="full_team">Full team</option>');
+        expect(html).toContain('<option value="staff">Staff only</option>');
+        expect(html).toContain('<option value="individuals">Selected members</option>');
+        expect(html).toContain('id="recipient-summary"');
+    });
+
+    it('loads roster/community recipient options and sends target metadata', () => {
+        const html = readRepoFile('team-chat.html');
+
+        expect(html).toContain('await loadRecipientOptions();');
+        expect(html).toContain('const players = await getPlayers(teamId);');
+        expect(html).toContain('Array.isArray(player.parents)');
+        expect(html).toContain('...buildRecipientTargetMetadata()');
+        expect(html).toContain("targetType: 'staff'");
+        expect(html).toContain("targetType: 'full_team'");
+        expect(html).toContain('recipientIds: Array.from(selectedRecipientIds).sort()');
+    });
+
+    it('persists normalized target metadata from postChatMessage', () => {
+        const db = readRepoFile('js/db.js');
+
+        expect(db).toContain("targetType = 'full_team'");
+        expect(db).toContain('recipientIds = []');
+        expect(db).toContain('targetRole = null');
+        expect(db).toContain("const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);");
+        expect(db).toContain("const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0");
+        expect(db).toContain('targetType: effectiveTargetType');
+        expect(db).toContain('recipientIds: normalizedRecipientIds');
+        expect(db).toContain("targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null");
+    });
+});

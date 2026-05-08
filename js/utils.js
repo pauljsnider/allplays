@@ -1621,9 +1621,16 @@ export function expandRecurrence(master, windowDays = 180) {
         occurrence.date = occDate;
 
         if (master.endTime || override.endTime) {
-          const [endHours, endMinutes] = (override.endTime || master.endTime).split(':').map(Number);
+          const effectiveEndTime = override.endTime || master.endTime;
+          const [endHours, endMinutes] = effectiveEndTime.split(':').map(Number);
           const endDate = new Date(current);
+          const explicitEndDayOffset = override.endDayOffset ?? master.endDayOffset;
+          const endDayOffset = explicitEndDayOffset !== undefined
+            ? Math.max(0, Number(explicitEndDayOffset) || 0)
+            : ((endHours * 60 + endMinutes) < (hours * 60 + minutes) ? 1 : 0);
+
           endDate.setHours(endHours, endMinutes, 0, 0);
+          endDate.setDate(endDate.getDate() + endDayOffset);
           occurrence.end = endDate;
         }
       } else {

@@ -1916,7 +1916,11 @@
                             countsTowardSeasonRecord: event.countsTowardSeasonRecord
                         }),
                         arrivalTime: event.arrivalTime || null,
+                        statTrackerConfigId: event.statTrackerConfigId || null,
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
+                        officiatingSlots: Array.isArray(event.officiatingSlots) ? event.officiatingSlots : [],
+                        officiatingSelfAssignmentEnabled: event.officiatingSelfAssignmentEnabled === true,
+                        officiatingCoverageStatus: event.officiatingCoverageStatus || null,
                         rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
                         sourceMetadata: event.sourceMetadata || null,

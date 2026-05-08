@@ -46,6 +46,43 @@ function getExistingExternalPlayerId(player = {}) {
     );
 }
 
+function getContactConflictKeys(contacts = []) {
+    return contacts.flatMap((contact) => [
+        contact.email ? `email:${contact.email}` : '',
+        contact.phone ? `phone:${contact.phone}` : ''
+    ]).filter(Boolean);
+}
+
+function collectExistingContactOwners(existingPlayers = []) {
+    const owners = new Map();
+    existingPlayers.forEach((player) => {
+        const contacts = [
+            ...normalizeContacts(player.guardians),
+            ...normalizeContacts(player.contacts),
+            ...normalizeContacts(player.parents),
+            ...normalizeContacts(player.familyContacts)
+        ];
+        getContactConflictKeys(contacts).forEach((key) => {
+            if (!owners.has(key)) owners.set(key, []);
+            owners.get(key).push(player);
+        });
+    });
+    return owners;
+}
+
+function findContactConflict(sourceContacts = [], existingContactOwners, existingPlayer = null) {
+    for (const key of getContactConflictKeys(sourceContacts)) {
+        const owner = (existingContactOwners.get(key) || []).find((player) => !existingPlayer?.id || player.id !== existingPlayer.id);
+        if (owner) {
+            return {
+                existingPlayerId: owner.id || null,
+                contact: key.replace(':', ': ')
+            };
+        }
+    }
+    return null;
+}
+
 function getKnownExistingSource(player = {}) {
     const source = player.sourceMetadata || player.registrationSource || {};
     const sourceType = normalizeString(source.sourceType || source.type || source.provider || source.name);
@@ -229,12 +266,9 @@ function mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existin
 
 export function isExternallyLinkedRosterTeam(team = {}) {
     return !!(
-        team.registrationSource ||
-        team.registrationSourceId ||
-        team.externalRegistrationTeamId ||
         team.registrationSourceSnapshot ||
         team.registrationRosterSnapshot ||
-        team.registrationScheduleSnapshot
+        team.externalRosterPlayers
     );
 }
 
@@ -305,6 +339,7 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
     });
 
     const seenExternalIds = new Set();
+    const existingContactOwners = collectExistingContactOwners(existingPlayers);
     const operations = [];
     const results = {
         added: 0,
@@ -339,6 +374,19 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
                 results.conflicts.push({ externalPlayerId, existingPlayerId: conflict.id || null });
                 return;
             }
+        }
+
+        const sourceContacts = [...(payload.guardians || []), ...(payload.contacts || [])];
+        const contactConflict = findContactConflict(sourceContacts, existingContactOwners, existing);
+        if (contactConflict) {
+            results.conflicted += 1;
+            results.conflicts.push({
+                externalPlayerId,
+                existingPlayerId: contactConflict.existingPlayerId,
+                conflictType: 'contact',
+                contact: contactConflict.contact
+            });
+            return;
         }
 
         const fieldValues = collectRegistrationRosterFieldValues(sourcePlayer, fields, results);

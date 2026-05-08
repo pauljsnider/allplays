@@ -324,10 +324,19 @@
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
 
+        function canManageTeamAvailability() {
+            return !!currentUser && (
+                currentUser?.isAdmin ||
+                currentTeamAccessInfo?.accessLevel === 'full' ||
+                currentTeamAccessInfo?.accessLevel === 'owner' ||
+                currentTeamAccessInfo?.accessLevel === 'admin'
+            );
+        }
+
         function renderAvailabilitySettings(team) {
             const section = document.getElementById('availability-settings-section');
             if (!section) return;
-            const canManage = currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin' || currentUser?.isAdmin;
+            const canManage = canManageTeamAvailability();
             if (!canManage) {
                 section.classList.add('hidden');
                 section.innerHTML = '';
@@ -413,7 +422,7 @@
         }
 
         function canSendAvailabilityReminders() {
-            return !!currentUser && (currentUser?.isAdmin || currentTeamAccessInfo?.accessLevel === 'full' || currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin');
+            return canManageTeamAvailability();
         }
 
         function renderTeamAvailabilityControls(game, isUpcoming) {
@@ -1735,7 +1744,7 @@
             }
 
             const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
-            const isTeamAdmin = currentTeamAccessInfo?.accessLevel === 'full' || currentUser?.isAdmin;
+            const isTeamAdmin = canManageTeamAvailability();
             const linkedPlayerIds = Array.from(new Set((Array.isArray(currentUser?.parentOf) ? currentUser.parentOf : [])
                 .filter((link) => link?.teamId === currentTeamId && typeof link?.playerId === 'string' && link.playerId.trim())
                 .map((link) => link.playerId.trim())));
