@@ -4988,7 +4988,12 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
 }
 
 export async function getPublicTrackingItems(teamId) {
-    const snap = await getDocs(query(collection(db, `teams/${teamId}/trackingItems`), where('public', '==', true)));
+    const snap = await getDocs(query(
+        collection(db, `teams/${teamId}/trackingItems`),
+        where('public', '==', true),
+        where('private', '==', false),
+        where('isPrivate', '==', false)
+    ));
     return snap.docs
         .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
         .filter(isPublicTrackingItem);
@@ -5000,16 +5005,24 @@ export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
         .filter(Boolean)));
     if (uniquePlayerIds.length === 0) return [];
 
-    const snapshots = await Promise.all(uniquePlayerIds.map((playerId) => (
-        getDocs(query(
-            collection(db, `teams/${teamId}/memberTracking`),
-            where('playerId', '==', playerId),
+    const playerIdFields = ['playerId', 'childId', 'memberId'];
+    const trackingCollection = collection(db, `teams/${teamId}/memberTracking`);
+    const snapshots = await Promise.all(uniquePlayerIds.flatMap((playerId) => (
+        playerIdFields.map((fieldName) => getDocs(query(
+            trackingCollection,
+            where(fieldName, '==', playerId),
             where('public', '==', true)
-        ))
+        )))
     )));
 
-    return snapshots.flatMap((snap) => snap.docs.map((docSnap) => normalizeTrackingStatus({
-        id: docSnap.id,
-        ...docSnap.data()
-    })));
+    const statusesById = new Map();
+    snapshots.forEach((snap) => {
+        snap.docs.forEach((docSnap) => {
+            statusesById.set(docSnap.id, normalizeTrackingStatus({
+                id: docSnap.id,
+                ...docSnap.data()
+            }));
+        });
+    });
+    return Array.from(statusesById.values());
 }

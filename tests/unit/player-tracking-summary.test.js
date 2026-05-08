@@ -40,6 +40,12 @@ describe('player tracking summary', () => {
         expect(teamHtml).toContain('getPublicTrackingItems');
         expect(teamHtml).toContain('getPlayerTrackingStatuses');
         expect(dbSource).toContain("where('public', '==', true)");
+        expect(dbSource).toContain("where('private', '==', false)");
+        expect(dbSource).toContain("where('isPrivate', '==', false)");
+        expect(dbSource).toContain("const playerIdFields = ['playerId', 'childId', 'memberId'];");
+        expect(dbSource).toContain('uniquePlayerIds.flatMap');
+        expect(dbSource).toContain("where(fieldName, '==', playerId)");
+        expect(dbSource).toContain('const statusesById = new Map();');
         expect(rules).toContain('match /trackingItems/{itemId}');
         expect(rules).toContain('match /memberTracking/{trackingId}');
         expect(rules).toContain('canReadPublicTrackingStatus(teamId, resource.data)');
