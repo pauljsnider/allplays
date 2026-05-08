@@ -14,6 +14,29 @@ function normalizeString(value) {
     return String(value || '').trim();
 }
 
+function normalizeInvoiceEntries(entries = [], { descriptionKey = 'description', amountKey = 'amount', dateKey = null, requireDescription = false, missingMessage = 'Complete each invoice row before saving.' } = {}) {
+    return (entries || [])
+        .map((entry) => ({
+            description: normalizeString(entry?.[descriptionKey]),
+            dueDate: dateKey ? normalizeString(entry?.[dateKey]) : '',
+            amountCents: toFeeCents(entry?.[amountKey])
+        }))
+        .filter((entry) => entry.description || entry.dueDate || entry.amountCents !== null)
+        .map((entry) => {
+            if ((requireDescription && !entry.description) || (dateKey && !entry.dueDate) || entry.amountCents === null || entry.amountCents <= 0) {
+                throw new Error(missingMessage);
+            }
+            const normalized = { amountCents: entry.amountCents };
+            if (requireDescription) normalized.description = entry.description;
+            if (dateKey) normalized.dueDate = entry.dueDate;
+            return normalized;
+        });
+}
+
+function sumCents(entries = []) {
+    return entries.reduce((total, entry) => total + (Number(entry.amountCents) || 0), 0);
+}
+
 export function parseTeamFeeAmountToCents(value) {
     const normalized = normalizeString(value).replace(/[$,]/g, '');
     if (!normalized) return null;
@@ -59,12 +82,30 @@ export function normalizeTeamFeeDraft(formValues = {}) {
     if (!dueDate) throw new Error('Due date is required.');
     if (recipientIds.length === 0) throw new Error('Select at least one roster recipient.');
 
+    const lineItems = normalizeInvoiceEntries(formValues.lineItems, {
+        requireDescription: true,
+        missingMessage: 'Complete each line item description and amount before saving.'
+    });
+    const installments = normalizeInvoiceEntries(formValues.installments, {
+        dateKey: 'dueDate',
+        missingMessage: 'Complete each installment due date and amount before saving.'
+    });
+
+    if (lineItems.length && sumCents(lineItems) !== amountCents) {
+        throw new Error('Line items must add up to the total fee amount.');
+    }
+    if (installments.length && sumCents(installments) !== amountCents) {
+        throw new Error('Installments must add up to the total fee amount.');
+    }
+
     return {
         title,
         amountCents,
         dueDate,
         notes,
         recipientIds,
+        lineItems,
+        installments,
         collectionMode: 'offline_manual',
         offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS
     };
@@ -86,7 +127,9 @@ export function buildTeamFeeRecipientRecords(draft, players = [], teamId = '') {
             notes: draft.notes || '',
             status: 'unpaid',
             collectionMode: 'offline_manual',
-            offlinePaymentInstructions: draft.offlinePaymentInstructions || OFFLINE_TEAM_FEE_INSTRUCTIONS
+            offlinePaymentInstructions: draft.offlinePaymentInstructions || OFFLINE_TEAM_FEE_INSTRUCTIONS,
+            lineItems: draft.lineItems || [],
+            installments: draft.installments || []
         }));
 }
 
@@ -253,8 +296,36 @@ function collectFormValues(form) {
         amount: form.elements.amount.value,
         dueDate: form.elements.dueDate.value,
         notes: form.elements.notes.value,
-        recipientIds: Array.from(form.querySelectorAll('input[name="recipients"]:checked')).map((input) => input.value)
+        recipientIds: Array.from(form.querySelectorAll('input[name="recipients"]:checked')).map((input) => input.value),
+        lineItems: Array.from(form.querySelectorAll('[data-line-item-row]')).map((row) => ({
+            description: row.querySelector('[name="lineItemDescription"]')?.value,
+            amount: row.querySelector('[name="lineItemAmount"]')?.value
+        })),
+        installments: Array.from(form.querySelectorAll('[data-installment-row]')).map((row) => ({
+            dueDate: row.querySelector('[name="installmentDueDate"]')?.value,
+            amount: row.querySelector('[name="installmentAmount"]')?.value
+        }))
     };
+}
+
+function renderInvoiceRow(type) {
+    if (type === 'lineItem') {
+        return `
+            <div data-line-item-row class="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 md:grid-cols-[1fr_10rem_auto]">
+                <input name="lineItemDescription" type="text" placeholder="Description" class="rounded-lg border-gray-300 text-sm" aria-label="Line item description">
+                <input name="lineItemAmount" type="number" min="0.01" step="0.01" placeholder="0.00" class="rounded-lg border-gray-300 text-sm" aria-label="Line item amount">
+                <button type="button" data-remove-row class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white">Remove</button>
+            </div>
+        `;
+    }
+
+    return `
+        <div data-installment-row class="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 md:grid-cols-[1fr_10rem_auto]">
+            <input name="installmentDueDate" type="date" class="rounded-lg border-gray-300 text-sm" aria-label="Installment due date">
+            <input name="installmentAmount" type="number" min="0.01" step="0.01" placeholder="0.00" class="rounded-lg border-gray-300 text-sm" aria-label="Installment amount">
+            <button type="button" data-remove-row class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white">Remove</button>
+        </div>
+    `;
 }
 
 function renderSummary(container, recipients) {
@@ -369,6 +440,29 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
                 </label>
             </div>
 
+            <div class="mt-6 grid gap-4 lg:grid-cols-2">
+                <section class="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="font-bold text-gray-900">Invoice line items <span class="text-sm font-normal text-gray-500">optional</span></h2>
+                            <p class="mt-1 text-sm text-gray-500">Add descriptions and amounts when this fee should look like an invoice. If used, items must total the fee amount.</p>
+                        </div>
+                        <button type="button" id="add-line-item" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add item</button>
+                    </div>
+                    <div id="line-items-list" class="mt-4 space-y-3"></div>
+                </section>
+                <section class="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="font-bold text-gray-900">Installment schedule <span class="text-sm font-normal text-gray-500">optional</span></h2>
+                            <p class="mt-1 text-sm text-gray-500">Add due dates and amounts for planned installments. If used, installments must total the fee amount.</p>
+                        </div>
+                        <button type="button" id="add-installment" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add installment</button>
+                    </div>
+                    <div id="installments-list" class="mt-4 space-y-3"></div>
+                </section>
+            </div>
+
             <div class="mt-6">
                 <div class="mb-3 flex items-center justify-between gap-3">
                     <h2 class="text-lg font-bold text-gray-900">Recipients</h2>
@@ -385,6 +479,22 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
     `;
 
     const form = document.getElementById('team-fee-form');
+    const lineItemsList = document.getElementById('line-items-list');
+    const installmentsList = document.getElementById('installments-list');
+
+    document.getElementById('add-line-item')?.addEventListener('click', () => {
+        lineItemsList.insertAdjacentHTML('beforeend', renderInvoiceRow('lineItem'));
+    });
+
+    document.getElementById('add-installment')?.addEventListener('click', () => {
+        installmentsList.insertAdjacentHTML('beforeend', renderInvoiceRow('installment'));
+    });
+
+    form.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-remove-row]');
+        if (button) button.closest('[data-line-item-row], [data-installment-row]')?.remove();
+    });
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const button = form.querySelector('button[type="submit"]');
@@ -400,6 +510,8 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
 
             const batch = await createTeamFeeBatch(teamId, draft, recipients, user);
             form.reset();
+            lineItemsList.innerHTML = '';
+            installmentsList.innerHTML = '';
             showMessage(`Fee batch saved with unpaid recipient records. Batch ID: ${batch.id}`, 'success');
         } catch (error) {
             showMessage(error?.message || 'Unable to save fee batch.', 'error');
@@ -494,7 +606,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=22'),
+        import('./db.js?v=31'),
         import('./auth.js?v=12')
     ]);
 

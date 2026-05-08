@@ -17,6 +17,22 @@
       ]
     },
     {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sharedGames",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "liveStatus", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "drillLibrary",
       "queryScope": "COLLECTION",
       "fields": [
