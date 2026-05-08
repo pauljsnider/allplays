@@ -505,6 +505,16 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /mediaFolders/{folderId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /mediaItems/{itemId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /registrationForms/{formId} {
         allow read: if isPublishedRegistrationForm(resource.data) || isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
