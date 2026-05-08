@@ -505,6 +505,25 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /trackingItems/{itemId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+                                request.resource.data.get('teamId', teamId) == teamId &&
+                                request.resource.data.get('scope', 'players') == 'players';
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /memberTracking/{playerId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+                                  request.resource.data.get('teamId', teamId) == teamId &&
+                                  request.resource.data.get('trackingItemId', itemId) == itemId &&
+                                  request.resource.data.get('playerId', playerId) == playerId &&
+                                  request.resource.data.get('memberType', 'player') == 'player' &&
+                                  request.resource.data.get('status', 'incomplete') in ['complete', 'incomplete'];
+          allow delete: if isTeamOwnerOrAdmin(teamId);
+        }
+      }
+
       match /registrationForms/{formId} {
         allow read: if isPublishedRegistrationForm(resource.data) || isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
