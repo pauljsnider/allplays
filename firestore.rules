@@ -812,6 +812,12 @@ service cloud.firestore {
         }
       }
 
+      // Team media folders subcollection (read-only entry point)
+      match /mediaFolders/{folderId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if false;
+      }
+
       // Chat messages subcollection
       match /chatMessages/{messageId} {
         // Read: any team member (owner, admin, global admin, parent)
