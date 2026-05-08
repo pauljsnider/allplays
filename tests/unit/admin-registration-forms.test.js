@@ -4,6 +4,7 @@ import {
     buildAdminRegistrationFormPayload,
     fieldLabelsToDefinitions,
     getAdminRegistrationShareUrl,
+    normalizeRegistrationOptions,
     validateAdminRegistrationFormPayload
 } from '../../js/admin-registration-forms.js';
 
@@ -17,6 +18,10 @@ describe('admin registration form setup', () => {
             feeAmount: '125.50',
             participantFieldsText: 'Player name\nBirthdate',
             guardianFieldsText: 'Guardian name, Guardian email, Guardian phone',
+            registrationOptions: [
+                { id: 'division-a', label: 'Division A', capacityLimit: '12', active: true, waitlistEnabled: true },
+                { label: 'Division B', capacityLimit: '', active: false, waitlistEnabled: false }
+            ],
             waiverText: 'I accept the risk.',
             status: 'published'
         }, { teamId: 'team-1' });
@@ -39,7 +44,23 @@ describe('admin registration form setup', () => {
             { id: 'participant_2', label: 'Birthdate', type: 'date', required: true, options: [] }
         ]);
         expect(payload.guardianFields[1]).toMatchObject({ label: 'Guardian email', type: 'email', required: true });
+        expect(payload.registrationOptions).toEqual([
+            { id: 'division-a', label: 'Division A', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 },
+            { id: 'option_2', label: 'Division B', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
+        ]);
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
+    it('normalizes empty and legacy registration option settings safely', () => {
+        expect(normalizeRegistrationOptions()).toEqual([]);
+        expect(normalizeRegistrationOptions([
+            { label: '  ' },
+            { id: 'early', label: 'Early bird', capacityLimit: '25.9', waitlistEnabled: true },
+            { label: 'Open registration', capacityLimit: '-1', active: false }
+        ])).toEqual([
+            { id: 'early', label: 'Early bird', capacityLimit: 25, active: true, waitlistEnabled: true, sortOrder: 0 },
+            { id: 'option_2', label: 'Open registration', capacityLimit: 0, active: false, waitlistEnabled: false, sortOrder: 1 }
+        ]);
     });
 
     it('keeps unpublished forms as drafts and validates required admin setup', () => {
@@ -79,9 +100,14 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('registration-forms-modal');
         expect(adminPage).toContain('registration-participant-fields');
         expect(adminPage).toContain('registration-guardian-fields');
+        expect(adminPage).toContain('registration-options-list');
         expect(adminPage).toContain('registration-waiver');
         expect(adminPage).toContain('Publish and show link');
         expect(adminJs).toContain('window.openRegistrationFormsAdmin');
+        expect(adminJs).toContain('window.addRegistrationOptionAdmin');
+        expect(adminJs).toContain('window.moveRegistrationOptionAdmin');
+        expect(adminJs).toContain('window.removeRegistrationOptionAdmin');
+        expect(adminJs).toContain('collectRegistrationOptionsFromEditor()');
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
         expect(adminJs).toContain('if (activeRegistrationTeam?.id !== teamId) return;');
         expect(adminJs).toContain('teams/${teamId}/registrationForms');
