@@ -2803,6 +2803,8 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         status: 'open',
         collectionMode,
         offlinePaymentInstructions,
+        lineItems: feeDraft.lineItems || [],
+        installments: feeDraft.installments || [],
         createdBy: user.uid || null,
         createdByEmail: user.email || user.profileEmail || null,
         createdAt: now,
@@ -2823,6 +2825,8 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
             status: 'unpaid',
             collectionMode,
             offlinePaymentInstructions,
+            lineItems: feeDraft.lineItems || [],
+            installments: feeDraft.installments || [],
             createdAt: now,
             updatedAt: now
         });

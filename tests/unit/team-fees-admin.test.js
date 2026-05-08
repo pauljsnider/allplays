@@ -30,9 +30,52 @@ describe('team fees admin helpers', () => {
             dueDate: '2026-06-01',
             notes: 'Cash or check',
             recipientIds: ['p1', 'p2'],
+            lineItems: [],
+            installments: [],
             collectionMode: 'offline_manual'
         });
         expect(draft.offlinePaymentInstructions).toContain('No online payment');
+    });
+
+    it('normalizes invoice line items and installment schedules that match the fee total', () => {
+        const draft = normalizeTeamFeeDraft({
+            title: 'Season dues',
+            amount: '125.00',
+            dueDate: '2026-06-01',
+            recipientIds: ['p1'],
+            lineItems: [
+                { description: ' League fee ', amount: '100.00' },
+                { description: ' Jersey ', amount: '25' },
+                { description: '', amount: '' }
+            ],
+            installments: [
+                { dueDate: '2026-06-01', amount: '75.00' },
+                { dueDate: '2026-07-01', amount: '50.00' }
+            ]
+        });
+
+        expect(draft.lineItems).toEqual([
+            { description: 'League fee', amountCents: 10000 },
+            { description: 'Jersey', amountCents: 2500 }
+        ]);
+        expect(draft.installments).toEqual([
+            { dueDate: '2026-06-01', amountCents: 7500 },
+            { dueDate: '2026-07-01', amountCents: 5000 }
+        ]);
+    });
+
+    it('requires invoice line items and installments to be complete and total the fee amount', () => {
+        const base = {
+            title: 'Season dues',
+            amount: '125.00',
+            dueDate: '2026-06-01',
+            recipientIds: ['p1']
+        };
+
+        expect(() => normalizeTeamFeeDraft({ ...base, lineItems: [{ description: 'League fee', amount: '100.00' }] })).toThrow('Line items must add up');
+        expect(() => normalizeTeamFeeDraft({ ...base, lineItems: [{ description: '', amount: '125.00' }] })).toThrow('line item description');
+        expect(() => normalizeTeamFeeDraft({ ...base, installments: [{ dueDate: '2026-06-01', amount: '100.00' }] })).toThrow('Installments must add up');
+        expect(() => normalizeTeamFeeDraft({ ...base, installments: [{ dueDate: '', amount: '125.00' }] })).toThrow('installment due date');
     });
 
     it('builds unpaid recipient records for the selected roster members', () => {
@@ -57,7 +100,9 @@ describe('team fees admin helpers', () => {
                 feeTitle: 'Camp fee',
                 amountCents: 1000,
                 status: 'unpaid',
-                collectionMode: 'offline_manual'
+                collectionMode: 'offline_manual',
+                lineItems: [],
+                installments: []
             })
         ]);
     });
