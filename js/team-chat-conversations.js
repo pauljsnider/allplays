@@ -8,7 +8,12 @@ export function normalizeConversationType(type) {
 
 export function normalizeConversationParticipantIds(participantIds = []) {
     return Array.from(new Set((Array.isArray(participantIds) ? participantIds : [])
-        .map((id) => String(id || '').trim())
+        .map((id) => {
+            const normalizedId = String(id || '').trim();
+            return normalizedId.toLowerCase().startsWith('email:')
+                ? `email:${normalizedId.slice(6).trim().toLowerCase()}`
+                : normalizedId;
+        })
         .filter(Boolean)))
         .sort();
 }

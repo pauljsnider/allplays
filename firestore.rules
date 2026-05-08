@@ -977,11 +977,12 @@ service cloud.firestore {
       // remains teams/{teamId}/chatMessages for compatibility; targeted threads
       // store messages under their conversation record.
       match /chatConversations/{conversationId} {
-        allow read: if canAccessTeamChat(teamId);
+        allow read: if canAccessChatConversation(teamId, resource.data);
         allow create: if canAccessTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
                          canAccessChatConversation(teamId, request.resource.data);
         allow update: if canAccessChatConversation(teamId, resource.data) &&
+                         canAccessChatConversation(teamId, request.resource.data) &&
                          isChatConversationPayloadValid(request.resource.data) &&
                          request.resource.data.diff(resource.data).affectedKeys()
                            .hasOnly(['name', 'participantIds', 'participantRoles', 'lastMessageAt', 'mutedBy', 'updatedAt']);

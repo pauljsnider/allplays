@@ -3224,10 +3224,35 @@ function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATI
  */
 export async function getChatConversations(teamId, user = null, { team = null, canModerate = false } = {}) {
     const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
-    const snapshot = await getDocs(query(conversationsRef, orderBy('updatedAt', 'desc')));
-    const stored = snapshot.docs
-        .map(d => ({ id: d.id, ...d.data() }))
+    const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
+    const participantQueries = canModerate
+        ? [query(conversationsRef, orderBy('updatedAt', 'desc'))]
+        : [
+            ...(user?.uid ? [
+                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc')),
+                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            ...(normalizedEmail ? [
+                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            query(conversationsRef, where('participantRoles', 'array-contains', 'team'), orderBy('updatedAt', 'desc'))
+        ];
+    const snapshots = participantQueries.length > 0
+        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        : [];
+    const conversationsById = new Map();
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((d) => {
+            conversationsById.set(d.id, { id: d.id, ...d.data() });
+        });
+    });
+    const stored = Array.from(conversationsById.values())
         .filter((conversation) => !user || isUserInConversation(conversation, user, { canModerate }));
+    stored.sort((a, b) => {
+        const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : new Date(a.updatedAt || 0).getTime();
+        const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : new Date(b.updatedAt || 0).getTime();
+        return bTime - aTime;
+    });
 
     return [buildDefaultTeamConversation(team), ...stored];
 }
