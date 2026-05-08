@@ -1769,6 +1769,7 @@
                 console.error('Registration schedule preview failed:', error);
                 status.textContent = `Preview failed: ${error.message}`;
                 preview.innerHTML = '';
+                button.disabled = false;
             }
         }
 
