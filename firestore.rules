@@ -961,10 +961,36 @@ service cloud.firestore {
         }
       }
 
-      // Team media folders subcollection (read-only entry point)
+      // Team media library folders and video-link items
       match /mediaFolders/{folderId} {
-        allow read: if canAccessTeamChat(teamId);
-        allow create, update, delete: if false;
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+          (canAccessTeamChat(teamId) && resource.data.get('visibility', 'members') == 'members');
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.keys().hasOnly(['name', 'visibility', 'createdAt', 'updatedAt', 'createdBy', 'createdByEmail']) &&
+          request.resource.data.name is string &&
+          request.resource.data.visibility in ['members', 'managers'];
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'visibility', 'updatedAt']) &&
+          request.resource.data.name is string &&
+          request.resource.data.visibility in ['members', 'managers'];
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /items/{itemId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) ||
+            (canAccessTeamChat(teamId) &&
+             get(/databases/$(database)/documents/teams/$(teamId)/mediaFolders/$(folderId)).data.get('visibility', 'members') == 'members');
+          allow create: if isTeamOwnerOrAdmin(teamId) &&
+            request.resource.data.keys().hasOnly(['title', 'url', 'type', 'createdAt', 'updatedAt', 'createdBy', 'createdByEmail']) &&
+            request.resource.data.title is string &&
+            request.resource.data.url is string &&
+            request.resource.data.type == 'video_link';
+          allow update: if isTeamOwnerOrAdmin(teamId) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'url', 'updatedAt']) &&
+            request.resource.data.title is string &&
+            request.resource.data.url is string &&
+            request.resource.data.type == 'video_link';
+          allow delete: if isTeamOwnerOrAdmin(teamId);
+        }
       }
 
       // Chat messages subcollection

@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
@@ -10,7 +9,6 @@
         gtag('js', new Date());
         gtag('config', 'G-3J13LHWFT3');
     </script>
-
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex,nofollow">
@@ -18,51 +16,57 @@
     <title>Team Media - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        primary: {
-                            50: '#eef2ff',
-                            100: '#e0e7ff',
-                            500: '#6366f1',
-                            600: '#4f46e5',
-                            700: '#4338ca',
-                            800: '#3730a3',
-                            900: '#312e81'
-                        }
-                    }
-                }
-            }
-        }
-    </script>
 </head>
-
-<body class="bg-gray-50 text-gray-900">
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900 min-h-screen">
     <div id="header-container"></div>
 
-    <main class="container mx-auto px-4 py-6 max-w-5xl">
-        <div id="team-banner" class="mb-6"></div>
+    <main class="container mx-auto px-4 py-8">
+        <div id="team-nav-banner" class="mb-6"></div>
 
-        <section class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-            <div class="p-6 border-b border-gray-100 bg-gradient-to-r from-primary-50 to-white">
-                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                        <p class="text-sm font-semibold text-primary-700 uppercase tracking-wide">Team library</p>
-                        <h1 class="text-2xl md:text-3xl font-bold text-gray-900 mt-1">Media</h1>
-                        <p id="media-page-subtitle" class="text-gray-600 mt-2">Browse team video folders and highlights shared with this team.</p>
-                    </div>
-                    <span id="media-role-badge" class="self-start rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-700">Loading...</span>
+        <section class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+            <div class="p-6 border-b border-gray-100 bg-gray-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold text-gray-900">Team Media</h1>
+                    <p class="text-sm text-gray-500 mt-1">Organize YouTube and Vimeo links for the team.</p>
                 </div>
+                <button id="show-folder-form" class="hidden px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition">New Folder</button>
             </div>
 
-            <div id="media-page-content" class="p-6">
-                <div class="text-center py-12">
-                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
-                    <p class="text-sm text-gray-500">Loading team media...</p>
-                </div>
+            <div id="manager-tools" class="hidden p-6 border-b border-gray-100 bg-white space-y-6">
+                <form id="folder-form" class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Folder name</span>
+                        <input id="folder-name" type="text" maxlength="80" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500" placeholder="Game film, Highlights, Training clips">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Visibility</span>
+                        <select id="folder-visibility" class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500">
+                            <option value="members">Members</option>
+                            <option value="managers">Managers only</option>
+                        </select>
+                    </label>
+                    <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition">Create</button>
+                </form>
+
+                <form id="video-form" class="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Folder</span>
+                        <select id="video-folder" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500"></select>
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Video title</span>
+                        <input id="video-title" type="text" maxlength="120" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500" placeholder="Quarter 1 clips">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">YouTube or Vimeo URL</span>
+                        <input id="video-url" type="url" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500" placeholder="https://youtu.be/...">
+                    </label>
+                    <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition">Add Link</button>
+                </form>
             </div>
+
+            <div id="status" class="px-6 pt-4 text-sm text-gray-500">Loading media library...</div>
+            <div id="media-folders" class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
         </section>
     </main>
 
@@ -70,5 +74,4 @@
 
     <script type="module" src="./js/team-media.js?v=1"></script>
 </body>
-
 </html>

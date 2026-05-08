@@ -43,7 +43,8 @@ function icon(name) {
   }
   if (name === 'media') {
     return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 12l5 3-5 3v-6z"></path>
     </svg>`;
   }
   if (name === 'drills') {
@@ -170,7 +171,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
 
   // Determine grid columns based on number of items
   const gridCols = isFullAccess
-    ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-6'
+    ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-11'
     : 'grid-cols-2 sm:grid-cols-4';
 
   container.innerHTML = `

@@ -55,6 +55,10 @@ import {
     normalizeConversationType
 } from './team-chat-conversations.js';
 import {
+    normalizeTeamMediaFolderDraft,
+    normalizeTeamMediaVideoDraft
+} from './team-media-utils.js?v=1';
+import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
     buildMirroredGamePayload,
@@ -5245,4 +5249,75 @@ export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
         });
     });
     return Array.from(statusesById.values());
+}
+
+// ============================================
+// Team Media Library Functions
+// ============================================
+
+export async function getTeamMediaFolders(teamId, { visibility = null } = {}) {
+    const foldersRef = collection(db, 'teams', teamId, 'mediaFolders');
+    const folderQuery = visibility
+        ? query(foldersRef, where('visibility', '==', visibility), orderBy('createdAt', 'desc'))
+        : query(foldersRef, orderBy('createdAt', 'desc'));
+    const folderSnapshot = await getDocs(folderQuery);
+    const folders = await Promise.all(folderSnapshot.docs.map(async (folderDoc) => {
+        const itemsRef = collection(db, 'teams', teamId, 'mediaFolders', folderDoc.id, 'items');
+        const itemSnapshot = await getDocs(query(itemsRef, orderBy('createdAt', 'desc')));
+        return {
+            id: folderDoc.id,
+            ...folderDoc.data(),
+            items: itemSnapshot.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
+        };
+    }));
+
+    return folders;
+}
+
+export function subscribeToTeamMediaFolders(teamId, { visibility = null } = {}, onFolders, onError = null) {
+    const foldersRef = collection(db, 'teams', teamId, 'mediaFolders');
+    const q = visibility
+        ? query(foldersRef, where('visibility', '==', visibility), orderBy('createdAt', 'desc'))
+        : query(foldersRef, orderBy('createdAt', 'desc'));
+    return onSnapshot(q, async (snapshot) => {
+        const folders = await Promise.all(snapshot.docs.map(async (folderDoc) => {
+            const itemsRef = collection(db, 'teams', teamId, 'mediaFolders', folderDoc.id, 'items');
+            const itemSnapshot = await getDocs(query(itemsRef, orderBy('createdAt', 'desc')));
+            return {
+                id: folderDoc.id,
+                ...folderDoc.data(),
+                items: itemSnapshot.docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
+            };
+        }));
+        onFolders(folders);
+    }, onError || undefined);
+}
+
+export async function createTeamMediaFolder(teamId, draft, user = {}) {
+    const normalized = normalizeTeamMediaFolderDraft(draft);
+    const foldersRef = collection(db, 'teams', teamId, 'mediaFolders');
+    const now = Timestamp.now();
+
+    return await addDoc(foldersRef, {
+        ...normalized,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: user.uid || null,
+        createdByEmail: user.email || null
+    });
+}
+
+export async function addTeamMediaVideoLink(teamId, folderId, draft, user = {}) {
+    const normalized = normalizeTeamMediaVideoDraft(draft);
+    const itemsRef = collection(db, 'teams', teamId, 'mediaFolders', folderId, 'items');
+    const now = Timestamp.now();
+
+    return await addDoc(itemsRef, {
+        ...normalized,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: user.uid || null,
+        createdByEmail: user.email || null
+    });
+
 }
