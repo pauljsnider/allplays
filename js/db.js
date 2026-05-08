@@ -2804,6 +2804,8 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         status: 'open',
         collectionMode,
         offlinePaymentInstructions,
+        lineItems: feeDraft.lineItems || [],
+        installments: feeDraft.installments || [],
         createdBy: user.uid || null,
         createdByEmail: user.email || user.profileEmail || null,
         createdAt: now,
@@ -2824,6 +2826,8 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
             status: 'unpaid',
             collectionMode,
             offlinePaymentInstructions,
+            lineItems: feeDraft.lineItems || [],
+            installments: feeDraft.installments || [],
             createdAt: now,
             updatedAt: now
         });
@@ -3247,7 +3251,10 @@ export async function postChatMessage(teamId, {
     ai = false,
     aiName = null,
     aiQuestion = null,
-    aiMeta = null
+    aiMeta = null,
+    targetType = 'full_team',
+    recipientIds = [],
+    targetRole = null
 }) {
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
     const createdAt = Timestamp.now();
@@ -3266,6 +3273,16 @@ export async function postChatMessage(teamId, {
         ...attachment,
         uploadedAt: createdAt
     }));
+    const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
+    const normalizedTargetType = allowedTargetTypes.has(targetType) ? targetType : 'full_team';
+    const normalizedRecipientIds = normalizedTargetType === 'individuals'
+        ? Array.from(new Set((Array.isArray(recipientIds) ? recipientIds : [])
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)))
+        : [];
+    const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
+        ? 'full_team'
+        : normalizedTargetType;
     return await addDoc(messagesRef, {
         text,
         senderId,
@@ -3286,7 +3303,10 @@ export async function postChatMessage(teamId, {
         ai: ai === true,
         aiName: aiName || null,
         aiQuestion: aiQuestion || null,
-        aiMeta: aiMeta || null
+        aiMeta: aiMeta || null,
+        targetType: effectiveTargetType,
+        recipientIds: normalizedRecipientIds,
+        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null
     });
 }
 
@@ -4307,10 +4327,17 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
                 timestamp: Timestamp.now()
             });
         }
+        const officiatingAuthorizedUserIds = new Set(game.officiatingAuthorizedUserIds || []);
+        const officiatingAuthorizedEmails = new Set(game.officiatingAuthorizedEmails || []);
+        if (official?.uid) officiatingAuthorizedUserIds.add(official.uid);
+        if (official?.email) officiatingAuthorizedEmails.add(String(official.email).trim().toLowerCase());
+
         transaction.update(docRef, {
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now()
+            officiatingUpdatedAt: Timestamp.now(),
+            officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds),
+            officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)
         });
     });
 

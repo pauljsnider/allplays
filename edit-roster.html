@@ -53,15 +53,20 @@
                     <div id="registration-roster-import" class="hidden border-b border-emerald-200 bg-emerald-50 p-4">
                         <div class="flex items-start justify-between gap-3">
                             <div>
-                                <h3 class="font-semibold text-emerald-900">Registration Roster Sync</h3>
-                                <p class="text-sm text-emerald-800">Refresh this roster from the latest linked registration snapshot.</p>
+                                <h3 class="font-semibold text-emerald-900">Import from registration provider</h3>
+                                <p class="text-sm text-emerald-800">Preview players and guardian/contact records from the latest registration snapshot before importing.</p>
                                 <p id="registration-roster-import-status" class="mt-2 text-sm text-emerald-700"></p>
                             </div>
+                            <button id="registration-roster-preview-btn" type="button"
+                                class="shrink-0 rounded-md bg-white px-3 py-2 text-sm font-semibold text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-100">
+                                Preview Import
+                            </button>
                             <button id="registration-roster-import-btn" type="button"
                                 class="shrink-0 rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
-                                Re-import Roster
+                                Import Roster
                             </button>
                         </div>
+                        <div id="registration-roster-import-preview" class="hidden mt-4 space-y-2 text-sm"></div>
                     </div>
 
                     <!-- Tab Navigation -->
@@ -502,6 +507,7 @@
         let rosterFieldDefinitionDrafts = [];
         let registrationForms = [];
         let selectedRegistrationFormId = '';
+        let registrationRosterImportPlan = null;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -576,21 +582,105 @@
                 'registration';
         }
 
+        function formatRegistrationContacts(player = {}) {
+            const contacts = [...(player.guardians || []), ...(player.contacts || [])]
+                .map((contact) => [contact.name, contact.relation, contact.email, contact.phone].filter(Boolean).join(' · '));
+            return contacts.length ? contacts.join('; ') : 'No guardian/contact records provided';
+        }
+
+        function renderRegistrationRosterImportPreview(plan) {
+            const preview = document.getElementById('registration-roster-import-preview');
+            const importButton = document.getElementById('registration-roster-import-btn');
+            if (!preview || !importButton || !plan) return;
+
+            const operationRows = plan.operations.map((operation) => {
+                const label = operation.type === 'update' ? 'Update existing player' : 'Add new player';
+                return `
+                    <div class="rounded-md border border-emerald-200 bg-white p-3">
+                        <div class="font-semibold text-gray-900">${escapeHtml(label)}: ${escapeHtml(operation.payload.name || 'Unnamed player')}${operation.payload.number ? ` #${escapeHtml(operation.payload.number)}` : ''}</div>
+                        <div class="text-xs text-gray-600 mt-1">Contacts: ${escapeHtml(formatRegistrationContacts(operation.payload))}</div>
+                        <div class="text-xs text-emerald-700 mt-1">Source: ${escapeHtml(operation.payload.sourceMetadata?.sourceType || 'registration')} · ${escapeHtml(operation.payload.sourceMetadata?.externalPlayerId || '')}</div>
+                    </div>
+                `;
+            });
+            const conflictRows = (plan.results.conflicts || []).map((conflict) => `
+                <div class="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                    <div class="font-semibold">Review conflict before import</div>
+                    <div class="text-xs mt-1">External player ${escapeHtml(conflict.externalPlayerId || 'unknown')} likely conflicts with existing player ${escapeHtml(conflict.existingPlayerId || 'unknown')}${conflict.contact ? ` by ${escapeHtml(conflict.contact)}` : ' by name/number match'}.</div>
+                </div>
+            `);
+
+            preview.classList.remove('hidden');
+            preview.innerHTML = `
+                <div class="rounded-md border border-emerald-200 bg-emerald-100/60 p-3 font-semibold text-emerald-900">
+                    Preview: ${escapeHtml(formatRegistrationRosterImportResults(plan.results))}.
+                </div>
+                ${operationRows.length ? operationRows.join('') : '<div class="rounded-md border border-gray-200 bg-white p-3 text-gray-600">No importable player changes found.</div>'}
+                ${conflictRows.join('')}
+            `;
+            importButton.disabled = plan.operations.length === 0;
+            importButton.classList.toggle('opacity-50', importButton.disabled);
+        }
+
         function renderRegistrationRosterImport(team = {}) {
             const container = document.getElementById('registration-roster-import');
             const status = document.getElementById('registration-roster-import-status');
-            if (!container || !status) return;
+            const previewButton = document.getElementById('registration-roster-preview-btn');
+            const importButton = document.getElementById('registration-roster-import-btn');
+            const preview = document.getElementById('registration-roster-import-preview');
+            if (!container || !status || !previewButton || !importButton || !preview) return;
 
-            if (!isExternallyLinkedRosterTeam(team)) {
-                container.classList.add('hidden');
+            registrationRosterImportPlan = null;
+            container.classList.remove('hidden');
+            preview.classList.add('hidden');
+            preview.innerHTML = '';
+
+            const sourcePlayers = getRegistrationRosterPlayers(team);
+            const hasSnapshot = isExternallyLinkedRosterTeam(team);
+            previewButton.disabled = !hasSnapshot || sourcePlayers.length === 0;
+            previewButton.classList.toggle('opacity-50', previewButton.disabled);
+            importButton.disabled = true;
+            importButton.classList.toggle('opacity-50', importButton.disabled);
+            status.textContent = hasSnapshot
+                ? (sourcePlayers.length > 0
+                    ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest source snapshot. Preview before importing.`
+                    : 'No roster players were found in the latest source snapshot.')
+                : 'No registration provider data is available yet. Connect or load a registration roster snapshot before importing.';
+        }
+
+        async function handleRegistrationRosterPreview() {
+            const button = document.getElementById('registration-roster-preview-btn');
+            const status = document.getElementById('registration-roster-import-status');
+            if (!currentTeam || !button || !status) return;
+
+            const sourcePlayers = getRegistrationRosterPlayers(currentTeam);
+            if (sourcePlayers.length === 0) {
+                status.textContent = isExternallyLinkedRosterTeam(currentTeam)
+                    ? 'No roster players were found in the latest source snapshot.'
+                    : 'No registration provider data is available yet. Connect or load a registration roster snapshot before importing.';
                 return;
             }
 
-            const sourcePlayers = getRegistrationRosterPlayers(team);
-            container.classList.remove('hidden');
-            status.textContent = sourcePlayers.length > 0
-                ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest source snapshot.`
-                : 'No roster players were found in the latest source snapshot.';
+            try {
+                button.disabled = true;
+                button.textContent = 'Previewing...';
+                status.textContent = 'Comparing source roster to current roster...';
+                const existingPlayers = await getPlayers(currentTeamId, { includeInactive: true });
+                registrationRosterImportPlan = planRegistrationRosterImport({
+                    sourcePlayers,
+                    existingPlayers,
+                    source: getRegistrationSourceDescriptor(currentTeam),
+                    fields: rosterFieldDefinitions
+                });
+                renderRegistrationRosterImportPreview(registrationRosterImportPlan);
+                status.textContent = 'Preview ready. Review players, contacts, and conflicts before importing.';
+            } catch (error) {
+                console.error('Error previewing registration roster:', error);
+                status.textContent = 'Roster preview failed: ' + (error?.message || 'Please try again.');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Preview Import';
+            }
         }
 
         async function handleRegistrationRosterImport() {
@@ -598,26 +688,17 @@
             const status = document.getElementById('registration-roster-import-status');
             if (!currentTeam || !button || !status) return;
 
-            const sourcePlayers = getRegistrationRosterPlayers(currentTeam);
-            if (sourcePlayers.length === 0) {
-                status.textContent = 'No roster players were found in the latest source snapshot.';
+            if (!registrationRosterImportPlan) {
+                status.textContent = 'Preview the registration roster before importing.';
                 return;
             }
 
             try {
                 button.disabled = true;
                 button.textContent = 'Importing...';
-                status.textContent = 'Comparing source roster to current roster...';
+                status.textContent = 'Importing previewed roster changes...';
 
-                const existingPlayers = await getPlayers(currentTeamId, { includeInactive: true });
-                const plan = planRegistrationRosterImport({
-                    sourcePlayers,
-                    existingPlayers,
-                    source: getRegistrationSourceDescriptor(currentTeam),
-                    fields: rosterFieldDefinitions
-                });
-
-                for (const operation of plan.operations) {
+                for (const operation of registrationRosterImportPlan.operations) {
                     let playerId = operation.playerId;
                     if (operation.type === 'update') {
                         await updatePlayer(currentTeamId, playerId, operation.payload);
@@ -629,17 +710,19 @@
                     }
                 }
 
-                status.textContent = `Import complete: ${formatRegistrationRosterImportResults(plan.results)}.`;
-                if (plan.results.conflicted > 0) {
+                status.textContent = `Import complete: ${formatRegistrationRosterImportResults(registrationRosterImportPlan.results)}.`;
+                if (registrationRosterImportPlan.results.conflicted > 0) {
                     status.textContent += ' Conflicts were left unchanged so local-only players are preserved.';
                 }
+                registrationRosterImportPlan = null;
                 await loadRoster();
             } catch (error) {
                 console.error('Error importing registration roster:', error);
                 status.textContent = 'Roster import failed: ' + (error?.message || 'Please try again.');
             } finally {
-                button.disabled = false;
-                button.textContent = 'Re-import Roster';
+                button.disabled = !registrationRosterImportPlan;
+                button.classList.toggle('opacity-50', button.disabled);
+                button.textContent = 'Import Roster';
             }
         }
 
@@ -1169,6 +1252,7 @@
         setupCopyLinkButton('copy-manual-link-btn', 'generated-code');
         setupCopyLinkButton('copy-fallback-link-btn', 'fallback-code');
         setupCopyLinkButton('copy-existing-link-btn', 'existing-user-code');
+        document.getElementById('registration-roster-preview-btn')?.addEventListener('click', handleRegistrationRosterPreview);
         document.getElementById('registration-roster-import-btn')?.addEventListener('click', handleRegistrationRosterImport);
 
         function resetForm() {

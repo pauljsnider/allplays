@@ -68,6 +68,7 @@ describe('edit schedule practice save flow', () => {
             seriesId: 'series-generated',
             startTime: '17:00',
             endTime: '18:30',
+            endDayOffset: 0,
             recurrence: {
                 freq: 'weekly',
                 interval: 2,
@@ -140,6 +141,7 @@ describe('edit schedule practice save flow', () => {
             seriesId: 'series-existing',
             startTime: '17:15',
             endTime: '18:45',
+            endDayOffset: 0,
             recurrence: {
                 freq: 'weekly',
                 interval: 1,
