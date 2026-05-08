@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildPendingRegistrationRecord,
     collectFieldValues,
+    decideRegistrationPlacement,
     formatFeeAmount,
     normalizeRegistrationForm,
     validateRegistrationSubmission
@@ -90,10 +91,107 @@ describe('public registration flow', () => {
         });
     });
 
+    it('requires an active registration option when configured', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            published: true,
+            registrationOptions: [
+                { id: 'u10', title: 'U10', capacityLimit: 2, waitlistEnabled: true },
+                { id: 'archived', title: 'Archived', active: false }
+            ]
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        expect(form.registrationOptions[0]).toMatchObject({
+            id: 'u10',
+            countKey: 'u10',
+            title: 'U10',
+            capacityLimit: 2,
+            waitlistEnabled: true,
+            active: true
+        });
+        expect(validateRegistrationSubmission(form, { waiverAccepted: true })).toEqual([
+            'Please select a registration option.'
+        ]);
+        expect(validateRegistrationSubmission(form, { waiverAccepted: true, selectedOptionId: 'u10' })).toEqual([]);
+    });
+
+    it('places selected option registrations into pending, waitlisted, or blocked states', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            published: true,
+            registrationOptions: [
+                { id: 'u10', title: 'U10', capacityLimit: 2, waitlistEnabled: true },
+                { id: 'u12', title: 'U12', capacityLimit: 1, waitlistEnabled: false }
+            ]
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        expect(decideRegistrationPlacement({
+            form,
+            selectedOptionId: 'u10',
+            counts: { u10: { enrolled: 1, waitlisted: 0 } }
+        })).toMatchObject({
+            status: 'pending',
+            nextCounts: { enrolled: 2, waitlisted: 0 }
+        });
+
+        expect(decideRegistrationPlacement({
+            form,
+            selectedOptionId: 'u10',
+            counts: { u10: { enrolled: 2, waitlisted: 0 } }
+        })).toMatchObject({
+            status: 'waitlisted',
+            nextCounts: { enrolled: 2, waitlisted: 1 }
+        });
+
+        expect(decideRegistrationPlacement({
+            form,
+            selectedOptionId: 'u12',
+            counts: { u12: { enrolled: 1, waitlisted: 0 } }
+        })).toMatchObject({
+            status: 'blocked',
+            reason: 'option-full',
+            message: 'U12 is full and is not accepting waitlist registrations.'
+        });
+    });
+
+    it('includes selected option metadata and waitlist lifecycle fields on records', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            feeAmountCents: 5000,
+            published: true,
+            registrationOptions: [{ id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: true }]
+        }, { teamId: 'team-1', formId: 'form-1' });
+        const now = { sentinel: 'serverTimestamp' };
+
+        expect(buildPendingRegistrationRecord({
+            form,
+            participant: {},
+            guardian: {},
+            waiverAccepted: true,
+            selectedOption: form.registrationOptions[0],
+            status: 'waitlisted',
+            now
+        })).toMatchObject({
+            status: 'waitlisted',
+            waitlistedAt: now,
+            selectedOption: {
+                id: 'u10',
+                title: 'U10',
+                feeAmountCents: 5000,
+                capacityLimit: 1,
+                waitlistEnabled: true
+            }
+        });
+    });
+
     it('wires registration page to public form reads and pending registration writes', () => {
         const page = fs.readFileSync('registration.html', 'utf8');
         expect(page).toContain("doc(db, 'teams', teamId, 'registrationForms', formId)");
         expect(page).toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
+        expect(page).toContain('registration-options-section');
+        expect(page).toContain('runTransaction(db, async (transaction)');
+        expect(page).toContain('decideRegistrationPlacement');
+        expect(page).toContain('option-full');
         expect(page).toContain('waiver-accepted');
         expect(page).toContain('confirmation-message');
         expect(page).toContain('labelText.textContent = field.label');
@@ -103,7 +201,10 @@ describe('public registration flow', () => {
         expect(rules).toContain('match /registrationForms/{formId}');
         expect(rules).toContain('allow create: if (');
         expect(rules).toContain('isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data)');
-        expect(rules).toContain("data.status == 'pending'");
+        expect(rules).toContain("data.status in ['pending', 'waitlisted']");
+        expect(rules).toContain("'selectedOption'");
+        expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
+        expect(rules).toContain("affectedKeys().hasOnly(['registrationOptionCounts', 'updatedAt'])");
         expect(rules).toContain('data.waiverAccepted == true');
         expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
         expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');

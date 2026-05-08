@@ -297,16 +297,23 @@ service cloud.firestore {
                'waiverText',
                'status',
                'submittedAt',
+               'waitlistedAt',
+               'selectedOption',
                'source'
              ]) &&
              data.teamId == teamId &&
              data.formId == formId &&
-             data.status == 'pending' &&
+             data.status in ['pending', 'waitlisted'] &&
              data.waiverAccepted == true &&
              hasOnlyFlatStringValues(data.participant) &&
              hasOnlyFlatStringValues(data.guardian) &&
              data.source == 'public-registration';
 
+    }
+
+    function isPublicRegistrationCapacityCounterUpdate(teamId, formId) {
+      return isPublishedRegistrationForm(resource.data) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registrationOptionCounts', 'updatedAt']);
     }
 
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
@@ -804,7 +811,8 @@ service cloud.firestore {
 
       match /registrationForms/{formId} {
         allow read: if isPublishedRegistrationForm(resource.data) || isTeamOwnerOrAdmin(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, delete: if isTeamOwnerOrAdmin(teamId);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isPublicRegistrationCapacityCounterUpdate(teamId, formId);
 
         match /registrations/{registrationId} {
           allow read: if isTeamOwnerOrAdmin(teamId);
