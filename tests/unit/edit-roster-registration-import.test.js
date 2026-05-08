@@ -14,7 +14,8 @@ function readEditRoster() {
 describe('registration roster import planning', () => {
     it('detects linked roster teams and source roster snapshots', () => {
         expect(isExternallyLinkedRosterTeam({})).toBe(false);
-        expect(isExternallyLinkedRosterTeam({ registrationSourceId: 'sports-connect' })).toBe(true);
+        expect(isExternallyLinkedRosterTeam({ registrationSourceId: 'sports-connect' })).toBe(false);
+        expect(isExternallyLinkedRosterTeam({ externalRosterPlayers: [{ id: 'p1' }] })).toBe(true);
         expect(getRegistrationRosterPlayers({ registrationSourceSnapshot: { rosterPlayers: [{ id: 'p1' }] } })).toEqual([{ id: 'p1' }]);
     });
 
@@ -128,6 +129,32 @@ describe('registration roster import planning', () => {
 
         expect(plan.results).toMatchObject({ added: 0, updated: 1, skipped: 0, conflicted: 0 });
         expect(plan.operations[0]).toMatchObject({ type: 'update', playerId: 'player-legacy' });
+    });
+
+    it('flags contact conflicts before import operations are applied', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            sourcePlayers: [
+                {
+                    externalPlayerId: 'ext-2',
+                    name: 'New Player',
+                    guardians: [{ name: 'Pat Lee', email: 'pat@example.com', relation: 'Parent' }]
+                }
+            ],
+            existingPlayers: [
+                {
+                    id: 'player-1',
+                    name: 'Avery Lee',
+                    guardians: [{ name: 'Pat Lee', email: 'PAT@example.com', relation: 'Parent' }]
+                }
+            ]
+        });
+
+        expect(plan.results).toMatchObject({ added: 0, updated: 0, skipped: 0, conflicted: 1 });
+        expect(plan.results.conflicts).toEqual([
+            { externalPlayerId: 'ext-2', existingPlayerId: 'player-1', conflictType: 'contact', contact: 'email: pat@example.com' }
+        ]);
+        expect(plan.operations).toHaveLength(0);
     });
 
     it('maps configured roster profile fields from matching registration answer keys and labels', () => {
@@ -262,9 +289,12 @@ describe('registration roster import wiring', () => {
         const source = readEditRoster();
 
         expect(source).toContain('id="registration-roster-import"');
-        expect(source).toContain('Re-import Roster');
+        expect(source).toContain('Import from registration provider');
+        expect(source).toContain('Preview Import');
         expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';");
         expect(source).toContain('planRegistrationRosterImport({');
+        expect(source).toContain('renderRegistrationRosterImportPreview');
+        expect(source).toContain('No registration provider data is available yet.');
         expect(source).toContain('fields: rosterFieldDefinitions');
         expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields)');
         expect(source).toContain('function getPlayerImportSourceType');
