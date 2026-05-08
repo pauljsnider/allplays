@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildRegistrationRosterDecision,
+    buildRegistrationStatusUpdate,
+    canTransitionRegistrationStatus,
     getRegistrationGuardianDrafts,
     getRegistrationPlayerDraft,
     matchesRegistrationReviewStatus,
@@ -50,6 +52,11 @@ describe('registration review helpers', () => {
     it('matches registration review status filters', () => {
         expect(matchesRegistrationReviewStatus({ status: 'pending' }, 'pending')).toBe(true);
         expect(matchesRegistrationReviewStatus({ status: 'rejected' }, 'rejected')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ status: 'waitlisted' }, 'waitlisted')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ status: 'offer-extended' }, 'offer-extended')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ status: 'offer-accepted' }, 'offer-accepted')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ status: 'released' }, 'released')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ status: 'approved' }, 'enrolled')).toBe(true);
         expect(matchesRegistrationReviewStatus({ registrationApproved: true }, 'registration-approved')).toBe(true);
         expect(matchesRegistrationReviewStatus({ rosterApproved: true }, 'roster-approved')).toBe(true);
         expect(matchesRegistrationReviewStatus({ registrationApproved: false }, 'rejected')).toBe(true);
@@ -88,7 +95,7 @@ describe('registration review helpers', () => {
             { email: 'taylor@example.com', name: 'Taylor Kim', relation: 'Guardian', phone: '' }
         ]);
         expect(decision.registrationUpdate).toMatchObject({
-            status: 'approved',
+            status: 'enrolled',
             linkedTeamId: 'team-1',
             linkedTeamName: 'Blue Jays',
             linkedPlayerId: 'player-1',
@@ -103,7 +110,33 @@ describe('registration review helpers', () => {
         });
     });
 
+    it('builds auditable waitlist status updates and rejects invalid transitions', () => {
+        const now = new Date('2026-05-06T12:00:00.000Z');
+        const update = buildRegistrationStatusUpdate({
+            registration: { status: 'waitlisted' },
+            status: 'offer-extended',
+            reviewer: { userId: 'admin-1', email: 'admin@example.com' },
+            now
+        });
+
+        expect(update).toMatchObject({
+            status: 'offer-extended',
+            activeWaitlistDemand: true,
+            offerExtendedAt: now,
+            offerExtendedBy: 'admin-1',
+            waitlistStatusUpdatedByName: 'admin@example.com'
+        });
+        expect(buildRegistrationStatusUpdate({ registration: { status: 'offer-accepted' }, status: 'released', now })).toMatchObject({
+            status: 'released',
+            activeWaitlistDemand: false,
+            releasedAt: now
+        });
+        expect(canTransitionRegistrationStatus('released', 'offer-accepted', { adminAction: true })).toBe(false);
+        expect(() => buildRegistrationStatusUpdate({ registration: { status: 'released' }, status: 'offer-accepted', now })).toThrow(/Invalid registration status transition/);
+    });
+
     it('records new roster players as new-player even after an id is assigned', () => {
+
         const decision = buildRegistrationRosterDecision({
             registration: {
                 id: 'reg-2',

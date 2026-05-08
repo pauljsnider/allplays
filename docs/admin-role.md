@@ -10,12 +10,13 @@ Published forms show a copyable `registration.html?teamId=...&formId=...` URL in
 
 ## Registration review
 
-Registration submissions are reviewed from `edit-roster.html` for the team. Admins can filter a registration form by pending, approved, rejected, or all submissions.
+Registration submissions are reviewed from `edit-roster.html` for the team. Admins can filter a registration form by pending, waitlisted, offer extended, offer accepted, enrolled, released, rejected, or all submissions.
 
-Approval is explicit and auditable:
-- Pending submissions can be approved into a new roster player, or into an existing linked player when the registration already carries a selected player id.
+Approval and waitlist actions are explicit and auditable:
+- Pending and offer accepted submissions can be approved into a new roster player, or into an existing linked player when the registration already carries a selected player id.
+- Waitlisted submissions can move to offer extended or released. Released submissions no longer count as active waitlist demand and cannot move directly back to offer accepted.
 - Player records are created or updated without copying sensitive medical or emergency-contact fields into the public player document.
 - Guardian details are retained on the player record. If a guardian email already maps to a user account, the user profile is linked through `parentOf`, `parentTeamIds`, and `parentPlayerKeys`.
 - The registration stores the reviewer, decision time, linked player id, guardian links, and roster destination.
 
-Rejected registrations keep the submitted data and are marked `rejected` in the review queue so the decision remains visible for later audit.
+Rejected and released registrations keep the submitted data in the review queue so the decision remains visible for later audit.

@@ -78,12 +78,13 @@ import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import {
     buildRegistrationRosterDecision,
+    buildRegistrationStatusUpdate,
     getRegistrationGuardianDrafts,
     getRegistrationPlayerDraft,
     matchesRegistrationReviewStatus,
     normalizeRegistrationStatus,
     summarizeRegistration
-} from './registration-review.js?v=1';
+} from './registration-review.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import {
@@ -987,8 +988,9 @@ export async function approveTeamRegistration(teamId, formId, registrationId, op
     if (!teamSnap.exists()) throw new Error('Team not found');
 
     const registration = { id: registrationId, formId, teamId, ...registrationSnap.data() };
-    if (normalizeRegistrationStatus(registration.status) !== 'pending') {
-        throw new Error('Only pending registrations can be approved');
+    const reviewStatus = normalizeRegistrationStatus(registration.status);
+    if (!['pending', 'offer-accepted'].includes(reviewStatus)) {
+        throw new Error('Only pending or offer accepted registrations can be approved');
     }
 
     const team = { id: teamId, ...teamSnap.data() };
@@ -1061,6 +1063,7 @@ export async function approveTeamRegistration(teamId, formId, registrationId, op
 
     batch.update(registrationRef, {
         ...decision.registrationUpdate,
+        activeWaitlistDemand: false,
         linkedPlayerId: playerRef.id,
         guardianLinks,
         updatedAt: now
@@ -1068,6 +1071,41 @@ export async function approveTeamRegistration(teamId, formId, registrationId, op
     await batch.commit();
 
     return { success: true, playerId: playerRef.id, linkedGuardians: guardianLinks.length };
+}
+
+export async function updateTeamRegistrationWaitlistStatus(teamId, formId, registrationId, status, decisionNote = '') {
+    const currentUser = auth.currentUser;
+    if (!currentUser?.uid) {
+        throw new Error('You must be signed in to manage waitlist registrations');
+    }
+    if (!teamId || !formId || !registrationId) {
+        throw new Error('Team, form, and registration are required');
+    }
+    const registrationRef = doc(db, `teams/${teamId}/registrationForms/${formId}/registrations`, registrationId);
+    const registrationSnap = await getDoc(registrationRef);
+    if (!registrationSnap.exists()) throw new Error('Registration not found');
+    const now = Timestamp.now();
+    const update = buildRegistrationStatusUpdate({
+        registration: { id: registrationId, formId, teamId, ...registrationSnap.data() },
+        status,
+        reviewer: {
+            userId: currentUser.uid,
+            email: currentUser.email || '',
+            name: currentUser.displayName || currentUser.email || 'Admin'
+        },
+        now,
+        decisionNote
+    });
+    await updateDoc(registrationRef, update);
+    return { success: true, status: update.status };
+}
+
+export function extendTeamRegistrationOffer(teamId, formId, registrationId, decisionNote = '') {
+    return updateTeamRegistrationWaitlistStatus(teamId, formId, registrationId, 'offer-extended', decisionNote);
+}
+
+export function releaseTeamRegistrationWaitlist(teamId, formId, registrationId, decisionNote = '') {
+    return updateTeamRegistrationWaitlistStatus(teamId, formId, registrationId, 'released', decisionNote);
 }
 
 export async function rejectTeamRegistration(teamId, formId, registrationId, decisionNote = '') {
@@ -1078,9 +1116,17 @@ export async function rejectTeamRegistration(teamId, formId, registrationId, dec
     if (!teamId || !formId || !registrationId) {
         throw new Error('Team, form, and registration are required');
     }
+    const registrationRef = doc(db, `teams/${teamId}/registrationForms/${formId}/registrations`, registrationId);
+    const registrationSnap = await getDoc(registrationRef);
+    if (!registrationSnap.exists()) throw new Error('Registration not found');
+    const currentStatus = normalizeRegistrationStatus(registrationSnap.data()?.status);
+    if (!['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(currentStatus)) {
+        throw new Error('Only pending, waitlisted, or active offer registrations can be rejected');
+    }
     const now = Timestamp.now();
-    await updateDoc(doc(db, `teams/${teamId}/registrationForms/${formId}/registrations`, registrationId), {
+    await updateDoc(registrationRef, {
         status: 'rejected',
+        activeWaitlistDemand: false,
         decidedAt: now,
         decidedBy: currentUser.uid,
         decidedByName: currentUser.displayName || currentUser.email || 'Admin',
