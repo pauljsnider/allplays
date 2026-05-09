@@ -4,6 +4,7 @@ import {
     canViewTeamMediaFolder,
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
+    canReadTeamMediaAlbum,
     buildBulkDeleteUpdates,
     buildMoveUpdates,
     buildReorderUpdates,
@@ -13,6 +14,7 @@ import {
     isSafeTeamMediaUrl,
     isSupportedTeamMediaVideoUrl,
     isSupportedTeamMediaImage,
+    normalizeAlbumVisibility,
     normalizeSelectedMediaIds,
     normalizeTeamMediaFolderDraft,
     normalizeTeamMediaVideoDraft,
@@ -49,20 +51,20 @@ describe('team media management permissions', () => {
     });
 });
 
-describe('team media video folders', () => {
-    it('normalizes folder names and supported visibility values', () => {
-        expect(normalizeTeamMediaFolderDraft({ name: '  Game Film  ', visibility: 'managers' })).toEqual({
+describe('team media video albums', () => {
+    it('normalizes album names and supported visibility values', () => {
+        expect(normalizeTeamMediaFolderDraft({ name: '  Game Film  ', visibility: 'private' })).toEqual({
             name: 'Game Film',
-            visibility: 'managers'
+            visibility: 'private'
         });
         expect(normalizeTeamMediaFolderDraft({ name: 'Highlights', visibility: 'public' })).toEqual({
             name: 'Highlights',
-            visibility: 'members'
+            visibility: 'team'
         });
     });
 
-    it('requires a folder name', () => {
-        expect(() => normalizeTeamMediaFolderDraft({ name: '   ' })).toThrow('Folder name is required.');
+    it('requires an album name', () => {
+        expect(() => normalizeTeamMediaFolderDraft({ name: '   ' })).toThrow('Album name is required.');
     });
 
     it('accepts only YouTube or Vimeo video links for team media video links', () => {
@@ -84,10 +86,28 @@ describe('team media video folders', () => {
         });
     });
 
-    it('hides manager-only folders from parents', () => {
-        expect(canViewTeamMediaFolder({ visibility: 'members' }, 'parent')).toBe(true);
-        expect(canViewTeamMediaFolder({ visibility: 'managers' }, 'parent')).toBe(false);
-        expect(canViewTeamMediaFolder({ visibility: 'managers' }, 'full')).toBe(true);
+    it('hides private albums from parents', () => {
+        expect(canViewTeamMediaFolder({ visibility: 'team' }, 'parent')).toBe(true);
+        expect(canViewTeamMediaFolder({ visibility: 'private' }, 'parent')).toBe(false);
+        expect(canViewTeamMediaFolder({ visibility: 'private' }, 'full')).toBe(true);
+    });
+});
+
+describe('team media album visibility', () => {
+    it('normalizes album metadata with team visibility as the safe default', () => {
+        expect(normalizeTeamMediaFolderDraft({ name: ' Highlights ', visibility: 'private' })).toEqual({
+            name: 'Highlights',
+            visibility: 'private'
+        });
+        expect(normalizeAlbumVisibility('public')).toBe('team');
+        expect(normalizeAlbumVisibility()).toBe('team');
+        expect(() => normalizeTeamMediaFolderDraft({ name: ' ' })).toThrow(/album name/i);
+    });
+
+    it('hides private albums from non-admin readers', () => {
+        expect(canReadTeamMediaAlbum({ visibility: 'team' }, false)).toBe(true);
+        expect(canReadTeamMediaAlbum({ visibility: 'private' }, false)).toBe(false);
+        expect(canReadTeamMediaAlbum({ visibility: 'private' }, true)).toBe(true);
     });
 });
 
