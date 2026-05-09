@@ -46,6 +46,15 @@ import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
+    DEFAULT_TEAM_CONVERSATION_ID,
+    buildConversationId,
+    buildDefaultTeamConversation,
+    isDefaultTeamConversation,
+    isUserInConversation,
+    normalizeConversationParticipantIds,
+    normalizeConversationType
+} from './team-chat-conversations.js';
+import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
     buildMirroredGamePayload,
@@ -3203,12 +3212,94 @@ export function canModerateChat(user, team) {
     return false;
 }
 
+function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+    if (isDefaultTeamConversation(conversationId)) {
+        return collection(db, 'teams', teamId, 'chatMessages');
+    }
+    return collection(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages');
+}
+
+/**
+ * Get conversations for a team. The default team-wide channel is virtual and keeps
+ * using teams/{teamId}/chatMessages for backwards compatibility.
+ */
+export async function getChatConversations(teamId, user = null, { team = null, canModerate = false } = {}) {
+    const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
+    const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
+    const participantQueries = canModerate
+        ? [query(conversationsRef, orderBy('updatedAt', 'desc'))]
+        : [
+            ...(user?.uid ? [
+                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc')),
+                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            ...(normalizedEmail ? [
+                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            query(conversationsRef, where('participantRoles', 'array-contains', 'team'), orderBy('updatedAt', 'desc'))
+        ];
+    const snapshots = participantQueries.length > 0
+        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        : [];
+    const conversationsById = new Map();
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((d) => {
+            conversationsById.set(d.id, { id: d.id, ...d.data() });
+        });
+    });
+    const stored = Array.from(conversationsById.values())
+        .filter((conversation) => !user || isUserInConversation(conversation, user, { canModerate }));
+    stored.sort((a, b) => {
+        const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : new Date(a.updatedAt || 0).getTime();
+        const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : new Date(b.updatedAt || 0).getTime();
+        return bTime - aTime;
+    });
+
+    return [buildDefaultTeamConversation(team), ...stored];
+}
+
+/**
+ * Create or update a lightweight conversation record.
+ */
+export async function upsertChatConversation(teamId, {
+    type = 'group',
+    participantIds = [],
+    participantRoles = [],
+    mutedBy = [],
+    name = null
+} = {}) {
+    const normalizedType = normalizeConversationType(type);
+    const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
+    const conversationId = buildConversationId(normalizedType, normalizedParticipantIds);
+    const now = Timestamp.now();
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+    const existing = await getDoc(conversationRef);
+    const payload = {
+        type: normalizedType,
+        participantIds: normalizedParticipantIds,
+        participantRoles: Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
+            .map((role) => String(role || '').trim())
+            .filter(Boolean)))
+            .sort(),
+        mutedBy: Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : [])),
+        updatedAt: now
+    };
+    if (name) {
+        payload.name = name;
+    }
+    if (!existing.exists()) {
+        payload.createdAt = now;
+    }
+    await setDoc(conversationRef, payload, { merge: true });
+    return { id: conversationId, ...payload };
+}
+
 /**
  * Get chat messages for a team with pagination support.
  * Returns messages ordered by createdAt descending (newest first).
  */
-export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null } = {}) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
 
     if (startAfterDoc) {
@@ -3223,8 +3314,8 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  * Subscribe to chat messages in real time (newest first).
  * Returns an unsubscribe function.
  */
-export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
@@ -3254,9 +3345,10 @@ export async function postChatMessage(teamId, {
     aiMeta = null,
     targetType = 'full_team',
     recipientIds = [],
-    targetRole = null
+    targetRole = null,
+    conversationId = DEFAULT_TEAM_CONVERSATION_ID
 }) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const createdAt = Timestamp.now();
     const normalizedMedia = normalizeChatAttachments(
         attachments.length > 0
@@ -3283,7 +3375,7 @@ export async function postChatMessage(teamId, {
     const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
         ? 'full_team'
         : normalizedTargetType;
-    return await addDoc(messagesRef, {
+    const docRef = await addDoc(messagesRef, {
         text,
         senderId,
         senderName: senderName || null,
@@ -3306,15 +3398,28 @@ export async function postChatMessage(teamId, {
         aiMeta: aiMeta || null,
         targetType: effectiveTargetType,
         recipientIds: normalizedRecipientIds,
-        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null
+        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null,
+        conversationId: isDefaultTeamConversation(conversationId) ? null : conversationId
     });
+
+    if (!isDefaultTeamConversation(conversationId)) {
+        const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+        await setDoc(conversationRef, {
+            lastMessageAt: createdAt,
+            updatedAt: createdAt
+        }, { merge: true });
+    }
+
+    return docRef;
 }
 
 /**
  * Edit an existing chat message (sender only).
  */
-export async function editChatMessage(teamId, messageId, newText) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function editChatMessage(teamId, messageId, newText, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         text: newText,
         editedAt: Timestamp.now()
@@ -3324,14 +3429,16 @@ export async function editChatMessage(teamId, messageId, newText) {
 /**
  * Soft-delete a chat message.
  */
-export async function deleteChatMessage(teamId, messageId) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function deleteChatMessage(teamId, messageId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         deleted: true
     });
 }
 
-export async function toggleChatReaction(teamId, messageId, reactionKey, userId) {
+export async function toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     if (!CHAT_REACTION_KEYS.has(reactionKey)) {
         throw new Error('Unsupported reaction key');
     }
@@ -3339,7 +3446,9 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId)
         throw new Error('Missing userId for reaction');
     }
 
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     const snap = await getDoc(messageRef);
     if (!snap.exists()) {
         throw new Error('Message not found');
