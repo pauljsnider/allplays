@@ -16,19 +16,20 @@ describe('team media entry point', () => {
         expect(bannerJs).toContain('canViewMedia ? actionCard');
     });
 
-    it('loads team media with team-scoped access checks and read-only empty states', () => {
+    it('loads team media with team-scoped management controls', () => {
         const pageHtml = readRepoFile('team-media.html');
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="./js/team-media.js?v=1"></script>');
-        expect(pageJs).toContain("collection(db, 'teams', teamId, 'mediaFolders')");
-        expect(pageJs).toContain("active: 'media'");
-        expect(pageJs).toContain("!['full', 'parent'].includes(accessInfo.accessLevel)");
-        expect(pageJs).toContain('Folder and video management will be added in a later workflow.');
-        expect(pageJs).toContain('This page is read-only for parents and team followers.');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=1"></script>');
+        expect(pageHtml).toContain('id="team-media-admin-panel"');
+        expect(pageHtml).toContain('id="bulk-actions"');
+        expect(pageJs).toContain("import { checkAuth } from './auth.js?v=13';");
+        expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
+        expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
+        expect(pageJs).toContain('bulkDeleteTeamMediaItems');
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canAccessTeamChat(teamId);');
-        expect(rules).toContain('allow create, update, delete: if false;');
+        expect(rules).toContain('allow create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });
 });
