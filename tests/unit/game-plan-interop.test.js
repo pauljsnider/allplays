@@ -17,19 +17,36 @@ describe('game plan interop helpers', () => {
     });
   });
 
-  it('maps legacy game-plan period-time-position shape to period-position', () => {
+  it('maps each legacy game-plan period-time-position shape to a Game Day substitution point', () => {
     const plan = buildRotationPlanFromGamePlan({
       numPeriods: 2,
       lineups: {
         '1-7-keeper': 'p1',
         '1-14-keeper': 'p2',
+        '1-21-keeper': 'p4',
         '2-7-striker': 'p3'
       }
     });
 
     expect(plan).toEqual({
-      H1: { keeper: 'p1' },
-      H2: { striker: 'p3' }
+      "H1 7'": { keeper: 'p1' },
+      "H1 14'": { keeper: 'p2' },
+      "H1 21'": { keeper: 'p4' },
+      "H2 7'": { striker: 'p3' }
+    });
+  });
+
+  it('round-trips saved Game Day substitution point labels', () => {
+    const plan = buildRotationPlanFromGamePlan({
+      lineups: {
+        "H1 7'-keeper": 'p1',
+        "H1 14'-keeper": 'p2'
+      }
+    });
+
+    expect(plan).toEqual({
+      "H1 7'": { keeper: 'p1' },
+      "H1 14'": { keeper: 'p2' }
     });
   });
 
@@ -43,8 +60,8 @@ describe('game plan interop helpers', () => {
     });
 
     expect(plan).toEqual({
-      Q1: { pg: 'p1' },
-      Q2: { pg: 'p2' }
+      "Q1 4'": { pg: 'p1' },
+      "Q2 4'": { pg: 'p2' }
     });
   });
 });

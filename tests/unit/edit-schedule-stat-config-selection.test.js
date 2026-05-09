@@ -42,4 +42,19 @@ describe('edit schedule stat config selection', () => {
         expect(trackBlock).toContain('statTrackerConfigId: configId || null,');
         expect(trackBlock).not.toContain('getSelectedOrDefaultConfigId');
     });
+
+    it('keeps stat config and officiating metadata when caching database games for editing', () => {
+        const source = readEditSchedule();
+
+        const loadStart = source.indexOf('const eventRecord = {');
+        const loadEnd = source.indexOf('                    allEvents.push(eventRecord);', loadStart);
+        expect(loadStart).toBeGreaterThanOrEqual(0);
+        expect(loadEnd).toBeGreaterThan(loadStart);
+
+        const eventRecordBlock = source.slice(loadStart, loadEnd);
+        expect(eventRecordBlock).toContain('statTrackerConfigId: event.statTrackerConfigId || null,');
+        expect(eventRecordBlock).toContain('officiatingSlots: Array.isArray(event.officiatingSlots) ? event.officiatingSlots : [],');
+        expect(eventRecordBlock).toContain('officiatingSelfAssignmentEnabled: event.officiatingSelfAssignmentEnabled === true,');
+        expect(eventRecordBlock).toContain('officiatingCoverageStatus: event.officiatingCoverageStatus || null,');
+    });
 });
