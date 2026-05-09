@@ -559,14 +559,25 @@ export async function deleteTeamMediaItem(teamId, item) {
     const cleanTeamId = String(teamId || '').trim();
     const itemId = String(item?.id || '').trim();
     if (!cleanTeamId || !itemId) throw new Error('Media item is required.');
-    await updateDoc(doc(db, `teams/${cleanTeamId}/mediaItems`, itemId), {
+    if (item?.type === 'photo' && !item.storagePath) {
+        console.error('Media object missing file reference:', itemId);
+        throw new Error('Cannot delete media: missing file reference');
+    }
+
+    const mediaDocRef = doc(db, `teams/${cleanTeamId}/mediaItems`, itemId);
+    if (!mediaDocRef) {
+        console.error('Media object missing document reference:', itemId);
+        throw new Error('Cannot delete media: missing document reference');
+    }
+
+    await updateDoc(mediaDocRef, {
         deleted: true,
         deletedAt: serverTimestamp(),
         deletedBy: auth.currentUser?.uid || null,
         updatedAt: serverTimestamp()
     });
 
-    if (item?.type === 'photo' && item.storagePath) {
+    if (item?.type === 'photo') {
         try {
             await deleteObject(ref(storage, item.storagePath));
         } catch (error) {

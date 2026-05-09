@@ -31,7 +31,8 @@ service firebase.storage {
     }
 
     match /team-media/{teamId}/{folderId}/{userId}/{fileName} {
-      allow read: if canAccessTeamMedia(teamId);
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
       allow create: if canAccessTeamMedia(teamId) &&
         request.auth.uid == userId &&
         request.resource.size > 0 &&
@@ -39,6 +40,16 @@ service firebase.storage {
         request.resource.contentType.matches('image/.*');
       allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
       allow update: if false;
+    }
+
+    match /stat-sheets/{fileName=**} {
+      allow get, create, delete: if isSignedIn();
+      allow list, update: if false;
+    }
+
+    match /game-clips/{fileName=**} {
+      allow get, create, delete: if isSignedIn();
+      allow list, update: if false;
     }
   }
 }
