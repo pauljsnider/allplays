@@ -3170,11 +3170,17 @@ Write the match report now:`;
                 Object.entries(gameState.playerStats).forEach(([playerId, stats]) => {
                     const player = players.find(p => p.id === playerId);
                     if (player) {
+                        const timeMs = getPlayerFieldElapsedMs(
+                            gameState.playerFieldStatus,
+                            playerId,
+                            gameState.isRunning ? Date.now() : null
+                        );
                         const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
                         batch.set(statsRef, {
                             playerName: player.name,
                             playerNumber: player.number,
-                            stats: stats
+                            stats: stats,
+                            timeMs
                         });
                     }
                 });
