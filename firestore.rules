@@ -686,6 +686,16 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /mediaFolders/{folderId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /mediaItems/{itemId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /memberTracking/{trackingId} {
         allow read: if isTeamOwnerOrAdmin(teamId) || canReadPublicTrackingStatus(teamId, resource.data);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
@@ -1010,12 +1020,6 @@ service cloud.firestore {
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId;
         }
-      }
-
-      // Team media folders subcollection (read-only entry point)
-      match /mediaFolders/{folderId} {
-        allow read: if canAccessTeamChat(teamId);
-        allow create, update, delete: if false;
       }
 
       // Chat messages subcollection
