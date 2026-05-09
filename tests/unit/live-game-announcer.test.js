@@ -80,4 +80,37 @@ describe('live game play announcer', () => {
         expect(announcer.announceEvent({ ...play })).toBe(false);
         expect(speak).toHaveBeenCalledTimes(1);
     });
+
+    it('scopes duplicate protection by playback session', () => {
+        const speak = vi.fn();
+        const announcer = createPlayAnnouncer({
+            speechSynthesis: { speak, cancel: vi.fn() },
+            SpeechSynthesisUtterance: function MockUtterance(text) { this.text = text; },
+            storage: createStorage({ allplaysPlayAnnouncerEnabled: 'true' })
+        });
+        const play = { id: 'event-3', description: 'Replayable goal' };
+
+        expect(announcer.announceEvent(play, { playbackSessionId: 'live' })).toBe(true);
+        expect(announcer.announceEvent(play, { playbackSessionId: 'live' })).toBe(false);
+        expect(announcer.announceEvent(play, { playbackSessionId: 'replay' })).toBe(true);
+        expect(speak).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not mark an event announced when speech synthesis throws', () => {
+        const speak = vi.fn()
+            .mockImplementationOnce(() => {
+                throw new Error('speech unavailable');
+            })
+            .mockImplementationOnce(() => {});
+        const announcer = createPlayAnnouncer({
+            speechSynthesis: { speak, cancel: vi.fn() },
+            SpeechSynthesisUtterance: function MockUtterance(text) { this.text = text; },
+            storage: createStorage({ allplaysPlayAnnouncerEnabled: 'true' })
+        });
+        const play = { id: 'event-4', description: 'Retry after failure' };
+
+        expect(announcer.announceEvent(play)).toBe(false);
+        expect(announcer.announceEvent(play)).toBe(true);
+        expect(speak).toHaveBeenCalledTimes(2);
+    });
 });

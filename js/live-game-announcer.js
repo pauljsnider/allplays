@@ -41,10 +41,11 @@ function safeSetStorage(storage, key, value) {
     }
 }
 
-function getAnnouncementEventKey(event = {}) {
-    if (event.id) return String(event.id);
+function getAnnouncementEventKey(event = {}, playbackSessionId = 'live') {
+    const sessionKey = cleanAnnouncementText(playbackSessionId) || 'live';
+    if (event.id) return `${sessionKey}:${String(event.id)}`;
     const timestamp = event.createdAt?.toMillis?.() ?? event.createdAt ?? '';
-    return [event.type || '', event.period || '', event.gameClockMs ?? '', timestamp, cleanAnnouncementText(event.description)].join('|');
+    return [sessionKey, event.type || '', event.period || '', event.gameClockMs ?? '', timestamp, cleanAnnouncementText(event.description)].join('|');
 }
 
 export function createPlayAnnouncer({
@@ -100,20 +101,20 @@ export function createPlayAnnouncer({
         clearHistory() {
             announcedEventIds.clear();
         },
-        announceEvent(event, { allowReplay = true } = {}) {
+        announceEvent(event, { allowReplay = true, playbackSessionId = 'live' } = {}) {
             if (!supported || !enabled || paused) return false;
             if (!allowReplay && event?.replayOnly) return false;
-            const eventId = getAnnouncementEventKey(event);
+            const eventId = getAnnouncementEventKey(event, playbackSessionId);
             if (eventId && announcedEventIds.has(eventId)) return false;
             const text = buildPlayAnnouncement(event);
             if (!text) return false;
-            if (eventId) announcedEventIds.add(eventId);
 
             try {
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = 1;
                 utterance.pitch = 1;
                 speechSynthesis.speak(utterance);
+                if (eventId) announcedEventIds.add(eventId);
                 return true;
             } catch {
                 return false;

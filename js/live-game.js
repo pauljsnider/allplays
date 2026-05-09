@@ -299,7 +299,7 @@ function initAnnouncerControls() {
 
 function announcePlayEvent(event, shouldAnnounce = true) {
   if (!shouldAnnounce) return;
-  playAnnouncer.announceEvent(event);
+  playAnnouncer.announceEvent(event, { playbackSessionId: state.isReplay ? 'replay' : 'live' });
 }
 
 function initTabs() {
