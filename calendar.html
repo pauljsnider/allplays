@@ -442,8 +442,9 @@
                     const [teamId, gameId] = parseTeamGameKey(key);
                     try {
                         const eventForPrefs = allEvents.find(ev => ev.teamId === teamId && ev.id === gameId);
+                        const linkedPlayerIds = getLinkedPlayersForTeam(teamId).map((player) => player.playerId).filter(Boolean);
                         const [myRsvp, rsvps] = await Promise.all([
-                            getMyRsvp(teamId, gameId, currentUserId),
+                            getMyRsvp(teamId, gameId, currentUserId, linkedPlayerIds),
                             eventForPrefs?.notesVisible ? getRsvps(teamId, gameId) : Promise.resolve([])
                         ]);
                         const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || null;
