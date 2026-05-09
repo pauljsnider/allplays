@@ -1528,6 +1528,11 @@ function lineupSnapshot() {
   };
 }
 
+function persistLiveLineup() {
+  updateGame(currentTeamId, currentGameId, { liveLineup: lineupSnapshot() })
+    .catch(err => console.warn('Failed to sync live lineup:', err));
+}
+
 function broadcastLineupUpdate(description = 'Lineup updated') {
   if (liveState.isLive) {
     broadcastEvent(baseLiveEvent({
@@ -1536,8 +1541,7 @@ function broadcastLineupUpdate(description = 'Lineup updated') {
       ...lineupSnapshot()
     }));
   }
-  updateGame(currentTeamId, currentGameId, { liveLineup: lineupSnapshot() })
-    .catch(err => console.warn('Failed to sync live lineup:', err));
+  persistLiveLineup();
 }
 
 function buildVideoTimestampMetadataForStat(statKey) {
@@ -2670,6 +2674,8 @@ function applySub(outId, inId) {
       ...lineupSnapshot()
     }));
   }
+  persistLocalTrackerState();
+  persistLiveLineup();
   renderLineup();
   renderLive();
 }
@@ -2701,6 +2707,8 @@ function applyQueue(closeModal = true) {
   });
 
   state.subQueue = [];
+  persistLocalTrackerState();
+  persistLiveLineup();
   renderQueue();
   if (closeModal) {
     closeSubModal();
