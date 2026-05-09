@@ -1,4 +1,4 @@
-import { auth, onAuthStateChanged } from './firebase.js?v=11';
+import { checkAuth } from './auth.js?v=13';
 import {
     getTeam,
     getTeamMediaFolders,
@@ -97,7 +97,7 @@ function render() {
         ? 'Select video links to move or delete. Use up/down controls to persist ordering.'
         : 'Organized video links and highlights for this team.';
     els.adminPanel.classList.toggle('hidden', !state.canManage);
-    els.backLink.href = state.teamId ? `team.html#${encodeURIComponent(state.teamId)}` : 'team.html';
+    els.backLink.href = state.teamId ? `team.html#teamId=${encodeURIComponent(state.teamId)}` : 'team.html';
     renderFolderOptions();
     renderBulkActions();
 
@@ -239,7 +239,7 @@ els.deleteSelected.addEventListener('click', () => {
     }, 'Selected media deleted.');
 });
 
-onAuthStateChanged(auth, async (user) => {
+checkAuth(async (user) => {
     state.user = user;
     state.teamId = getTeamIdFromLocation();
     if (!state.teamId) {
