@@ -49,6 +49,16 @@ service cloud.firestore {
              );
     }
 
+    function canVideographGame(teamId, gameId) {
+      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let permission = team.get('teamPermissions', {}).get('videography', {});
+      return isSignedIn() &&
+             !isTeamOwnerOrAdmin(teamId) &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
+             request.auth.uid in permission.get('memberIds', []);
+    }
+
     function keepsScorekeeperGameLifecycleVisible() {
       return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
              request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
@@ -61,6 +71,14 @@ service cloud.firestore {
                'completedAt', 'completedBy', 'completedByName', 'updatedAt'
              ]) &&
              keepsScorekeeperGameLifecycleVisible();
+    }
+
+    function isVideographyGameUpdate(teamId, gameId) {
+      return canVideographGame(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
+               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt'
+             ]);
     }
 
     // Check if user is a parent for a specific player.
@@ -712,7 +730,8 @@ service cloud.firestore {
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
-                        isScorekeepingGameUpdate(teamId, gameId);
+                        isScorekeepingGameUpdate(teamId, gameId) ||
+                        isVideographyGameUpdate(teamId, gameId);
         allow update: if isOpenOfficiatingSelfAssignmentUpdate();
 
         // Events subcollection
