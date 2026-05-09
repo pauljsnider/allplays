@@ -111,6 +111,28 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('Unpaid');
     });
 
+    it('falls back to populated fee aliases when primary arrays are empty', () => {
+        const html = renderParentTeamFees([
+            {
+                title: 'Alias-backed invoice',
+                amountCents: 17500,
+                lineItems: [],
+                invoiceLineItems: [
+                    { description: 'Warmup shirt', quantity: 2, amountCents: 7500 }
+                ],
+                installments: [],
+                installmentSchedule: [
+                    { label: 'Opening payment', dueDate: '2026-06-10', amountCents: 10000 }
+                ]
+            }
+        ]);
+
+        expect(html).toContain('Warmup shirt');
+        expect(html).toContain('Qty 2');
+        expect(html).toContain('Opening payment');
+        expect(html).toContain('Due Jun 10, 2026');
+    });
+
     it('only renders a Pay action when a checkout or payment link exists', () => {
         const manualOnlyHtml = renderParentTeamFees([
             { title: 'Manual collection', amountCents: 1000 }

@@ -23,7 +23,7 @@ const STATUS_META = {
 
 
 function getFirstDefined(...values) {
-    return values.find((value) => value !== undefined && value !== null && value !== '');
+    return values.find((value) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0));
 }
 
 function getFeeLineItems(fee) {
