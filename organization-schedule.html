@@ -140,7 +140,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { addGame, getTeam, getUserTeamsWithAccess } from './js/db.js?v=29';
+        import { addGame, getTeam, getTeams, getUserTeamsWithAccess } from './js/db.js?v=29';
         import { parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=13';
@@ -176,8 +176,6 @@
         const organizationNameEl = document.getElementById('organization-context-name');
         const organizationDetailEl = document.getElementById('organization-context-detail');
         const ORGANIZATION_CSV_IMPORT_ROW_LIMIT = 500;
-
-        const MAX_ORGANIZATION_SCHEDULE_CSV_IMPORT_ROWS = 500;
 
         let currentUser = null;
         let anchorTeam = null;
@@ -381,7 +379,9 @@
                 return;
             }
 
-            accessibleTeams = await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
+            accessibleTeams = currentUser.isAdmin === true
+                ? await getTeams()
+                : await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
             organizationTeams = getOrganizationTeams({
                 accessibleTeams,
                 organizationOwnerId: anchorTeam.ownerId
