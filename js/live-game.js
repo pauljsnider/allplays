@@ -22,6 +22,7 @@ import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } f
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=13';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
+import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
   buildReplaySessionState,
   collectReplayEventWindow,
@@ -99,6 +100,8 @@ const state = {
   selectedClipEvent: null
 };
 
+const playAnnouncer = createPlayAnnouncer();
+
 const els = {
   homeTeamName: q('#home-team-name'),
   awayTeamName: q('#away-team-name'),
@@ -113,6 +116,9 @@ const els = {
   connectionBanner: q('#connection-banner'),
 
   playsFeed: q('#plays-feed'),
+  announcerToggle: q('#announcer-toggle'),
+  announcerPause: q('#announcer-pause'),
+  announcerStatus: q('#announcer-status'),
   statsList: q('#stats-list'),
   opponentStats: q('#opponent-stats'),
   lineupOnCourt: q('#lineup-oncourt'),
@@ -249,6 +255,51 @@ function updateShareButton() {
 
 function canAttachScoreLinkedClips() {
   return hasFullTeamAccess(state.user, state.team);
+}
+
+function renderAnnouncerControls() {
+  if (!els.announcerToggle || !els.announcerPause || !els.announcerStatus) return;
+  const supported = playAnnouncer.isSupported();
+  const enabled = playAnnouncer.isEnabled();
+  const paused = playAnnouncer.isPaused();
+
+  els.announcerToggle.disabled = !supported;
+  els.announcerToggle.textContent = enabled ? 'Stop announcer' : 'Listen live';
+  els.announcerToggle.classList.toggle('bg-teal', enabled);
+  els.announcerToggle.classList.toggle('text-ink', enabled);
+  els.announcerPause.classList.toggle('hidden', !enabled);
+  els.announcerPause.textContent = paused ? 'Resume' : 'Pause';
+
+  if (!supported) {
+    els.announcerStatus.textContent = 'Play Announcer is not supported in this browser.';
+  } else if (!enabled) {
+    els.announcerStatus.textContent = 'Opt in to hear new plays during live games and replay.';
+  } else if (paused) {
+    els.announcerStatus.textContent = 'Announcer paused.';
+  } else {
+    els.announcerStatus.textContent = state.isReplay ? 'Replay announcer on.' : 'Live announcer on.';
+  }
+}
+
+function initAnnouncerControls() {
+  renderAnnouncerControls();
+  if (els.announcerToggle) {
+    els.announcerToggle.addEventListener('click', () => {
+      playAnnouncer.setEnabled(!playAnnouncer.isEnabled());
+      renderAnnouncerControls();
+    });
+  }
+  if (els.announcerPause) {
+    els.announcerPause.addEventListener('click', () => {
+      playAnnouncer.setPaused(!playAnnouncer.isPaused());
+      renderAnnouncerControls();
+    });
+  }
+}
+
+function announcePlayEvent(event, shouldAnnounce = true) {
+  if (!shouldAnnounce) return;
+  playAnnouncer.announceEvent(event, { playbackSessionId: state.isReplay ? 'replay' : 'live' });
 }
 
 function initTabs() {
@@ -1601,7 +1652,7 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
   renderLineup();
 }
 
-function processNewEvents(events) {
+function processNewEvents(events, { announce = true } = {}) {
   const newEvents = collectVisibleLiveEventsSequentially(events, {
     seenIds: state.eventIds,
     resetBoundaryMs: state.lastResetAt
@@ -1635,6 +1686,7 @@ function processNewEvents(events) {
     }
     if (transition.shouldRenderPlayByPlay) {
       renderPlayByPlay(event, true);
+      announcePlayEvent(event, announce);
     }
     if (transition.shouldRenderStats) {
       renderStats();
@@ -1694,6 +1746,7 @@ function startLiveEvents() {
   state.liveEventsFirstLoad = true;
   const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
     setConnectionBanner(false);
+    const isInitialLiveEventsLoad = state.liveEventsFirstLoad;
     if (state.liveEventsFirstLoad && events.length === 0) {
       // Show a message while waiting for first events
       const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
@@ -1708,7 +1761,7 @@ function startLiveEvents() {
       }
     }
     state.liveEventsFirstLoad = false;
-    processNewEvents(events);
+    processNewEvents(events, { announce: !isInitialLiveEventsLoad });
   }, (error) => {
     console.warn('Live events subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));
@@ -1926,7 +1979,7 @@ function seekReplay(targetMs) {
     elapsedMs: targetMs
   });
   if (replayWindow.events.length) {
-    processNewEvents(replayWindow.events);
+    processNewEvents(replayWindow.events, { announce: false });
   }
   state.replayIndex = replayWindow.nextReplayIndex;
 
@@ -2282,6 +2335,7 @@ async function init() {
   initReplayControls();
   initRecordedReplayControls();
   initNativeCameraControls();
+  initAnnouncerControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
