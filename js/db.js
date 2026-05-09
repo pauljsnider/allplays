@@ -3809,7 +3809,11 @@ export function trackViewerPresence(teamId, gameId, onCountChange) {
  * Get upcoming live games across all public teams
  */
 function isExcludedHomepageUpcomingStatus(status) {
-    const normalizedStatus = (status || '').toLowerCase();
+    if (typeof status !== 'string') {
+        return false;
+    }
+
+    const normalizedStatus = status.trim().toLowerCase();
     return normalizedStatus === 'completed'
         || normalizedStatus === 'cancelled'
         || normalizedStatus === 'canceled'
