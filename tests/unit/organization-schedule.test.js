@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+    buildOrganizationScheduleCsvTemplate,
+    buildOrganizationScheduleImportPreview,
     buildOrganizationSharedGamePayload,
     getOrganizationTeams,
+    inferOrganizationScheduleCsvMapping,
     validateOrganizationMatchup
 } from '../../js/organization-schedule.js';
 
@@ -43,6 +46,51 @@ describe('organization schedule helpers', () => {
             ok: false,
             error: 'Both teams must belong to the current organization.'
         });
+    });
+
+    it('previews organization schedule CSV rows against exact organization team matches', () => {
+        const headers = ['Home Team', 'Away Team', 'Date & Time', 'Location', 'Arrival Time', 'Notes'];
+        const mapping = inferOrganizationScheduleCsvMapping(headers);
+
+        const preview = buildOrganizationScheduleImportPreview({
+            rows: [
+                {
+                    'Home Team': 'Alpha',
+                    'Away Team': 'Bravo',
+                    'Date & Time': '2026-06-20 18:30',
+                    Location: 'Field 2',
+                    'Arrival Time': '2026-06-20 17:45',
+                    Notes: 'Bring white uniforms'
+                },
+                {
+                    'Home Team': 'Alpha',
+                    'Away Team': 'Charlie',
+                    'Date & Time': '2026-06-21 18:30',
+                    Location: 'Field 3'
+                }
+            ],
+            mapping,
+            organizationTeams: getOrganizationTeams({ accessibleTeams, organizationOwnerId: 'org-1' }),
+            accessibleTeams,
+            organizationOwnerId: 'org-1'
+        });
+
+        expect(preview.validRows).toHaveLength(1);
+        expect(preview.validRows[0]).toMatchObject({
+            homeTeam: { id: 'team-1' },
+            awayTeam: { id: 'team-2' },
+            normalized: {
+                location: 'Field 2',
+                notes: 'Bring white uniforms'
+            },
+            valid: true
+        });
+        expect(preview.invalidRows).toHaveLength(1);
+        expect(preview.invalidRows[0].errors).toContain('Away team is outside the current organization.');
+    });
+
+    it('builds the organization schedule CSV template headers', () => {
+        expect(buildOrganizationScheduleCsvTemplate().split('\n')[0]).toBe('Home Team,Away Team,Date & Time,Location,Arrival Time,Notes');
     });
 
     it('builds a mirrored shared-game payload for the selected away team', () => {
@@ -87,6 +135,25 @@ describe('organization schedule helpers', () => {
         expect(source).toContain("const option = document.createElement('option');");
         expect(source).toContain('option.textContent = team.name;');
         expect(source).not.toContain('selectEl.innerHTML = teams.map');
+    });
+
+    it('wires the organization schedule bulk import UI', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="bulk-import-tab"');
+        expect(source).toContain('id="download-organization-schedule-template"');
+        expect(source).toContain('id="download-organization-team-list"');
+        expect(source).toContain('id="organization-schedule-csv-input"');
+        expect(source).toContain('buildOrganizationScheduleImportPreview');
+        expect(source).toContain('createdVia: \'organizationScheduleCsvImport\'');
+    });
+
+    it('caps organization schedule CSV imports before preview and import', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('const ORGANIZATION_CSV_IMPORT_ROW_LIMIT = 500;');
+        expect(source).toContain('parsed.rows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT');
+        expect(source).toContain('preview.validRows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT');
     });
 
     it('renders shared matchup success actions without using innerHTML', () => {
