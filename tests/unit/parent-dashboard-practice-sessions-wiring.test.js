@@ -13,4 +13,11 @@ describe('parent dashboard practice session cancellation wiring', () => {
         expect(html).toContain('filterVisiblePracticeSessions(practiceSessions, dbGames)');
         expect(html).toContain('filterVisiblePracticeSessions(sessions || [], dbGames)');
     });
+
+    it('does not drop standalone sessions before fallback schedule rendering', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).not.toContain('if (!session?.eventId) return;');
+        expect(html).toContain('if (session?.eventId) {\n                        sessionsByEventId.set(session.eventId, session);\n                    }');
+    });
 });

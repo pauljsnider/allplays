@@ -47,6 +47,14 @@ export function createForgotPasswordHandler({ emailInput, errorDiv, resetPasswor
     };
 }
 
+export function shouldInitializeSignupMode({ windowObject = window, urlCodeParam = null } = {}) {
+    if (urlCodeParam && urlCodeParam.length === 8) {
+        return true;
+    }
+
+    return String(windowObject.location.hash || '').toLowerCase() === '#signup';
+}
+
 export function createLoginRedirectCoordinator({
     windowObject = window,
     getRedirectUrl,

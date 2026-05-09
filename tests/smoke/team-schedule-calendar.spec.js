@@ -107,7 +107,15 @@ export async function getLocalAttractionSponsors() {
 export async function getAdSpaceSponsors() {
     return [];
 }
-`;
+
+export async function getPublicTrackingItems() {
+    return [];
+}
+
+export async function getPlayerTrackingStatuses() {
+    return [];
+}
+	`;
 }
 
 function buildUtilsStub({ calendarEvents, teamId = 'team-a' }) {

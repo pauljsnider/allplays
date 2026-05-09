@@ -30,9 +30,52 @@ describe('team fees admin helpers', () => {
             dueDate: '2026-06-01',
             notes: 'Cash or check',
             recipientIds: ['p1', 'p2'],
+            lineItems: [],
+            installments: [],
             collectionMode: 'offline_manual'
         });
         expect(draft.offlinePaymentInstructions).toContain('No online payment');
+    });
+
+    it('normalizes invoice line items and installment schedules that match the fee total', () => {
+        const draft = normalizeTeamFeeDraft({
+            title: 'Season dues',
+            amount: '125.00',
+            dueDate: '2026-06-01',
+            recipientIds: ['p1'],
+            lineItems: [
+                { description: ' League fee ', amount: '100.00' },
+                { description: ' Jersey ', amount: '25' },
+                { description: '', amount: '' }
+            ],
+            installments: [
+                { dueDate: '2026-06-01', amount: '75.00' },
+                { dueDate: '2026-07-01', amount: '50.00' }
+            ]
+        });
+
+        expect(draft.lineItems).toEqual([
+            { description: 'League fee', amountCents: 10000 },
+            { description: 'Jersey', amountCents: 2500 }
+        ]);
+        expect(draft.installments).toEqual([
+            { dueDate: '2026-06-01', amountCents: 7500 },
+            { dueDate: '2026-07-01', amountCents: 5000 }
+        ]);
+    });
+
+    it('requires invoice line items and installments to be complete and total the fee amount', () => {
+        const base = {
+            title: 'Season dues',
+            amount: '125.00',
+            dueDate: '2026-06-01',
+            recipientIds: ['p1']
+        };
+
+        expect(() => normalizeTeamFeeDraft({ ...base, lineItems: [{ description: 'League fee', amount: '100.00' }] })).toThrow('Line items must add up');
+        expect(() => normalizeTeamFeeDraft({ ...base, lineItems: [{ description: '', amount: '125.00' }] })).toThrow('line item description');
+        expect(() => normalizeTeamFeeDraft({ ...base, installments: [{ dueDate: '2026-06-01', amount: '100.00' }] })).toThrow('Installments must add up');
+        expect(() => normalizeTeamFeeDraft({ ...base, installments: [{ dueDate: '', amount: '125.00' }] })).toThrow('installment due date');
     });
 
     it('builds unpaid recipient records for the selected roster members', () => {
@@ -57,7 +100,9 @@ describe('team fees admin helpers', () => {
                 feeTitle: 'Camp fee',
                 amountCents: 1000,
                 status: 'unpaid',
-                collectionMode: 'offline_manual'
+                collectionMode: 'offline_manual',
+                lineItems: [],
+                installments: []
             })
         ]);
     });
@@ -74,15 +119,17 @@ describe('team fees admin helpers', () => {
 
     it('summarizes assigned, paid, outstanding, and status counts', () => {
         const summary = summarizeFeeRecipients([
-            { status: 'paid', amountDueCents: 5000, amountPaidCents: 5000 },
-            { status: 'unpaid', amountDueCents: 7500 },
-            { status: 'adjusted', amountDueCents: 2500, amountPaidCents: 500 },
-            { status: 'canceled', amountDueCents: 3000 }
+            { status: 'paid', amountCents: 5000, amountDueCents: 5000, amountPaidCents: 5000 },
+            { status: 'unpaid', amountCents: 7500, amountDueCents: 7500 },
+            { status: 'adjusted', amountCents: 4000, amountDueCents: 2500, amountPaidCents: 500 },
+            { status: 'canceled', amountCents: 3000, amountDueCents: 3000 }
         ]);
 
         expect(summary).toEqual({
-            totalAssignedCents: 15000,
+            totalAssignedCents: 19500,
             totalPaidCents: 5500,
+            totalAdjustedCents: 1500,
+            totalCanceledCents: 3000,
             totalOutstandingCents: 9500,
             counts: {
                 paid: 1,
@@ -92,6 +139,49 @@ describe('team fees admin helpers', () => {
             }
         });
         expect(formatFeeCurrency(summary.totalOutstandingCents)).toBe('$95.00');
+    });
+
+    it('keeps partial manual payments outstanding until the balance is fully paid', () => {
+        expect(buildManualPaymentUpdate({
+            amount: '25.00',
+            date: '2026-05-05',
+            currentBalanceCents: 5000
+        })).toMatchObject({
+            status: 'unpaid',
+            amountPaidCents: 2500
+        });
+
+        expect(buildManualPaymentUpdate({
+            amount: '20.00',
+            date: '2026-05-05',
+            currentBalanceCents: 5000,
+            currentPaidCents: 2500
+        })).toMatchObject({
+            status: 'unpaid',
+            amountPaidCents: 4500
+        });
+
+        expect(buildManualPaymentUpdate({
+            amount: '25.00',
+            date: '2026-05-05',
+            currentBalanceCents: 5000,
+            currentPaidCents: 2500
+        })).toMatchObject({
+            status: 'paid',
+            amountPaidCents: 5000,
+            manualPayment: {
+                amountPaidCents: 2500
+            }
+        });
+
+        expect(buildManualPaymentUpdate({
+            amount: '50.00',
+            date: '2026-05-05',
+            currentBalanceCents: 5000
+        })).toMatchObject({
+            status: 'paid',
+            amountPaidCents: 5000
+        });
     });
 
     it('builds manual payment, adjustment, and cancellation updates', () => {
