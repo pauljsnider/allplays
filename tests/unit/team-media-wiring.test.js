@@ -25,6 +25,17 @@ describe('team media page wiring', () => {
         const rules = fs.readFileSync(path.join(repoRoot, 'firestore.rules'), 'utf8');
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canAccessTeamChat(teamId);');
-        expect(rules).toContain('allow create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);');
+        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);');
     });
+    it('configures team-scoped storage rules for album photos', () => {
+        const firebaseJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'firebase.json'), 'utf8'));
+        const storageRules = fs.readFileSync(path.join(repoRoot, 'storage.rules'), 'utf8');
+
+        expect(firebaseJson.storage.rules).toBe('storage.rules');
+        expect(storageRules).toContain('match /team-media/{teamId}/{folderId}/{userId}/{fileName}');
+        expect(storageRules).toContain("request.resource.contentType.matches('image/.*')");
+        expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+    });
+
 });

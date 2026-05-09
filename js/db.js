@@ -32,6 +32,7 @@ import {
     deleteObject
 } from './firebase.js?v=11';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
+import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
@@ -498,6 +499,80 @@ export async function setTeamMediaAlbumCover(teamId, folderId, item = {}) {
         coverPhotoTitle: String(item.title || item.fileName || '').trim(),
         updatedAt: serverTimestamp()
     });
+}
+
+function sanitizeTeamMediaFileName(name) {
+    return String(name || 'photo')
+        .trim()
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'photo';
+}
+
+export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanFolderId = String(folderId || '').trim();
+    const currentUser = auth.currentUser;
+    if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading photos.');
+    if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
+    if (!file || !String(file.type || '').startsWith('image/')) throw new Error('Choose a supported image file.');
+
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type || 'image/jpeg' });
+
+    const snapshot = await new Promise((resolve, reject) => {
+        uploadTask.on('state_changed', (progressSnapshot) => {
+            if (typeof options.onProgress === 'function') {
+                const percent = progressSnapshot.totalBytes > 0
+                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                    : 0;
+                options.onProgress({
+                    bytesTransferred: progressSnapshot.bytesTransferred,
+                    totalBytes: progressSnapshot.totalBytes,
+                    percent
+                });
+            }
+        }, reject, () => resolve(uploadTask.snapshot));
+    });
+
+    const url = await getDownloadURL(snapshot.ref);
+    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+        folderId: cleanFolderId,
+        title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
+        type: 'photo',
+        url,
+        storagePath,
+        uploadedBy: currentUser.uid,
+        size: Number(file.size || 0),
+        mimeType: file.type || 'image/jpeg',
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function deleteTeamMediaItem(teamId, item) {
+    const cleanTeamId = String(teamId || '').trim();
+    const itemId = String(item?.id || '').trim();
+    if (!cleanTeamId || !itemId) throw new Error('Media item is required.');
+    await updateDoc(doc(db, `teams/${cleanTeamId}/mediaItems`, itemId), {
+        deleted: true,
+        deletedAt: serverTimestamp(),
+        deletedBy: auth.currentUser?.uid || null,
+        updatedAt: serverTimestamp()
+    });
+
+    if (item?.type === 'photo' && item.storagePath) {
+        try {
+            await deleteObject(ref(storage, item.storagePath));
+        } catch (error) {
+            console.warn('Unable to delete team media storage object:', error);
+        }
+    }
 }
 
 export async function reorderTeamMediaFolders(teamId, folderIds = []) {
