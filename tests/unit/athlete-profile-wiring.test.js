@@ -30,6 +30,14 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('releaseProfilePhotoPreview();');
     });
 
+    it('prefills new builder profiles from the linked athlete selected in the URL', () => {
+        const source = readFile('athlete-profile-builder.html');
+
+        expect(source).toContain("const defaultKey = params.teamId && params.playerId ? `${params.teamId}::${params.playerId}` : '';");
+        expect(source).toContain('availableLinks.find((link) => `${link.teamId}::${link.playerId}` === defaultKey)');
+        expect(source).toContain("currentProfile?.athlete?.name || defaultLink?.playerName || availableLinks[0]?.playerName || ''");
+    });
+
     it('includes a public athlete profile page with inline media rendering and share action', () => {
         const source = readFile('athlete-profile.html');
 
