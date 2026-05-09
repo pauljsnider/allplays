@@ -78,6 +78,8 @@
             </div>
         </div>
 
+        <section id="team-scorekeeper-section" class="mb-8 hidden"></section>
+
         <section id="availability-settings-section" class="mb-8 hidden"></section>
 
         <section id="tournament-standings-section" class="mb-8 hidden">
@@ -305,7 +307,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=19';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=20';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -370,6 +372,7 @@
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
+        window.toggleScorekeeperGrant = toggleScorekeeperGrant;
 
         function canManageTeamAvailability() {
             return !!currentUser && (
@@ -378,6 +381,107 @@
                 currentTeamAccessInfo?.accessLevel === 'owner' ||
                 currentTeamAccessInfo?.accessLevel === 'admin'
             );
+        }
+
+        function canManageScorekeeperGrants() {
+            return canManageTeamAvailability();
+        }
+
+        function getPlayerMemberUserId(player) {
+            return String(player?.userId || player?.authUid || player?.accountUserId || '').trim();
+        }
+
+        function getSelectedScorekeeperIds(team) {
+            const scorekeeping = team?.teamPermissions?.scorekeeping || {};
+            if (scorekeeping.mode !== 'selected') return new Set();
+            return new Set((Array.isArray(scorekeeping.memberIds) ? scorekeeping.memberIds : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean));
+        }
+
+        function renderScorekeeperGrantControls(team, players = []) {
+            const section = document.getElementById('team-scorekeeper-section');
+            if (!section) return;
+            if (!canManageScorekeeperGrants()) {
+                section.classList.add('hidden');
+                section.innerHTML = '';
+                return;
+            }
+
+            const selectedScorekeeperIds = getSelectedScorekeeperIds(team);
+            const eligiblePlayers = (players || [])
+                .map((player) => ({ player, memberUserId: getPlayerMemberUserId(player) }))
+                .filter(({ memberUserId }) => memberUserId);
+
+            section.classList.remove('hidden');
+            section.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-900">Scorekeeper access</h2>
+                            <p class="text-sm text-gray-500 mt-1">Grant an existing team member scorekeeping access without making them a team admin.</p>
+                        </div>
+                    </div>
+                    ${eligiblePlayers.length ? `
+                        <div class="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
+                            ${eligiblePlayers.map(({ player, memberUserId }) => {
+                                const granted = selectedScorekeeperIds.has(memberUserId);
+                                return `
+                                    <div class="flex items-center justify-between gap-3 p-3">
+                                        <div class="min-w-0">
+                                            <div class="font-semibold text-gray-900 truncate">${escapeHtml(player.name || 'Team member')}</div>
+                                            <div class="text-xs text-gray-500">${granted ? 'Can score games. No team admin access.' : 'No scorekeeper grant.'}</div>
+                                        </div>
+                                        <button type="button" data-member-user-id="${escapeAttr(memberUserId)}" data-granted="${granted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="shrink-0 px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${granted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
+                                            ${granted ? 'Revoke' : 'Grant'}
+                                        </button>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    ` : '<p class="text-sm text-gray-500">No linked team member accounts found on the roster yet.</p>'}
+                    <div id="team-scorekeeper-status" class="mt-2 text-xs text-gray-500" aria-live="polite"></div>
+                </div>
+            `;
+        }
+
+        async function toggleScorekeeperGrant(button) {
+            if (!button || button.disabled || !currentTeamId) return;
+            const memberUserId = String(button.dataset.memberUserId || '').trim();
+            if (!memberUserId) return;
+            const wasGranted = button.dataset.granted === 'true';
+            const status = document.getElementById('team-scorekeeper-status');
+            try {
+                button.disabled = true;
+                if (status) status.textContent = wasGranted ? 'Revoking scorekeeper access...' : 'Granting scorekeeper access...';
+                if (wasGranted) {
+                    await revokeScorekeeperAccess(currentTeamId, memberUserId);
+                } else {
+                    await grantScorekeeperAccess(currentTeamId, memberUserId);
+                }
+                const nextIds = getSelectedScorekeeperIds(currentTeam);
+                if (wasGranted) {
+                    nextIds.delete(memberUserId);
+                } else {
+                    nextIds.add(memberUserId);
+                }
+                currentTeam = {
+                    ...currentTeam,
+                    teamPermissions: {
+                        ...(currentTeam?.teamPermissions || {}),
+                        scorekeeping: {
+                            mode: 'selected',
+                            memberIds: Array.from(nextIds)
+                        }
+                    }
+                };
+                renderScorekeeperGrantControls(currentTeam, currentPlayers);
+                const nextStatus = document.getElementById('team-scorekeeper-status');
+                if (nextStatus) nextStatus.textContent = wasGranted ? 'Scorekeeper access revoked.' : 'Scorekeeper access granted.';
+            } catch (err) {
+                button.disabled = false;
+                if (status) status.textContent = `Unable to update scorekeeper access: ${err?.message || err}`;
+            }
         }
 
         function renderAvailabilitySettings(team) {
@@ -1328,6 +1432,7 @@
                     }
                 }
 
+                renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
                 renderTeamPassCard(document.getElementById('team-pass-container'), {
                     user: currentUser,

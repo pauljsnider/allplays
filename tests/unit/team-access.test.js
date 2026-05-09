@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasFullTeamAccess, hasStreamTeamAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
+import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
 
 const TEAM = {
   id: 'team-1',
@@ -115,6 +115,40 @@ describe('team access helpers', () => {
 
   it('returns no access for unrelated users', () => {
     expect(getTeamAccessInfo({ uid: 'u5', email: 'random@example.com' }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
+    });
+  });
+
+  it('grants limited scorekeeper access to selected team permission members', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        scorekeeping: { mode: 'selected', memberIds: [' selected-user '] }
+      }
+    };
+    const game = { id: 'game-1', status: 'scheduled' };
+
+    expect(hasScorekeepingTeamAccess({ uid: 'selected-user' }, team, game)).toBe(true);
+    expect(hasFullTeamAccess({ uid: 'selected-user' }, team)).toBe(false);
+    expect(getTeamAccessInfo({ uid: 'selected-user' }, team, { game })).toEqual({
+      hasAccess: true,
+      accessLevel: 'scorekeep',
+      exitUrl: 'team.html#teamId=team-1'
+    });
+  });
+
+  it('denies selected scorekeeper access to admin-only management when the game is cancelled', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        scorekeeping: { mode: 'selected', memberIds: ['selected-user'] }
+      }
+    };
+
+    expect(hasScorekeepingTeamAccess({ uid: 'selected-user' }, team, { id: 'game-1', status: 'cancelled' })).toBe(false);
+    expect(getTeamAccessInfo({ uid: 'selected-user' }, team, { game: { id: 'game-1', status: 'cancelled' } })).toEqual({
       hasAccess: false,
       accessLevel: null,
       exitUrl: 'index.html'
