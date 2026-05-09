@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-3J13LHWFT3');
+    </script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Team Media - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-6 max-w-5xl">
+        <div id="team-banner" class="mb-6"></div>
+
+        <section class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <div class="p-6 border-b border-gray-100 bg-gradient-to-r from-primary-50 to-white">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <p class="text-sm font-semibold text-primary-700 uppercase tracking-wide">Team library</p>
+                        <h1 class="text-2xl md:text-3xl font-bold text-gray-900 mt-1">Media</h1>
+                        <p id="media-page-subtitle" class="text-gray-600 mt-2">Browse team video folders and highlights shared with this team.</p>
+                    </div>
+                    <span id="media-role-badge" class="self-start rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-700">Loading...</span>
+                </div>
+            </div>
+
+            <div id="media-page-content" class="p-6">
+                <div class="text-center py-12">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-3"></div>
+                    <p class="text-sm text-gray-500">Loading team media...</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module" src="./js/team-media.js?v=1"></script>
+</body>
+
+</html>

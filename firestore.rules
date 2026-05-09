@@ -992,6 +992,12 @@ service cloud.firestore {
         }
       }
 
+      // Team media folders subcollection (read-only entry point)
+      match /mediaFolders/{folderId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if false;
+      }
+
       // Chat messages subcollection
       match /chatMessages/{messageId} {
         // List queries are unfiltered by target metadata in existing clients.
