@@ -123,6 +123,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
   const sport = team?.sport || '';
   const photoUrl = team?.photoUrl || '';
   const isFullAccess = accessLevel === 'full';
+  const canViewMedia = isFullAccess || accessLevel === 'parent';
   const helpRole = isFullAccess ? 'coach' : 'parent';
 
   const hrefs = {
@@ -162,7 +163,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
     navCards = `
       ${actionCard({ href: hrefs.view, label: 'View', iconName: 'view', active: active === 'view' })}
       ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
-      ${actionCard({ href: hrefs.media, label: 'Media', iconName: 'media', active: active === 'media' })}
+      ${canViewMedia ? actionCard({ href: hrefs.media, label: 'Media', iconName: 'media', active: active === 'media' }) : ''}
       ${actionCard({ href: `${hrefs.help}&role=${helpRole}`, label: 'Help', iconName: 'help', active: active === 'help' })}
     `;
   }

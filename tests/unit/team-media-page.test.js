@@ -12,6 +12,8 @@ describe('team media entry point', () => {
         expect(bannerJs).toContain('media: `team-media.html#teamId=${teamId}`');
         expect(bannerJs).toContain("label: 'Media', iconName: 'media', active: active === 'media'");
         expect(bannerJs).toContain('// Parent: View, Chat, Media, Help');
+        expect(bannerJs).toContain("const canViewMedia = isFullAccess || accessLevel === 'parent';");
+        expect(bannerJs).toContain('canViewMedia ? actionCard');
     });
 
     it('loads team media with team-scoped access checks and read-only empty states', () => {
