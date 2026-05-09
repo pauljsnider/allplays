@@ -85,6 +85,7 @@ import {
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
     getRegistrationGuardianDrafts,
@@ -5204,4 +5205,44 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
     return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+}
+
+export async function getPublicTrackingItems(teamId) {
+    const snap = await getDocs(query(
+        collection(db, `teams/${teamId}/trackingItems`),
+        where('public', '==', true),
+        where('private', '==', false),
+        where('isPrivate', '==', false)
+    ));
+    return snap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter(isPublicTrackingItem);
+}
+
+export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
+    const uniquePlayerIds = Array.from(new Set((Array.isArray(playerIds) ? playerIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)));
+    if (uniquePlayerIds.length === 0) return [];
+
+    const playerIdFields = ['playerId', 'childId', 'memberId'];
+    const trackingCollection = collection(db, `teams/${teamId}/memberTracking`);
+    const snapshots = await Promise.all(uniquePlayerIds.flatMap((playerId) => (
+        playerIdFields.map((fieldName) => getDocs(query(
+            trackingCollection,
+            where(fieldName, '==', playerId),
+            where('public', '==', true)
+        )))
+    )));
+
+    const statusesById = new Map();
+    snapshots.forEach((snap) => {
+        snap.docs.forEach((docSnap) => {
+            statusesById.set(docSnap.id, normalizeTrackingStatus({
+                id: docSnap.id,
+                ...docSnap.data()
+            }));
+        });
+    });
+    return Array.from(statusesById.values());
 }
