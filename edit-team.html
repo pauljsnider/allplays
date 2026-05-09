@@ -488,6 +488,7 @@
         let teamPermissions = normalizeTeamPermissions();
         let rolloverSourceTeams = [];
         let rolloverAccessPreview = null;
+        let currentRegistrationSource = null;
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
         let selectedRegistrationTeam = null;
@@ -577,6 +578,9 @@
         }
 
         function populateRegistrationProviderFields(team = {}) {
+            currentRegistrationSource = team.registrationSource && typeof team.registrationSource === 'object'
+                ? { ...team.registrationSource }
+                : null;
             document.getElementById('registrationProviderName').value = getRegistrationSourceValue(team, 'provider') || getRegistrationSourceValue(team, 'providerName');
             document.getElementById('registrationExternalTeamId').value = getRegistrationSourceValue(team, 'externalTeamId');
             document.getElementById('registrationLastSyncStatus').value = getRegistrationSourceValue(team, 'lastSyncStatus') || getRegistrationSourceValue(team, 'syncStatus');
@@ -597,6 +601,7 @@
                 return null;
             }
             return {
+                ...(currentTeamId && currentRegistrationSource ? currentRegistrationSource : {}),
                 provider,
                 externalTeamId,
                 teamId: currentTeamId || null,

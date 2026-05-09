@@ -705,6 +705,10 @@ describe('edit team admin access persistence', () => {
                 registrationSource: {
                     provider: 'Sports Connect',
                     externalTeamId: 'SC-123',
+                    sourceId: 'sports-connect',
+                    externalTeamName: 'Sharks 12U',
+                    season: 'Spring 2026',
+                    division: '12U',
                     teamId: 'team-1',
                     lastSyncStatus: 'Not synced'
                 }
@@ -728,6 +732,10 @@ describe('edit team admin access persistence', () => {
             expect(env.state.updateCalls[0].teamData.registrationSource).toEqual({
                 provider: 'League Apps',
                 externalTeamId: 'LA-456',
+                sourceId: 'sports-connect',
+                externalTeamName: 'Sharks 12U',
+                season: 'Spring 2026',
+                division: '12U',
                 teamId: 'team-1',
                 lastSyncStatus: 'Documented only'
             });
