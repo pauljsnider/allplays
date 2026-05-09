@@ -957,7 +957,8 @@
                 state.game = game;
 
                 const needsRsvpForScopedAccess = ['confirmed_members', 'all_confirmed'].includes(String(team.streamAccessMode || '').toLowerCase())
-                    || String(team.teamPermissions?.scorekeeping?.mode || '').toLowerCase() === 'all_confirmed';
+                    || String(team.teamPermissions?.scorekeeping?.mode || '').toLowerCase() === 'all_confirmed'
+                    || String(team.teamPermissions?.streaming?.mode || '').toLowerCase() === 'all_confirmed';
                 const scopedRsvp = needsRsvpForScopedAccess
                     ? await getMyRsvp(teamId, resolvedGameId, state.user.uid).catch(() => null)
                     : null;
