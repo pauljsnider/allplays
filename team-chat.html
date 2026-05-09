@@ -61,7 +61,10 @@
         <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden flex flex-col">
             <!-- Chat Header -->
             <div class="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                <h2 class="text-lg font-bold text-gray-900">Team Chat</h2>
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Team Chat</h2>
+                    <p id="active-conversation-label" class="text-sm text-gray-500">Team-wide channel</p>
+                </div>
                 <div class="flex items-center gap-2">
                     <button id="media-gallery-btn"
                         class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
@@ -78,6 +81,14 @@
                         </svg>
                         Refresh
                     </button>
+                </div>
+            </div>
+
+            <!-- Conversations -->
+            <div id="conversations-container" class="border-b border-gray-100 bg-white px-4 py-3">
+                <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Conversations</div>
+                <div id="conversations-list" class="flex gap-2 overflow-x-auto pb-1">
+                    <button type="button" class="rounded-full bg-primary-600 px-3 py-1.5 text-sm font-medium text-white">Team-wide</button>
                 </div>
             </div>
 
@@ -217,7 +228,8 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=13';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=30';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=31';
+        import { DEFAULT_TEAM_CONVERSATION_ID, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
             MAX_CHAT_MEDIA_SIZE,
@@ -383,6 +395,8 @@
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
         const reactionUserNameCache = new Map();
+        let conversations = [];
+        let selectedConversationId = DEFAULT_TEAM_CONVERSATION_ID;
         let recipientOptions = [];
         let selectedRecipientTarget = 'full_team';
         let selectedRecipientIds = new Set();
@@ -460,7 +474,7 @@
                     accessLevel,
                     exitUrl
                 });
-                renderRecipientPicker();
+                await loadConversations();
 
                 // Load messages (real-time)
                 startRealtimeUpdates();
@@ -487,7 +501,7 @@
                     return;
                 }
 
-                const newMessages = await getChatMessages(teamId, { limit: 50, startAfterDoc: cursor });
+                const newMessages = await getChatMessages(teamId, { limit: 50, startAfterDoc: cursor, conversationId: selectedConversationId });
 
                 if (newMessages.length < 50) {
                     hasMoreMessages = false;
@@ -525,7 +539,7 @@
             liveMessages = [];
             liveOldestDoc = null;
 
-            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50 }, async (newMessages, oldestDoc) => {
+            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50, conversationId: selectedConversationId }, async (newMessages, oldestDoc) => {
                 const container = document.getElementById('messages-container');
                 const wasNearBottom = isNearBottom(container);
 
@@ -1046,7 +1060,80 @@
             }
         }
 
+        async function loadConversations() {
+            conversations = await getChatConversations(teamId, currentUser, {
+                team: currentTeam,
+                canModerate
+            });
+            if (!conversations.some((conversation) => conversation.id === selectedConversationId)) {
+                selectedConversationId = DEFAULT_TEAM_CONVERSATION_ID;
+            }
+            renderConversations();
+        }
+
+        function getSelectedConversation() {
+            return conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null;
+        }
+
+        function renderConversations() {
+            const list = document.getElementById('conversations-list');
+            const label = document.getElementById('active-conversation-label');
+            if (!list) return;
+
+            const visibleConversations = conversations.length > 0
+                ? conversations
+                : [{ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', name: 'Team-wide' }];
+            list.innerHTML = visibleConversations.map((conversation) => {
+                const active = conversation.id === selectedConversationId;
+                const name = getConversationDisplayName(conversation, currentTeam);
+                const type = conversation.type === 'direct' ? 'Direct' : (conversation.type === 'group' ? 'Group' : 'Team');
+                return `
+                    <button type="button" data-conversation-id="${escapeHtml(conversation.id)}"
+                        class="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium transition ${active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-primary-50 hover:text-primary-700'}">
+                        ${escapeHtml(name)}
+                        <span class="ml-1 text-xs ${active ? 'text-primary-100' : 'text-gray-400'}">${escapeHtml(type)}</span>
+                    </button>
+                `;
+            }).join('');
+
+            const activeConversation = getSelectedConversation();
+            if (label) {
+                label.textContent = isDefaultTeamConversation(selectedConversationId)
+                    ? 'Team-wide channel'
+                    : `${getConversationDisplayName(activeConversation, currentTeam)} conversation`;
+            }
+            renderRecipientPicker();
+        }
+
+        async function switchConversation(conversationId) {
+            if (!conversationId || conversationId === selectedConversationId) return;
+            selectedConversationId = conversationId;
+            messages = [];
+            olderMessages = [];
+            liveMessages = [];
+            liveOldestDoc = null;
+            hasMoreMessages = true;
+            activeReactionPickerMessageId = null;
+            activeReactionInfo = null;
+            document.getElementById('messages-container').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                    <p class="text-sm text-gray-500">Loading messages...</p>
+                </div>
+            `;
+            renderConversations();
+            startRealtimeUpdates();
+        }
+
         function buildRecipientTargetMetadata() {
+            const activeConversation = getSelectedConversation();
+            if (activeConversation && !isDefaultTeamConversation(selectedConversationId)) {
+                return {
+                    targetType: activeConversation.type === 'direct' ? 'individuals' : 'individuals',
+                    recipientIds: Array.isArray(activeConversation.participantIds) ? activeConversation.participantIds : [],
+                    targetRole: null
+                };
+            }
             if (selectedRecipientTarget === 'staff') {
                 return {
                     targetType: 'staff',
@@ -1093,7 +1180,7 @@
             const select = document.getElementById('recipient-target');
             if (!picker || !summary || !list || !select) return;
 
-            if (!canModerate) {
+            if (!canModerate || !isDefaultTeamConversation(selectedConversationId)) {
                 picker.classList.add('hidden');
                 return;
             }
@@ -1807,6 +1894,8 @@
                     ai: true,
                     aiName: 'ALL PLAYS',
                     aiQuestion: question,
+                    conversationId: selectedConversationId,
+                    ...buildRecipientTargetMetadata(),
                     aiMeta: {
                         statsGameLimit: AI_STATS_GAMES_LIMIT,
                         gamesContextLimit: AI_GAMES_CONTEXT_LIMIT,
@@ -1880,7 +1969,7 @@
             pendingReactionOps.add(opKey);
 
             try {
-                await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid);
+                await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid, { conversationId: selectedConversationId });
                 activeReactionPickerMessageId = null;
                 activeReactionInfo = null;
             } catch (error) {
@@ -1901,6 +1990,11 @@
             document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
             document.getElementById('media-gallery-btn').addEventListener('click', openMediaGallery);
             document.getElementById('media-gallery-close-btn').addEventListener('click', closeMediaGallery);
+            document.getElementById('conversations-list').addEventListener('click', (event) => {
+                const button = event.target.closest('[data-conversation-id]');
+                if (!button) return;
+                switchConversation(button.dataset.conversationId);
+            });
             document.getElementById('media-gallery-grid').addEventListener('click', (event) => {
                 const actionButton = event.target.closest('[data-media-action]');
                 if (!actionButton) return;
@@ -2069,6 +2163,7 @@
             const text = input.value.trim();
             const imageFiles = pendingImageFiles.slice();
             const wantsAi = /@all\s*plays/i.test(text);
+            const originalConversationId = selectedConversationId;
 
             if (!text && imageFiles.length === 0) return;
 
@@ -2086,6 +2181,24 @@
                     }
                 }
                 pendingScrollToBottom = true;
+                const targetMetadata = buildRecipientTargetMetadata();
+                let conversationId = selectedConversationId;
+                if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
+                    const participantIds = targetMetadata.targetType === 'staff'
+                        ? [currentUser.uid]
+                        : Array.from(new Set([currentUser.uid, ...targetMetadata.recipientIds]));
+                    const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
+                    const conversation = await upsertChatConversation(teamId, {
+                        type: participantIds.length === 2 ? 'direct' : 'group',
+                        participantIds,
+                        participantRoles,
+                        mutedBy: [],
+                        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null
+                    });
+                    conversationId = conversation.id;
+                    selectedConversationId = conversationId;
+                    await loadConversations();
+                }
                 await postChatMessage(teamId, {
                     text,
                     senderId: currentUser.uid,
@@ -2093,12 +2206,19 @@
                     senderEmail: currentUser.email,
                     senderPhotoUrl: currentUserProfile?.photoUrl || null,
                     attachments: mediaPayloads,
-                    ...buildRecipientTargetMetadata()
+                    conversationId,
+                    ...targetMetadata
                 });
 
                 input.value = '';
                 clearSelectedImage();
                 document.getElementById('send-error').classList.add('hidden');
+                if (selectedConversationId !== originalConversationId) {
+                    olderMessages = [];
+                    liveMessages = [];
+                    messages = [];
+                    startRealtimeUpdates();
+                }
                 scrollToBottom();
                 hideMentionMenu();
 
@@ -2163,7 +2283,7 @@
             saveBtn.textContent = 'Saving...';
 
             try {
-                await editChatMessage(teamId, editingMessageId, newText);
+                await editChatMessage(teamId, editingMessageId, newText, { conversationId: selectedConversationId });
                 closeEditModal();
 
             } catch (error) {
@@ -2180,7 +2300,7 @@
             if (!confirm('Delete this message?')) return;
 
             try {
-                await deleteChatMessage(teamId, messageId);
+                await deleteChatMessage(teamId, messageId, { conversationId: selectedConversationId });
 
             } catch (error) {
                 console.error('Error deleting message:', error);
