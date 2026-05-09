@@ -82,6 +82,35 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function isPlayerSelf(teamId, playerId) {
+      let playerPath = /databases/$(database)/documents/teams/$(teamId)/players/$(playerId);
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let playerKey = teamId + "::" + playerId;
+      return isSignedIn() &&
+             (
+               (exists(playerPath) && get(playerPath).data.get('userId', get(playerPath).data.get('authUid', get(playerPath).data.get('accountUserId', ''))) == request.auth.uid) ||
+               (exists(userPath) && playerKey in get(userPath).data.get('playerKeys', []))
+             );
+    }
+
+    function isPublicTrackingItem(data) {
+      return data.get('public', false) == true &&
+             data.get('private', false) != true &&
+             data.get('isPrivate', false) != true;
+    }
+
+    function canReadPublicTrackingStatus(teamId, data) {
+      let playerId = data.get('playerId', data.get('childId', data.get('memberId', '')));
+      let itemId = data.get('itemId', data.get('trackingItemId', ''));
+      let itemPath = /databases/$(database)/documents/teams/$(teamId)/trackingItems/$(itemId);
+      return data.get('public', false) == true &&
+             playerId is string &&
+             itemId is string &&
+             (isParentForPlayer(teamId, playerId) || isPlayerSelf(teamId, playerId)) &&
+             exists(itemPath) &&
+             isPublicTrackingItem(get(itemPath).data);
+    }
+
     function hasIncentivePlayerLink(data) {
       return data.teamId is string &&
              data.playerId is string &&
@@ -573,6 +602,16 @@ service cloud.firestore {
 
       match /rosterFields/{fieldId} {
         allow read: if true;
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /trackingItems/{itemId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || isPublicTrackingItem(resource.data);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /memberTracking/{trackingId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) || canReadPublicTrackingStatus(teamId, resource.data);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
