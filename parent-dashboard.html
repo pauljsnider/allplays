@@ -1088,8 +1088,9 @@
                 const sessions = [];
                 const matchedSessionIds = new Set();
                 visibleSessions.forEach((session) => {
-                    if (!session?.eventId) return;
-                    sessionsByEventId.set(session.eventId, session);
+                    if (session?.eventId) {
+                        sessionsByEventId.set(session.eventId, session);
+                    }
                     sessions.push({
                         ...session,
                         _parsedDate: toDateSafe(session.date)
