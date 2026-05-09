@@ -61,7 +61,10 @@
         <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden flex flex-col">
             <!-- Chat Header -->
             <div class="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-                <h2 class="text-lg font-bold text-gray-900">Team Chat</h2>
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Team Chat</h2>
+                    <p id="active-conversation-label" class="text-sm text-gray-500">Team-wide channel</p>
+                </div>
                 <div class="flex items-center gap-2">
                     <button id="media-gallery-btn"
                         class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
@@ -78,6 +81,14 @@
                         </svg>
                         Refresh
                     </button>
+                </div>
+            </div>
+
+            <!-- Conversations -->
+            <div id="conversations-container" class="border-b border-gray-100 bg-white px-4 py-3">
+                <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Conversations</div>
+                <div id="conversations-list" class="flex gap-2 overflow-x-auto pb-1">
+                    <button type="button" class="rounded-full bg-primary-600 px-3 py-1.5 text-sm font-medium text-white">Team-wide</button>
                 </div>
             </div>
 
@@ -99,6 +110,20 @@
 
             <!-- Composer -->
             <div class="p-4 border-t border-gray-200 bg-gray-50">
+                <div id="recipient-picker" class="hidden mb-3 rounded-xl border border-gray-200 bg-white p-3">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <label for="recipient-target" class="block text-xs font-semibold uppercase tracking-wide text-gray-500">Send to</label>
+                            <select id="recipient-target" class="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                <option value="full_team">Full team</option>
+                                <option value="staff">Staff only</option>
+                                <option value="individuals">Selected members</option>
+                            </select>
+                        </div>
+                        <div id="recipient-summary" class="text-sm text-gray-700 sm:text-right">Audience: Full team</div>
+                    </div>
+                    <div id="recipient-list" class="hidden mt-3 max-h-44 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100"></div>
+                </div>
                 <div class="flex gap-2 items-start">
                     <div class="relative flex-1">
                         <div class="flex items-center gap-1 w-full rounded-lg border border-gray-300 bg-white px-2 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500">
@@ -203,7 +228,8 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=13';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=29';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=31';
+        import { DEFAULT_TEAM_CONVERSATION_ID, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
             MAX_CHAT_MEDIA_SIZE,
@@ -369,6 +395,11 @@
         let activeReactionInfo = null;
         const pendingReactionOps = new Set();
         const reactionUserNameCache = new Map();
+        let conversations = [];
+        let selectedConversationId = DEFAULT_TEAM_CONVERSATION_ID;
+        let recipientOptions = [];
+        let selectedRecipientTarget = 'full_team';
+        let selectedRecipientIds = new Set();
         const reactionLongPress = {
             timer: null,
             key: null,
@@ -429,6 +460,9 @@
                 }
 
                 canModerate = canModerateChat(userWithProfile, currentTeam);
+                if (canModerate) {
+                    await loadRecipientOptions();
+                }
 
                 // Render team navigation banner with appropriate access level
                 const accessLevel = canModerate ? 'full' : 'parent';
@@ -440,6 +474,7 @@
                     accessLevel,
                     exitUrl
                 });
+                await loadConversations();
 
                 // Load messages (real-time)
                 startRealtimeUpdates();
@@ -466,7 +501,7 @@
                     return;
                 }
 
-                const newMessages = await getChatMessages(teamId, { limit: 50, startAfterDoc: cursor });
+                const newMessages = await getChatMessages(teamId, { limit: 50, startAfterDoc: cursor, conversationId: selectedConversationId });
 
                 if (newMessages.length < 50) {
                     hasMoreMessages = false;
@@ -504,7 +539,7 @@
             liveMessages = [];
             liveOldestDoc = null;
 
-            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50 }, async (newMessages, oldestDoc) => {
+            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50, conversationId: selectedConversationId }, async (newMessages, oldestDoc) => {
                 const container = document.getElementById('messages-container');
                 const wasNearBottom = isNearBottom(container);
 
@@ -980,6 +1015,202 @@
             }).join('');
 
             preview.classList.remove('hidden');
+        }
+
+        function getRecipientOptionId(kind, value) {
+            return `${kind}:${String(value || '').trim()}`;
+        }
+
+        function getRecipientOptionLabel(option) {
+            return option.detail ? `${option.name} (${option.detail})` : option.name;
+        }
+
+        async function loadRecipientOptions() {
+            try {
+                const players = await getPlayers(teamId);
+                const options = [];
+                players.forEach((player) => {
+                    if (!player?.id) return;
+                    const number = player.number !== undefined && player.number !== null && String(player.number).trim() !== ''
+                        ? `#${player.number}`
+                        : 'Roster';
+                    options.push({
+                        id: getRecipientOptionId('player', player.id),
+                        name: player.name || `Player ${player.id.slice(0, 6)}`,
+                        detail: number
+                    });
+                    (Array.isArray(player.parents) ? player.parents : []).forEach((parent) => {
+                        const parentKey = parent?.userId || parent?.email || '';
+                        if (!parentKey) return;
+                        const parentName = parent.name || parent.fullName || parent.email || 'Guardian';
+                        options.push({
+                            id: getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey),
+                            name: parentName,
+                            detail: player.name ? `Guardian for ${player.name}` : 'Guardian'
+                        });
+                    });
+                });
+                const uniqueById = new Map();
+                options.forEach((option) => uniqueById.set(option.id, option));
+                recipientOptions = Array.from(uniqueById.values())
+                    .sort((a, b) => getRecipientOptionLabel(a).localeCompare(getRecipientOptionLabel(b)));
+            } catch (error) {
+                console.warn('Failed to load chat recipient options:', error);
+                recipientOptions = [];
+            }
+        }
+
+        async function loadConversations() {
+            conversations = await getChatConversations(teamId, currentUser, {
+                team: currentTeam,
+                canModerate
+            });
+            if (!conversations.some((conversation) => conversation.id === selectedConversationId)) {
+                selectedConversationId = DEFAULT_TEAM_CONVERSATION_ID;
+            }
+            renderConversations();
+        }
+
+        function getSelectedConversation() {
+            return conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null;
+        }
+
+        function renderConversations() {
+            const list = document.getElementById('conversations-list');
+            const label = document.getElementById('active-conversation-label');
+            if (!list) return;
+
+            const visibleConversations = conversations.length > 0
+                ? conversations
+                : [{ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', name: 'Team-wide' }];
+            list.innerHTML = visibleConversations.map((conversation) => {
+                const active = conversation.id === selectedConversationId;
+                const name = getConversationDisplayName(conversation, currentTeam);
+                const type = conversation.type === 'direct' ? 'Direct' : (conversation.type === 'group' ? 'Group' : 'Team');
+                return `
+                    <button type="button" data-conversation-id="${escapeHtml(conversation.id)}"
+                        class="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium transition ${active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-primary-50 hover:text-primary-700'}">
+                        ${escapeHtml(name)}
+                        <span class="ml-1 text-xs ${active ? 'text-primary-100' : 'text-gray-400'}">${escapeHtml(type)}</span>
+                    </button>
+                `;
+            }).join('');
+
+            const activeConversation = getSelectedConversation();
+            if (label) {
+                label.textContent = isDefaultTeamConversation(selectedConversationId)
+                    ? 'Team-wide channel'
+                    : `${getConversationDisplayName(activeConversation, currentTeam)} conversation`;
+            }
+            renderRecipientPicker();
+        }
+
+        async function switchConversation(conversationId) {
+            if (!conversationId || conversationId === selectedConversationId) return;
+            selectedConversationId = conversationId;
+            messages = [];
+            olderMessages = [];
+            liveMessages = [];
+            liveOldestDoc = null;
+            hasMoreMessages = true;
+            activeReactionPickerMessageId = null;
+            activeReactionInfo = null;
+            document.getElementById('messages-container').innerHTML = `
+                <div class="text-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                    <p class="text-sm text-gray-500">Loading messages...</p>
+                </div>
+            `;
+            renderConversations();
+            startRealtimeUpdates();
+        }
+
+        function buildRecipientTargetMetadata() {
+            const activeConversation = getSelectedConversation();
+            if (activeConversation && !isDefaultTeamConversation(selectedConversationId)) {
+                return {
+                    targetType: activeConversation.type === 'direct' ? 'individuals' : 'individuals',
+                    recipientIds: Array.isArray(activeConversation.participantIds) ? activeConversation.participantIds : [],
+                    targetRole: null
+                };
+            }
+            if (selectedRecipientTarget === 'staff') {
+                return {
+                    targetType: 'staff',
+                    recipientIds: [],
+                    targetRole: 'staff'
+                };
+            }
+            if (selectedRecipientTarget === 'individuals' && selectedRecipientIds.size > 0) {
+                return {
+                    targetType: 'individuals',
+                    recipientIds: Array.from(selectedRecipientIds).sort(),
+                    targetRole: null
+                };
+            }
+            return {
+                targetType: 'full_team',
+                recipientIds: [],
+                targetRole: null
+            };
+        }
+
+        function getRecipientSummaryText() {
+            const target = buildRecipientTargetMetadata();
+            if (target.targetType === 'staff') {
+                return 'Audience: Staff only';
+            }
+            if (target.targetType === 'individuals') {
+                const selected = recipientOptions.filter((option) => selectedRecipientIds.has(option.id));
+                if (selected.length === 0) {
+                    return 'Audience: Full team (no selected members yet)';
+                }
+                if (selected.length <= 3) {
+                    return `Audience: ${selected.map(getRecipientOptionLabel).join(', ')}`;
+                }
+                return `Audience: ${selected.slice(0, 3).map(getRecipientOptionLabel).join(', ')} +${selected.length - 3} more`;
+            }
+            return 'Audience: Full team';
+        }
+
+        function renderRecipientPicker() {
+            const picker = document.getElementById('recipient-picker');
+            const summary = document.getElementById('recipient-summary');
+            const list = document.getElementById('recipient-list');
+            const select = document.getElementById('recipient-target');
+            if (!picker || !summary || !list || !select) return;
+
+            if (!canModerate || !isDefaultTeamConversation(selectedConversationId)) {
+                picker.classList.add('hidden');
+                return;
+            }
+
+            picker.classList.remove('hidden');
+            select.value = selectedRecipientTarget;
+            summary.textContent = getRecipientSummaryText();
+
+            if (selectedRecipientTarget !== 'individuals') {
+                list.classList.add('hidden');
+                list.innerHTML = '';
+                return;
+            }
+
+            list.classList.remove('hidden');
+            if (recipientOptions.length === 0) {
+                list.innerHTML = '<div class="px-3 py-2 text-sm text-gray-500">No roster or community members are available yet.</div>';
+                return;
+            }
+
+            list.innerHTML = recipientOptions.map((option) => `
+                <label class="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-gray-50">
+                    <input type="checkbox" data-recipient-id="${escapeHtml(option.id)}" ${selectedRecipientIds.has(option.id) ? 'checked' : ''}
+                        class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                    <span class="min-w-0 flex-1">
+                        <span class="block truncate text-sm font-medium text-gray-800">${escapeHtml(option.name)}</span>
+                        ${option.detail ? `<span class="block truncate text-xs text-gray-500">${escapeHtml(option.detail)}</span>` : ''}
+                    </span>
+                </label>
+            `).join('');
         }
 
         function updateComposerState() {
@@ -1663,6 +1894,8 @@
                     ai: true,
                     aiName: 'ALL PLAYS',
                     aiQuestion: question,
+                    conversationId: selectedConversationId,
+                    ...buildRecipientTargetMetadata(),
                     aiMeta: {
                         statsGameLimit: AI_STATS_GAMES_LIMIT,
                         gamesContextLimit: AI_GAMES_CONTEXT_LIMIT,
@@ -1736,7 +1969,7 @@
             pendingReactionOps.add(opKey);
 
             try {
-                await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid);
+                await toggleChatReaction(teamId, messageId, reactionKey, currentUser.uid, { conversationId: selectedConversationId });
                 activeReactionPickerMessageId = null;
                 activeReactionInfo = null;
             } catch (error) {
@@ -1757,10 +1990,32 @@
             document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
             document.getElementById('media-gallery-btn').addEventListener('click', openMediaGallery);
             document.getElementById('media-gallery-close-btn').addEventListener('click', closeMediaGallery);
+            document.getElementById('conversations-list').addEventListener('click', (event) => {
+                const button = event.target.closest('[data-conversation-id]');
+                if (!button) return;
+                switchConversation(button.dataset.conversationId);
+            });
             document.getElementById('media-gallery-grid').addEventListener('click', (event) => {
                 const actionButton = event.target.closest('[data-media-action]');
                 if (!actionButton) return;
                 handleGalleryMediaAction(actionButton);
+            });
+            document.getElementById('recipient-target').addEventListener('change', (event) => {
+                selectedRecipientTarget = event.target.value || 'full_team';
+                if (selectedRecipientTarget !== 'individuals') {
+                    selectedRecipientIds = new Set();
+                }
+                renderRecipientPicker();
+            });
+            document.getElementById('recipient-list').addEventListener('change', (event) => {
+                const recipientId = event.target?.dataset?.recipientId;
+                if (!recipientId) return;
+                if (event.target.checked) {
+                    selectedRecipientIds.add(recipientId);
+                } else {
+                    selectedRecipientIds.delete(recipientId);
+                }
+                renderRecipientPicker();
             });
 
             // Enter key to send
@@ -1908,6 +2163,7 @@
             const text = input.value.trim();
             const imageFiles = pendingImageFiles.slice();
             const wantsAi = /@all\s*plays/i.test(text);
+            const originalConversationId = selectedConversationId;
 
             if (!text && imageFiles.length === 0) return;
 
@@ -1925,18 +2181,44 @@
                     }
                 }
                 pendingScrollToBottom = true;
+                const targetMetadata = buildRecipientTargetMetadata();
+                let conversationId = selectedConversationId;
+                if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
+                    const participantIds = targetMetadata.targetType === 'staff'
+                        ? [currentUser.uid]
+                        : Array.from(new Set([currentUser.uid, ...targetMetadata.recipientIds]));
+                    const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
+                    const conversation = await upsertChatConversation(teamId, {
+                        type: participantIds.length === 2 ? 'direct' : 'group',
+                        participantIds,
+                        participantRoles,
+                        mutedBy: [],
+                        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null
+                    });
+                    conversationId = conversation.id;
+                    selectedConversationId = conversationId;
+                    await loadConversations();
+                }
                 await postChatMessage(teamId, {
                     text,
                     senderId: currentUser.uid,
                     senderName: currentUserProfile?.fullName || null,
                     senderEmail: currentUser.email,
                     senderPhotoUrl: currentUserProfile?.photoUrl || null,
-                    attachments: mediaPayloads
+                    attachments: mediaPayloads,
+                    conversationId,
+                    ...targetMetadata
                 });
 
                 input.value = '';
                 clearSelectedImage();
                 document.getElementById('send-error').classList.add('hidden');
+                if (selectedConversationId !== originalConversationId) {
+                    olderMessages = [];
+                    liveMessages = [];
+                    messages = [];
+                    startRealtimeUpdates();
+                }
                 scrollToBottom();
                 hideMentionMenu();
 
@@ -2001,7 +2283,7 @@
             saveBtn.textContent = 'Saving...';
 
             try {
-                await editChatMessage(teamId, editingMessageId, newText);
+                await editChatMessage(teamId, editingMessageId, newText, { conversationId: selectedConversationId });
                 closeEditModal();
 
             } catch (error) {
@@ -2018,7 +2300,7 @@
             if (!confirm('Delete this message?')) return;
 
             try {
-                await deleteChatMessage(teamId, messageId);
+                await deleteChatMessage(teamId, messageId, { conversationId: selectedConversationId });
 
             } catch (error) {
                 console.error('Error deleting message:', error);

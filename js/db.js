@@ -46,6 +46,15 @@ import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
+    DEFAULT_TEAM_CONVERSATION_ID,
+    buildConversationId,
+    buildDefaultTeamConversation,
+    isDefaultTeamConversation,
+    isUserInConversation,
+    normalizeConversationParticipantIds,
+    normalizeConversationType
+} from './team-chat-conversations.js';
+import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
     buildMirroredGamePayload,
@@ -76,6 +85,7 @@ import {
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
     getRegistrationGuardianDrafts,
@@ -2803,6 +2813,8 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
         status: 'open',
         collectionMode,
         offlinePaymentInstructions,
+        lineItems: feeDraft.lineItems || [],
+        installments: feeDraft.installments || [],
         createdBy: user.uid || null,
         createdByEmail: user.email || user.profileEmail || null,
         createdAt: now,
@@ -2823,6 +2835,8 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
             status: 'unpaid',
             collectionMode,
             offlinePaymentInstructions,
+            lineItems: feeDraft.lineItems || [],
+            installments: feeDraft.installments || [],
             createdAt: now,
             updatedAt: now
         });
@@ -3198,12 +3212,94 @@ export function canModerateChat(user, team) {
     return false;
 }
 
+function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+    if (isDefaultTeamConversation(conversationId)) {
+        return collection(db, 'teams', teamId, 'chatMessages');
+    }
+    return collection(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages');
+}
+
+/**
+ * Get conversations for a team. The default team-wide channel is virtual and keeps
+ * using teams/{teamId}/chatMessages for backwards compatibility.
+ */
+export async function getChatConversations(teamId, user = null, { team = null, canModerate = false } = {}) {
+    const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
+    const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
+    const participantQueries = canModerate
+        ? [query(conversationsRef, orderBy('updatedAt', 'desc'))]
+        : [
+            ...(user?.uid ? [
+                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc')),
+                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            ...(normalizedEmail ? [
+                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            query(conversationsRef, where('participantRoles', 'array-contains', 'team'), orderBy('updatedAt', 'desc'))
+        ];
+    const snapshots = participantQueries.length > 0
+        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        : [];
+    const conversationsById = new Map();
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((d) => {
+            conversationsById.set(d.id, { id: d.id, ...d.data() });
+        });
+    });
+    const stored = Array.from(conversationsById.values())
+        .filter((conversation) => !user || isUserInConversation(conversation, user, { canModerate }));
+    stored.sort((a, b) => {
+        const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : new Date(a.updatedAt || 0).getTime();
+        const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : new Date(b.updatedAt || 0).getTime();
+        return bTime - aTime;
+    });
+
+    return [buildDefaultTeamConversation(team), ...stored];
+}
+
+/**
+ * Create or update a lightweight conversation record.
+ */
+export async function upsertChatConversation(teamId, {
+    type = 'group',
+    participantIds = [],
+    participantRoles = [],
+    mutedBy = [],
+    name = null
+} = {}) {
+    const normalizedType = normalizeConversationType(type);
+    const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
+    const conversationId = buildConversationId(normalizedType, normalizedParticipantIds);
+    const now = Timestamp.now();
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+    const existing = await getDoc(conversationRef);
+    const payload = {
+        type: normalizedType,
+        participantIds: normalizedParticipantIds,
+        participantRoles: Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
+            .map((role) => String(role || '').trim())
+            .filter(Boolean)))
+            .sort(),
+        mutedBy: Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : [])),
+        updatedAt: now
+    };
+    if (name) {
+        payload.name = name;
+    }
+    if (!existing.exists()) {
+        payload.createdAt = now;
+    }
+    await setDoc(conversationRef, payload, { merge: true });
+    return { id: conversationId, ...payload };
+}
+
 /**
  * Get chat messages for a team with pagination support.
  * Returns messages ordered by createdAt descending (newest first).
  */
-export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null } = {}) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
 
     if (startAfterDoc) {
@@ -3218,8 +3314,8 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  * Subscribe to chat messages in real time (newest first).
  * Returns an unsubscribe function.
  */
-export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
@@ -3246,9 +3342,13 @@ export async function postChatMessage(teamId, {
     ai = false,
     aiName = null,
     aiQuestion = null,
-    aiMeta = null
+    aiMeta = null,
+    targetType = 'full_team',
+    recipientIds = [],
+    targetRole = null,
+    conversationId = DEFAULT_TEAM_CONVERSATION_ID
 }) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const createdAt = Timestamp.now();
     const normalizedMedia = normalizeChatAttachments(
         attachments.length > 0
@@ -3265,7 +3365,17 @@ export async function postChatMessage(teamId, {
         ...attachment,
         uploadedAt: createdAt
     }));
-    return await addDoc(messagesRef, {
+    const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
+    const normalizedTargetType = allowedTargetTypes.has(targetType) ? targetType : 'full_team';
+    const normalizedRecipientIds = normalizedTargetType === 'individuals'
+        ? Array.from(new Set((Array.isArray(recipientIds) ? recipientIds : [])
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)))
+        : [];
+    const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
+        ? 'full_team'
+        : normalizedTargetType;
+    const docRef = await addDoc(messagesRef, {
         text,
         senderId,
         senderName: senderName || null,
@@ -3285,15 +3395,31 @@ export async function postChatMessage(teamId, {
         ai: ai === true,
         aiName: aiName || null,
         aiQuestion: aiQuestion || null,
-        aiMeta: aiMeta || null
+        aiMeta: aiMeta || null,
+        targetType: effectiveTargetType,
+        recipientIds: normalizedRecipientIds,
+        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null,
+        conversationId: isDefaultTeamConversation(conversationId) ? null : conversationId
     });
+
+    if (!isDefaultTeamConversation(conversationId)) {
+        const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+        await setDoc(conversationRef, {
+            lastMessageAt: createdAt,
+            updatedAt: createdAt
+        }, { merge: true });
+    }
+
+    return docRef;
 }
 
 /**
  * Edit an existing chat message (sender only).
  */
-export async function editChatMessage(teamId, messageId, newText) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function editChatMessage(teamId, messageId, newText, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         text: newText,
         editedAt: Timestamp.now()
@@ -3303,14 +3429,16 @@ export async function editChatMessage(teamId, messageId, newText) {
 /**
  * Soft-delete a chat message.
  */
-export async function deleteChatMessage(teamId, messageId) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function deleteChatMessage(teamId, messageId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         deleted: true
     });
 }
 
-export async function toggleChatReaction(teamId, messageId, reactionKey, userId) {
+export async function toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     if (!CHAT_REACTION_KEYS.has(reactionKey)) {
         throw new Error('Unsupported reaction key');
     }
@@ -3318,7 +3446,9 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId)
         throw new Error('Missing userId for reaction');
     }
 
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     const snap = await getDoc(messageRef);
     if (!snap.exists()) {
         throw new Error('Message not found');
@@ -3400,6 +3530,85 @@ export async function getUnreadChatCounts(userId, teamIds) {
         }
     }));
     return counts;
+}
+
+
+function normalizeGameDateValue(value) {
+    if (!value) return null;
+    if (typeof value?.toDate === 'function') return value.toDate();
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function compareGamesByDateAsc(a, b) {
+    const aDate = normalizeGameDateValue(a?.date);
+    const bDate = normalizeGameDateValue(b?.date);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate - bDate;
+}
+
+function compareGamesByDateDesc(a, b) {
+    return compareGamesByDateAsc(b, a);
+}
+
+function getSharedHomepageTeamIds(sharedGame) {
+    return Array.from(new Set([
+        sharedGame?.homeTeamId,
+        sharedGame?.awayTeamId,
+        ...(Array.isArray(sharedGame?.teamIds) ? sharedGame.teamIds : [])
+    ].filter(Boolean)));
+}
+
+async function projectSharedHomepageGame(sharedGame, shouldIncludeTeam) {
+    const teamIds = getSharedHomepageTeamIds(sharedGame);
+
+    for (const teamId of teamIds) {
+        const teamSnap = await getDoc(doc(db, 'teams', teamId));
+        if (!teamSnap.exists()) {
+            continue;
+        }
+
+        const team = { id: teamSnap.id, ...teamSnap.data() };
+        if (!shouldIncludeTeam(team)) {
+            continue;
+        }
+
+        const projectedGame = projectSharedGameForTeam(sharedGame, teamId);
+        if (!projectedGame) {
+            continue;
+        }
+
+        return {
+            ...projectedGame,
+            team
+        };
+    }
+
+    return null;
+}
+
+async function getSharedHomepageGames(queryConstraints, shouldIncludeTeam, maxResults) {
+    const sharedGamesRef = collectionGroup(db, 'sharedGames');
+    const snapshot = await getDocs(query(sharedGamesRef, ...queryConstraints));
+    const games = [];
+
+    for (const docSnap of snapshot.docs) {
+        const sharedGame = normalizeSharedGameSnapshot(docSnap);
+        const projectedGame = await projectSharedHomepageGame(sharedGame, shouldIncludeTeam);
+        if (!projectedGame) {
+            continue;
+        }
+
+        games.push(projectedGame);
+        if (maxResults && games.length >= maxResults) {
+            break;
+        }
+    }
+
+    return games;
 }
 
 // ============ LIVE GAME EVENTS ============
@@ -3700,11 +3909,22 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         }
     }
 
-    games.sort((a, b) => {
-        const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-        const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
-        return aDate - bDate;
-    });
+    try {
+        const sharedGames = await getSharedHomepageGames([
+            ...queryConstraints,
+            limitQuery(fetchBatchSize)
+        ], shouldIncludeTeamInLiveOrUpcoming);
+        games.push(...sharedGames.filter((game) => {
+            return game.type !== 'practice'
+                && game.status !== 'completed'
+                && game.status !== 'cancelled'
+                && game.liveStatus !== 'completed';
+        }));
+    } catch (error) {
+        console.warn('Could not load shared upcoming live games:', error?.message || error);
+    }
+
+    games.sort(compareGamesByDateAsc);
 
     return games.slice(0, limitCount);
 }
@@ -4163,6 +4383,15 @@ export async function getLiveGamesNow() {
         games.push(gameData);
     }
 
+    try {
+        const sharedGames = await getSharedHomepageGames([
+            where('liveStatus', '==', 'live')
+        ], shouldIncludeTeamInLiveOrUpcoming);
+        games.push(...sharedGames);
+    } catch (error) {
+        console.warn('Could not load shared live games:', error?.message || error);
+    }
+
     return games;
 }
 
@@ -4172,14 +4401,17 @@ export async function getLiveGamesNow() {
 export async function getRecentLiveTrackedGames(limitCount = 6) {
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    const gamesRef = collectionGroup(db, 'games');
-    const q = query(
-        gamesRef,
+    const recentQueryConstraints = [
         where('liveStatus', '==', 'completed'),
         where('date', '>=', Timestamp.fromDate(oneWeekAgo)),
         orderBy('date', 'desc'),
         limitQuery(limitCount)
+    ];
+
+    const gamesRef = collectionGroup(db, 'games');
+    const q = query(
+        gamesRef,
+        ...recentQueryConstraints
     );
 
     const snapshot = await getDocs(q);
@@ -4201,7 +4433,16 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
         games.push(gameData);
     }
 
-    return games;
+    try {
+        const sharedGames = await getSharedHomepageGames(recentQueryConstraints, shouldIncludeTeamInReplay, limitCount);
+        games.push(...sharedGames);
+    } catch (error) {
+        console.warn('Could not load shared replay games:', error?.message || error);
+    }
+
+    games.sort(compareGamesByDateDesc);
+
+    return games.slice(0, limitCount);
 }
 
 // ============================================
@@ -4306,10 +4547,17 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
                 timestamp: Timestamp.now()
             });
         }
+        const officiatingAuthorizedUserIds = new Set(game.officiatingAuthorizedUserIds || []);
+        const officiatingAuthorizedEmails = new Set(game.officiatingAuthorizedEmails || []);
+        if (official?.uid) officiatingAuthorizedUserIds.add(official.uid);
+        if (official?.email) officiatingAuthorizedEmails.add(String(official.email).trim().toLowerCase());
+
         transaction.update(docRef, {
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now()
+            officiatingUpdatedAt: Timestamp.now(),
+            officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds),
+            officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)
         });
     });
 
@@ -4957,4 +5205,44 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
     return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+}
+
+export async function getPublicTrackingItems(teamId) {
+    const snap = await getDocs(query(
+        collection(db, `teams/${teamId}/trackingItems`),
+        where('public', '==', true),
+        where('private', '==', false),
+        where('isPrivate', '==', false)
+    ));
+    return snap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter(isPublicTrackingItem);
+}
+
+export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
+    const uniquePlayerIds = Array.from(new Set((Array.isArray(playerIds) ? playerIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)));
+    if (uniquePlayerIds.length === 0) return [];
+
+    const playerIdFields = ['playerId', 'childId', 'memberId'];
+    const trackingCollection = collection(db, `teams/${teamId}/memberTracking`);
+    const snapshots = await Promise.all(uniquePlayerIds.flatMap((playerId) => (
+        playerIdFields.map((fieldName) => getDocs(query(
+            trackingCollection,
+            where(fieldName, '==', playerId),
+            where('public', '==', true)
+        )))
+    )));
+
+    const statusesById = new Map();
+    snapshots.forEach((snap) => {
+        snap.docs.forEach((docSnap) => {
+            statusesById.set(docSnap.id, normalizeTrackingStatus({
+                id: docSnap.id,
+                ...docSnap.data()
+            }));
+        });
+    });
+    return Array.from(statusesById.values());
 }

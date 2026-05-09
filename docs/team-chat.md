@@ -15,6 +15,8 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
 - Message deletion (own messages, or any message for moderators)
 - Pagination (50 messages per load)
 - Manual refresh button
+- Coach/admin recipient picker for full team, staff-only, or selected roster/community members
+- Lightweight conversations list for the default team-wide channel plus targeted direct/group conversation records
 
 ### Deferred Features
 - Real-time updates (Firestore onSnapshot) - using manual refresh instead
@@ -32,7 +34,21 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
 - Data stays inside each `team` namespace to match the rest of the app
 
 ## Data Model (Firestore)
-- Collection: `teams/{teamId}/chatMessages/{messageId}`
+- Legacy/default team channel: `teams/{teamId}/chatMessages/{messageId}`
+  - This remains the compatibility path for the team-wide stream and existing clients.
+- Targeted conversations: `teams/{teamId}/chatConversations/{conversationId}`
+  - `type: "team" | "group" | "direct"`
+  - `name: string | null`
+  - `participantIds: string[]` (user IDs or stable recipient identifiers such as `user:{uid}`, `email:{email}`, or `player:{playerId}`)
+  - `participantRoles: string[]` (for role conversations such as `staff`)
+  - `lastMessageAt: Timestamp` (set after the first message)
+  - `mutedBy: string[]`
+  - `createdAt: Timestamp`
+  - `updatedAt: Timestamp`
+- Targeted conversation messages: `teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}`
+  - Same message shape as the default channel, with `conversationId` populated.
+
+### Message Fields
   - `text: string`
   - `senderId: string`
   - `senderName: string`
@@ -41,6 +57,9 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
   - `createdAt: Timestamp`
   - `editedAt: Timestamp` (optional, set when edited)
   - `deleted: boolean` (soft delete flag)
+  - `targetType: "full_team" | "staff" | "individuals"` (defaults to `full_team`)
+  - `recipientIds: string[]` (selected roster/community recipient identifiers for targeted sends)
+  - `targetRole: string | null` (for role targets such as `staff`)
 
 ## Access Control
 A user can read/post if they have team access:
@@ -60,12 +79,13 @@ Moderation (delete others' messages):
 ## Files Changed
 | File | Changes |
 |------|---------|
-| `js/db.js` | Added `uploadUserPhoto`, `canAccessTeamChat`, `canModerateChat`, `getChatMessages`, `postChatMessage`, `editChatMessage`, `deleteChatMessage` |
+| `js/db.js` | Added `uploadUserPhoto`, `canAccessTeamChat`, `canModerateChat`, `getChatConversations`, `upsertChatConversation`, `getChatMessages`, `postChatMessage`, `editChatMessage`, `deleteChatMessage` |
+| `js/team-chat-conversations.js` | Conversation normalization, default channel, display name, and participation helpers |
 | `profile.html` | Added profile photo upload section |
 | `dashboard.html` | Added Chat button to team cards |
 | `parent-dashboard.html` | Added Team Chats section |
 | `js/team-admin-banner.js` | Added Chat icon and navigation card |
-| `team-chat.html` | NEW - Full chat page |
+| `team-chat.html` | NEW - Full chat page with recipient selection for coach/admin sends |
 | `firestore.rules` | Added `canAccessTeamChat` helper and `chatMessages` subcollection rules |
 
 ## Firestore Index Required
@@ -87,6 +107,10 @@ This index may be auto-created when the first query runs, or can be created manu
 - [x] Unauthenticated user redirected to login
 - [x] User without team access redirected to dashboard
 - [x] Send message appears in list
+- [x] Coach/admin can choose full team, staff-only, or selected roster/community recipients before sending
+- [x] Team chat shows the default team-wide channel and targeted conversations the signed-in user participates in
+- [x] Opening a targeted conversation loads and sends under `chatConversations/{conversationId}/chatMessages`
+- [x] Targeted sends persist `targetType`, `recipientIds`, `targetRole`, and conversation metadata
 - [x] Edit own message shows "edited" indicator
 - [x] Delete own message shows "Message removed"
 - [x] Coach/Admin can delete any message (moderation)

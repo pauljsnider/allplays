@@ -14,6 +14,29 @@ function normalizeString(value) {
     return String(value || '').trim();
 }
 
+function normalizeInvoiceEntries(entries = [], { descriptionKey = 'description', amountKey = 'amount', dateKey = null, requireDescription = false, missingMessage = 'Complete each invoice row before saving.' } = {}) {
+    return (entries || [])
+        .map((entry) => ({
+            description: normalizeString(entry?.[descriptionKey]),
+            dueDate: dateKey ? normalizeString(entry?.[dateKey]) : '',
+            amountCents: toFeeCents(entry?.[amountKey])
+        }))
+        .filter((entry) => entry.description || entry.dueDate || entry.amountCents !== null)
+        .map((entry) => {
+            if ((requireDescription && !entry.description) || (dateKey && !entry.dueDate) || entry.amountCents === null || entry.amountCents <= 0) {
+                throw new Error(missingMessage);
+            }
+            const normalized = { amountCents: entry.amountCents };
+            if (requireDescription) normalized.description = entry.description;
+            if (dateKey) normalized.dueDate = entry.dueDate;
+            return normalized;
+        });
+}
+
+function sumCents(entries = []) {
+    return entries.reduce((total, entry) => total + (Number(entry.amountCents) || 0), 0);
+}
+
 export function parseTeamFeeAmountToCents(value) {
     const normalized = normalizeString(value).replace(/[$,]/g, '');
     if (!normalized) return null;
@@ -59,12 +82,30 @@ export function normalizeTeamFeeDraft(formValues = {}) {
     if (!dueDate) throw new Error('Due date is required.');
     if (recipientIds.length === 0) throw new Error('Select at least one roster recipient.');
 
+    const lineItems = normalizeInvoiceEntries(formValues.lineItems, {
+        requireDescription: true,
+        missingMessage: 'Complete each line item description and amount before saving.'
+    });
+    const installments = normalizeInvoiceEntries(formValues.installments, {
+        dateKey: 'dueDate',
+        missingMessage: 'Complete each installment due date and amount before saving.'
+    });
+
+    if (lineItems.length && sumCents(lineItems) !== amountCents) {
+        throw new Error('Line items must add up to the total fee amount.');
+    }
+    if (installments.length && sumCents(installments) !== amountCents) {
+        throw new Error('Installments must add up to the total fee amount.');
+    }
+
     return {
         title,
         amountCents,
         dueDate,
         notes,
         recipientIds,
+        lineItems,
+        installments,
         collectionMode: 'offline_manual',
         offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS
     };
@@ -86,7 +127,9 @@ export function buildTeamFeeRecipientRecords(draft, players = [], teamId = '') {
             notes: draft.notes || '',
             status: 'unpaid',
             collectionMode: 'offline_manual',
-            offlinePaymentInstructions: draft.offlinePaymentInstructions || OFFLINE_TEAM_FEE_INSTRUCTIONS
+            offlinePaymentInstructions: draft.offlinePaymentInstructions || OFFLINE_TEAM_FEE_INSTRUCTIONS,
+            lineItems: draft.lineItems || [],
+            installments: draft.installments || []
         }));
 }
 
@@ -116,6 +159,8 @@ export function summarizeFeeRecipients(recipients = []) {
     const summary = {
         totalAssignedCents: 0,
         totalPaidCents: 0,
+        totalAdjustedCents: 0,
+        totalCanceledCents: 0,
         totalOutstandingCents: 0,
         counts: {
             paid: 0,
@@ -129,9 +174,13 @@ export function summarizeFeeRecipients(recipients = []) {
         const status = normalizeFeeStatus(recipient?.status);
         const balance = getRecipientBalanceCents(recipient);
         const paid = getRecipientPaidCents(recipient);
+        const assigned = Number(recipient?.amountCents ?? recipient?.originalAmountCents ?? recipient?.assignedAmountCents ?? balance);
+        const assignedCents = Number.isFinite(assigned) ? Math.max(0, assigned) : 0;
         summary.counts[status] += 1;
-        summary.totalAssignedCents += status === 'canceled' ? 0 : balance;
+        summary.totalAssignedCents += assignedCents;
         summary.totalPaidCents += paid;
+        summary.totalCanceledCents += status === 'canceled' ? assignedCents : 0;
+        summary.totalAdjustedCents += status === 'adjusted' ? Math.max(0, assignedCents - balance) : 0;
         summary.totalOutstandingCents += status === 'paid' || status === 'canceled' ? 0 : Math.max(0, balance - paid);
     });
 
@@ -147,19 +196,26 @@ export function formatFeeCurrency(cents) {
     }).format(amount / 100);
 }
 
-export function buildManualPaymentUpdate({ amount, date, note, actorId }) {
-    const amountPaidCents = toFeeCents(amount);
-    if (amountPaidCents === null || amountPaidCents <= 0) {
+export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentPaidCents, currentStatus }) {
+    const paymentAmountCents = toFeeCents(amount);
+    if (paymentAmountCents === null || paymentAmountCents <= 0) {
         throw new Error('Enter a manual payment amount greater than $0.');
     }
     if (!date) throw new Error('Enter a manual payment date.');
 
+    const currentBalance = Number(currentBalanceCents);
+    const priorPaid = Number(currentPaidCents);
+    const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
+    const amountPaidCents = priorPaidCents + paymentAmountCents;
+    const isPaidInFull = Number.isFinite(currentBalance) ? amountPaidCents >= Math.max(0, currentBalance) : true;
+    const status = isPaidInFull ? 'paid' : normalizeFeeStatus(currentStatus) === 'adjusted' ? 'adjusted' : 'unpaid';
+
     return {
-        status: 'paid',
+        status,
         amountPaidCents,
         paidAt: date,
         manualPayment: {
-            amountPaidCents,
+            amountPaidCents: paymentAmountCents,
             paidAt: date,
             note: normalizeString(note),
             recordedBy: actorId || null
@@ -240,8 +296,36 @@ function collectFormValues(form) {
         amount: form.elements.amount.value,
         dueDate: form.elements.dueDate.value,
         notes: form.elements.notes.value,
-        recipientIds: Array.from(form.querySelectorAll('input[name="recipients"]:checked')).map((input) => input.value)
+        recipientIds: Array.from(form.querySelectorAll('input[name="recipients"]:checked')).map((input) => input.value),
+        lineItems: Array.from(form.querySelectorAll('[data-line-item-row]')).map((row) => ({
+            description: row.querySelector('[name="lineItemDescription"]')?.value,
+            amount: row.querySelector('[name="lineItemAmount"]')?.value
+        })),
+        installments: Array.from(form.querySelectorAll('[data-installment-row]')).map((row) => ({
+            dueDate: row.querySelector('[name="installmentDueDate"]')?.value,
+            amount: row.querySelector('[name="installmentAmount"]')?.value
+        }))
     };
+}
+
+function renderInvoiceRow(type) {
+    if (type === 'lineItem') {
+        return `
+            <div data-line-item-row class="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 md:grid-cols-[1fr_10rem_auto]">
+                <input name="lineItemDescription" type="text" placeholder="Description" class="rounded-lg border-gray-300 text-sm" aria-label="Line item description">
+                <input name="lineItemAmount" type="number" min="0.01" step="0.01" placeholder="0.00" class="rounded-lg border-gray-300 text-sm" aria-label="Line item amount">
+                <button type="button" data-remove-row class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white">Remove</button>
+            </div>
+        `;
+    }
+
+    return `
+        <div data-installment-row class="grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 md:grid-cols-[1fr_10rem_auto]">
+            <input name="installmentDueDate" type="date" class="rounded-lg border-gray-300 text-sm" aria-label="Installment due date">
+            <input name="installmentAmount" type="number" min="0.01" step="0.01" placeholder="0.00" class="rounded-lg border-gray-300 text-sm" aria-label="Installment amount">
+            <button type="button" data-remove-row class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white">Remove</button>
+        </div>
+    `;
 }
 
 function renderSummary(container, recipients) {
@@ -249,6 +333,8 @@ function renderSummary(container, recipients) {
     const cards = [
         ['Total assigned', formatFeeCurrency(summary.totalAssignedCents)],
         ['Total paid', formatFeeCurrency(summary.totalPaidCents)],
+        ['Adjusted', formatFeeCurrency(summary.totalAdjustedCents)],
+        ['Canceled', formatFeeCurrency(summary.totalCanceledCents)],
         ['Outstanding', formatFeeCurrency(summary.totalOutstandingCents)],
         ['Status counts', `${summary.counts.paid} paid · ${summary.counts.unpaid} unpaid · ${summary.counts.adjusted} adjusted · ${summary.counts.canceled} canceled`]
     ];
@@ -270,24 +356,29 @@ function renderRecipients(container, countEl, recipients) {
     container.innerHTML = recipients.map((recipient) => {
         const name = escapeHtml(getRecipientDisplayName(recipient));
         const status = getStatusLabel(recipient.status);
-        const balance = formatFeeCurrency(getRecipientBalanceCents(recipient));
-        const paid = formatFeeCurrency(getRecipientPaidCents(recipient));
+        const assigned = formatFeeCurrency(recipient.amountCents ?? recipient.originalAmountCents ?? recipient.assignedAmountCents ?? 0);
+        const balanceCents = getRecipientBalanceCents(recipient);
+        const paidCents = getRecipientPaidCents(recipient);
+        const outstandingCents = recipient.status === 'paid' || recipient.status === 'canceled' ? 0 : Math.max(0, balanceCents - paidCents);
+        const balance = formatFeeCurrency(balanceCents);
+        const paid = formatFeeCurrency(paidCents);
+        const outstanding = formatFeeCurrency(outstandingCents);
         const note = recipient.manualPayment?.note || recipient.adjustment?.note || recipient.canceled?.note || recipient.notes || '';
         return `
-            <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}">
+            <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}" data-balance-cents="${balanceCents}" data-paid-cents="${paidCents}" data-status="${escapeHtml(normalizeFeeStatus(recipient.status))}">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                     <div>
                         <div class="flex items-center gap-2 flex-wrap">
                             <h3 class="font-bold text-gray-900">${name}</h3>
                             <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-700">${status}</span>
                         </div>
-                        <div class="mt-1 text-sm text-gray-500">Balance ${balance} · Paid ${paid}</div>
+                        <div class="mt-1 text-sm text-gray-500">Assigned ${assigned} · Balance ${balance} · Paid ${paid} · Outstanding ${outstanding}</div>
                         ${note ? `<p class="mt-2 text-sm text-gray-600">${escapeHtml(note)}</p>` : ''}
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-3 w-full lg:max-w-4xl">
                         <form data-action="paid" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Manual payment</div>
-                            <input name="amount" type="number" min="0" step="0.01" value="${(getRecipientBalanceCents(recipient) / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment amount">
+                            <input name="amount" type="number" min="0" step="0.01" value="${(outstandingCents / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment amount">
                             <input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment date">
                             <input name="note" type="text" placeholder="Optional note" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment note">
                             <button class="w-full rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700">Mark paid</button>
@@ -349,6 +440,29 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
                 </label>
             </div>
 
+            <div class="mt-6 grid gap-4 lg:grid-cols-2">
+                <section class="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="font-bold text-gray-900">Invoice line items <span class="text-sm font-normal text-gray-500">optional</span></h2>
+                            <p class="mt-1 text-sm text-gray-500">Add descriptions and amounts when this fee should look like an invoice. If used, items must total the fee amount.</p>
+                        </div>
+                        <button type="button" id="add-line-item" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add item</button>
+                    </div>
+                    <div id="line-items-list" class="mt-4 space-y-3"></div>
+                </section>
+                <section class="rounded-2xl border border-gray-200 bg-white p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <h2 class="font-bold text-gray-900">Installment schedule <span class="text-sm font-normal text-gray-500">optional</span></h2>
+                            <p class="mt-1 text-sm text-gray-500">Add due dates and amounts for planned installments. If used, installments must total the fee amount.</p>
+                        </div>
+                        <button type="button" id="add-installment" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add installment</button>
+                    </div>
+                    <div id="installments-list" class="mt-4 space-y-3"></div>
+                </section>
+            </div>
+
             <div class="mt-6">
                 <div class="mb-3 flex items-center justify-between gap-3">
                     <h2 class="text-lg font-bold text-gray-900">Recipients</h2>
@@ -365,6 +479,22 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
     `;
 
     const form = document.getElementById('team-fee-form');
+    const lineItemsList = document.getElementById('line-items-list');
+    const installmentsList = document.getElementById('installments-list');
+
+    document.getElementById('add-line-item')?.addEventListener('click', () => {
+        lineItemsList.insertAdjacentHTML('beforeend', renderInvoiceRow('lineItem'));
+    });
+
+    document.getElementById('add-installment')?.addEventListener('click', () => {
+        installmentsList.insertAdjacentHTML('beforeend', renderInvoiceRow('installment'));
+    });
+
+    form.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-remove-row]');
+        if (button) button.closest('[data-line-item-row], [data-installment-row]')?.remove();
+    });
+
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const button = form.querySelector('button[type="submit"]');
@@ -380,6 +510,8 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
 
             const batch = await createTeamFeeBatch(teamId, draft, recipients, user);
             form.reset();
+            lineItemsList.innerHTML = '';
+            installmentsList.innerHTML = '';
             showMessage(`Fee batch saved with unpaid recipient records. Batch ID: ${batch.id}`, 'success');
         } catch (error) {
             showMessage(error?.message || 'Unable to save fee batch.', 'error');
@@ -444,7 +576,7 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
 
         try {
             if (form.dataset.action === 'paid') {
-                updates = buildManualPaymentUpdate({ ...data, actorId: user.uid });
+                updates = buildManualPaymentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentPaidCents: article?.dataset?.paidCents, currentStatus: article?.dataset?.status });
             } else if (form.dataset.action === 'adjust') {
                 updates = buildBalanceAdjustmentUpdate({ ...data, actorId: user.uid });
             } else {
@@ -474,7 +606,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=22'),
+        import('./db.js?v=31'),
         import('./auth.js?v=12')
     ]);
 

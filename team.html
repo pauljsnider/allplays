@@ -198,6 +198,15 @@
                                 </svg>
                                 .ics
                             </button>
+                            <button id="sync-calendar"
+                                class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z">
+                                    </path>
+                                </svg>
+                                Sync Calendar
+                            </button>
                         </div>
                     </div>
                     <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
@@ -224,6 +233,7 @@
 
             <!-- Roster Section -->
             <section>
+                <section id="player-tracking-section" class="mb-6 hidden"></section>
                 <h2 class="text-2xl md:text-3xl font-bold mb-6 text-gray-900">Roster</h2>
                 <div class="bg-white shadow-lg rounded-2xl overflow-hidden border border-gray-200">
                     <div class="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
@@ -258,8 +268,44 @@
         </div>
     </div>
 
+    <div id="sync-calendar-modal" class="hidden fixed inset-0 z-50">
+        <div id="sync-calendar-backdrop" class="absolute inset-0 bg-black/50"></div>
+        <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <div>
+                        <p class="text-xs uppercase tracking-wide text-emerald-600 font-semibold">Live schedule feed</p>
+                        <h3 class="text-lg font-bold text-gray-900">Sync Calendar</h3>
+                    </div>
+                    <button id="sync-calendar-close" class="text-gray-400 hover:text-gray-700">
+                        <span class="sr-only">Close</span>
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <p class="text-sm text-gray-600">Subscribe once to keep this team schedule updated in your personal calendar.</p>
+                    <div class="grid gap-3">
+                        <button id="sync-calendar-apple" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition">
+                            <span class="block text-sm font-semibold text-gray-900">Apple Calendar</span>
+                            <span class="block text-xs text-gray-500">Open a webcal subscription link.</span>
+                        </button>
+                        <button id="sync-calendar-google" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition">
+                            <span class="block text-sm font-semibold text-gray-900">Google Calendar</span>
+                            <span class="block text-xs text-gray-500">Open Google Calendar add-calendar flow.</span>
+                        </button>
+                        <button id="sync-calendar-copy" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition">
+                            <span class="block text-sm font-semibold text-gray-900">Copy Link</span>
+                            <span class="block text-xs text-gray-500">Copy the private HTTPS subscription URL.</span>
+                        </button>
+                    </div>
+                    <p id="sync-calendar-feedback" class="text-sm text-gray-600" aria-live="polite"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage } from './js/db.js?v=18';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=19';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -276,6 +322,7 @@
         import { buildAvailabilityReminderRecipients, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
         import { renderTeamPassCard } from './js/team-pass.js?v=2';
+        import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -324,10 +371,19 @@
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
 
+        function canManageTeamAvailability() {
+            return !!currentUser && (
+                currentUser?.isAdmin ||
+                currentTeamAccessInfo?.accessLevel === 'full' ||
+                currentTeamAccessInfo?.accessLevel === 'owner' ||
+                currentTeamAccessInfo?.accessLevel === 'admin'
+            );
+        }
+
         function renderAvailabilitySettings(team) {
             const section = document.getElementById('availability-settings-section');
             if (!section) return;
-            const canManage = currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin' || currentUser?.isAdmin;
+            const canManage = canManageTeamAvailability();
             if (!canManage) {
                 section.classList.add('hidden');
                 section.innerHTML = '';
@@ -413,7 +469,7 @@
         }
 
         function canSendAvailabilityReminders() {
-            return !!currentUser && (currentUser?.isAdmin || currentTeamAccessInfo?.accessLevel === 'full' || currentTeamAccessInfo?.accessLevel === 'owner' || currentTeamAccessInfo?.accessLevel === 'admin');
+            return canManageTeamAvailability();
         }
 
         function renderTeamAvailabilityControls(game, isUpcoming) {
@@ -1238,6 +1294,8 @@
                         if (profile) {
                             if (profile.isAdmin) currentUser.isAdmin = true;
                             if (profile.parentOf) currentUser.parentOf = profile.parentOf;
+                            if (profile.playerKeys) currentUser.playerKeys = profile.playerKeys;
+                            if (profile.playerOf) currentUser.playerOf = profile.playerOf;
                             if (profile.coachOf) currentUser.coachOf = profile.coachOf;
                         }
                     } catch (e) {
@@ -1624,6 +1682,8 @@
                 }
                 }
 
+                await renderPlayerTrackingSection(teamId, players);
+
                 // Render Roster
                 const rosterBody = document.getElementById('roster-list');
                 if (players.length === 0) {
@@ -1674,6 +1734,88 @@
 
             } catch (error) {
                 console.error(error);
+            }
+        }
+
+        function getPlayerTrackingVisiblePlayerIds(players) {
+            if (!currentUser || !currentTeamId) return [];
+            const ids = new Set();
+            (Array.isArray(currentUser.parentOf) ? currentUser.parentOf : [])
+                .filter((link) => link?.teamId === currentTeamId && link?.playerId)
+                .forEach((link) => ids.add(String(link.playerId).trim()));
+            (Array.isArray(currentUser.playerKeys) ? currentUser.playerKeys : [])
+                .map((key) => String(key || '').split('::'))
+                .filter(([teamId, playerId]) => teamId === currentTeamId && playerId)
+                .forEach(([, playerId]) => ids.add(playerId.trim()));
+            (Array.isArray(currentUser.playerOf) ? currentUser.playerOf : [])
+                .filter((link) => link?.teamId === currentTeamId && link?.playerId)
+                .forEach((link) => ids.add(String(link.playerId).trim()));
+            (Array.isArray(players) ? players : [])
+                .filter((player) => player?.id && [player.userId, player.authUid, player.accountUserId].includes(currentUser.uid))
+                .forEach((player) => ids.add(player.id));
+            return Array.from(ids).filter(Boolean);
+        }
+
+        function renderTrackingStatusPill(item) {
+            const classes = item.isComplete
+                ? 'bg-green-50 text-green-700 border-green-200'
+                : 'bg-amber-50 text-amber-700 border-amber-200';
+            const label = item.isComplete ? 'Complete' : 'Incomplete';
+            return `<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${classes}">${label}</span>`;
+        }
+
+        async function renderPlayerTrackingSection(teamId, players) {
+            const section = document.getElementById('player-tracking-section');
+            if (!section) return;
+            section.classList.add('hidden');
+            section.innerHTML = '';
+
+            const visiblePlayerIds = getPlayerTrackingVisiblePlayerIds(players);
+            if (!currentUser || visiblePlayerIds.length === 0) return;
+
+            try {
+                const [items, statuses] = await Promise.all([
+                    getPublicTrackingItems(teamId),
+                    getPlayerTrackingStatuses(teamId, visiblePlayerIds)
+                ]);
+                const summaries = getVisiblePlayerTrackingSummary({ items, statuses, playerIds: visiblePlayerIds })
+                    .filter((summary) => summary.items.length > 0);
+                if (summaries.length === 0) return;
+
+                const playersById = new Map((players || []).map((player) => [player.id, player]));
+                section.classList.remove('hidden');
+                section.innerHTML = `
+                    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+                        <div class="p-4 border-b border-gray-100 bg-gray-50">
+                            <h2 class="text-xl font-bold text-gray-900">Player checklist</h2>
+                            <p class="text-sm text-gray-500 mt-1">Public tracking items for your linked player${summaries.length === 1 ? '' : 's'}.</p>
+                        </div>
+                        <div class="divide-y divide-gray-100">
+                            ${summaries.map((summary) => {
+                                const player = playersById.get(summary.playerId) || {};
+                                const playerName = player.name || 'Player';
+                                return `
+                                    <div class="p-4">
+                                        <div class="font-semibold text-gray-900 mb-3">${escapeHtml(playerName)}</div>
+                                        <div class="space-y-2">
+                                            ${summary.items.map((item) => `
+                                                <div class="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
+                                                    <div>
+                                                        <div class="text-sm font-semibold text-gray-900">${escapeHtml(item.title)}</div>
+                                                        ${item.description ? `<div class="text-xs text-gray-500 mt-0.5">${escapeHtml(item.description)}</div>` : ''}
+                                                    </div>
+                                                    ${renderTrackingStatusPill(item)}
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading player tracking summary:', error);
             }
         }
 
@@ -1735,7 +1877,7 @@
             }
 
             const availabilityPreferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
-            const isTeamAdmin = currentTeamAccessInfo?.accessLevel === 'full' || currentUser?.isAdmin;
+            const isTeamAdmin = canManageTeamAvailability();
             const linkedPlayerIds = Array.from(new Set((Array.isArray(currentUser?.parentOf) ? currentUser.parentOf : [])
                 .filter((link) => link?.teamId === currentTeamId && typeof link?.playerId === 'string' && link.playerId.trim())
                 .map((link) => link.playerId.trim())));
@@ -2244,6 +2386,86 @@
             return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
         }
 
+        function getPrivateCalendarFeedUrl() {
+            const directUrl = currentTeam?.privateCalendarFeedUrl ||
+                currentTeam?.calendarSubscriptionUrl ||
+                currentTeam?.calendarFeedUrl ||
+                currentTeam?.teamCalendarFeedUrl;
+            if (typeof directUrl === 'string' && directUrl.trim()) {
+                return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
+            }
+
+            const token = currentTeam?.calendarSubscriptionToken ||
+                currentTeam?.privateCalendarToken ||
+                currentTeam?.calendarFeedToken ||
+                currentTeam?.teamCalendarToken;
+            if (!token || !currentTeamId) return '';
+
+            const configuredUrl = window.__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || window.ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+            const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+            const baseUrl = (typeof configuredUrl === 'string' && configuredUrl.trim())
+                ? configuredUrl.trim()
+                : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
+                    ? fallbackUrl.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
+                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs');
+            const separator = baseUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(currentTeamId)}&token=${encodeURIComponent(token)}`;
+        }
+
+        function getAppleCalendarFeedUrl(feedUrl) {
+            return feedUrl.replace(/^https?:\/\//i, 'webcal://');
+        }
+
+        function getGoogleCalendarFeedUrl(feedUrl) {
+            return `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}`;
+        }
+
+        function setSyncCalendarFeedback(message, tone = 'neutral') {
+            const feedback = document.getElementById('sync-calendar-feedback');
+            if (!feedback) return;
+            feedback.textContent = message;
+            feedback.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-emerald-700' : 'text-gray-600'}`;
+        }
+
+        function openSyncCalendarModal() {
+            const feedUrl = getPrivateCalendarFeedUrl();
+            document.getElementById('sync-calendar-modal')?.classList.remove('hidden');
+            setSyncCalendarFeedback(feedUrl ? 'Choose where to subscribe, or copy the private link.' : 'Calendar subscription link is not available yet.', feedUrl ? 'neutral' : 'error');
+        }
+
+        function closeSyncCalendarModal() {
+            document.getElementById('sync-calendar-modal')?.classList.add('hidden');
+        }
+
+        async function copyPrivateCalendarFeedUrl(feedUrl) {
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(feedUrl);
+                } else {
+                    const input = document.createElement('textarea');
+                    input.value = feedUrl;
+                    input.setAttribute('readonly', '');
+                    input.style.position = 'fixed';
+                    input.style.left = '-9999px';
+                    document.body.appendChild(input);
+                    input.select();
+                    const copied = document.execCommand('copy');
+                    document.body.removeChild(input);
+                    if (!copied) throw new Error('Copy command failed');
+                }
+                setSyncCalendarFeedback('Subscription link copied.', 'success');
+                showToast('Calendar link copied!');
+            } catch (error) {
+                console.error('Failed to copy calendar feed URL:', error);
+                setSyncCalendarFeedback('Could not copy the link. Select Copy Link again or try manually.', 'error');
+                showToast('Failed to copy calendar link.');
+            }
+        }
+
         function buildIcs(games) {
             const teamName = currentTeam?.name || 'Team';
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
@@ -2288,6 +2510,31 @@
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('sync-calendar')?.addEventListener('click', openSyncCalendarModal);
+        document.getElementById('sync-calendar-close')?.addEventListener('click', closeSyncCalendarModal);
+        document.getElementById('sync-calendar-backdrop')?.addEventListener('click', closeSyncCalendarModal);
+        document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
+            const feedUrl = getPrivateCalendarFeedUrl();
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            window.open(getAppleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
+            setSyncCalendarFeedback('Opening Apple Calendar subscription.', 'success');
+        });
+        document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
+            const feedUrl = getPrivateCalendarFeedUrl();
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            window.open(getGoogleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
+            setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
+        });
+        document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
+            copyPrivateCalendarFeedUrl(getPrivateCalendarFeedUrl());
         });
 
         // Practice filter

@@ -157,6 +157,23 @@ async function mockLoginPageModules(page, resetScenario = {}) {
                         }
                     };
                 }
+
+                export function shouldInitializeSignupMode() {
+                    return false;
+                }
+
+                export function createLoginAuthStateManager() {
+                    return {
+                        beginProcessing() {},
+                        finishProcessing() {},
+                        captureAuthenticatedUser(user) {
+                            return Boolean(user);
+                        },
+                        consumePendingRedirectUser() {
+                            return null;
+                        }
+                    };
+                }
             `
         });
     });
