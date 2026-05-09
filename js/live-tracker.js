@@ -730,7 +730,7 @@ function liveCard(id) {
   // Foul pill with warning colors
   const fouls = s.fouls || 0;
   const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : 'bg-sand';
-  const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
+  const foulWarning = fouls >= 5 ? ' FOULED OUT!' : fouls >= 4 ? ' ⚠️' : '';
   const foulPill = `<div class="${foulBgClass} rounded-lg py-1">FLS <span class="font-display text-sm">${fouls}${foulWarning}</span></div>`;
 
   const btnHtml = cols.map(col => {
@@ -797,7 +797,7 @@ function renderOpponents() {
     // Add fouls to quick stats display
     const fouls = s.fouls || 0;
     const foulBgClass = fouls >= 5 ? 'bg-red-600 text-white' : fouls >= 4 ? 'bg-amber-500 text-white' : '';
-    const foulWarning = fouls >= 5 ? ' ⚠️' : fouls >= 4 ? ' ⚠️' : '';
+    const foulWarning = fouls >= 5 ? ' FOULED OUT!' : fouls >= 4 ? ' ⚠️' : '';
     const foulDisplay = foulBgClass ? `<span class="${foulBgClass} px-1 rounded">FLS ${fouls}${foulWarning}</span>` : `FLS ${fouls}`;
     const quickLineWithFouls = quickLine ? `${quickLine} · ${foulDisplay}` : foulDisplay;
 
