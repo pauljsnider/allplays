@@ -21,13 +21,17 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=1"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=2"></script>');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
         expect(pageJs).toContain("import { checkAuth } from './auth.js?v=13';");
+        expect(pageJs).toContain("from './db.js?v=13'");
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
         expect(pageJs).toContain('bulkDeleteTeamMediaItems');
+        expect(pageJs).toContain('setTeamMediaAlbumCover');
+        expect(pageJs).toContain('download class="rounded-lg');
+        expect(pageJs).toContain('data-set-cover');
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canAccessTeamChat(teamId);');
         expect(rules).toContain('allow create, update, delete: if isTeamOwnerOrAdmin(teamId);');
