@@ -188,4 +188,14 @@ describe('live tracker integrity helpers', () => {
     expect(workflowSource).toContain('scoreLogIsComplete: state.scoreLogIsComplete');
     expect(workflowSource).toContain('buildFinishCompletionPlan');
   });
+
+  it('persists live lineup after quick and queued substitutions', () => {
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const quickSubBody = liveTrackerSource.match(/function applySub\([\s\S]*?function applyQueue/)?.[0] || '';
+    const queuedSubBody = liveTrackerSource.match(/function applyQueue[\s\S]*?function subIn/)?.[0] || '';
+
+    expect(liveTrackerSource).toContain('function persistLiveLineup()');
+    expect(quickSubBody).toContain('persistLiveLineup();');
+    expect(queuedSubBody).toContain('persistLiveLineup();');
+  });
 });
