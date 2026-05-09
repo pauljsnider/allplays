@@ -207,6 +207,10 @@
                                 </svg>
                                 Sync Calendar
                             </button>
+                            <button id="public-games-feed" hidden
+                                class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                                Fan feed
+                            </button>
                         </div>
                     </div>
                     <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
@@ -1443,6 +1447,8 @@
                     adSpaceSponsors = [];
                 }
 
+                updatePublicGamesFeedButton(team, dbGames);
+
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
 
@@ -2499,6 +2505,48 @@
             }
         }
 
+        function isShareableFanGame(game = {}) {
+            const visibility = String(game?.visibility || '').toLowerCase();
+            if (visibility === 'private' || game?.isPrivate === true || game?.private === true) return false;
+            return visibility === 'public' ||
+                game?.isPublic === true ||
+                game?.public === true ||
+                game?.shareable === true ||
+                game?.isShareable === true ||
+                game?.publicCalendar === true;
+        }
+
+        function isPublicFanFeedGame(team = {}, game = {}) {
+            if (String(game?.type || 'game').toLowerCase() !== 'game') return false;
+            if (String(game?.visibility || '').toLowerCase() === 'private') return false;
+            if (game?.isPrivate === true || game?.private === true) return false;
+            if (String(game?.status || '').toLowerCase() === 'deleted') return false;
+            if (String(game?.liveStatus || '').toLowerCase() === 'deleted') return false;
+            return team?.isPublic !== false || isShareableFanGame(game);
+        }
+
+        function canExposePublicFanFeed(team = {}, games = []) {
+            return (games || []).some((game) => isPublicFanFeedGame(team, game));
+        }
+
+        function getPublicGamesFeedUrl() {
+            const configuredUrl = window.__ALLPLAYS_CONFIG__?.publicTeamGamesIcsFunctionUrl || window.ALLPLAYS_PUBLIC_GAMES_ICS_URL;
+            const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+            const baseUrl = (typeof configuredUrl === 'string' && configuredUrl.trim())
+                ? configuredUrl.trim()
+                : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
+                    ? fallbackUrl.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
+                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs');
+            const separator = baseUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(currentTeamId)}`;
+        }
+
+        function updatePublicGamesFeedButton(team, games) {
+            const button = document.getElementById('public-games-feed');
+            if (!button) return;
+            button.hidden = !canExposePublicFanFeed(team, games);
+        }
+
         function buildIcs(games) {
             const teamName = currentTeam?.name || 'Team';
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
@@ -2568,6 +2616,19 @@
         });
         document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
             copyPrivateCalendarFeedUrl(getPrivateCalendarFeedUrl());
+        });
+        document.getElementById('public-games-feed')?.addEventListener('click', () => {
+            const url = getPublicGamesFeedUrl();
+            shareOrCopy({
+                title: `${currentTeam?.name || 'Team'} public games`,
+                text: 'Subscribe to the public games-only calendar feed.',
+                url,
+                clipboardText: url
+            }).then((result) => {
+                if (result.status === 'shared') showToast('Fan feed opened!');
+                if (result.status === 'copied') showToast('Fan feed URL copied!');
+                if (result.status === 'failed') showToast('Failed to share fan feed.');
+            });
         });
 
         // Practice filter
