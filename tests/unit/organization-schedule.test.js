@@ -148,6 +148,14 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('createdVia: \'organizationScheduleCsvImport\'');
     });
 
+    it('caps organization schedule CSV imports before preview and import', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('const ORGANIZATION_CSV_IMPORT_ROW_LIMIT = 500;');
+        expect(source).toContain('parsed.rows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT');
+        expect(source).toContain('preview.validRows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT');
+    });
+
     it('renders shared matchup success actions without using innerHTML', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 

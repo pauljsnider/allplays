@@ -175,6 +175,7 @@
         const backLink = document.getElementById('back-to-team-schedule');
         const organizationNameEl = document.getElementById('organization-context-name');
         const organizationDetailEl = document.getElementById('organization-context-detail');
+        const ORGANIZATION_CSV_IMPORT_ROW_LIMIT = 500;
 
         let currentUser = null;
         let anchorTeam = null;
@@ -429,6 +430,10 @@
 
             try {
                 const parsed = parseCsvText(await file.text());
+                if (parsed.rows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT) {
+                    showOrganizationCsvErrors([`Import is limited to ${ORGANIZATION_CSV_IMPORT_ROW_LIMIT} rows at a time. Please split this CSV into smaller files.`]);
+                    return;
+                }
                 const mapping = inferOrganizationScheduleCsvMapping(parsed.headers);
                 const preview = buildOrganizationScheduleImportPreview({
                     rows: parsed.rows,
@@ -455,6 +460,10 @@
             }
             if (preview.invalidRows.length > 0) {
                 showOrganizationCsvErrors(['Fix all validation errors before importing.']);
+                return;
+            }
+            if (preview.validRows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT) {
+                showOrganizationCsvErrors([`Import is limited to ${ORGANIZATION_CSV_IMPORT_ROW_LIMIT} rows at a time. Please split this CSV into smaller files.`]);
                 return;
             }
 
