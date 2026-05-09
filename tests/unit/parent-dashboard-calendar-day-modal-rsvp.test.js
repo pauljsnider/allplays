@@ -119,7 +119,7 @@ const Blob = deps.Blob;
         .replace("import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';", 'const { getEventRideshareSummary, getOfferSeatInfo } = deps.rideshareHelpers;')
         .replace("import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';", 'const { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } = deps.parentDashboardRideshareControls;')
         .replace("import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';", 'const { applyRsvpHydration } = deps.rsvpHydration;')
-        .replace("import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=2';", 'const { renderParentTeamFees } = deps.parentDashboardFees;')
+        .replace("import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=3';", 'const { renderParentTeamFees } = deps.parentDashboardFees;')
         .replace("import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';", 'const { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;')
         .replace("import { renderFamilyPlanSection } from './js/family-plan.js?v=1';", 'const { renderFamilyPlanSection } = deps.familyPlan;')
         .replace(/\binit\(\);\s*$/, `
