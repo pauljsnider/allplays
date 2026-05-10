@@ -32,10 +32,11 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('border-l-red-500');
     });
 
-    it('normalizes paid, unpaid, canceled, and adjusted status styling', () => {
+    it('normalizes paid, unpaid, partial, canceled, and adjusted status styling', () => {
         const html = renderParentTeamFees([
             { title: 'Paid fee', status: 'paid', amountCents: 1000 },
             { title: 'Unpaid fee', status: 'unpaid', amountCents: 1000 },
+            { title: 'Partial fee', status: 'partially_paid', amountCents: 1000 },
             { title: 'Canceled fee', status: 'canceled', amountCents: 1000 },
             { title: 'Adjusted fee', status: 'adjusted', adjustedAmountCents: 500 }
         ]);
@@ -44,6 +45,8 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('bg-green-100');
         expect(html).toContain('Unpaid');
         expect(html).toContain('bg-red-100');
+        expect(html).toContain('Partially paid');
+        expect(html).toContain('bg-blue-100');
         expect(html).toContain('Canceled');
         expect(html).toContain('bg-gray-100');
         expect(html).toContain('Adjusted');
@@ -80,12 +83,12 @@ describe('parent dashboard team fees', () => {
         }
     });
 
-    it('renders invoice line items, balances, and installment schedules', () => {
+    it('renders a fee detail view with totals, balances, line items, installments, and receipts', () => {
         const html = renderParentTeamFees([
             {
                 title: 'Spring team invoice',
                 amountCents: 30000,
-                balanceDueCents: 20000,
+                paidAmountCents: 10000,
                 lineItems: [
                     { description: 'Uniform kit', quantity: 1, amountCents: 12500 },
                     { name: 'Tournament entry', amountCents: 17500, dueDate: '2026-06-15' }
@@ -93,22 +96,33 @@ describe('parent dashboard team fees', () => {
                 installmentSchedule: [
                     { label: 'Deposit', dueDate: '2026-06-01', amountCents: 10000, paid: true },
                     { label: 'Final payment', dueDate: '2026-07-01', amountCents: 20000, status: 'unpaid' }
+                ],
+                ledgerEntries: [
+                    { type: 'payment', paidAt: '2026-06-01', amountCents: 10000, receiptNumber: 'Receipt #101', status: 'posted' }
                 ]
             }
         ]);
 
+        expect(html).toContain('View fee details');
+        expect(html).toContain('Total amount');
+        expect(html).toContain('$300.00');
+        expect(html).toContain('Paid');
+        expect(html).toContain('$100.00');
         expect(html).toContain('Invoice line items');
         expect(html).toContain('Uniform kit');
         expect(html).toContain('Qty 1');
         expect(html).toContain('Tournament entry');
         expect(html).toContain('Due Jun 15, 2026');
-        expect(html).toContain('Balance');
+        expect(html).toContain('Remaining balance');
         expect(html).toContain('$200.00');
         expect(html).toContain('Installment schedule');
         expect(html).toContain('Deposit');
         expect(html).toContain('Final payment');
         expect(html).toContain('Paid');
         expect(html).toContain('Unpaid');
+        expect(html).toContain('Receipts & activity');
+        expect(html).toContain('payment');
+        expect(html).toContain('Receipt #101');
     });
 
     it('falls back to populated fee aliases when primary arrays are empty', () => {
@@ -133,16 +147,25 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('Due Jun 10, 2026');
     });
 
-    it('only renders a Pay action when a checkout or payment link exists', () => {
+    it('only renders a Pay action for unpaid or partially paid fees with a checkout or payment link', () => {
         const manualOnlyHtml = renderParentTeamFees([
             { title: 'Manual collection', amountCents: 1000 }
         ]);
         const checkoutHtml = renderParentTeamFees([
             { title: 'Online collection', amountCents: 1000, checkoutUrl: 'https://pay.example/checkout' }
         ]);
+        const partialPaymentLinkHtml = renderParentTeamFees([
+            { title: 'Partial collection', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://pay.example/remaining' }
+        ]);
+        const paidHtml = renderParentTeamFees([
+            { title: 'Paid collection', amountCents: 1000, balanceDueCents: 0, status: 'paid', checkoutUrl: 'https://pay.example/paid' }
+        ]);
 
         expect(manualOnlyHtml).not.toContain('>Pay</a>');
         expect(checkoutHtml).toContain('>Pay</a>');
         expect(checkoutHtml).toContain('https://pay.example/checkout');
+        expect(partialPaymentLinkHtml).toContain('>Pay</a>');
+        expect(partialPaymentLinkHtml).toContain('https://pay.example/remaining');
+        expect(paidHtml).not.toContain('>Pay</a>');
     });
 });
