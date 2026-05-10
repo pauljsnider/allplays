@@ -3057,12 +3057,19 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     }
 
     const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
-    await updateDoc(recipientRef, {
-        ...updates,
+    const { ledgerEntries = [], ...recipientUpdates } = updates;
+    const updatePayload = {
+        ...recipientUpdates,
         teamId,
         batchId,
         updatedAt: serverTimestamp()
-    });
+    };
+
+    if (Array.isArray(ledgerEntries) && ledgerEntries.length > 0) {
+        updatePayload.paymentLedger = arrayUnion(...ledgerEntries);
+    }
+
+    await updateDoc(recipientRef, updatePayload);
 }
 
 export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {
