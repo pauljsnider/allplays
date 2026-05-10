@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   shouldPromptWrapupOnCompletion,
   getWrapupFormState,
+  getWrapupScore,
   buildFinishGamePayload,
   buildMatchReportUrl,
   buildPracticeFeedPrompt,
@@ -41,6 +42,16 @@ describe('game day wrap-up helpers', () => {
       homeScore: 4,
       awayScore: 2,
       postGameNotes: 'Closed out strong.'
+    });
+  });
+
+  it('reads the edited wrap-up score values for AI prompts and completion', () => {
+    expect(getWrapupScore({
+      homeScoreValue: '3',
+      awayScoreValue: '2'
+    })).toEqual({
+      home: 3,
+      away: 2
     });
   });
 
@@ -122,11 +133,19 @@ describe('game-day wrap-up page wiring', () => {
   it('routes the completion transition, wrap-up prefill, and finish flow through the helper module', () => {
     const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-    expect(source).toContain("from './js/game-day-wrapup.js?v=1'");
+    expect(source).toContain("from './js/game-day-wrapup.js?v=2'");
     expect(source).toContain('shouldPromptWrapupOnCompletion({');
     expect(source).toContain('const wrapupFormState = getWrapupFormState({');
-    expect(source).toContain('const prompt = buildPracticeFeedPrompt({');
-    expect(source).toContain('const prompt = buildGameSummaryPrompt({');
+    const wrapupActions = source.slice(
+      source.indexOf('window.analyzeGame = async function()'),
+      source.indexOf('window.finishGame = async function()')
+    );
+
+    expect(wrapupActions).toContain('const wrapupScore = getWrapupScore({');
+    expect(wrapupActions).toContain('const prompt = buildPracticeFeedPrompt({');
+    expect(wrapupActions).toContain('const prompt = buildGameSummaryPrompt({');
+    expect(wrapupActions).toContain('score: wrapupScore,');
+    expect(wrapupActions).not.toContain('score: state.score,');
     expect(source).toContain('const completionPayload = buildFinishGamePayload({');
     expect(source).toContain('window.location.href = buildMatchReportUrl({');
   });

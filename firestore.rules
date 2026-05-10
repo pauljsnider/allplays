@@ -468,6 +468,21 @@ service cloud.firestore {
     }
 
 
+    function canReadTeamMediaFolder(teamId, folderData) {
+      return isTeamOwnerOrAdmin(teamId) ||
+             (canAccessTeamChat(teamId) && folderData.get('visibility', 'team') == 'team');
+    }
+
+    function canReadTeamMediaItem(teamId, itemData) {
+      let folderId = itemData.get('folderId', '');
+      let folderPath = /databases/$(database)/documents/teams/$(teamId)/mediaFolders/$(folderId);
+      return isTeamOwnerOrAdmin(teamId) ||
+             (canAccessTeamChat(teamId) &&
+              folderId is string &&
+              exists(folderPath) &&
+              get(folderPath).data.get('visibility', 'team') == 'team');
+    }
+
     function isTeamMediaPhotoCreate(teamId, data) {
       return canAccessTeamChat(teamId) &&
              data.keys().hasAll([
@@ -851,12 +866,12 @@ service cloud.firestore {
       }
 
       match /mediaFolders/{folderId} {
-        allow read: if canAccessTeamChat(teamId);
+        allow read: if canReadTeamMediaFolder(teamId, resource.data);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
       match /mediaItems/{itemId} {
-        allow read: if canAccessTeamChat(teamId);
+        allow read: if canReadTeamMediaItem(teamId, resource.data);
         allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
         allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
         allow delete: if isTeamOwnerOrAdmin(teamId);
