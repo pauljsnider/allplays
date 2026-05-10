@@ -984,7 +984,12 @@
 @media print {
     @page {
         size: letter landscape;
-        margin: 0.25in;
+        margin: 0;
+    }
+
+    body.cert-printing {
+        margin: 0 !important;
+        padding: 0 !important;
     }
 
     body.cert-printing > *:not(#cert-print-root) {
@@ -999,8 +1004,8 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 10.5in;
-        height: 8in;
+        width: 11in;
+        height: 8.5in;
         break-after: page;
         page-break-after: always;
     }
