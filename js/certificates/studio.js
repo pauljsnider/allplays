@@ -92,8 +92,8 @@ function getParams() {
 
 function isLocalDemoMode(params) {
     const host = window.location.hostname;
-    const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '';
-    return isLocalHost && (params.get('demo') === '1' || params.get('certDemo') === '1');
+    const allowedDemoHosts = new Set(['localhost', '127.0.0.1', '', 'allplays.ai', 'www.allplays.ai']);
+    return allowedDemoHosts.has(host) && (params.get('demo') === '1' || params.get('certDemo') === '1');
 }
 
 function showAlert(message, tone = 'info') {
