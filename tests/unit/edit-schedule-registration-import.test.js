@@ -146,6 +146,8 @@ describe('registration schedule import planning', () => {
                     date: new Date('2026-05-02T18:00:00.000Z'),
                     opponent: 'Bears',
                     location: 'Field 2',
+                    status: 'scheduled',
+                    isHome: true,
                     sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalEventId: 'ext-same' }
                 },
                 {
@@ -178,7 +180,7 @@ describe('registration schedule import wiring', () => {
         expect(source).toContain('id="registration-schedule-import"');
         expect(source).toContain('id="registration-schedule-import-preview"');
         expect(source).toContain('Import Selected');
-        expect(source).toContain("import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=3';");
+        expect(source).toContain("import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';");
         expect(source).toContain('buildRegistrationScheduleImportPreview({');
         expect(source).toContain('registration-schedule-import-choice:checked');
         expect(source).toContain('sourceMetadata?.externalEventId');

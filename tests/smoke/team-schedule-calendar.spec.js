@@ -400,7 +400,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: AUTH_STUB
     }));
-    await page.route('**/js/firebase.js?v=11', (route) => route.fulfill({
+    await page.route('**/js/firebase.js?v=*', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: FIREBASE_STUB
