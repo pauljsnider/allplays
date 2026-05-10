@@ -30,6 +30,13 @@ function icon(name) {
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
     </svg>`;
   }
+  if (name === 'permissions') {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 16v-2m8-6h-2M6 12H4m12.95-4.95l-1.414 1.414M8.464 15.536 7.05 16.95m9.9 0-1.414-1.414M8.464 8.464 7.05 7.05"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"></path>
+      <circle cx="12" cy="12" r="7" stroke-width="2"></circle>
+    </svg>`;
+  }
   if (name === 'stats') {
     return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
@@ -140,6 +147,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
     schedule: `edit-schedule.html#teamId=${teamId}`,
     gameplan: `game-plan.html#teamId=${teamId}`,
     stats: `edit-config.html#teamId=${teamId}`,
+    permissions: `team.html#teamId=${teamId}&section=staff-permissions`,
     chat: `team-chat.html#teamId=${teamId}`,
     media: `team-media.html#teamId=${teamId}`,
     certificates: `certificates.html#teamId=${teamId}`,
@@ -163,6 +171,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
       ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
       ${actionCard({ href: hrefs.media, label: 'Media', iconName: 'media', active: active === 'media' })}
       ${actionCard({ href: hrefs.certificates, label: 'Certificates', iconName: 'certificates', active: active === 'certificates' })}
+      ${actionCard({ href: hrefs.permissions, label: 'Staff', iconName: 'permissions', active: active === 'permissions' })}
       ${actionCard({ href: hrefs.drills, label: 'Drills', iconName: 'drills', active: active === 'drills' })}
       ${actionCard({ href: hrefs.gameday, label: 'Game Day', iconName: 'gameday', active: active === 'gameday' })}
       ${actionCard({ href: `${hrefs.help}&role=${helpRole}`, label: 'Help', iconName: 'help', active: active === 'help' })}
