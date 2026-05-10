@@ -107,7 +107,7 @@ const setTimeout = deps.setTimeout;
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
-            "import { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=29';",
+            "import { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=30';",
             'const { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(

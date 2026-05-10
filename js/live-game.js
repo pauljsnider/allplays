@@ -538,9 +538,20 @@ function refreshVideoPanel({ force = false } = {}) {
   const nextPlayback = resolveVideoPlayback();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
     state.videoPlayback = nextPlayback;
-    state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || hasMediaHubContent(state.videoPlayback?.mediaHub));
+    const recordedReplayGateEnabled = isRecordedReplayTeamPassGateEnabled({ game: state.game, team: state.team });
+    const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
+    const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled && !videoUnlocked;
+    const shouldShowVideoPanel = Boolean(
+      isGatedRecordedReplay ||
+      userCanUseNativeCamera() ||
+      hasMediaHubContent(state.videoPlayback?.mediaHub) ||
+      state.videoPlayback?.gameClips?.length ||
+      state.videoPlayback?.replayState
+    );
+    state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || shouldShowVideoPanel);
     renderRecordedReplayTools();
     renderGameMediaHub();
+    renderReplayAvailabilityState({ shouldShowVideoPanel });
     updateTabs();
     return false;
   }
@@ -562,7 +573,8 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const canUseNativeCamera = userCanUseNativeCamera();
   const hasMediaHub = hasMediaHubContent(state.videoPlayback?.mediaHub);
   const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
-  const shouldShowVideoPanel = isGatedRecordedReplay || canUseNativeCamera || hasMediaHub || hasGameClips;
+  const hasReplayAvailabilityState = Boolean(state.videoPlayback?.replayState);
+  const shouldShowVideoPanel = isGatedRecordedReplay || canUseNativeCamera || hasMediaHub || hasGameClips || hasReplayAvailabilityState;
   state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || shouldShowVideoPanel);
   updateNativeCameraPanel();
   renderGameClips();
@@ -659,12 +671,27 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
     if (state.activeTab === 'video' && !shouldShowVideoPanel) state.activeTab = 'plays';
   }
 
-  if (els.videoEmptyState) {
-    els.videoEmptyState.classList.toggle('hidden', state.videoPlayback?.mode !== 'none' || shouldShowVideoPanel);
-  }
+  renderReplayAvailabilityState({ shouldShowVideoPanel });
 
   renderGameMediaHub();
   updateTabs();
+}
+
+function renderReplayAvailabilityState({ shouldShowVideoPanel = false } = {}) {
+  if (!els.videoEmptyState) return;
+  const replayState = state.videoPlayback?.replayState;
+  if (replayState && state.videoPlayback?.mode === 'none') {
+    els.videoEmptyState.innerHTML = `
+      <p class="text-[11px] uppercase tracking-[0.25em] text-teal/70">Replay</p>
+      <h2 class="mt-2 text-lg font-display font-bold text-sand">${escapeHtml(replayState.title)}</h2>
+      <p class="mt-2 text-sm text-sand/70">${escapeHtml(replayState.message)}</p>
+    `;
+    els.videoEmptyState.classList.remove('hidden');
+    return;
+  }
+
+  els.videoEmptyState.textContent = 'No game video yet. Clips shared for this game will appear here.';
+  els.videoEmptyState.classList.toggle('hidden', state.videoPlayback?.mode !== 'none' || shouldShowVideoPanel);
 }
 
 function hasMediaHubContent(mediaHub) {
