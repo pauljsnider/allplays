@@ -24,6 +24,17 @@
 
         <div id="team-media-alert" class="hidden mb-4 rounded-xl border px-4 py-3 text-sm"></div>
 
+        <section id="team-media-upload-panel" class="hidden mb-6 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
+            <form id="photo-upload-form" class="space-y-3">
+                <h2 class="font-semibold text-gray-900">Upload photos</h2>
+                <p class="text-sm text-gray-500">Choose an album and add one or more image files.</p>
+                <select id="photo-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
+                <input id="photo-files" type="file" accept="image/*" multiple class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required>
+                <button class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">Upload photos</button>
+                <div id="upload-progress" class="space-y-2 text-sm"></div>
+            </form>
+        </section>
+
         <section id="team-media-admin-panel" class="hidden mb-6 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
             <div class="grid gap-4 lg:grid-cols-2">
                 <form id="folder-form" class="space-y-3">

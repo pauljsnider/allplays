@@ -44,8 +44,26 @@ export function canViewTeamMediaFolder(folder, accessLevel) {
     return ['full', 'parent'].includes(accessLevel);
 }
 
+export function canContributeTeamMedia(user, team) {
+    if (!user || !team) return false;
+    if (hasFullTeamAccess(user, team)) return true;
+    const teamId = String(team.id || '').trim();
+    if (!teamId) return false;
+    return (Array.isArray(user.parentTeamIds) && user.parentTeamIds.includes(teamId)) ||
+        (Array.isArray(user.parentOf) && user.parentOf.some((parentLink) => parentLink?.teamId === teamId));
+}
+
 export function isSupportedTeamMediaVideoUrl(value) {
     return Boolean(getSafeVideoUrl(value));
+}
+
+export function isSupportedTeamMediaImage(file) {
+    return Boolean(file && String(file.type || '').startsWith('image/'));
+}
+
+export function canDeleteTeamMediaItem(user, team, item) {
+    if (!user || !item) return false;
+    return canManageTeamMedia(user, team) || (item.type === 'photo' && item.uploadedBy === user.uid);
 }
 
 export function normalizeTeamMediaFolderDraft(draft = {}) {
