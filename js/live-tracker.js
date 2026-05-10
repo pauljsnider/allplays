@@ -1,4 +1,4 @@
-// Mobile-first basketball tracker, now backed by Firebase like track.html.
+// Mobile-first live tracker, backed by Firebase like track.html.
 import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=14';
 import { db } from './firebase.js?v=9';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
@@ -15,7 +15,7 @@ import { resolveSummaryRecipient } from './live-tracker-email.js?v=1';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
 import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
-import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
+import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport } from './live-sport-config.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -193,6 +193,7 @@ const els = {
   clock: q('#clock-mobile'),
   fairness: q('#fairness-mobile'),
   onCourtCount: q('#on-court-count-mobile'),
+  lineupLimitLabel: q('#lineup-limit-label'),
   startStop: q('#start-stop'),
   undoMini: q('#undo-mini'),
   preTab: q('#pre-game-tab'),
@@ -313,13 +314,26 @@ function renderHeader() {
   updateClockUI();
 }
 
+function getActivePlayerLimit() {
+  const sport = resolveLiveSport({ game: currentGame, team: currentTeam, config: currentConfig }).toLowerCase();
+  if (sport === 'baseball') return 9;
+  if (sport === 'softball') return 10;
+  return 5;
+}
+
+function updateLineupLabels() {
+  const limit = getActivePlayerLimit();
+  if (els.lineupLimitLabel) els.lineupLimitLabel.textContent = `Pick starters (max ${limit})`;
+  if (els.autoFill) els.autoFill.textContent = `Auto-fill ${limit}`;
+}
+
 function updateClockUI() {
   els.periodChip.textContent = `${state.period} · ${formatClock(state.clock)}`;
   els.clock.textContent = formatClock(state.clock);
 }
 
 function renderLineup() {
-  els.onCourtCount.textContent = `${state.onCourt.length}/5`;
+  els.onCourtCount.textContent = `${state.onCourt.length}/${getActivePlayerLimit()}`;
   els.lineupStarters.innerHTML = state.onCourt.map(id => playerChip(id, true)).join('');
   const bench = state.bench.map(id => playerChip(id, false)).join('');
   els.lineupBench.innerHTML = bench || '<div class="col-span-5 text-[10px] text-slate-500">No bench set</div>';
@@ -379,7 +393,7 @@ function liveCard(id) {
 
   const btnHtml = cols.map(col => {
     const key = col.toLowerCase();
-    if (isPointsColumn(col)) {
+    if (isMultiValueScoreColumn(col)) {
       return `${statBtn(id, key, 2, '+2')} ${statBtn(id, key, 3, '+3')} ${statBtn(id, key, 1, '+1')}`;
     }
     return statBtn(id, key, 1, col);
@@ -447,7 +461,7 @@ function renderOpponents() {
 
     const oppBtns = cols.map(col => {
       const key = col.toLowerCase();
-      if (isPointsColumn(col)) {
+      if (isMultiValueScoreColumn(col)) {
         return `${oppBtn(o.id, key, 2, '+2')} ${oppBtn(o.id, key, 3, '+3')} ${oppBtn(o.id, key, 1, '+1')}`;
       }
       return oppBtn(o.id, key, 1, col);
@@ -1561,7 +1575,12 @@ function formatClock(ms) {
 
 function isPointsColumn(colOrKey) {
   const u = (colOrKey || '').toString().toUpperCase();
-  return u === 'PTS' || u === 'POINTS' || u === 'GOALS';
+  return u === 'PTS' || u === 'POINTS' || u === 'GOALS' || u === 'R' || u === 'RUN' || u === 'RUNS';
+}
+
+function isMultiValueScoreColumn(colOrKey) {
+  const u = (colOrKey || '').toString().toUpperCase();
+  return u === 'PTS' || u === 'POINTS';
 }
 
 async function startStop() {
@@ -1693,13 +1712,14 @@ function setPeriod(p) {
 }
 
 function applyPeriodButtons() {
-  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig }).slice(0, 5);
+  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig });
   const fallbackLabel = labels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
-  document.querySelectorAll('.period-btn').forEach((button, index) => {
-    const label = labels[index] || fallbackLabel;
-    button.dataset.period = label;
-    button.textContent = label;
-  });
+  const container = document.getElementById('period-buttons');
+  if (!container) return;
+  container.innerHTML = labels.map((label) => {
+    const active = label === (state.period || fallbackLabel);
+    return `<button class="pill px-2 py-1.5 ${active ? 'bg-teal text-ink border-teal font-bold' : 'bg-white border-slate/10 font-semibold'} border period-btn" data-period="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+  }).join('');
 }
 
 function addStat(id, key, delta) {
@@ -2072,7 +2092,7 @@ function handleLineupClick(e) {
     state.bench.push(id);
     addLog(`#${getNum(id)} ${playerName(id)} removed from court`);
   } else {
-    if (state.onCourt.length >= 5) return;
+    if (state.onCourt.length >= getActivePlayerLimit()) return;
     state.onCourt.push(id);
     state.bench = state.bench.filter(p => p !== id);
     addLog(`#${getNum(id)} ${playerName(id)} added to court`);
@@ -2109,13 +2129,13 @@ function setSubMode(mode) {
 function updateSubHint() {
   if (state.queueMode) {
     if (!state.pendingOut) {
-      els.subHint.textContent = 'Tap player on court, then tap replacement';
+      els.subHint.textContent = 'Tap active player, then tap replacement';
     } else {
       els.subHint.textContent = 'Now tap bench player to complete swap';
     }
   } else {
     if (!state.pendingOut) {
-      els.subHint.textContent = 'Tap player on court, then tap replacement';
+      els.subHint.textContent = 'Tap active player, then tap replacement';
     } else {
       els.subHint.textContent = 'Now tap bench player to swap in';
     }
@@ -2172,7 +2192,7 @@ function renderSubPlayers() {
       ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
       <span class="truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</span>
     </button>`;
-  }).join('') || '<div class="text-xs text-slate-500 text-center py-2">No players on court</div>';
+  }).join('') || '<div class="text-xs text-slate-500 text-center py-2">No active players</div>';
 
   // Render bench players
   els.subIn.innerHTML = state.bench.map(id => {
@@ -2252,7 +2272,7 @@ function applyQueue(closeModal = true) {
 }
 
 function subIn(id) {
-  if (state.onCourt.length >= 5) return;
+  if (state.onCourt.length >= getActivePlayerLimit()) return;
   state.onCourt.push(id);
   state.bench = state.bench.filter(p => p !== id);
   renderLineup();
@@ -2288,7 +2308,7 @@ function renderQueue() {
 }
 
 function autoFillStarters() {
-  const needed = 5 - state.onCourt.length;
+  const needed = getActivePlayerLimit() - state.onCourt.length;
   if (needed <= 0) return;
   const add = state.bench.slice(0, needed);
   state.onCourt = [...state.onCourt, ...add];
@@ -2426,6 +2446,7 @@ async function init() {
     setVoiceNoteButtonLabel(false);
     setVoiceNoteHint(false);
     applyPeriodButtons();
+    updateLineupLabels();
 
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
@@ -2455,7 +2476,7 @@ async function init() {
             liveResetAt: resetAt,
             liveClockMs: 0,
             liveClockRunning: false,
-            liveClockPeriod: 'Q1',
+            liveClockPeriod: state.period,
             liveClockUpdatedAt: resetAt,
             liveLineup: { onCourt: [], bench: roster.map(r => r.id) },
             // Preserve opponent fields
@@ -2471,7 +2492,7 @@ async function init() {
         }
         currentGame.liveClockMs = 0;
         currentGame.liveClockRunning = false;
-        currentGame.liveClockPeriod = 'Q1';
+        currentGame.liveClockPeriod = state.period;
         currentGame.liveClockUpdatedAt = resetAt;
         const deletions = [
           ...eventsSnapshot.docs.map(d => deleteDoc(d.ref)),

@@ -67,6 +67,9 @@
         .basketball-court { background: #c68642; }
         .basketball-court::before { background: rgba(255,255,255,0.2); }
         .basketball-court::after { border-color: rgba(255,255,255,0.2); }
+        .diamond-field { background: #3f7f47; }
+        .diamond-field::before,
+        .diamond-field::after { display: none; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -198,6 +201,8 @@
                         <option value="">— Select formation —</option>
                         <option value="soccer-9v9">Soccer 9v9</option>
                         <option value="basketball-5v5">Basketball 5v5</option>
+                        <option value="baseball-9">Baseball 9</option>
+                        <option value="softball-10">Softball 10</option>
                     </select>
                 </div>
 
@@ -515,6 +520,41 @@
                     { id: 'pf', name: 'Power Forward' },
                     { id: 'c', name: 'Center' }
                 ]
+            },
+            'baseball-9': {
+                name: 'Baseball 9',
+                numPeriods: 7,
+                periodPrefix: 'I',
+                diamond: true,
+                positions: [
+                    { id: 'p', name: 'Pitcher' },
+                    { id: 'c', name: 'Catcher' },
+                    { id: '1b', name: 'First Base' },
+                    { id: '2b', name: 'Second Base' },
+                    { id: '3b', name: 'Third Base' },
+                    { id: 'ss', name: 'Shortstop' },
+                    { id: 'lf', name: 'Left Field' },
+                    { id: 'cf', name: 'Center Field' },
+                    { id: 'rf', name: 'Right Field' }
+                ]
+            },
+            'softball-10': {
+                name: 'Softball 10',
+                numPeriods: 7,
+                periodPrefix: 'I',
+                diamond: true,
+                positions: [
+                    { id: 'p', name: 'Pitcher' },
+                    { id: 'c', name: 'Catcher' },
+                    { id: '1b', name: 'First Base' },
+                    { id: '2b', name: 'Second Base' },
+                    { id: '3b', name: 'Third Base' },
+                    { id: 'ss', name: 'Shortstop' },
+                    { id: 'lf', name: 'Left Field' },
+                    { id: 'lcf', name: 'Left Center' },
+                    { id: 'rcf', name: 'Right Center' },
+                    { id: 'rf', name: 'Right Field' }
+                ]
             }
         };
 
@@ -551,6 +591,29 @@
                 'sf': { left: 78, top: 42 },
                 'pf': { left: 28, top: 67 },
                 'c':  { left: 72, top: 67 },
+            },
+            'baseball-9': {
+                'p':  { left: 50, top: 50 },
+                'c':  { left: 50, top: 86 },
+                '1b': { left: 76, top: 58 },
+                '2b': { left: 62, top: 34 },
+                '3b': { left: 24, top: 58 },
+                'ss': { left: 38, top: 34 },
+                'lf': { left: 20, top: 15 },
+                'cf': { left: 50, top: 10 },
+                'rf': { left: 80, top: 15 },
+            },
+            'softball-10': {
+                'p':   { left: 50, top: 50 },
+                'c':   { left: 50, top: 86 },
+                '1b':  { left: 76, top: 58 },
+                '2b':  { left: 62, top: 34 },
+                '3b':  { left: 24, top: 58 },
+                'ss':  { left: 38, top: 34 },
+                'lf':  { left: 18, top: 16 },
+                'lcf': { left: 40, top: 10 },
+                'rcf': { left: 60, top: 10 },
+                'rf':  { left: 82, top: 16 },
             }
         };
 
@@ -1630,6 +1693,9 @@ Assistant:`;
         function getPeriods(formationId) {
             const f = FORMATIONS[formationId];
             if (!f) return ['H1', 'H2'];
+            if (f.periodPrefix) {
+                return Array.from({ length: f.numPeriods || 2 }, (_, index) => `${f.periodPrefix}${index + 1}`);
+            }
             const n = f.numPeriods || 2;
             if (n === 4) return ['Q1', 'Q2', 'Q3', 'Q4'];
             return ['H1', 'H2'];
@@ -1883,6 +1949,7 @@ Respond ONLY with valid JSON.`;
                 const gamePlan = {
                     formationId: state.formationId,
                     numPeriods: FORMATIONS[state.formationId].numPeriods || 2,
+                    battingOrder: Array.isArray(state.gamePlan?.battingOrder) ? state.gamePlan.battingOrder : [],
                     lineups: flattenRotationPlan(state.rotationPlan)
                 };
                 await updateGame(state.teamId, state.gameId, { gamePlan });
@@ -2020,9 +2087,10 @@ Respond ONLY with valid JSON.`;
 
             const isSoccer = state.formationId.startsWith('soccer');
             const isBasketball = state.formationId.startsWith('basketball');
+            const isDiamond = !!formation.diamond;
 
             // Field background class
-            const fieldClass = isBasketball ? 'basketball-court' : '';
+            const fieldClass = isBasketball ? 'basketball-court' : (isDiamond ? 'diamond-field' : '');
 
             // Build player blocks HTML
             const playerBlocks = formation.positions.map(pos => {
@@ -2065,10 +2133,15 @@ Respond ONLY with valid JSON.`;
                 <div class="field-line" style="left:10%;right:10%;top:5%;height:1px"></div>
                 <div class="field-line" style="left:35%;right:35%;top:78%;height:1px"></div>
             ` : '';
+            const diamondMarkings = isDiamond ? `
+                <div class="field-line" style="left:50%;top:86%;width:1px;height:46%;transform:rotate(45deg);transform-origin:top;background:rgba(255,255,255,0.35)"></div>
+                <div class="field-line" style="left:50%;top:86%;width:1px;height:46%;transform:rotate(-45deg);transform-origin:top;background:rgba(255,255,255,0.35)"></div>
+                <div class="field-line" style="left:50%;top:46%;width:44%;height:1px;transform:translateX(-50%) rotate(45deg);background:rgba(255,255,255,0.35)"></div>
+            ` : '';
 
             container.innerHTML = `
                 <div class="field-diagram ${fieldClass}" style="height:260px">
-                    ${soccerMarkings}${basketballMarkings}
+                    ${soccerMarkings}${basketballMarkings}${diamondMarkings}
                     ${playerBlocks}
                     <!-- bench players -->
                 </div>

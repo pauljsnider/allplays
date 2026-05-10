@@ -68,6 +68,8 @@
                         <option value="">Select a sport...</option>
                         <option value="Basketball">Basketball — PTS/REB/AST/STL/TO template</option>
                         <option value="Soccer">Soccer — GOALS/SHOTS/PASSES/BLOCKS/HUSTLE template</option>
+                        <option value="Baseball">Baseball — AB/H/R/RBI/BB/FP template</option>
+                        <option value="Softball">Softball — AB/H/R/RBI/BB/FP template</option>
                     </select>
                     <p class="text-xs text-gray-500 mt-1">Only sports with built-in stat tracker templates are listed.
                     </p>
@@ -247,6 +249,7 @@
         import { normalizeYouTubeEmbedUrl } from './js/live-stream-utils.js?v=1';
         import { hasFullTeamAccess } from './js/team-access.js';
         import { processPendingAdminInvites, buildAdminInviteFollowUp } from './js/edit-team-admin-invites.js?v=3';
+        import { getSportStatTemplate } from './js/sport-templates.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -663,32 +666,16 @@
                     console.log('Created team with ID:', newTeamId);
                     console.log('Team sport:', teamData.sport);
 
-                    // Auto-create standard config based on sport
-                    const sportValue = teamData.sport;
-                    const sport = sportValue ? sportValue.toLowerCase() : '';
-                    console.log('Sport value (lowercase):', sport);
-
-                    let configName = '';
-                    let columns = [];
-
-                    if (sport === 'basketball') {
-                        configName = 'Basketball Standard';
-                        columns = ['PTS', 'REB', 'AST', 'STL', 'TO'];
-                        console.log('Basketball config:', configName, columns);
-                    } else if (sport === 'soccer') {
-                        configName = 'Soccer Standard';
-                        columns = ['GOALS', 'SHOTS', 'PASSES', 'BLOCKS', 'HUSTLE'];
-                        console.log('Soccer config:', configName, columns);
-                    }
+                    const sportTemplate = getSportStatTemplate(teamData.sport);
 
                     // Create the config if we have a template for this sport
-                    if (configName && columns.length > 0) {
-                        console.log('Creating config...', { name: configName, baseType: sport, columns });
+                    if (sportTemplate) {
+                        console.log('Creating config...', sportTemplate);
                         try {
                             const configId = await addConfig(newTeamId, {
-                                name: configName,
-                                baseType: sport,
-                                columns: columns
+                                name: sportTemplate.name,
+                                baseType: sportTemplate.baseType,
+                                columns: sportTemplate.columns
                             });
                             console.log('Config created successfully with ID:', configId);
                         } catch (configError) {
@@ -696,7 +683,7 @@
                             alert('Team created but failed to create default config: ' + configError.message);
                         }
                     } else {
-                        console.log('No template for sport:', sport);
+                        console.log('No template for sport:', teamData.sport);
                     }
 
                     let pendingInviteSummary = {
