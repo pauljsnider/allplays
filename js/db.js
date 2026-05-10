@@ -1790,19 +1790,32 @@ async function syncSharedScheduleCounterpart(teamId, gameId, sourceGame, previou
     });
 
     let counterpartGameId = previousGame?.sharedScheduleOpponentGameId || null;
+    let createdCounterpartRef = null;
 
     if (counterpartRef && counterpartGameId) {
         await updateDoc(counterpartRef, mirrorPayload);
     } else {
         const newCounterpartRef = await addDoc(collection(db, `teams/${counterpartTeamId}/games`), mirrorPayload);
         counterpartGameId = newCounterpartRef.id;
+        createdCounterpartRef = newCounterpartRef;
     }
 
-    await updateDoc(sourceRef, buildSharedScheduleSourceUpdate({
-        sharedScheduleId,
-        counterpartTeamId,
-        counterpartGameId
-    }));
+    try {
+        await updateDoc(sourceRef, buildSharedScheduleSourceUpdate({
+            sharedScheduleId,
+            counterpartTeamId,
+            counterpartGameId
+        }));
+    } catch (error) {
+        if (createdCounterpartRef) {
+            try {
+                await deleteDoc(createdCounterpartRef);
+            } catch (rollbackError) {
+                console.warn('Failed to roll back shared schedule counterpart:', rollbackError);
+            }
+        }
+        throw error;
+    }
 }
 
 export async function addGame(teamId, gameData) {
@@ -1813,6 +1826,13 @@ export async function addGame(teamId, gameData) {
             await syncSharedScheduleCounterpart(teamId, docRef.id, { ...gameData, id: docRef.id });
         } catch (error) {
             console.warn('Failed to create shared schedule counterpart:', error);
+            try {
+                await deleteDoc(docRef);
+            } catch (rollbackError) {
+                console.warn('Failed to roll back shared schedule source game:', rollbackError);
+            }
+            const detail = error?.message ? ` ${error.message}` : '';
+            throw new Error(`Shared matchup was not fully published.${detail}`);
         }
     }
     return docRef.id;
