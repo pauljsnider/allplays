@@ -60,27 +60,27 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <section class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
-        <h2 class="text-xl font-semibold text-gray-900 mb-4">Upload Score Sheet</h2>
-        <div class="space-y-4">
-          <input id="stat-sheet-input" type="file" accept="image/*" class="block w-full text-sm text-gray-600">
-          <div id="stat-sheet-preview" class="hidden">
-            <img id="stat-sheet-preview-img" src="" alt="Stat sheet preview" class="rounded-xl border border-gray-200 w-full h-auto object-contain">
-          </div>
-          <div class="flex flex-wrap items-center gap-3">
-            <button id="analyze-btn" class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700">Analyze Photo</button>
-            <button id="clear-btn" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-100">Clear</button>
-            <span id="analyze-status" class="text-sm text-gray-500"></span>
-          </div>
-          <div id="analyze-loading" class="hidden text-sm text-indigo-600 flex items-center gap-2">
-            <div class="w-3 h-3 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin"></div>
-            Analyzing stat sheet…
-          </div>
+    <section class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+      <h2 class="text-xl font-semibold text-gray-900 mb-4">Upload Score Sheet</h2>
+      <div class="space-y-4">
+        <input id="stat-sheet-input" type="file" accept="image/*" class="block w-full text-sm text-gray-600">
+        <div id="stat-sheet-preview" class="hidden">
+          <img id="stat-sheet-preview-img" src="" alt="Stat sheet preview" class="rounded-xl border border-gray-200 w-full h-auto object-contain">
         </div>
-      </section>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="analyze-btn" class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700">Analyze Photo</button>
+          <button id="clear-btn" class="px-4 py-2 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-100">Clear</button>
+          <span id="analyze-status" class="text-sm text-gray-500"></span>
+        </div>
+        <div id="analyze-loading" class="hidden text-sm text-indigo-600 flex items-center gap-2">
+          <div class="w-3 h-3 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin"></div>
+          Analyzing stat sheet…
+        </div>
+      </div>
+    </section>
 
-      <section class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
+    <section id="analysis-section" class="hidden mt-6 space-y-6">
+      <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
         <h2 class="text-xl font-semibold text-gray-900 mb-4">Review Scores</h2>
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -99,10 +99,7 @@
           </label>
           <p id="match-hint" class="text-xs text-gray-500">Scores default to the stat sheet totals; edit if needed.</p>
         </div>
-      </section>
-    </div>
-
-    <section id="analysis-section" class="hidden mt-6 space-y-6">
+      </div>
       <div class="bg-white shadow-lg rounded-2xl p-6 border border-gray-200">
         <div class="flex items-center justify-between gap-4 mb-4">
           <h2 id="home-team-title" class="text-xl font-semibold text-gray-900">Home Players</h2>

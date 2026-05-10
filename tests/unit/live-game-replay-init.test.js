@@ -530,6 +530,19 @@ async function bootReplayPage({ replayEvents }) {
 }
 
 describe('live game replay initialization', () => {
+    it('keeps no-reload video refreshes from exposing the generic empty state over media content', () => {
+        const source = readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8');
+        const noReloadStart = source.indexOf('if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {');
+        const fullReloadStart = source.indexOf('setupVideoPanel(nextPlayback);', noReloadStart);
+        const noReloadBranch = source.slice(noReloadStart, fullReloadStart);
+
+        expect(noReloadBranch).toContain('const shouldShowVideoPanel = Boolean(');
+        expect(noReloadBranch).toContain('hasMediaHubContent(state.videoPlayback?.mediaHub)');
+        expect(noReloadBranch).toContain('state.videoPlayback?.gameClips?.length');
+        expect(noReloadBranch).toContain('renderReplayAvailabilityState({ shouldShowVideoPanel });');
+        expect(noReloadBranch).not.toContain('renderReplayAvailabilityState();');
+    });
+
     it('locks chat for replay pages with no saved events', async () => {
         const page = await bootReplayPage({ replayEvents: [] });
 
