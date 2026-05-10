@@ -100,6 +100,14 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function isPublishedLinkedCertificate(teamId, data) {
+      let playerId = data.get('playerId', '');
+      return data.get('status', '') == 'published' &&
+             playerId is string &&
+             playerId.size() > 0 &&
+             isParentForPlayer(teamId, playerId);
+    }
+
     function isPlayerSelf(teamId, playerId) {
       let playerPath = /databases/$(database)/documents/teams/$(teamId)/players/$(playerId);
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
@@ -360,6 +368,47 @@ service cloud.firestore {
         isGlobalAdmin();
 
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
+    }
+
+
+    function isTeamMediaPhotoCreate(teamId, data) {
+      return canAccessTeamChat(teamId) &&
+             data.keys().hasAll([
+               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.folderId is string &&
+             data.folderId.size() > 0 &&
+             data.type == 'photo' &&
+             data.url is string &&
+             data.storagePath is string &&
+             data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
+             data.uploadedBy == request.auth.uid &&
+             data.size is number &&
+             data.size > 0 &&
+             data.size <= 10485760 &&
+             data.mimeType is string &&
+             data.mimeType.matches('image/.*') &&
+             data.deleted == false &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    function isOwnTeamMediaPhotoSoftDelete(teamId) {
+      return canAccessTeamChat(teamId) &&
+             resource.data.type == 'photo' &&
+             resource.data.uploadedBy == request.auth.uid &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'deleted', 'deletedAt', 'deletedBy', 'updatedAt'
+             ]) &&
+             request.resource.data.deleted == true &&
+             request.resource.data.deletedBy == request.auth.uid &&
+             request.resource.data.deletedAt == request.time &&
+             request.resource.data.updatedAt == request.time;
     }
 
     function teamChatRecipientIds(teamId) {
@@ -711,7 +760,41 @@ service cloud.firestore {
 
       match /mediaItems/{itemId} {
         allow read: if canAccessTeamChat(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /settings/{settingId} {
+        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
+                                            isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateAssets/{assetId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateBatches/{batchId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
+      }
+
+      match /certificates/{certificateId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isPublishedLinkedCertificate(teamId, resource.data);
+        allow create, update: if isTeamOwnerOrAdmin(teamId);
+        allow delete: if isGlobalAdmin();
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
       }
 
       match /memberTracking/{trackingId} {

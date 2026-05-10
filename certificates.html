@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-3J13LHWFT3');
+    </script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Certificates - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/certificates.css?v=5">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-6 max-w-7xl">
+        <div id="team-admin-banner" class="mb-6"></div>
+
+        <section class="mb-5">
+            <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                    <p class="text-sm font-semibold uppercase tracking-wide text-primary-700">Team workflow</p>
+                    <h1 class="mt-1 text-3xl font-bold text-gray-900">Awards & Certificates</h1>
+                    <p id="cert-page-subtitle" class="mt-2 text-gray-600">Set up the certificate, choose players, create drafts, edit, then print.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button id="cert-new-run-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Start new run</button>
+                    <button id="cert-view-saved-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">View saved work</button>
+                    <button id="cert-custom-recipient-btn" type="button" class="rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-100">Create one-off certificate</button>
+                </div>
+            </div>
+        </section>
+
+        <div id="cert-alert" class="hidden mb-4 rounded-lg border px-4 py-3 text-sm"></div>
+
+        <div id="cert-loading" class="cert-panel">
+            <div class="cert-panel-body text-center py-12">
+                <div class="mx-auto mb-3 h-9 w-9 animate-spin rounded-full border-b-2 border-primary-600"></div>
+                <p class="text-sm text-gray-500">Loading certificate studio...</p>
+            </div>
+        </div>
+
+        <div id="cert-parent-view" class="hidden"></div>
+
+        <div id="cert-studio" class="hidden">
+            <div id="cert-setup-layout" class="cert-studio-shell">
+                <div class="space-y-4">
+                    <div id="cert-setup" class="cert-panel"></div>
+                    <div id="cert-player-selection" class="cert-panel"></div>
+                </div>
+                <div id="cert-preview" class="cert-panel"></div>
+            </div>
+
+            <div id="cert-review-layout" class="cert-review-shell hidden">
+                <aside id="cert-sidebar" class="cert-panel"></aside>
+                <section id="cert-review-grid" class="cert-panel"></section>
+                <section id="cert-review-preview" class="cert-panel"></section>
+            </div>
+
+            <div class="cert-sticky-actions">
+                <button id="cert-mobile-preview-btn" type="button" class="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700">Preview</button>
+                <button id="cert-mobile-print-btn" type="button" class="flex-1 rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white">Print</button>
+            </div>
+        </div>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module" src="./js/certificates/studio.js?v=6"></script>
+</body>
+
+</html>

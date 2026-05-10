@@ -42,8 +42,13 @@ function formatClipGameDate(value) {
     if (typeof value?.seconds === 'number') {
         return new Date(value.seconds * 1000).toLocaleDateString();
     }
+    const cleanValue = toCleanString(value);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleanValue)) {
+        const [year, month, day] = cleanValue.split('-').map(Number);
+        return new Date(year, month - 1, day).toLocaleDateString();
+    }
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? toCleanString(value) : date.toLocaleDateString();
+    return Number.isNaN(date.getTime()) ? cleanValue : date.toLocaleDateString();
 }
 
 function playerMatchesClip(clip = {}, playerId = '') {
