@@ -36,7 +36,8 @@ describe('parent dashboard team fees', () => {
         const html = renderParentTeamFees([
             { title: 'Paid fee', status: 'paid', amountCents: 1000 },
             { title: 'Unpaid fee', status: 'unpaid', amountCents: 1000 },
-            { title: 'Partial fee', status: 'partially_paid', amountCents: 1000 },
+            { title: 'Partial fee', status: 'partial', amountCents: 1000 },
+            { title: 'Legacy partial fee', status: 'partially_paid', amountCents: 1000 },
             { title: 'Canceled fee', status: 'canceled', amountCents: 1000 },
             { title: 'Adjusted fee', status: 'adjusted', adjustedAmountCents: 500 }
         ]);
@@ -47,6 +48,8 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('bg-red-100');
         expect(html).toContain('Partially paid');
         expect(html).toContain('bg-blue-100');
+        expect(normalizeParentFeeStatus('partial')).toBe('partial');
+        expect(normalizeParentFeeStatus('partially_paid')).toBe('partially_paid');
         expect(html).toContain('Canceled');
         expect(html).toContain('bg-gray-100');
         expect(html).toContain('Adjusted');
