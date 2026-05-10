@@ -280,8 +280,9 @@
             getAggregatedStatsForPlayer,
             createParentMembershipRequest,
             listMyParentMembershipRequests,
-            listParentTeamFeeRecipients
-        } from './js/db.js?v=29';
+            listParentTeamFeeRecipients,
+            listCertificatesForPlayer
+        } from './js/db.js?v=32';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -339,6 +340,7 @@
         let incentivesPanelPlayer = null;  // { id, name, teamId }
         let incentivesPanelRules = [];
         let parentDashboardHydrationRun = 0;
+        const certificatesByPlayerKey = new Map();
         const incentivesEarningsCache = new Map(); // gameId__playerId → { totalCents, breakdown }
         window.setPracticePacketFilter = setPracticePacketFilter;
         window.setScheduleFilter = setScheduleFilter;
@@ -472,6 +474,26 @@
                     listEl.innerHTML = '<div class="text-xs text-red-600">Unable to load your access requests right now.</div>';
                 }
             }
+        }
+
+        function parentCertificateKey(teamId, playerId) {
+            return `${teamId || ''}::${playerId || ''}`;
+        }
+
+        async function loadParentCertificateLinks(children = []) {
+            certificatesByPlayerKey.clear();
+            const lookups = (children || [])
+                .filter((child) => child?.teamId && child?.playerId)
+                .map(async (child) => {
+                    try {
+                        const certificates = await listCertificatesForPlayer(child.teamId, child.playerId, { status: 'published', limit: 5 });
+                        certificatesByPlayerKey.set(parentCertificateKey(child.teamId, child.playerId), certificates);
+                    } catch (error) {
+                        console.warn('[parent-dashboard] Failed to load certificates for child:', error);
+                        certificatesByPlayerKey.set(parentCertificateKey(child.teamId, child.playerId), []);
+                    }
+                });
+            await Promise.all(lookups);
         }
 
         async function submitParentAccessRequest() {
@@ -858,6 +880,7 @@
                     loadRequestAccessOptions(),
                     refreshParentMembershipRequestList(user.uid)
                 ]);
+                await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
@@ -1803,7 +1826,9 @@
                 return;
             }
 
-            container.innerHTML = children.map(child => `
+            container.innerHTML = children.map(child => {
+                const certificates = certificatesByPlayerKey.get(parentCertificateKey(child.teamId, child.playerId)) || [];
+                return `
                 <div class="rounded-xl border border-gray-200 overflow-hidden">
                     <a href="player.html?teamId=${child.teamId}&playerId=${child.playerId}"
                        class="flex items-center gap-4 p-3 hover:border-primary-300 hover:bg-primary-50 transition group">
@@ -1836,10 +1861,17 @@
                                 class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
                                 💰 Incentives
                             </button>
+                            ${certificates.length ? `
+                                <a href="certificates.html#teamId=${escapeAttr(child.teamId)}&playerId=${escapeAttr(child.playerId)}"
+                                    class="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                                    Certificates
+                                </a>
+                            ` : ''}
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
 
         function renderTeamChats(children, unreadCounts = {}) {

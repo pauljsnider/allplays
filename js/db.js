@@ -3212,6 +3212,253 @@ export function canModerateChat(user, team) {
     return false;
 }
 
+function getNormalizedCertificateEmail(user) {
+    return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+}
+
+function hasCertificateCoachAccess(user, team) {
+    if (!user || !team) return false;
+    if (team.ownerId === user.uid) return true;
+    if (user.isAdmin === true) return true;
+
+    const email = getNormalizedCertificateEmail(user);
+    const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails : [];
+    return Boolean(email && adminEmails.map((item) => String(item || '').trim().toLowerCase()).includes(email));
+}
+
+function hasCertificateParentPlayerAccess(user, teamId, playerId) {
+    if (!user || !teamId || !playerId) return false;
+    const key = `${teamId}::${playerId}`;
+    if (Array.isArray(user.parentPlayerKeys) && user.parentPlayerKeys.includes(key)) return true;
+    return Array.isArray(user.parentOf) && user.parentOf.some((entry) => (
+        entry?.teamId === teamId && entry?.playerId === playerId
+    ));
+}
+
+export function canAccessCertificates(user, team) {
+    return hasCertificateCoachAccess(user, team);
+}
+
+export function canViewSavedCertificate(user, team, certificate) {
+    if (!user || !team || !certificate) return false;
+    if (hasCertificateCoachAccess(user, team)) return true;
+    return certificate.status === 'published'
+        && hasCertificateParentPlayerAccess(user, team.id, certificate.playerId);
+}
+
+function getCertificateActor() {
+    const user = auth.currentUser || {};
+    return {
+        actorId: user.uid || null,
+        actorEmail: user.email || null
+    };
+}
+
+function getCertificateTimestamp(value = null) {
+    return value || Timestamp.now();
+}
+
+function getUpdatedCertificatePayload(data = {}, now = Timestamp.now()) {
+    const actor = getCertificateActor();
+    return {
+        ...data,
+        updatedAt: getCertificateTimestamp(data.updatedAt || now),
+        updatedBy: data.updatedBy || actor.actorId
+    };
+}
+
+async function writeCertificateAudit(teamId, certificateId, event = {}) {
+    if (!teamId || !certificateId) return null;
+    const actor = getCertificateActor();
+    const eventRef = await addDoc(collection(db, 'teams', teamId, 'certificates', certificateId, 'audit'), {
+        action: event.action || 'updated',
+        format: event.format || null,
+        actorId: event.actorId || actor.actorId,
+        actorEmail: event.actorEmail || actor.actorEmail,
+        at: event.at || Timestamp.now()
+    });
+    return eventRef.id;
+}
+
+export async function getCertificateDefaults(teamId) {
+    if (!teamId) return null;
+    const snap = await getDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function setCertificateDefaults(teamId, defaults = {}) {
+    if (!teamId) throw new Error('Missing team for certificate defaults');
+    const actor = getCertificateActor();
+    const payload = {
+        ...defaults,
+        updatedAt: Timestamp.now(),
+        updatedBy: actor.actorId
+    };
+    await setDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'), payload, { merge: true });
+    return payload;
+}
+
+export async function listCertificateAssets(teamId) {
+    if (!teamId) return [];
+    const assetsRef = collection(db, 'teams', teamId, 'certificateAssets');
+    try {
+        const snapshot = await getDocs(query(assetsRef, orderBy('uploadedAt', 'desc')));
+        return snapshot.docs.map((assetDoc) => ({ id: assetDoc.id, ...assetDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(assetsRef);
+        return snapshot.docs
+            .map((assetDoc) => ({ id: assetDoc.id, ...assetDoc.data() }))
+            .sort((a, b) => {
+                const aTime = a.uploadedAt?.toMillis ? a.uploadedAt.toMillis() : 0;
+                const bTime = b.uploadedAt?.toMillis ? b.uploadedAt.toMillis() : 0;
+                return bTime - aTime;
+            });
+    }
+}
+
+export async function writeCertificateBatchAudit(teamId, batchId, event = {}) {
+    if (!teamId || !batchId) return null;
+    const actor = getCertificateActor();
+    const eventRef = await addDoc(collection(db, 'teams', teamId, 'certificateBatches', batchId, 'audit'), {
+        action: event.action || 'updated',
+        actorId: event.actorId || actor.actorId,
+        actorEmail: event.actorEmail || actor.actorEmail,
+        at: event.at || Timestamp.now()
+    });
+    return eventRef.id;
+}
+
+export async function createCertificateBatch(teamId, data = {}) {
+    if (!teamId) throw new Error('Missing team for certificate batch');
+    const actor = getCertificateActor();
+    const now = Timestamp.now();
+    const docRef = await addDoc(collection(db, 'teams', teamId, 'certificateBatches'), {
+        ...data,
+        status: data.status || 'draft',
+        createdBy: data.createdBy || actor.actorId,
+        createdAt: data.createdAt || now,
+        updatedBy: data.updatedBy || actor.actorId,
+        updatedAt: data.updatedAt || now
+    });
+    await writeCertificateBatchAudit(teamId, docRef.id, { action: 'created' });
+    return docRef.id;
+}
+
+export async function updateCertificateBatch(teamId, batchId, data = {}) {
+    if (!teamId || !batchId) throw new Error('Missing certificate batch');
+    const payload = getUpdatedCertificatePayload(data);
+    await updateDoc(doc(db, 'teams', teamId, 'certificateBatches', batchId), payload);
+    await writeCertificateBatchAudit(teamId, batchId, { action: data.status === 'published' ? 'published' : 'updated' });
+}
+
+export async function listCertificateBatches(teamId, options = {}) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'certificateBatches');
+    const status = String(options.status || '').trim();
+    try {
+        const baseQuery = status
+            ? query(batchesRef, where('status', '==', status), orderBy('updatedAt', 'desc'), limit(options.limit || 100))
+            : query(batchesRef, orderBy('updatedAt', 'desc'), limit(options.limit || 100));
+        const snapshot = await getDocs(baseQuery);
+        return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(batchesRef);
+        return snapshot.docs
+            .map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }))
+            .filter((batch) => !status || batch.status === status)
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            })
+            .slice(0, options.limit || 100);
+    }
+}
+
+export async function createCertificate(teamId, data = {}) {
+    if (!teamId) throw new Error('Missing team for certificate');
+    const actor = getCertificateActor();
+    const now = Timestamp.now();
+    const docRef = await addDoc(collection(db, 'teams', teamId, 'certificates'), {
+        ...data,
+        status: data.status || 'draft',
+        createdBy: data.createdBy || actor.actorId,
+        createdAt: data.createdAt || now,
+        updatedBy: data.updatedBy || actor.actorId,
+        updatedAt: data.updatedAt || now
+    });
+    await writeCertificateAudit(teamId, docRef.id, { action: 'created' });
+    return docRef.id;
+}
+
+export async function updateCertificate(teamId, certificateId, data = {}, auditEvent = null) {
+    if (!teamId || !certificateId) throw new Error('Missing certificate');
+    const payload = getUpdatedCertificatePayload(data);
+    await updateDoc(doc(db, 'teams', teamId, 'certificates', certificateId), payload);
+    await writeCertificateAudit(teamId, certificateId, auditEvent || { action: data.status === 'published' ? 'published' : 'updated' });
+}
+
+export async function getCertificate(teamId, certificateId) {
+    if (!teamId || !certificateId) return null;
+    const snap = await getDoc(doc(db, 'teams', teamId, 'certificates', certificateId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function listCertificates(teamId, options = {}) {
+    if (!teamId) return [];
+    const certsRef = collection(db, 'teams', teamId, 'certificates');
+    const status = String(options.status || '').trim();
+    try {
+        const baseQuery = status
+            ? query(certsRef, where('status', '==', status), orderBy('updatedAt', 'desc'), limit(options.limit || 250))
+            : query(certsRef, orderBy('updatedAt', 'desc'), limit(options.limit || 250));
+        const snapshot = await getDocs(baseQuery);
+        return snapshot.docs.map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(certsRef);
+        return snapshot.docs
+            .map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }))
+            .filter((cert) => !status || cert.status === status)
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            })
+            .slice(0, options.limit || 250);
+    }
+}
+
+export async function listCertificatesForPlayer(teamId, playerId, options = {}) {
+    if (!teamId || !playerId) return [];
+    const certsRef = collection(db, 'teams', teamId, 'certificates');
+    const status = String(options.status || 'published').trim();
+    try {
+        const snapshot = await getDocs(query(
+            certsRef,
+            where('playerId', '==', playerId),
+            where('status', '==', status),
+            orderBy('updatedAt', 'desc'),
+            limit(options.limit || 25)
+        ));
+        return snapshot.docs.map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(certsRef);
+        return snapshot.docs
+            .map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }))
+            .filter((cert) => cert.playerId === playerId && (!status || cert.status === status))
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            })
+            .slice(0, options.limit || 25);
+    }
+}
+
+export async function archiveCertificate(teamId, certificateId) {
+    await updateCertificate(teamId, certificateId, { status: 'archived' }, { action: 'archived' });
+}
+
 function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     if (isDefaultTeamConversation(conversationId)) {
         return collection(db, 'teams', teamId, 'chatMessages');

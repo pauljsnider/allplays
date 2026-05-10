@@ -106,6 +106,25 @@
                     </p>
                 </div>
 
+                <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    <div class="mb-3">
+                        <h3 class="text-sm font-semibold text-gray-900">Team Colors</h3>
+                        <p class="text-xs text-gray-500">Used by certificates and team-branded pages.</p>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                        <label class="block text-sm font-medium text-gray-700">
+                            Primary
+                            <input type="color" id="teamColorPrimary" value="#5ec9c5"
+                                class="mt-1 h-10 w-full cursor-pointer rounded-md border border-gray-300 bg-white p-1">
+                        </label>
+                        <label class="block text-sm font-medium text-gray-700">
+                            Secondary
+                            <input type="color" id="teamColorSecondary" value="#d32f3a"
+                                class="mt-1 h-10 w-full cursor-pointer rounded-md border border-gray-300 bg-white p-1">
+                        </label>
+                    </div>
+                </div>
+
                 <div>
                     <label class="block text-sm font-medium text-gray-700">ZIP Code</label>
                     <input type="text" id="zip" inputmode="numeric" maxlength="10"
@@ -531,6 +550,22 @@
                 .split(',')
                 .map((item) => item.trim())
                 .filter(Boolean);
+        }
+
+        function normalizeHexColor(value, fallback) {
+            const raw = String(value || '').trim();
+            if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+            if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+                return `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`.toLowerCase();
+            }
+            return fallback;
+        }
+
+        function getTeamColorValue(team = {}, key, fallback) {
+            const colors = team.colors || {};
+            const legacyKey = key === 'primary' ? 'primaryColor' : 'secondaryColor';
+            const alternateKey = key === 'primary' ? 'colorPrimary' : 'colorSecondary';
+            return normalizeHexColor(colors[key] || team[legacyKey] || team[alternateKey], fallback);
         }
 
         async function copyTextToClipboard(value) {
@@ -1017,6 +1052,8 @@
                 document.getElementById('name').value = team.name || '';
                 document.getElementById('description').value = team.description || '';
                 document.getElementById('sport').value = team.sport || '';
+                document.getElementById('teamColorPrimary').value = getTeamColorValue(team, 'primary', '#5ec9c5');
+                document.getElementById('teamColorSecondary').value = getTeamColorValue(team, 'secondary', '#d32f3a');
                 document.getElementById('notificationEmail').value = team.notificationEmail || '';
                 document.getElementById('leagueUrl').value = team.leagueUrl || '';
                 document.getElementById('standingsEnabled').checked = team.standingsConfig?.enabled === true;
@@ -1490,6 +1527,10 @@
                         multiTeamTiebreakers: standingsMultiTeamTiebreakers
                     },
                     zip,
+                    colors: {
+                        primary: normalizeHexColor(document.getElementById('teamColorPrimary').value, '#5ec9c5'),
+                        secondary: normalizeHexColor(document.getElementById('teamColorSecondary').value, '#d32f3a')
+                    },
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
                     adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails,

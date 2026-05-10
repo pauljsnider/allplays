@@ -1,7 +1,7 @@
 import { checkAuth } from './auth.js?v=13';
 import { getTeam, getUserProfile, getUnreadChatCounts } from './db.js?v=30';
 import { db, collection, getDocs, query, orderBy } from './firebase.js?v=11';
-import { renderTeamAdminBanner, getTeamAccessInfo } from './team-admin-banner.js?v=3';
+import { renderTeamAdminBanner, getTeamAccessInfo } from './team-admin-banner.js?v=4';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 
 function getTeamIdFromUrl() {
