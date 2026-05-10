@@ -82,6 +82,8 @@ describe('awards and certificates workflow wiring', () => {
         expect(assets).toContain('MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024');
         expect(assets).toContain("image/png', 'image/jpeg', 'image/jpg', 'image/webp");
         expect(assets).toContain('sanitizeCertificateFilename');
+        expect(assets).toContain('validateCertificateStorageId');
+        expect(assets).toContain('/^[A-Za-z0-9_-]+$/');
         expect(firebaseConfig).toContain('"host": "localhost"');
         expect(firebaseConfig).toContain('"port": 8000');
         expect(packageJson).toContain('"serve:firebase"');

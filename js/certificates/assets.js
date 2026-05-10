@@ -17,6 +17,18 @@ export function sanitizeCertificateFilename(fileName = 'asset') {
     return safe || 'asset';
 }
 
+export function validateCertificateStorageId(value, label = 'ID') {
+    if (!value) {
+        throw new Error(`Missing ${label}.`);
+    }
+
+    const normalized = String(value);
+    if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
+        throw new Error(`Invalid ${label} format.`);
+    }
+    return normalized;
+}
+
 export function validateCertificateImageFile(file) {
     if (!file) {
         throw new Error('Choose an image file to upload.');
@@ -34,12 +46,13 @@ export function validateCertificateImageFile(file) {
 
 export async function uploadCertificateAsset(teamId, file, kind = 'generic', uploaderId = null) {
     if (!teamId) throw new Error('Missing team for certificate asset upload.');
+    const safeTeamId = validateCertificateStorageId(teamId, 'team ID');
     validateCertificateImageFile(file);
     await requireImageAuth();
 
     const normalizedKind = ['foreground', 'background', 'watermark', 'generic'].includes(kind) ? kind : 'generic';
     const safeName = sanitizeCertificateFilename(file.name);
-    const storagePath = `team-photos/${Date.now()}_certificate_${teamId}_${normalizedKind}_${safeName}`;
+    const storagePath = `team-photos/${Date.now()}_certificate_${safeTeamId}_${normalizedKind}_${safeName}`;
     const storageRef = ref(imageStorage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
     const url = await getDownloadURL(snapshot.ref);
@@ -55,7 +68,7 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
         kind: normalizedKind
     };
     try {
-        const docRef = await addDoc(collection(db, 'teams', teamId, 'certificateAssets'), assetDoc);
+        const docRef = await addDoc(collection(db, 'teams', safeTeamId, 'certificateAssets'), assetDoc);
         return { id: docRef.id, ...assetDoc };
     } catch (error) {
         console.warn('[certificates] asset uploaded but Firestore asset save failed:', error);
@@ -71,11 +84,12 @@ export async function uploadCertificateAsset(teamId, file, kind = 'generic', upl
 
 export async function uploadSignatureImage(userId, file) {
     if (!userId) throw new Error('A signed-in user is required to upload a signature.');
+    const safeUserId = validateCertificateStorageId(userId, 'user ID');
     validateCertificateImageFile(file);
     await requireImageAuth();
 
     const safeName = sanitizeCertificateFilename(file.name);
-    const storagePath = `user-photos/${Date.now()}_certificate-signature_${userId}_${safeName}`;
+    const storagePath = `user-photos/${Date.now()}_certificate-signature_${safeUserId}_${safeName}`;
     const storageRef = ref(imageStorage, storagePath);
     const snapshot = await uploadBytes(storageRef, file);
     return {

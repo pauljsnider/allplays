@@ -122,6 +122,25 @@ npx vitest run tests/unit/certificates-workflow.test.js tests/unit/certificates-
 SMOKE_BASE_URL=http://localhost:8000 npm run test:smoke -- tests/smoke/certificates-workflow.spec.js
 ```
 
+## PR Review Comment Fix Validation - 2026-05-10
+
+Addressed the four unresolved review threads on PR #884:
+
+- Sanitized and length-limited user-controlled team, player, tone, stat, and game-summary values before adding them to AI prompts.
+- Added an explicit prompt instruction that source data is untrusted context, not instructions.
+- Made the concurrent draft worker index handoff explicit before reading each draft.
+- Validated certificate image upload `teamId` and signature upload `userId` before auth/upload/storage-path construction.
+
+Commands run:
+
+```bash
+node --check js/certificates/aiDescriptions.js && node --check js/certificates/assets.js
+npx vitest run tests/unit/certificates-logic.test.js tests/unit/certificates-workflow.test.js tests/unit/certificates-assets.test.js
+npm run test:unit
+SMOKE_BASE_URL=http://localhost:8010 npm run test:smoke -- tests/smoke/certificates-workflow.spec.js
+git diff --check
+```
+
 ## Saved Sidebar and Deep Link Validation - 2026-05-09
 
 Validated the saved-area click behavior with Playwright:
