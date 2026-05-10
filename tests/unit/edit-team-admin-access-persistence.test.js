@@ -712,7 +712,7 @@ describe('edit team admin access persistence', () => {
                 isPublic: true,
                 adminEmails: [],
                 registrationSource: {
-                    provider: 'Sports Connect',
+                    provider: 'sports-connect',
                     externalTeamId: 'SC-123',
                     sourceId: 'sports-connect',
                     externalTeamName: 'Sharks 12U',
@@ -791,7 +791,7 @@ describe('edit team admin access persistence', () => {
 
         const env = await bootEditTeam(initialState);
         try {
-            env.elements.get('registrationProviderName').value = 'Sports Connect';
+            env.elements.get('registrationProviderName').value = 'sports-connect';
             env.elements.get('registrationExternalTeamId').value = 'SC-987';
             await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
 
@@ -804,7 +804,7 @@ describe('edit team admin access persistence', () => {
             await env.elements.get('team-form').requestSubmit();
 
             expect(env.state.updateCalls[0].teamData.registrationSource).toEqual({
-                provider: 'Sports Connect',
+                provider: 'sports-connect',
                 providerId: 'sports-connect',
                 externalTeamId: 'SC-987',
                 teamId: 'team-1',

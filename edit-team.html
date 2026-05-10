@@ -687,8 +687,21 @@
             });
         }
 
+        function normalizeRegistrationProviderKey(provider) {
+            return String(provider || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+        }
+
+        function isSportsConnectProvider(provider) {
+            return normalizeRegistrationProviderKey(provider) === 'sports-connect';
+        }
+
+        function getRegistrationProviderDisplayName(provider) {
+            const normalizedProvider = String(provider || '').trim();
+            return isSportsConnectProvider(normalizedProvider) ? 'Sports Connect' : normalizedProvider;
+        }
+
         function getRegistrationProviderId(provider) {
-            return provider.toLowerCase() === 'sports connect' ? 'sports-connect' : '';
+            return isSportsConnectProvider(provider) ? 'sports-connect' : '';
         }
 
         function ensureRegistrationProviderOption(provider) {
@@ -713,7 +726,7 @@
             const externalTeamId = document.getElementById('registrationExternalTeamId').value.trim();
             const lastSyncStatus = document.getElementById('registrationLastSyncStatus').value.trim() || 'Not synced';
             const lastSyncTime = getRegistrationLastSyncTime(source);
-            const isSportsConnect = provider.toLowerCase() === 'sports connect';
+            const isSportsConnect = isSportsConnectProvider(provider);
             let connectionStatus = 'Not configured';
             let helpText = 'Choose Sports Connect and enter a team ID or mapping to store registration metadata.';
 
@@ -737,7 +750,11 @@
             currentRegistrationSource = team.registrationSource && typeof team.registrationSource === 'object'
                 ? { ...team.registrationSource }
                 : null;
-            const provider = getRegistrationSourceValue(team, 'provider') || getRegistrationSourceValue(team, 'providerName');
+            const provider = getRegistrationProviderDisplayName(
+                getRegistrationSourceValue(team, 'provider') ||
+                getRegistrationSourceValue(team, 'providerName') ||
+                getRegistrationSourceValue(team, 'providerId')
+            );
             ensureRegistrationProviderOption(provider);
             document.getElementById('registrationProviderName').value = provider;
             document.getElementById('registrationExternalTeamId').value = getRegistrationSourceValue(team, 'externalTeamId');
