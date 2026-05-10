@@ -79,7 +79,7 @@ function isPayActionAllowed(fee) {
 
     const balanceCents = Number(fee.balanceDueCents);
     if (Number.isFinite(balanceCents)) return balanceCents > 0;
-    return fee.status === 'unpaid' || fee.status === 'partial' || fee.status === 'partially_paid' || fee.status === 'adjusted';
+    return fee.status === 'unpaid' || fee.status === 'partial' || fee.status === 'partially_paid';
 }
 
 function formatCents(value) {

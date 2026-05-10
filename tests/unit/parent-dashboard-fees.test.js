@@ -160,6 +160,9 @@ describe('parent dashboard team fees', () => {
         const paidHtml = renderParentTeamFees([
             { title: 'Paid collection', amountCents: 1000, balanceDueCents: 0, status: 'paid', checkoutUrl: 'https://pay.example/paid' }
         ]);
+        const adjustedHtml = renderParentTeamFees([
+            { title: 'Adjusted collection', amountCents: 1000, status: 'adjusted', checkoutUrl: 'https://pay.example/adjusted' }
+        ]);
 
         expect(manualOnlyHtml).not.toContain('>Pay</a>');
         expect(checkoutHtml).toContain('>Pay</a>');
@@ -167,5 +170,6 @@ describe('parent dashboard team fees', () => {
         expect(partialPaymentLinkHtml).toContain('>Pay</a>');
         expect(partialPaymentLinkHtml).toContain('https://pay.example/remaining');
         expect(paidHtml).not.toContain('>Pay</a>');
+        expect(adjustedHtml).not.toContain('>Pay</a>');
     });
 });
