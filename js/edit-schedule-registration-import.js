@@ -34,6 +34,19 @@ function getExistingExternalEventId(event = {}) {
     );
 }
 
+function getSourceKey(source = {}) {
+    return `${normalizeString(source.sourceType || source.type || source.provider || source.name || 'registration').toLowerCase()}::${normalizeString(source.sourceId || source.id || source.providerId || source.registrationSourceId || 'registration').toLowerCase()}`;
+}
+
+function getExistingSourceKey(event = {}) {
+    const metadata = event.sourceMetadata || event.registrationSource || {};
+    return getSourceKey(metadata);
+}
+
+function getExternalEventKey(externalEventId, source = {}) {
+    return `${getSourceKey(source)}::${normalizeString(externalEventId).toLowerCase()}`;
+}
+
 function getComparableTitle(event = {}) {
     return normalizeString(event.opponent || event.title).toLowerCase();
 }
@@ -45,6 +58,24 @@ function isSameLocalEvent(sourceEvent, existingEvent) {
 
     const sourceTitle = normalizeString(sourceEvent.opponent || sourceEvent.title || sourceEvent.summary).toLowerCase();
     return sourceTitle && sourceTitle === getComparableTitle(existingEvent);
+}
+
+function normalizeComparableValue(value) {
+    if (value?.toDate) return normalizeComparableValue(value.toDate());
+    const date = toDate(value);
+    if (date && (value instanceof Date || typeof value === 'string' || value?.toDate)) return date.toISOString();
+    if (value === null || typeof value === 'undefined') return '';
+    return String(value).trim();
+}
+
+function isUnchangedImportedEvent(payload = {}, existingEvent = {}) {
+    const existingType = normalizeString(existingEvent.type || 'game').toLowerCase();
+    const payloadType = normalizeString(payload.type || 'game').toLowerCase();
+    const fields = ['opponent', 'title', 'location', 'notes', 'status', 'isHome'];
+    const fieldMatches = payloadType === existingType && fields.every((field) => normalizeComparableValue(payload[field]) === normalizeComparableValue(existingEvent[field]));
+    const dateMatches = normalizeComparableValue(payload.date) === normalizeComparableValue(existingEvent.date || existingEvent.start || existingEvent.startTime);
+    const endMatches = normalizeComparableValue(payload.end) === normalizeComparableValue(existingEvent.end || existingEvent.endTime || existingEvent.endsAt);
+    return fieldMatches && dateMatches && endMatches;
 }
 
 export function isExternallyLinkedRegistrationTeam(team = {}) {
@@ -77,7 +108,7 @@ export function buildRegistrationScheduleEventPayload(sourceEvent = {}, { Timest
     const rawType = normalizeString(sourceEvent.type || sourceEvent.eventType).toLowerCase();
     const isPractice = rawType === 'practice';
     const toTimestamp = (date) => Timestamp?.fromDate ? Timestamp.fromDate(date) : date;
-    const title = normalizeString(sourceEvent.title || sourceEvent.summary || (isPractice ? 'Practice' : 'Game'));
+    const title = normalizeString(sourceEvent.title || sourceEvent.summary || (isPractice ? 'Practice' : ''));
     const opponent = normalizeString(sourceEvent.opponent || sourceEvent.awayTeam || sourceEvent.homeTeam || title || 'TBD');
     const endDate = toDate(sourceEvent.end || sourceEvent.endTime || sourceEvent.endsAt);
 
@@ -106,24 +137,51 @@ export function buildRegistrationScheduleEventPayload(sourceEvent = {}, { Timest
 }
 
 export function buildRegistrationScheduleImportPreview({ sourceEvents = [], existingEvents = [], Timestamp, source = {} } = {}) {
+    const sourceKey = getSourceKey(source);
     const existingByExternalId = new Map();
     (existingEvents || []).forEach((event) => {
         const externalEventId = getExistingExternalEventId(event);
-        if (externalEventId) existingByExternalId.set(externalEventId, event);
+        if (!externalEventId) return;
+        existingByExternalId.set(getExternalEventKey(externalEventId, event.sourceMetadata || event.registrationSource || source), event);
+        if (!event.sourceMetadata?.sourceType && !event.sourceMetadata?.sourceId && !event.registrationSource?.sourceType && !event.registrationSource?.sourceId) {
+            existingByExternalId.set(getExternalEventKey(externalEventId, source), event);
+        }
     });
 
     const seenExternalIds = new Set();
     return (sourceEvents || []).map((sourceEvent, index) => {
         const externalEventId = getExternalEventId(sourceEvent);
+        const eventKey = getExternalEventKey(externalEventId, source);
         const payload = buildRegistrationScheduleEventPayload(sourceEvent, { Timestamp, source });
-        if (!externalEventId || seenExternalIds.has(externalEventId) || !payload) {
-            return { index, sourceEvent, payload, externalEventId, action: 'skipped', selectable: false, reason: 'Missing or duplicate source event id/date' };
+        if (!externalEventId || !payload) {
+            return { index, sourceEvent, payload, externalEventId, action: 'skipped', selectable: false, reason: 'Missing source event id or date' };
         }
-        seenExternalIds.add(externalEventId);
+        if (seenExternalIds.has(eventKey)) {
+            return { index, sourceEvent, payload, externalEventId, action: 'duplicate', selectable: false, reason: 'Duplicate source event in the registration snapshot' };
+        }
+        seenExternalIds.add(eventKey);
 
-        const existing = existingByExternalId.get(externalEventId);
+        const existing = existingByExternalId.get(eventKey);
         if (existing?.id) {
-            return { index, sourceEvent, payload, externalEventId, action: 'update', selectable: true, existingEventId: existing.id, reason: 'Matches an imported event' };
+            const unchanged = isUnchangedImportedEvent(payload, existing);
+            return {
+                index,
+                sourceEvent,
+                payload,
+                externalEventId,
+                action: unchanged ? 'unchanged' : 'update',
+                selectable: !unchanged,
+                existingEventId: existing.id,
+                reason: unchanged ? 'Already matches the imported event' : 'Matches an imported event with changes'
+            };
+        }
+
+        const conflictingImportedEvent = (existingEvents || []).find((candidate) => {
+            const candidateExternalEventId = getExistingExternalEventId(candidate);
+            return candidateExternalEventId === externalEventId && getExistingSourceKey(candidate) !== sourceKey;
+        });
+        if (conflictingImportedEvent) {
+            return { index, sourceEvent, payload, externalEventId, action: 'conflict', selectable: false, existingEventId: conflictingImportedEvent.id || null, reason: 'Source event id is already linked to a different registration source' };
         }
 
         const conflict = (existingEvents || []).find((candidate) => !getExistingExternalEventId(candidate) && isSameLocalEvent(sourceEvent, candidate));
@@ -140,6 +198,8 @@ export function planRegistrationScheduleImport({ sourceEvents = [], existingEven
     const results = {
         added: 0,
         updated: 0,
+        unchanged: 0,
+        duplicates: 0,
         skipped: 0,
         conflicted: 0,
         conflicts: []
@@ -148,6 +208,14 @@ export function planRegistrationScheduleImport({ sourceEvents = [], existingEven
     buildRegistrationScheduleImportPreview({ sourceEvents, existingEvents, Timestamp, source }).forEach((row) => {
         if (row.action === 'skipped') {
             results.skipped += 1;
+            return;
+        }
+        if (row.action === 'duplicate') {
+            results.duplicates += 1;
+            return;
+        }
+        if (row.action === 'unchanged') {
+            results.unchanged += 1;
             return;
         }
         if (row.action === 'conflict') {
@@ -172,5 +240,5 @@ export function planRegistrationScheduleImport({ sourceEvents = [], existingEven
 }
 
 export function formatRegistrationImportResults(results = {}) {
-    return `${results.added || 0} added, ${results.updated || 0} updated, ${results.skipped || 0} skipped, ${results.conflicted || 0} conflicted`;
+    return `${results.added || 0} added, ${results.updated || 0} updated, ${results.unchanged || 0} unchanged, ${results.duplicates || 0} duplicate, ${results.skipped || 0} skipped, ${results.conflicted || 0} conflicted`;
 }
