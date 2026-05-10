@@ -941,6 +941,11 @@ service cloud.firestore {
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /calendarTokens/{tokenId} {
+        // Raw calendar subscription tokens grant private feed access and must not be public.
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /entitlements/{entitlementId} {
         // Public fan pages may read safe team-pass state, but raw billing/provider
         // metadata stays limited to team admins.
