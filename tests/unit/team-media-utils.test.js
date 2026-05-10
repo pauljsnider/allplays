@@ -4,6 +4,9 @@ import {
     buildBulkDeleteUpdates,
     buildMoveUpdates,
     buildReorderUpdates,
+    getTeamMediaItemUrl,
+    getTeamMediaUploaderName,
+    isSafeTeamMediaPhoto,
     isSafeTeamMediaUrl,
     normalizeSelectedMediaIds,
     sortByMediaOrder
@@ -52,6 +55,20 @@ describe('team media bulk actions', () => {
         expect(isSafeTeamMediaUrl('http://videos.example.com/clip')).toBe(true);
         expect(isSafeTeamMediaUrl('javascript:alert(1)')).toBe(false);
         expect(isSafeTeamMediaUrl('not a url')).toBe(false);
+    });
+
+    it('identifies uploaded photo items and uploader metadata', () => {
+        const item = {
+            downloadUrl: 'https://cdn.example.com/photo.png',
+            type: 'photo',
+            uploadedByName: 'Coach Pat'
+        };
+
+        expect(getTeamMediaItemUrl(item)).toBe('https://cdn.example.com/photo.png');
+        expect(isSafeTeamMediaPhoto(item)).toBe(true);
+        expect(isSafeTeamMediaPhoto({ url: 'https://cdn.example.com/photo.jpg?token=1' })).toBe(true);
+        expect(isSafeTeamMediaPhoto({ url: 'javascript:alert(1)', type: 'photo' })).toBe(false);
+        expect(getTeamMediaUploaderName(item)).toBe('Coach Pat');
     });
 
     it('sorts by saved order with stable name fallback', () => {
