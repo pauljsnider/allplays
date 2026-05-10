@@ -2522,7 +2522,7 @@
             if (game?.isPrivate === true || game?.private === true) return false;
             if (String(game?.status || '').toLowerCase() === 'deleted') return false;
             if (String(game?.liveStatus || '').toLowerCase() === 'deleted') return false;
-            return team?.isPublic !== false || isShareableFanGame(game);
+            return (team?.isPublic !== false && team?.active !== false) || isShareableFanGame(game);
         }
 
         function canExposePublicFanFeed(team = {}, games = []) {

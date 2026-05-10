@@ -163,6 +163,10 @@ describe('team page schedule event normalization', () => {
             { id: 'game-1', type: 'game', date: '2099-03-10T18:00:00.000Z' }
         ])).toBe(true);
 
+        expect(canExposePublicFanFeed({ isPublic: true, active: false }, [
+            { id: 'inactive-game', type: 'game', date: '2099-03-10T18:00:00.000Z' }
+        ])).toBe(false);
+
         expect(canExposePublicFanFeed({ isPublic: false }, [
             { id: 'practice-1', type: 'practice', date: '2099-03-10T18:00:00.000Z' },
             { id: 'private-game', type: 'game', visibility: 'private', date: '2099-03-10T19:00:00.000Z' }
@@ -170,6 +174,10 @@ describe('team page schedule event normalization', () => {
 
         expect(canExposePublicFanFeed({ isPublic: false }, [
             { id: 'shareable-game', type: 'game', shareable: true, date: '2099-03-10T20:00:00.000Z' }
+        ])).toBe(true);
+
+        expect(canExposePublicFanFeed({ isPublic: true, active: false }, [
+            { id: 'shareable-inactive-game', type: 'game', shareable: true, date: '2099-03-10T20:00:00.000Z' }
         ])).toBe(true);
     });
 });

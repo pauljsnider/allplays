@@ -8,6 +8,10 @@ function isPublicTeam(team = {}) {
   return team?.isPublic !== false && team?.active !== false;
 }
 
+function canExposeEmptyPublicFeed(team = {}) {
+  return isPublicTeam(team);
+}
+
 function isShareableGame(game = {}) {
   const visibility = String(game?.visibility || '').toLowerCase();
   if (visibility === 'private' || game?.isPrivate === true || game?.private === true) return false;
@@ -99,6 +103,7 @@ function buildPublicGamesIcs({ teamId, team = {}, games = [], now = new Date() }
 
 module.exports = {
   buildPublicGamesIcs,
+  canExposeEmptyPublicFeed,
   escapeIcsText,
   formatIcsDate,
   isPublicFanGame,

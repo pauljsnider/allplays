@@ -1,9 +1,11 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
     buildPublicGamesIcs,
+    canExposeEmptyPublicFeed,
     isPublicFanGame,
     stablePublicGameUid
 } = require('../../functions/public-calendar-core.cjs');
@@ -69,6 +71,29 @@ describe('public games calendar feed helpers', () => {
             type: 'game',
             date: '2026-06-01T18:00:00Z'
         })).toBe(false);
+    });
+
+    it('keeps active public teams subscribable before games are added', () => {
+        const ics = buildPublicGamesIcs({
+            teamId: 'team-1',
+            team: { name: 'Wildcats', isPublic: true, active: true },
+            now: new Date('2026-05-09T01:18:00Z'),
+            games: []
+        });
+
+        expect(canExposeEmptyPublicFeed({ isPublic: true, active: true })).toBe(true);
+        expect(canExposeEmptyPublicFeed({ isPublic: true, active: false })).toBe(false);
+        expect(canExposeEmptyPublicFeed({ isPublic: false, active: true })).toBe(false);
+        expect(ics).toContain('BEGIN:VCALENDAR');
+        expect(ics).toContain('END:VCALENDAR');
+        expect(ics).not.toContain('BEGIN:VEVENT');
+    });
+
+    it('runs the public feed function with the configured calendar runtime', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+
+        expect(source).toContain('exports.publicTeamGamesIcs = functions\n  .runWith(fetchCalendarRuntime)');
+        expect(source).toContain('!canExposeEmptyPublicFeed(team)');
     });
 
     it('uses stable public game UIDs', () => {
