@@ -298,11 +298,12 @@
                     throw new Error('Registration form could not be found.');
                 }
 
-                const latestForm = normalizeRegistrationForm(formSnap.data(), { teamId, formId });
+                const formData = formSnap.data() || {};
+                const latestForm = normalizeRegistrationForm(formData, { teamId, formId });
                 const placement = decideRegistrationPlacement({
                     form: latestForm,
                     selectedOptionId: submission.selectedOptionId,
-                    counts: formSnap.data().registrationOptionCounts || {}
+                    counts: formData.registrationOptionCounts || {}
                 });
 
                 if (placement.status === 'blocked') {
@@ -311,10 +312,17 @@
                     throw error;
                 }
 
+                const optionCounts = formData.registrationOptionCounts || null;
+                const selectedCountKey = placement.selectedOption.countKey;
+                if (!optionCounts || typeof optionCounts !== 'object' || !optionCounts[selectedCountKey] || typeof optionCounts[selectedCountKey] !== 'object') {
+                    throw new Error('Registration form capacity tracking is not properly configured.');
+                }
+
                 const countPath = `registrationOptionCounts.${placement.selectedOption.countKey}`;
                 transaction.update(formRef, {
                     [`${countPath}.enrolled`]: placement.nextCounts.enrolled,
                     [`${countPath}.waitlisted`]: placement.nextCounts.waitlisted,
+                    registrationCapacityUpdateId: registrationRef.id,
                     updatedAt: serverTimestamp()
                 });
                 transaction.set(registrationRef, buildPendingRegistrationRecord({

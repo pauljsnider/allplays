@@ -155,6 +155,7 @@ export function buildRegistrationRecord({ form, participant, guardian, waiverAcc
     if (selectedOption) {
         record.selectedOption = {
             id: selectedOption.id,
+            countKey: selectedOption.countKey,
             title: selectedOption.title,
             feeAmountCents: selectedOption.feeAmountCents ?? form.feeAmountCents,
             capacityLimit: selectedOption.capacityLimit,

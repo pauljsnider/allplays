@@ -176,6 +176,7 @@ describe('public registration flow', () => {
             waitlistedAt: now,
             selectedOption: {
                 id: 'u10',
+                countKey: 'u10',
                 title: 'U10',
                 feeAmountCents: 5000,
                 capacityLimit: 1,
@@ -191,6 +192,8 @@ describe('public registration flow', () => {
         expect(page).toContain('registration-options-section');
         expect(page).toContain('runTransaction(db, async (transaction)');
         expect(page).toContain('decideRegistrationPlacement');
+        expect(page).toContain('registrationCapacityUpdateId: registrationRef.id');
+        expect(page).toContain('Registration form capacity tracking is not properly configured.');
         expect(page).toContain('option-full');
         expect(page).toContain('waiver-accepted');
         expect(page).toContain('confirmation-message');
@@ -200,11 +203,16 @@ describe('public registration flow', () => {
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
         expect(rules).toContain('allow create: if (');
-        expect(rules).toContain('isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data)');
+        expect(rules).toContain('function registrationFormPath(teamId, formId)');
+        expect(rules).toContain('isPublishedRegistrationForm(get(formPath).data)');
         expect(rules).toContain("data.status in ['pending', 'waitlisted']");
         expect(rules).toContain("'selectedOption'");
         expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
-        expect(rules).toContain("affectedKeys().hasOnly(['registrationOptionCounts', 'updatedAt'])");
+        expect(rules).toContain('registrationCapacityUpdateId');
+        expect(rules).toContain('existsAfter(registrationPath)');
+        expect(rules).toContain('isPublicPendingRegistrationCreate(teamId, formId, registrationId)');
+        expect(rules).toContain("affectedKeys().hasOnly(['registrationOptionCounts', 'registrationCapacityUpdateId', 'updatedAt'])");
+        expect(rules).toContain("afterOption.diff(beforeOption).affectedKeys().hasOnly(['enrolled', 'waitlisted'])");
         expect(rules).toContain('data.waiverAccepted == true');
         expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
         expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');
