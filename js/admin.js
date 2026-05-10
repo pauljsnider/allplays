@@ -363,7 +363,7 @@ function renderRegistrationOptionsEditor() {
                     <input class="registration-option-label mt-1 w-full rounded border border-gray-300 p-2" value="${escapeHtml(option.label || '')}" placeholder="Early bird" aria-label="Registration option label">
                 </label>
                 <label class="text-sm font-medium text-gray-700">Capacity limit
-                    <input class="registration-option-capacity mt-1 w-full rounded border border-gray-300 p-2" type="number" min="0" step="1" value="${option.capacityLimit === null || option.capacityLimit === undefined ? '' : Number(option.capacityLimit)}" placeholder="Optional" aria-label="Registration option capacity limit">
+                    <input class="registration-option-capacity mt-1 w-full rounded border border-gray-300 p-2" type="number" min="0" step="1" value="${option.capacityLimit === null || option.capacityLimit === undefined || option.capacityLimit === '' ? '' : Number(option.capacityLimit)}" placeholder="Optional" aria-label="Registration option capacity limit">
                 </label>
             </div>
             <div class="mt-3 flex flex-wrap items-center justify-between gap-3">

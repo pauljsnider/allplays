@@ -63,6 +63,12 @@ describe('admin registration form setup', () => {
         ]);
     });
 
+    it('preserves blank capacity inputs when rerendering registration options', () => {
+        const adminSource = fs.readFileSync(new URL('../../js/admin.js', import.meta.url), 'utf8');
+
+        expect(adminSource).toContain("option.capacityLimit === null || option.capacityLimit === undefined || option.capacityLimit === '' ? '' : Number(option.capacityLimit)");
+    });
+
     it('keeps unpublished forms as drafts and validates required admin setup', () => {
         const payload = buildAdminRegistrationFormPayload({
             title: '',
