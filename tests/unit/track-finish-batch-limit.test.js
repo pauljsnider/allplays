@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { commitStandardTrackerFinishData } from '../../js/track-finish.js';
 
-function createFirestoreHarness() {
+function createFirestoreHarness({ commitFailuresByBatchIndex = {} } = {}) {
     const batches = [];
     let autoId = 0;
 
@@ -10,6 +10,7 @@ function createFirestoreHarness() {
         db: { name: 'mock-db' },
         batches,
         writeBatch: () => {
+            const batchIndex = batches.length;
             const batch = {
                 operations: [],
                 commitCount: 0,
@@ -21,6 +22,9 @@ function createFirestoreHarness() {
                 },
                 async commit() {
                     this.commitCount += 1;
+                    if (commitFailuresByBatchIndex[batchIndex]) {
+                        throw commitFailuresByBatchIndex[batchIndex];
+                    }
                 }
             };
             batches.push(batch);
@@ -138,10 +142,65 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches).toHaveLength(0);
     });
 
-    it('wires the production track.html submit path through the tested finish helper', () => {
+    it('rejects when a secondary aggregated stats batch fails after primary commit', async () => {
+        const statsBatchFailure = new Error('Secondary aggregated stats batch failed');
+        const harness = createFirestoreHarness({
+            commitFailuresByBatchIndex: {
+                2: statsBatchFailure
+            }
+        });
+
+        await expect(commitStandardTrackerFinishData({
+            db: harness.db,
+            writeBatch: harness.writeBatch,
+            doc: harness.doc,
+            collection: harness.collection,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            currentUserUid: 'coach-1',
+            gameLog: buildGameLog(499),
+            players: buildRoster(905),
+            playerStatsByPlayerId: {},
+            columns: ['PTS', 'AST'],
+            finalHome: 12,
+            finalAway: 10,
+            summary: 'Partially saved before stats failure.',
+            opponentStats: {}
+        })).rejects.toBe(statsBatchFailure);
+
+        expect(harness.batches).toHaveLength(3);
+        expect(harness.batches[0].commitCount).toBe(1);
+        expect(harness.batches[1].commitCount).toBe(1);
+        expect(harness.batches[2].commitCount).toBe(1);
+        expect(harness.batches[0].operations).toHaveLength(500);
+        expect(harness.batches[1].operations).toHaveLength(450);
+        expect(harness.batches[2].operations).toHaveLength(450);
+        expect(harness.batches[3]).toBeUndefined();
+    });
+
+    it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {
         const source = readFileSync(new URL('../../track.html', import.meta.url), 'utf8');
 
         expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=1';");
         expect(source).toContain('await commitStandardTrackerFinishData({');
+
+        const helperAwaitIndex = source.indexOf('await commitStandardTrackerFinishData({');
+        const successLogIndex = source.indexOf("console.log('Game data saved successfully')", helperAwaitIndex);
+        const finishingFlagIndex = source.indexOf('isFinishing = true;', helperAwaitIndex);
+        const mailtoRedirectIndex = source.indexOf('window.location.href = mailto;', helperAwaitIndex);
+        const gameRedirectIndex = source.indexOf('window.location.href = `game.html#teamId=${currentTeamId}&gameId=${currentGameId}`;', helperAwaitIndex);
+        const catchIndex = source.indexOf('} catch (error) {', helperAwaitIndex);
+        const alertIndex = source.indexOf("alert('Error finishing game: ' + error.message);", catchIndex);
+
+        expect(successLogIndex).toBeGreaterThan(helperAwaitIndex);
+        expect(finishingFlagIndex).toBeGreaterThan(helperAwaitIndex);
+        expect(mailtoRedirectIndex).toBeGreaterThan(helperAwaitIndex);
+        expect(gameRedirectIndex).toBeGreaterThan(helperAwaitIndex);
+        expect(catchIndex).toBeGreaterThan(helperAwaitIndex);
+        expect(alertIndex).toBeGreaterThan(catchIndex);
+        expect(successLogIndex).toBeLessThan(catchIndex);
+        expect(finishingFlagIndex).toBeLessThan(catchIndex);
+        expect(mailtoRedirectIndex).toBeLessThan(catchIndex);
+        expect(gameRedirectIndex).toBeLessThan(catchIndex);
     });
 });
