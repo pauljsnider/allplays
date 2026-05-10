@@ -165,6 +165,14 @@ describe('organization schedule helpers', () => {
         expect(source).toContain(': await getUserTeamsWithAccess(currentUser.uid, currentUser.email);');
     });
 
+    it('fails shared matchup publishes when the mirror write fails', () => {
+        const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+
+        expect(source).toContain('await syncSharedScheduleCounterpart(teamId, docRef.id, { ...gameData, id: docRef.id });');
+        expect(source).toContain("await deleteDoc(docRef);");
+        expect(source).toContain('throw new Error(`Shared matchup was not fully published.${detail}`);');
+    });
+
     it('renders shared matchup success actions without using innerHTML', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
