@@ -57,7 +57,7 @@ describe('parent dashboard RSVP controller', () => {
         expect(renderScheduleFromControls).toHaveBeenCalledTimes(1);
     });
 
-    it('submits a per-child card RSVP only for the clicked child and leaves siblings unchanged', async () => {
+    it('submits a per-child card RSVP only for the clicked child and refreshes sibling summaries', async () => {
         const allScheduleEvents = [
             { teamId: 'team-1', id: 'game-1', childId: 'child-a', myRsvp: null, rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 } },
             { teamId: 'team-1', id: 'game-1', childId: 'child-b', myRsvp: 'going', rsvpSummary: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 } },
@@ -101,9 +101,47 @@ describe('parent dashboard RSVP controller', () => {
         expect(allScheduleEvents[0].myRsvp).toBe('not_going');
         expect(allScheduleEvents[0].rsvpSummary).toEqual({ going: 1, maybe: 0, notGoing: 1, notResponded: 0, total: 2 });
         expect(allScheduleEvents[1].myRsvp).toBe('going');
-        expect(allScheduleEvents[1].rsvpSummary).toEqual({ going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 });
+        expect(allScheduleEvents[1].rsvpSummary).toEqual({ going: 1, maybe: 0, notGoing: 1, notResponded: 0, total: 2 });
         expect(allScheduleEvents[2].myRsvp).toBeNull();
         expect(renderScheduleFromControls).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes the first sibling summary when a later sibling submits from the day modal', async () => {
+        const allScheduleEvents = [
+            { teamId: 'team-1', id: 'game-1', childId: 'child-a', myRsvp: null, rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 } },
+            { teamId: 'team-1', id: 'game-1', childId: 'child-b', myRsvp: null, rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 } }
+        ];
+        const submitRsvpForPlayer = vi.fn().mockResolvedValue({ going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 });
+        const controller = createParentDashboardRsvpController({
+            getAllScheduleEvents: () => allScheduleEvents,
+            getCurrentUserId: () => 'parent-1',
+            getCurrentUser: () => ({ email: 'parent@example.com' }),
+            documentRef: {
+                getElementById(id) {
+                    if (id === 'player-filter') return { value: '' };
+                    return null;
+                }
+            },
+            resolveRsvpPlayerIdsForSubmission,
+            submitRsvp: vi.fn(),
+            submitRsvpForPlayer,
+            renderScheduleFromControls: vi.fn(),
+            alertFn: vi.fn(),
+            consoleRef: { error: vi.fn() }
+        });
+
+        await controller.submitGameRsvpFromButton({
+            dataset: {
+                teamId: 'team-1',
+                gameId: 'game-1',
+                childId: 'child-b'
+            }
+        }, 'going');
+
+        expect(allScheduleEvents[0].myRsvp).toBeNull();
+        expect(allScheduleEvents[0].rsvpSummary).toEqual({ going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 });
+        expect(allScheduleEvents[1].myRsvp).toBe('going');
+        expect(allScheduleEvents[1].rsvpSummary).toEqual({ going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 });
     });
 
     it('reads the current schedule array from the accessor after init-time reassignment', async () => {
