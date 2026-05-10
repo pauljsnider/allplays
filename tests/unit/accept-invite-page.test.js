@@ -157,7 +157,8 @@ function createEnvironment({ href, storage } = {}) {
         'submit-code-btn',
         'success-message',
         'error-message',
-        'try-manual-code-btn'
+        'try-manual-code-btn',
+        'signup-link'
     ];
 
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
@@ -291,6 +292,16 @@ describe('accept-invite page parent flow', () => {
         expect(elements.get('success-message').textContent).toContain("#22");
         expect(elements.get('success-message').textContent).toContain('Tigers');
         expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+
+    it('preserves the invite context on the signed-out signup link', async () => {
+        const loggedOut = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=ab12cd34&type=parent',
+            authUser: null
+        });
+
+        expect(loggedOut.elements.get('signup-link').href).toBe('login.html?code=AB12CD34&type=parent');
+        expect(loggedOut.elements.get('code-input').value).toBe('ab12cd34');
     });
 
     it('uppercases the manual code for login redirect and redeems exactly once after the user returns authenticated', async () => {
