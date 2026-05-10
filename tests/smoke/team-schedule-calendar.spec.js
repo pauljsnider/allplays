@@ -80,7 +80,19 @@ export async function getUserProfile() {
     return null;
 }
 
+export async function getAllUsers() {
+    return [];
+}
+
 export async function saveTeamAvailabilityPreferences() {
+    return undefined;
+}
+
+export async function grantScorekeeperAccess() {
+    return undefined;
+}
+
+export async function revokeScorekeeperAccess() {
     return undefined;
 }
 
