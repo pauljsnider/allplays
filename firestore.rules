@@ -100,6 +100,14 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function isPublishedLinkedCertificate(teamId, data) {
+      let playerId = data.get('playerId', '');
+      return data.get('status', '') == 'published' &&
+             playerId is string &&
+             playerId.size() > 0 &&
+             isParentForPlayer(teamId, playerId);
+    }
+
     function isPlayerSelf(teamId, playerId) {
       let playerPath = /databases/$(database)/documents/teams/$(teamId)/players/$(playerId);
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
@@ -712,6 +720,38 @@ service cloud.firestore {
       match /mediaItems/{itemId} {
         allow read: if canAccessTeamChat(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /settings/{settingId} {
+        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
+                                            isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateAssets/{assetId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateBatches/{batchId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
+      }
+
+      match /certificates/{certificateId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isPublishedLinkedCertificate(teamId, resource.data);
+        allow create, update: if isTeamOwnerOrAdmin(teamId);
+        allow delete: if isGlobalAdmin();
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
       }
 
       match /memberTracking/{trackingId} {

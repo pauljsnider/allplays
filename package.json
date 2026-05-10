@@ -5,9 +5,15 @@
   "scripts": {
     "test": "vitest run tests/unit",
     "test:unit": "vitest run tests/unit",
-    "test:unit:ci": "vitest run tests/unit --reporter=dot"
+    "test:unit:ci": "vitest run tests/unit --reporter=dot",
+    "test:smoke": "playwright test --config=playwright.smoke.config.js",
+    "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "html-to-image": "^1.11.13"
   }
 }

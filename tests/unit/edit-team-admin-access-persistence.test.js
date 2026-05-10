@@ -193,6 +193,8 @@ function createEnvironment(initialState, overrides = {}) {
         'name',
         'description',
         'sport',
+        'teamColorPrimary',
+        'teamColorSecondary',
         'notificationEmail',
         'leagueUrl',
         'standingsEnabled',
