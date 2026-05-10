@@ -183,7 +183,7 @@ export function renderHeader(container, user) {
 
     // Add logout handler
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=13');
+      const { logout } = await import('./auth.js?v=14');
       await logout();
       window.location.href = 'index.html';
     });

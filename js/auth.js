@@ -16,7 +16,7 @@ import {
     updatePassword
 } from './firebase.js?v=11';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests } from './db.js?v=29';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=3';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
 
@@ -41,6 +41,27 @@ async function cleanupFailedNewUser(user, context) {
     } catch (signOutError) {
         console.error(`Error signing out after ${context}:`, signOutError);
     }
+}
+
+function normalizeSignupEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function assertInviteEmailMatchesGoogleSignup(validation, signupEmail) {
+    if (validation?.type !== 'parent_invite' && validation?.type !== 'admin_invite') {
+        return;
+    }
+
+    const invitedEmail = normalizeSignupEmail(validation?.data?.email);
+    if (!invitedEmail) {
+        return;
+    }
+
+    if (normalizeSignupEmail(signupEmail) === invitedEmail) {
+        return;
+    }
+
+    throw new Error(`This invite was sent to ${invitedEmail}. Sign up with that email to accept it.`);
 }
 
 async function linkParentInviteOrRollback(user, parentInviteCode) {
@@ -167,6 +188,14 @@ async function processGoogleAuthResult(result, activationCode = null) {
             clearPendingActivationCode();
             await cleanupFailedNewUser(result.user, 'invalid activation code');
             throw new Error(validation.message || 'Invalid activation code');
+        }
+
+        try {
+            assertInviteEmailMatchesGoogleSignup(validation, result.user.email);
+        } catch (emailMismatchError) {
+            clearPendingActivationCode();
+            await cleanupFailedNewUser(result.user, 'invite email mismatch');
+            throw emailMismatchError;
         }
 
         const userId = result.user.uid;

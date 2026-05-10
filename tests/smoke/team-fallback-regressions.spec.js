@@ -588,7 +588,7 @@ export function getDefaultLivePeriod() {
 `;
 
 async function routeCommonPageStubs(page) {
-    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
@@ -653,7 +653,7 @@ test('team chat falls back to the team-wide channel when conversation listing is
 
 test('team media shows an empty library when media reads are denied', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
-    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_STUB }));
 
@@ -667,7 +667,7 @@ test('team media shows an empty library when media reads are denied', async ({ p
 
 test('team media shows a staff permission error when rules block management reads', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
-    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
 
@@ -682,7 +682,7 @@ test('team media shows a staff permission error when rules block management read
 
 test('team media renders visible save actions for staff', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
-    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_WITH_FOLDER_STUB }));
     await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
 

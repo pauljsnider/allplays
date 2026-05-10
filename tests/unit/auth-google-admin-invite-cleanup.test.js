@@ -158,6 +158,44 @@ describe('loginWithGoogle admin invite failure handling', () => {
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
     });
 
+    it('rejects google admin invite signup when Google email does not match invite email', async () => {
+        const deleteMock = vi.fn().mockResolvedValue(undefined);
+
+        signInWithPopupMock.mockResolvedValue({
+            user: {
+                uid: 'user-mismatch',
+                email: 'other@example.com',
+                displayName: 'Other Coach',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-03-07T14:00:00.000Z',
+                    lastSignInTime: '2026-03-07T14:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'admin_invite',
+            codeId: 'code-admin-mismatch',
+            data: {
+                teamId: 'team-1',
+                email: 'coach@example.com'
+            }
+        });
+        signOutMock.mockResolvedValue(undefined);
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await expect(loginWithGoogle('ADMINCODE')).rejects.toThrow('This invite was sent to coach@example.com. Sign up with that email to accept it.');
+        expect(redeemAdminInviteAcceptanceMock).not.toHaveBeenCalled();
+        expect(updateUserProfileMock).not.toHaveBeenCalled();
+        expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(signOutMock).toHaveBeenCalledTimes(1);
+        expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
     it('does not clean up after successful admin redemption when profile finalization fails', async () => {
         const deleteMock = vi.fn().mockResolvedValue(undefined);
 
