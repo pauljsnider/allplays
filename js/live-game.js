@@ -606,11 +606,28 @@ function buildSafeMediaHubHighlightUrl(clip) {
   return clipUrl && isSafeUrl(clipUrl) ? clipUrl : null;
 }
 
+function areEquivalentVideoUrls(left, right) {
+  if (!left || !right) return false;
+  try {
+    return new URL(left, window.location.href).href === new URL(right, window.location.href).href;
+  } catch (error) {
+    return String(left).trim() === String(right).trim();
+  }
+}
+
+function isActiveMediaHubReplaySource() {
+  return areEquivalentVideoUrls(
+    state.videoPlayback?.sourceUrl,
+    state.videoPlayback?.mediaHub?.replay?.sourceUrl
+  );
+}
+
 function canPlayMediaHubHighlight(clip) {
   return Boolean(
     state.videoPlayback?.mode === 'recorded' &&
     state.videoPlayback?.sourceUrl &&
     state.videoPlayback?.mediaHub?.replay &&
+    isActiveMediaHubReplaySource() &&
     Number.isFinite(clip?.startMs) &&
     Number.isFinite(clip?.endMs)
   );
