@@ -535,6 +535,32 @@ test.beforeEach(async ({ page }) => {
     await installModuleMocks(page);
 });
 
+test('defers score and side controls until statsheet analysis completes', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario());
+
+    await page.goto(buildUrl(baseURL, '/track-statsheet.html#teamId=team-1&gameId=game-1'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#home-score-input')).toBeHidden();
+    await expect(page.locator('#visitor-score-input')).toBeHidden();
+    await expect(page.locator('#swap-toggle')).toBeHidden();
+
+    await page.locator('#stat-sheet-input').setInputFiles({
+        name: 'statsheet.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('fake-image')
+    });
+    await page.locator('#analyze-btn').click();
+    await page.locator('#home-rows tr').nth(1).waitFor();
+
+    await expect(page.locator('#home-score-input')).toBeVisible();
+    await expect(page.locator('#visitor-score-input')).toBeVisible();
+    await expect(page.locator('#swap-toggle')).toBeVisible();
+    await expect(page.locator('#home-score-input')).toHaveValue('19');
+    await expect(page.locator('#visitor-score-input')).toHaveValue('24');
+});
+
 test('blocks apply until every included home row is mapped, then saves report data', async ({ page, baseURL }) => {
     await seedScenario(page, baseURL, createScenario());
     await analyzeStatsheet(page, baseURL);

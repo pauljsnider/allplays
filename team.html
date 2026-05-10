@@ -61,6 +61,8 @@
         <!-- Team Pass entry point -->
         <div id="team-pass-container"></div>
 
+        <section id="scoreboard-widget-tools" class="mb-8 hidden"></section>
+
         <!-- Season Overview Cards -->
         <div id="season-overview" class="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 mb-8">
             <!-- Loading placeholders -->
@@ -1572,6 +1574,7 @@
                     user: currentUser,
                     team: { ...team, id: teamId }
                 });
+                renderScoreboardWidgetTools();
 
                 const seasonLabels = listSeasonLabels(dbGames);
                 if (!seasonLabels.length) {
@@ -2823,7 +2826,91 @@
             return `Watch ${teamName} vs ${opponent}${when ? ` — ${when}` : ''}\n${url}`;
         }
 
+        function getScoreboardWidgetUrl() {
+            if (!currentTeamId) return '';
+            return `${window.location.origin}/widget-scoreboard.html?teamId=${encodeURIComponent(currentTeamId)}`;
+        }
+
+        function buildScoreboardWidgetEmbedCode() {
+            const url = getScoreboardWidgetUrl();
+            if (!url) return '';
+            return `<iframe src="${url}" title="${escapeHtml(currentTeam?.name || 'Team')} live scoreboard" width="100%" height="480" style="border:0;max-width:720px;width:100%;" loading="lazy"></iframe>`;
+        }
+
+        function renderScoreboardWidgetTools() {
+            const section = document.getElementById('scoreboard-widget-tools');
+            if (!section) return;
+            const canManage = canManageTeamAvailability();
+            if (!canManage || !currentTeamId) {
+                section.classList.add('hidden');
+                section.innerHTML = '';
+                return;
+            }
+            const widgetUrl = getScoreboardWidgetUrl();
+            const embedCode = buildScoreboardWidgetEmbedCode();
+            section.classList.remove('hidden');
+            section.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                        <div>
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-xs font-bold uppercase tracking-wide text-primary-600 bg-primary-50 px-2 py-1 rounded-full">Share</span>
+                                <h2 class="text-xl font-bold text-gray-900">Scoreboard widget</h2>
+                            </div>
+                            <p class="text-sm text-gray-600 max-w-2xl">Embed this read-only public scoreboard on a team, league, school, or tournament website. It shows live, upcoming, and recent games with links back to ALL PLAYS for details.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button data-copy-scoreboard-widget="embed" class="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg font-semibold shadow transition">
+                                <span class="text-xs">▣</span>
+                                Copy Embed Code
+                            </button>
+                            <button data-copy-scoreboard-widget="link" class="inline-flex items-center gap-2 bg-white text-slate-700 px-4 py-2 rounded-lg font-semibold shadow border border-gray-200 hover:bg-gray-50 transition">
+                                <span class="text-xs">🔗</span>
+                                Copy Link
+                            </button>
+                        </div>
+                    </div>
+                    <label class="block mt-4">
+                        <span class="text-xs font-semibold text-gray-500 uppercase">Website embed snippet</span>
+                        <textarea id="scoreboard-widget-embed-code" readonly class="mt-1 w-full min-h-[96px] rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs font-mono text-gray-700">${escapeHtml(embedCode)}</textarea>
+                    </label>
+                    <p class="text-xs text-gray-500 mt-2">Widget URL: <a href="${widgetUrl}" target="_blank" rel="noopener noreferrer" class="text-primary-600 hover:text-primary-700 font-semibold">${escapeHtml(widgetUrl)}</a></p>
+                </div>
+            `;
+        }
+
+        async function copyScoreboardWidget(value, successMessage) {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(value);
+                } else {
+                    const input = document.createElement('textarea');
+                    input.value = value;
+                    input.setAttribute('readonly', '');
+                    input.style.position = 'fixed';
+                    input.style.left = '-9999px';
+                    document.body.appendChild(input);
+                    input.select();
+                    const copied = document.execCommand('copy');
+                    document.body.removeChild(input);
+                    if (!copied) throw new Error('Copy command failed');
+                }
+                showToast(successMessage);
+            } catch (error) {
+                console.error('Failed to copy scoreboard widget:', error);
+                showToast('Failed to copy scoreboard widget.');
+            }
+        }
+
         document.addEventListener('click', (event) => {
+            const widgetButton = event.target.closest('[data-copy-scoreboard-widget]');
+            if (widgetButton) {
+                const mode = widgetButton.dataset.copyScoreboardWidget;
+                const value = mode === 'link' ? getScoreboardWidgetUrl() : buildScoreboardWidgetEmbedCode();
+                copyScoreboardWidget(value, mode === 'link' ? 'Scoreboard link copied!' : 'Scoreboard embed code copied!');
+                return;
+            }
+
             const btn = event.target.closest('[data-share-game-id]');
             if (!btn) return;
             const gameId = btn.dataset.shareGameId;

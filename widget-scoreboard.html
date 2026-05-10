@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>ALL PLAYS Scoreboard Widget</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-transparent text-gray-900">
+    <main id="scoreboard-widget" class="max-w-3xl mx-auto p-3 sm:p-4">
+        <div class="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div class="p-4 border-b border-gray-100 bg-gradient-to-r from-slate-900 to-slate-700 text-white">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <p class="text-xs uppercase tracking-wide text-slate-300">ALL PLAYS live scoreboard</p>
+                        <h1 id="widget-team-name" class="text-xl font-bold">Loading team...</h1>
+                    </div>
+                    <a id="widget-team-link" href="#" target="_blank" rel="noopener noreferrer" class="hidden text-xs font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-full transition">Team page</a>
+                </div>
+            </div>
+            <section id="widget-games" class="divide-y divide-gray-100">
+                <div class="p-4 text-sm text-gray-500">Loading schedule...</div>
+            </section>
+            <div class="px-4 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-3 text-xs text-gray-500">
+                <span id="widget-updated-at">Read-only public scoreboard</span>
+                <a href="index.html" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-600 hover:text-primary-700">Powered by ALL PLAYS</a>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { getTeam, getGames } from './js/db.js?v=19';
+        import { getUrlParams, formatShortDate, formatTime, escapeHtml } from './js/utils.js?v=10';
+
+        const REFRESH_MS = 60000;
+        const MAX_GAMES = 8;
+        const state = {
+            teamId: '',
+            refreshTimer: null
+        };
+
+        function toDate(value) {
+            if (!value) return null;
+            if (value.toDate) return value.toDate();
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+
+        function normalizeStatus(value) {
+            return String(value || '').trim().toLowerCase();
+        }
+
+        function isGameEvent(game) {
+            return (game?.type || 'game') !== 'practice';
+        }
+
+        function isCancelled(game) {
+            const status = normalizeStatus(game?.status);
+            return status === 'cancelled' || status === 'canceled';
+        }
+
+        function isCompleted(game) {
+            return normalizeStatus(game?.liveStatus) === 'completed' || normalizeStatus(game?.status) === 'completed';
+        }
+
+        function isLive(game) {
+            return normalizeStatus(game?.liveStatus) === 'live' || normalizeStatus(game?.status) === 'live';
+        }
+
+        function selectWidgetGames(games) {
+            const now = new Date();
+            const recentCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+            return (Array.isArray(games) ? games : [])
+                .filter(isGameEvent)
+                .filter((game) => !isCancelled(game))
+                .map((game) => ({ ...game, _date: toDate(game.date) }))
+                .filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))
+                .sort((a, b) => {
+                    if (isLive(a) !== isLive(b)) return isLive(a) ? -1 : 1;
+                    const aFuture = a._date >= now;
+                    const bFuture = b._date >= now;
+                    if (aFuture !== bFuture) return aFuture ? -1 : 1;
+                    return aFuture ? a._date - b._date : b._date - a._date;
+                })
+                .slice(0, MAX_GAMES);
+        }
+
+        function getGameUrl(game) {
+            const gameId = game.gameId || game.id;
+            if (!state.teamId || !gameId) return '';
+            if (isCompleted(game)) {
+                return `game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
+            }
+            return `live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
+        }
+
+        function getStatusLabel(game) {
+            if (isLive(game)) return 'LIVE';
+            if (isCompleted(game)) return 'Final';
+            return 'Upcoming';
+        }
+
+        function renderGame(game) {
+            const url = getGameUrl(game);
+            const statusLabel = getStatusLabel(game);
+            const liveClass = isLive(game) ? 'bg-red-100 text-red-700' : isCompleted(game) ? 'bg-gray-100 text-gray-700' : 'bg-emerald-100 text-emerald-700';
+            const homeScore = Number.isFinite(Number(game.homeScore)) ? Number(game.homeScore) : 0;
+            const awayScore = Number.isFinite(Number(game.awayScore)) ? Number(game.awayScore) : 0;
+            const showScore = isLive(game) || isCompleted(game);
+            return `
+                <article class="p-4 hover:bg-gray-50 transition">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2 mb-1">
+                                <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${liveClass}">${statusLabel}</span>
+                                <span class="text-xs text-gray-500">${escapeHtml(formatShortDate(game._date))}${formatTime(game._date) ? ` • ${escapeHtml(formatTime(game._date))}` : ''}</span>
+                            </div>
+                            <h2 class="font-bold text-gray-900 truncate">vs. ${escapeHtml(game.opponent || 'Opponent TBD')}</h2>
+                            ${game.location ? `<p class="text-xs text-gray-500 truncate mt-1">${escapeHtml(game.location)}</p>` : ''}
+                        </div>
+                        <div class="flex items-center gap-3 flex-shrink-0">
+                            ${showScore ? `<div class="text-right font-mono"><div class="text-2xl font-black text-gray-900">${homeScore} - ${awayScore}</div><div class="text-[10px] text-gray-500 uppercase tracking-wide">score</div></div>` : ''}
+                            ${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-primary-600 hover:text-primary-700">Details</a>` : ''}
+                        </div>
+                    </div>
+                </article>`;
+        }
+
+        function renderEmpty(message) {
+            document.getElementById('widget-games').innerHTML = `<div class="p-6 text-center text-sm text-gray-500">${escapeHtml(message)}</div>`;
+        }
+
+        async function loadWidget() {
+            const teamNameEl = document.getElementById('widget-team-name');
+            const teamLinkEl = document.getElementById('widget-team-link');
+            try {
+                const [team, games] = await Promise.all([
+                    getTeam(state.teamId),
+                    getGames(state.teamId)
+                ]);
+                if (!team) {
+                    teamNameEl.textContent = 'Team unavailable';
+                    renderEmpty('This team scoreboard is not available.');
+                    return;
+                }
+
+                teamNameEl.textContent = team.name || 'Team';
+                teamLinkEl.href = `team.html?teamId=${encodeURIComponent(state.teamId)}`;
+                teamLinkEl.classList.remove('hidden');
+                const widgetGames = selectWidgetGames(games);
+                if (!widgetGames.length) {
+                    renderEmpty('No live, upcoming, or recent games to show.');
+                } else {
+                    document.getElementById('widget-games').innerHTML = widgetGames.map(renderGame).join('');
+                }
+                document.getElementById('widget-updated-at').textContent = `Updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+            } catch (error) {
+                console.error('Failed to load scoreboard widget:', error);
+                teamNameEl.textContent = 'Scoreboard unavailable';
+                renderEmpty('Unable to load the scoreboard right now.');
+            }
+        }
+
+        function clearRefreshTimer() {
+            if (!state.refreshTimer) return;
+            window.clearInterval(state.refreshTimer);
+            state.refreshTimer = null;
+        }
+
+        function init() {
+            const { teamId } = getUrlParams();
+            state.teamId = String(teamId || '').trim();
+            if (!state.teamId) {
+                document.getElementById('widget-team-name').textContent = 'Missing team';
+                renderEmpty('Add a teamId to the widget URL.');
+                return;
+            }
+            loadWidget();
+            state.refreshTimer = window.setInterval(loadWidget, REFRESH_MS);
+        }
+
+        window.addEventListener('pagehide', clearRefreshTimer);
+        window.addEventListener('beforeunload', clearRefreshTimer);
+
+        init();
+    </script>
+</body>
+
+</html>
