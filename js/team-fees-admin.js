@@ -6,6 +6,7 @@ export const OFFLINE_TEAM_FEE_INSTRUCTIONS = 'Collect payment outside ALL PLAYS.
 const STATUS_LABELS = {
     paid: 'Paid',
     unpaid: 'Unpaid',
+    partial: 'Partial',
     adjusted: 'Adjusted',
     canceled: 'Canceled'
 };
@@ -52,6 +53,14 @@ export function toFeeCents(value) {
     const normalized = normalizeString(value).replace(/[$,]/g, '');
     const amount = Number(normalized);
     if (!Number.isFinite(amount) || amount < 0) return null;
+    return Math.round(amount * 100);
+}
+
+export function toSignedFeeCents(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const normalized = normalizeString(value).replace(/[$,]/g, '');
+    const amount = Number(normalized);
+    if (!Number.isFinite(amount)) return null;
     return Math.round(amount * 100);
 }
 
@@ -164,6 +173,7 @@ export function summarizeFeeRecipients(recipients = []) {
         totalOutstandingCents: 0,
         counts: {
             paid: 0,
+            partial: 0,
             unpaid: 0,
             adjusted: 0,
             canceled: 0
@@ -180,7 +190,7 @@ export function summarizeFeeRecipients(recipients = []) {
         summary.totalAssignedCents += assignedCents;
         summary.totalPaidCents += paid;
         summary.totalCanceledCents += status === 'canceled' ? assignedCents : 0;
-        summary.totalAdjustedCents += status === 'adjusted' ? Math.max(0, assignedCents - balance) : 0;
+        summary.totalAdjustedCents += status === 'canceled' ? 0 : Math.abs(assignedCents - balance);
         summary.totalOutstandingCents += status === 'paid' || status === 'canceled' ? 0 : Math.max(0, balance - paid);
     });
 
@@ -196,7 +206,15 @@ export function formatFeeCurrency(cents) {
     }).format(amount / 100);
 }
 
-export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentPaidCents, currentStatus }) {
+function normalizeLedgerStatus(balanceCents, paidCents) {
+    const balance = Math.max(0, Number(balanceCents) || 0);
+    const paid = Math.max(0, Number(paidCents) || 0);
+    if (balance === 0 || paid >= balance) return 'paid';
+    if (paid > 0) return 'partial';
+    return 'unpaid';
+}
+
+export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentPaidCents }) {
     const paymentAmountCents = toFeeCents(amount);
     if (paymentAmountCents === null || paymentAmountCents <= 0) {
         throw new Error('Enter a manual payment amount greater than $0.');
@@ -204,50 +222,93 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     if (!date) throw new Error('Enter a manual payment date.');
 
     const currentBalance = Number(currentBalanceCents);
+    const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : paymentAmountCents;
     const priorPaid = Number(currentPaidCents);
     const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
-    const amountPaidCents = priorPaidCents + paymentAmountCents;
-    const isPaidInFull = Number.isFinite(currentBalance) ? amountPaidCents >= Math.max(0, currentBalance) : true;
-    const status = isPaidInFull ? 'paid' : normalizeFeeStatus(currentStatus) === 'adjusted' ? 'adjusted' : 'unpaid';
+    const amountPaidCents = Math.min(balanceCents, priorPaidCents + paymentAmountCents);
+    const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
+    const status = normalizeLedgerStatus(balanceCents, amountPaidCents);
+    const noteText = normalizeString(note);
+    const ledgerEntry = {
+        type: 'offline_payment',
+        amountCents: paymentAmountCents,
+        paymentDate: date,
+        note: noteText,
+        recordedBy: actorId || null
+    };
 
     return {
         status,
         amountPaidCents,
-        paidAt: date,
+        remainingBalanceCents,
+        paidAt: status === 'paid' ? date : null,
         manualPayment: {
             amountPaidCents: paymentAmountCents,
             paidAt: date,
-            note: normalizeString(note),
+            note: noteText,
             recordedBy: actorId || null
-        }
+        },
+        ledgerEntries: [ledgerEntry]
     };
 }
 
-export function buildBalanceAdjustmentUpdate({ amount, note, actorId }) {
-    const amountDueCents = toFeeCents(amount);
-    if (amountDueCents === null) {
-        throw new Error('Enter a valid adjusted balance.');
+export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBalanceCents, currentPaidCents }) {
+    const adjustmentCents = toSignedFeeCents(amount);
+    const reason = normalizeString(note);
+    if (adjustmentCents === null || adjustmentCents === 0) {
+        throw new Error('Enter a positive or negative adjustment amount.');
     }
+    if (!reason) throw new Error('Enter an adjustment reason.');
+
+    const currentBalance = Number(currentBalanceCents);
+    const priorBalanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : 0;
+    const paid = Number(currentPaidCents);
+    const amountPaidCents = Number.isFinite(paid) ? Math.max(0, paid) : 0;
+    const amountDueCents = Math.max(0, priorBalanceCents + adjustmentCents);
+    const remainingBalanceCents = Math.max(0, amountDueCents - amountPaidCents);
+    const status = normalizeLedgerStatus(amountDueCents, amountPaidCents);
+    const ledgerEntry = {
+        type: 'balance_adjustment',
+        amountCents: adjustmentCents,
+        previousAmountDueCents: priorBalanceCents,
+        amountDueCents,
+        reason,
+        adjustedBy: actorId || null
+    };
 
     return {
-        status: amountDueCents === 0 ? 'paid' : 'adjusted',
+        status,
         amountDueCents,
+        remainingBalanceCents,
         adjustment: {
+            amountCents: adjustmentCents,
+            previousAmountDueCents: priorBalanceCents,
             amountDueCents,
-            note: normalizeString(note),
+            note: reason,
             adjustedBy: actorId || null
-        }
+        },
+        ledgerEntries: [ledgerEntry]
     };
 }
 
 export function buildCancelRecipientUpdate({ note, actorId }) {
+    const reason = normalizeString(note);
+    const ledgerEntry = {
+        type: 'cancellation',
+        amountCents: 0,
+        reason,
+        canceledBy: actorId || null
+    };
+
     return {
         status: 'canceled',
         amountDueCents: 0,
+        remainingBalanceCents: 0,
         canceled: {
-            note: normalizeString(note),
+            note: reason,
             canceledBy: actorId || null
-        }
+        },
+        ledgerEntries: [ledgerEntry]
     };
 }
 
@@ -336,7 +397,7 @@ function renderSummary(container, recipients) {
         ['Adjusted', formatFeeCurrency(summary.totalAdjustedCents)],
         ['Canceled', formatFeeCurrency(summary.totalCanceledCents)],
         ['Outstanding', formatFeeCurrency(summary.totalOutstandingCents)],
-        ['Status counts', `${summary.counts.paid} paid · ${summary.counts.unpaid} unpaid · ${summary.counts.adjusted} adjusted · ${summary.counts.canceled} canceled`]
+        ['Status counts', `${summary.counts.paid} paid · ${summary.counts.partial} partial · ${summary.counts.unpaid} unpaid · ${summary.counts.canceled} canceled`]
     ];
     container.innerHTML = cards.map(([label, value]) => `
         <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -385,8 +446,8 @@ function renderRecipients(container, countEl, recipients) {
                         </form>
                         <form data-action="adjust" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Adjust balance</div>
-                            <input name="amount" type="number" min="0" step="0.01" value="${(getRecipientBalanceCents(recipient) / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Adjusted balance">
-                            <input name="note" type="text" placeholder="Reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Adjustment note">
+                            <input name="amount" type="number" step="0.01" placeholder="-10.00 or 5.00" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Balance adjustment amount">
+                            <input name="note" type="text" required placeholder="Required reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Adjustment reason">
                             <button class="w-full rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700">Save adjustment</button>
                         </form>
                         <form data-action="cancel" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
@@ -578,7 +639,7 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
             if (form.dataset.action === 'paid') {
                 updates = buildManualPaymentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentPaidCents: article?.dataset?.paidCents, currentStatus: article?.dataset?.status });
             } else if (form.dataset.action === 'adjust') {
-                updates = buildBalanceAdjustmentUpdate({ ...data, actorId: user.uid });
+                updates = buildBalanceAdjustmentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentPaidCents: article?.dataset?.paidCents });
             } else {
                 updates = buildCancelRecipientUpdate({ ...data, actorId: user.uid });
             }
@@ -606,7 +667,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=31'),
+        import('./db.js?v=32'),
         import('./auth.js?v=12')
     ]);
 
