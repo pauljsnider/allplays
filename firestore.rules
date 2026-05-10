@@ -1119,7 +1119,7 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
-      // Offline/manual team fee batches. No payment processing data is stored here.
+      // Team fee batches store only safe payment metadata; Stripe secrets and raw payment methods stay server-side.
       match /feeBatches/{batchId} {
         allow read: if isTeamOwnerOrAdmin(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
