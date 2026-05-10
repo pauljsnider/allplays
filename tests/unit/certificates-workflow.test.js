@@ -23,7 +23,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=6');
+        expect(html).toContain('./js/certificates/studio.js?v=7');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
@@ -63,6 +63,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('saveDraftsToLocalHistory');
         expect(studio).toContain('startCustomCertificate');
         expect(studio).toContain('selectRecentCompletedGames');
+        expect(studio).toContain("'allplays.ai'");
         expect(studio).toContain("window.location.href = 'login.html'");
         expect(studio).toContain('loadOptionalCertificateResource');
         expect(studio).toContain('certificatePersistenceUnavailable');
