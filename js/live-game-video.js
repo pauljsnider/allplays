@@ -2,6 +2,11 @@ import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
 import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
+export const BROADCAST_SETUP_STATUSES = Object.freeze({
+    CHECKING: 'checking_permissions',
+    READY: 'ready_for_managed_stream',
+    FAILED: 'permission_failed'
+});
 
 function toFiniteNumber(value) {
     const num = typeof value === 'string' ? Number(value) : value;
@@ -168,6 +173,48 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
         game.nativeCameraContributorEmails
     ];
     return Boolean(userEmail && approvedEmailFields.some(values => normalizeStringSet(values).has(userEmail)));
+}
+
+export function canSaveBroadcastSetupSession({ user, team, game }) {
+    if (!user || !team || !isGameCameraEligible(game)) return false;
+
+    if (user.isAdmin) return true;
+    if (team.ownerId && user.uid === team.ownerId) return true;
+
+    const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
+    if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
+
+    return hasSelectedVideographerGrant(user, team);
+}
+
+export function buildBroadcastSetupSession({ existingSession = {}, sessionName = '', user = {}, permissions = {}, status = BROADCAST_SETUP_STATUSES.CHECKING, errorMessage = '', now = new Date() } = {}) {
+    const timestamp = now instanceof Date ? now.toISOString() : String(now || new Date().toISOString());
+    const safeName = toCleanString(sessionName) || toCleanString(existingSession.name) || 'Game broadcast setup';
+    const safeStatus = Object.values(BROADCAST_SETUP_STATUSES).includes(status) ? status : BROADCAST_SETUP_STATUSES.CHECKING;
+    const session = {
+        ...(existingSession && typeof existingSession === 'object' ? existingSession : {}),
+        id: toCleanString(existingSession?.id) || `broadcast-${Date.parse(timestamp) || Date.now()}`,
+        name: safeName.slice(0, 80),
+        status: safeStatus,
+        setupOnly: true,
+        managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
+        permissions: {
+            camera: permissions.camera === true,
+            microphone: permissions.microphone === true
+        },
+        updatedAt: timestamp,
+        updatedBy: user?.uid || existingSession?.updatedBy || null,
+        updatedByEmail: toCleanString(user?.email || existingSession?.updatedByEmail) || null
+    };
+
+    if (!session.createdAt) session.createdAt = timestamp;
+    if (errorMessage) {
+        session.errorMessage = String(errorMessage).slice(0, 180);
+    } else {
+        delete session.errorMessage;
+    }
+
+    return session;
 }
 
 function isSafeVideoUrl(value) {
