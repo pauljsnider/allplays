@@ -176,6 +176,39 @@ describe('auth signup parent invite failure handling', () => {
         expect(firebaseMocks.sendEmailVerification).not.toHaveBeenCalled();
     });
 
+    it('rejects google parent invite signup when Google email does not match invite email', async () => {
+        const deleteMock = vi.fn().mockResolvedValue(undefined);
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            type: 'parent_invite',
+            data: {
+                code: 'PARENT1',
+                email: 'invited@example.com'
+            }
+        });
+        firebaseMocks.signInWithPopup.mockResolvedValue({
+            user: {
+                uid: 'google-user-mismatch',
+                email: 'other@example.com',
+                displayName: 'Other Parent',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-02-28T00:00:00.000Z',
+                    lastSignInTime: '2026-02-28T00:00:00.000Z'
+                },
+                delete: deleteMock
+            }
+        });
+
+        await expect(loginWithGoogle('PARENT1')).rejects.toThrow('This invite was sent to invited@example.com. Sign up with that email to accept it.');
+        expect(dbMocks.redeemParentInvite).not.toHaveBeenCalled();
+        expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
+        expect(deleteMock).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
+        expect(window.sessionStorage.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
     it('does not fail signup when parent invite profile write fails after redeem', async () => {
         dbMocks.validateAccessCode.mockResolvedValue({
             valid: true,
