@@ -41,10 +41,57 @@ function stripSensitiveFields(values = {}) {
 }
 
 export function normalizeRegistrationStatus(status) {
-    const normalized = cleanString(status).toLowerCase();
-    if (['approved', 'accepted'].includes(normalized)) return 'approved';
+    const normalized = cleanString(status).toLowerCase().replace(/[ _]+/g, '-');
+    if (['submitted', 'new', 'in-review'].includes(normalized)) return 'pending';
+    if (['approved', 'accepted', 'enrolled', 'roster-approved'].includes(normalized)) return 'enrolled';
     if (['rejected', 'denied', 'declined'].includes(normalized)) return 'rejected';
+    if (['waitlisted', 'offer-extended', 'offer-accepted', 'released', 'pending'].includes(normalized)) return normalized;
     return 'pending';
+}
+
+export function isActiveWaitlistDemandStatus(status) {
+    return ['waitlisted', 'offer-extended', 'offer-accepted'].includes(normalizeRegistrationStatus(status));
+}
+
+export function canTransitionRegistrationStatus(fromStatus, toStatus, { adminAction = false } = {}) {
+    const from = normalizeRegistrationStatus(fromStatus);
+    const to = normalizeRegistrationStatus(toStatus);
+    if (from === to) return true;
+    if (from === 'released') return false;
+    if (to === 'offer-extended') return from === 'waitlisted' && adminAction;
+    if (to === 'released') return ['waitlisted', 'offer-extended', 'offer-accepted'].includes(from) && adminAction;
+    if (to === 'enrolled') return ['pending', 'offer-accepted'].includes(from) && adminAction;
+    if (to === 'rejected') return ['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(from) && adminAction;
+    return false;
+}
+
+export function buildRegistrationStatusUpdate({ registration = {}, status = '', reviewer = {}, now = null, decisionNote = '' } = {}) {
+    const currentStatus = normalizeRegistrationStatus(registration.status);
+    const nextStatus = normalizeRegistrationStatus(status);
+    if (!canTransitionRegistrationStatus(currentStatus, nextStatus, { adminAction: true })) {
+        throw new Error(`Invalid registration status transition: ${currentStatus} to ${nextStatus}`);
+    }
+    const changedAt = now || new Date();
+    const update = {
+        status: nextStatus,
+        updatedAt: changedAt,
+        waitlistStatusUpdatedAt: changedAt,
+        waitlistStatusUpdatedBy: reviewer.userId || '',
+        waitlistStatusUpdatedByName: reviewer.name || reviewer.email || 'Admin',
+        activeWaitlistDemand: isActiveWaitlistDemandStatus(nextStatus)
+    };
+    if (decisionNote) update.decisionNote = cleanString(decisionNote);
+    if (nextStatus === 'offer-extended') {
+        update.offerExtendedAt = changedAt;
+        update.offerExtendedBy = reviewer.userId || '';
+        update.offerExtendedByName = reviewer.name || reviewer.email || 'Admin';
+    }
+    if (nextStatus === 'released') {
+        update.releasedAt = changedAt;
+        update.releasedBy = reviewer.userId || '';
+        update.releasedByName = reviewer.name || reviewer.email || 'Admin';
+    }
+    return update;
 }
 
 export function getRegistrationSubmittedData(registration = {}) {
@@ -121,6 +168,9 @@ export function matchesRegistrationReviewStatus(registration = {}, status = 'all
     switch (wantedStatus) {
         case 'all':
             return true;
+        case 'approved':
+        case 'enrolled':
+            return normalizeRegistrationStatus(registration.status) === 'enrolled';
         case 'registration-approved':
             return registration.registrationApproved === true;
         case 'roster-approved':
@@ -129,6 +179,12 @@ export function matchesRegistrationReviewStatus(registration = {}, status = 'all
             return normalizeRegistrationStatus(registration.status) === 'rejected' ||
                 registration.registrationApproved === false ||
                 registration.rosterApproved === false;
+        case 'waitlisted':
+        case 'offer-extended':
+        case 'offer-accepted':
+        case 'released':
+        case 'pending':
+            return normalizeRegistrationStatus(registration.status) === wantedStatus;
         default:
             return normalizeRegistrationStatus(registration.status) === wantedStatus;
     }
@@ -155,7 +211,7 @@ export function buildRegistrationRosterDecision({ registration = {}, team = {}, 
         },
         guardians,
         registrationUpdate: {
-            status: 'approved',
+            status: 'enrolled',
             linkedTeamId: team.id || registration.teamId || '',
             linkedTeamName: team.name || registration.teamName || '',
             linkedPlayerId: playerId || null,
