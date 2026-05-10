@@ -8,9 +8,10 @@ import {
     reorderTeamMediaFolders,
     reorderTeamMediaItems,
     moveTeamMediaItems,
-    bulkDeleteTeamMediaItems
-} from './db.js?v=12';
-import { canManageTeamMedia, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
+    bulkDeleteTeamMediaItems,
+    setTeamMediaAlbumCover
+} from './db.js?v=13';
+import { canManageTeamMedia, getTeamMediaItemUrl, getTeamMediaUploaderName, isSafeTeamMediaPhoto, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
 
 const state = {
     teamId: '',
@@ -75,7 +76,7 @@ function clearAlert() {
 function getItemsForFolder(folderId) {
     return sortByMediaOrder(state.items
         .filter((item) => item.folderId === folderId)
-        .filter((item) => isSafeTeamMediaUrl(item.url)));
+        .filter((item) => isSafeTeamMediaUrl(getTeamMediaItemUrl(item))));
 }
 
 function renderFolderOptions() {
@@ -91,11 +92,19 @@ function renderBulkActions() {
     els.bulkActions.classList.toggle('hidden', !state.canManage || count === 0);
 }
 
+
+function formatMediaDate(value) {
+    const raw = value?.toDate ? value.toDate() : value;
+    const date = raw instanceof Date ? raw : raw ? new Date(raw) : null;
+    if (!date || Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 function render() {
     els.title.textContent = state.team?.name ? `${state.team.name} Media` : 'Media Library';
     els.subtitle.textContent = state.canManage
-        ? 'Select video links to move or delete. Use up/down controls to persist ordering.'
-        : 'Organized video links and highlights for this team.';
+        ? 'Select media to move or delete. Use up/down controls to persist ordering.'
+        : 'Organized photos, video links, and highlights for this team.';
     els.adminPanel.classList.toggle('hidden', !state.canManage);
     els.backLink.href = state.teamId ? `team.html#teamId=${encodeURIComponent(state.teamId)}` : 'team.html';
     renderFolderOptions();
@@ -114,33 +123,48 @@ function render() {
                 <button type="button" data-folder-move="down" data-folder-id="${escapeHtml(folder.id)}" ${folderIndex === state.folders.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>
             </div>` : '';
         const itemRows = items.length === 0
-            ? '<div class="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500">No video links in this folder.</div>'
-            : items.map((item, itemIndex) => `
-                <div class="flex flex-col gap-3 rounded-xl border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between" data-item-id="${escapeHtml(item.id)}">
-                    <div class="flex items-start gap-3">
-                        ${state.canManage ? `<input type="checkbox" data-select-item="${escapeHtml(item.id)}" ${state.selectedIds.has(item.id) ? 'checked' : ''} class="mt-1 h-4 w-4 rounded border-gray-300">` : ''}
-                        <div>
-                            <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:text-primary-900">${escapeHtml(item.title || 'Untitled video')}</a>
-                            <div class="break-all text-xs text-gray-500">${escapeHtml(item.url)}</div>
+            ? '<div class="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500">No media in this folder.</div>'
+            : `<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">${items.map((item, itemIndex) => {
+                const itemUrl = getTeamMediaItemUrl(item);
+                const isPhoto = isSafeTeamMediaPhoto(item);
+                const title = item.title || item.fileName || (isPhoto ? 'Untitled photo' : 'Untitled video');
+                const uploadedBy = getTeamMediaUploaderName(item);
+                const uploadedAt = formatMediaDate(item.uploadedAt || item.createdAt);
+                const metadata = [uploadedBy ? `Uploaded by ${uploadedBy}` : '', uploadedAt].filter(Boolean).join(' • ');
+                return `
+                    <div class="flex h-full flex-col gap-3 rounded-xl border border-gray-200 p-4" data-item-id="${escapeHtml(item.id)}">
+                        ${isPhoto ? `<a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="block overflow-hidden rounded-lg bg-gray-100"><img src="${escapeHtml(itemUrl)}" alt="${escapeHtml(title)}" loading="lazy" class="h-48 w-full object-cover"></a>` : ''}
+                        <div class="flex items-start gap-3">
+                            ${state.canManage ? `<input type="checkbox" data-select-item="${escapeHtml(item.id)}" ${state.selectedIds.has(item.id) ? 'checked' : ''} class="mt-1 h-4 w-4 rounded border-gray-300">` : ''}
+                            <div class="min-w-0 flex-1">
+                                <a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:text-primary-900">${escapeHtml(title)}</a>
+                                <div class="text-xs text-gray-500">${escapeHtml(metadata || 'Media item')}</div>
+                                ${!isPhoto ? `<div class="break-all text-xs text-gray-500">${escapeHtml(itemUrl)}</div>` : ''}
+                            </div>
                         </div>
-                    </div>
-                    ${state.canManage ? `<div class="flex gap-2">
-                        <button type="button" data-item-move="up" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
-                        <button type="button" data-item-move="down" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === items.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>
-                    </div>` : ''}
-                </div>
-            `).join('');
+                        <div class="mt-auto flex flex-wrap gap-2">
+                            <a href="${escapeHtml(itemUrl)}" download class="rounded-lg border border-primary-200 px-3 py-1 text-xs font-semibold text-primary-700 hover:bg-primary-50">Download</a>
+                            ${state.canManage && isPhoto ? `<button type="button" data-set-cover="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" class="rounded-lg border border-primary-200 px-3 py-1 text-xs font-semibold text-primary-700 hover:bg-primary-50">Set cover</button>` : ''}
+                            ${state.canManage ? `<button type="button" data-item-move="up" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
+                            <button type="button" data-item-move="down" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === items.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>` : ''}
+                        </div>
+                    </div>`;
+            }).join('')}</div>`;
 
+        const coverUrl = isSafeTeamMediaUrl(folder.coverPhotoUrl) ? folder.coverPhotoUrl : '';
         return `
             <article class="rounded-2xl border border-gray-200 bg-white shadow-sm">
                 <header class="flex items-center justify-between gap-3 border-b border-gray-100 p-5">
-                    <div>
-                        <h2 class="text-xl font-bold">${escapeHtml(folder.name || 'Untitled folder')}</h2>
-                        <p class="text-sm text-gray-500">${items.length} item${items.length === 1 ? '' : 's'}</p>
+                    <div class="flex items-center gap-4">
+                        ${coverUrl ? `<img src="${escapeHtml(coverUrl)}" alt="${escapeHtml(folder.coverPhotoTitle || folder.name || 'Album cover')}" class="h-16 w-16 rounded-xl object-cover">` : ''}
+                        <div>
+                            <h2 class="text-xl font-bold">${escapeHtml(folder.name || 'Untitled folder')}</h2>
+                            <p class="text-sm text-gray-500">${items.length} item${items.length === 1 ? '' : 's'}</p>
+                        </div>
                     </div>
                     ${folderControls}
                 </header>
-                <div class="space-y-3 p-5">${itemRows}</div>
+                <div class="p-5">${itemRows}</div>
             </article>`;
     }).join('');
 }
@@ -179,6 +203,13 @@ els.foldersList.addEventListener('click', (event) => {
     if (folderButton) {
         const reordered = moveInArray(state.folders, folderButton.dataset.folderId, folderButton.dataset.folderMove);
         persistAndReload(() => reorderTeamMediaFolders(state.teamId, reordered.map((folder) => folder.id)), 'Folder order saved.');
+        return;
+    }
+
+    const coverButton = event.target.closest('[data-set-cover]');
+    if (coverButton) {
+        const item = state.items.find((candidate) => candidate.id === coverButton.dataset.setCover);
+        persistAndReload(() => setTeamMediaAlbumCover(state.teamId, coverButton.dataset.folderId, item), 'Album cover saved.');
         return;
     }
 
