@@ -1,7 +1,7 @@
 import { getTeams, getAllUsers, deleteTeam } from './db.js?v=29';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=10';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=13';
+import { checkAuth } from './auth.js?v=14';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
