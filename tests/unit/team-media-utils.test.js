@@ -1,11 +1,18 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
     canManageTeamMedia,
+    canViewTeamMediaFolder,
     buildBulkDeleteUpdates,
     buildMoveUpdates,
     buildReorderUpdates,
+    getTeamMediaItemUrl,
+    getTeamMediaUploaderName,
+    isSafeTeamMediaPhoto,
     isSafeTeamMediaUrl,
+    isSupportedTeamMediaVideoUrl,
     normalizeSelectedMediaIds,
+    normalizeTeamMediaFolderDraft,
+    normalizeTeamMediaVideoDraft,
     sortByMediaOrder
 } from '../../js/team-media-utils.js';
 
@@ -18,6 +25,48 @@ describe('team media management permissions', () => {
         expect(canManageTeamMedia({ uid: 'global-1', email: 'other@example.com', isAdmin: true }, team)).toBe(true);
         expect(canManageTeamMedia({ uid: 'parent-1', email: 'parent@example.com' }, team)).toBe(false);
         expect(canManageTeamMedia(null, team)).toBe(false);
+    });
+});
+
+describe('team media video folders', () => {
+    it('normalizes folder names and supported visibility values', () => {
+        expect(normalizeTeamMediaFolderDraft({ name: '  Game Film  ', visibility: 'managers' })).toEqual({
+            name: 'Game Film',
+            visibility: 'managers'
+        });
+        expect(normalizeTeamMediaFolderDraft({ name: 'Highlights', visibility: 'public' })).toEqual({
+            name: 'Highlights',
+            visibility: 'members'
+        });
+    });
+
+    it('requires a folder name', () => {
+        expect(() => normalizeTeamMediaFolderDraft({ name: '   ' })).toThrow('Folder name is required.');
+    });
+
+    it('accepts only YouTube or Vimeo video links for team media video links', () => {
+        expect(isSupportedTeamMediaVideoUrl('https://www.youtube.com/watch?v=abc123')).toBe(true);
+        expect(isSupportedTeamMediaVideoUrl('https://youtu.be/abc123')).toBe(true);
+        expect(isSupportedTeamMediaVideoUrl('https://vimeo.com/123456')).toBe(true);
+        expect(isSupportedTeamMediaVideoUrl('https://example.com/video')).toBe(false);
+        expect(isSupportedTeamMediaVideoUrl('javascript:alert(1)')).toBe(false);
+    });
+
+    it('normalizes video-link payloads', () => {
+        expect(normalizeTeamMediaVideoDraft({
+            title: '  First Half  ',
+            url: 'https://youtu.be/abc123'
+        })).toEqual({
+            title: 'First Half',
+            url: 'https://youtu.be/abc123',
+            type: 'video_link'
+        });
+    });
+
+    it('hides manager-only folders from parents', () => {
+        expect(canViewTeamMediaFolder({ visibility: 'members' }, 'parent')).toBe(true);
+        expect(canViewTeamMediaFolder({ visibility: 'managers' }, 'parent')).toBe(false);
+        expect(canViewTeamMediaFolder({ visibility: 'managers' }, 'full')).toBe(true);
     });
 });
 
@@ -47,11 +96,25 @@ describe('team media bulk actions', () => {
         ]);
     });
 
-    it('accepts only safe http and https media links', () => {
+    it('accepts only safe http and https media links for generic safety checks', () => {
         expect(isSafeTeamMediaUrl('https://videos.example.com/clip')).toBe(true);
         expect(isSafeTeamMediaUrl('http://videos.example.com/clip')).toBe(true);
         expect(isSafeTeamMediaUrl('javascript:alert(1)')).toBe(false);
         expect(isSafeTeamMediaUrl('not a url')).toBe(false);
+    });
+
+    it('identifies uploaded photo items and uploader metadata', () => {
+        const item = {
+            downloadUrl: 'https://cdn.example.com/photo.png',
+            type: 'photo',
+            uploadedByName: 'Coach Pat'
+        };
+
+        expect(getTeamMediaItemUrl(item)).toBe('https://cdn.example.com/photo.png');
+        expect(isSafeTeamMediaPhoto(item)).toBe(true);
+        expect(isSafeTeamMediaPhoto({ url: 'https://cdn.example.com/photo.jpg?token=1' })).toBe(true);
+        expect(isSafeTeamMediaPhoto({ url: 'javascript:alert(1)', type: 'photo' })).toBe(false);
+        expect(getTeamMediaUploaderName(item)).toBe('Coach Pat');
     });
 
     it('sorts by saved order with stable name fallback', () => {

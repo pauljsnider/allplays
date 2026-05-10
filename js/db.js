@@ -486,6 +486,20 @@ export async function createTeamMediaLink(teamId, folderId, media = {}) {
     return docRef.id;
 }
 
+export async function setTeamMediaAlbumCover(teamId, folderId, item = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    const itemId = String(item.id || '').trim();
+    const coverPhotoUrl = String(item.downloadUrl || item.url || item.src || '').trim();
+    if (!teamId || !cleanFolderId || !itemId) throw new Error('Choose a photo to use as the album cover.');
+    if (!isSafeTeamMediaUrl(coverPhotoUrl)) throw new Error('Album cover must use a valid photo URL.');
+    await updateDoc(doc(db, `teams/${teamId}/mediaFolders`, cleanFolderId), {
+        coverPhotoId: itemId,
+        coverPhotoUrl,
+        coverPhotoTitle: String(item.title || item.fileName || '').trim(),
+        updatedAt: serverTimestamp()
+    });
+}
+
 export async function reorderTeamMediaFolders(teamId, folderIds = []) {
     const updates = buildReorderUpdates(folderIds);
     if (!teamId || updates.length === 0) return;
