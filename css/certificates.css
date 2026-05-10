@@ -987,6 +987,11 @@
         margin: 0.25in;
     }
 
+    body.cert-printing {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
     body.cert-printing > *:not(#cert-print-root) {
         display: none !important;
     }
@@ -1001,6 +1006,7 @@
         justify-content: center;
         width: 10.5in;
         height: 8in;
+        margin: 0 auto;
         break-after: page;
         page-break-after: always;
     }
