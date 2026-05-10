@@ -278,6 +278,56 @@ function getRecordedReplayConfig(game) {
     };
 }
 
+function normalizeReplayStatus(value) {
+    const status = toCleanString(value).toLowerCase().replace(/[_\s-]+/g, '-');
+    if (['processing', 'pending', 'queued', 'recording', 'transcoding', 'encoding'].includes(status)) return 'processing';
+    if (['failed', 'error', 'errored', 'unavailable', 'rejected'].includes(status)) return 'failed';
+    if (['ready', 'available', 'complete', 'completed', 'published'].includes(status)) return 'ready';
+    return '';
+}
+
+function getReplayAvailabilityState(game = {}, { hasReplay = false, isReplay = false, isCompletedGame = false } = {}) {
+    const replayVideo = game.replayVideo && typeof game.replayVideo === 'object' ? game.replayVideo : {};
+    const recordedVideo = game.recordedVideo && typeof game.recordedVideo === 'object' ? game.recordedVideo : {};
+    const videoReplay = game.videoReplay && typeof game.videoReplay === 'object' ? game.videoReplay : {};
+    const status = normalizeReplayStatus(firstSafeString([
+        game.replayStatus,
+        game.recordedReplayStatus,
+        game.videoReplayStatus,
+        replayVideo.status,
+        replayVideo.processingStatus,
+        recordedVideo.status,
+        recordedVideo.processingStatus,
+        videoReplay.status,
+        videoReplay.processingStatus
+    ]));
+
+    if (status === 'processing') {
+        return {
+            status,
+            title: 'Replay is processing',
+            message: 'The full-game replay is being prepared. Coaches, parents, and fans can watch it here when processing finishes.'
+        };
+    }
+
+    if (status === 'failed') {
+        return {
+            status,
+            title: 'Replay unavailable',
+            message: 'The full-game replay could not be prepared for this game. Coaches, parents, and fans can still follow the saved plays and clips.'
+        };
+    }
+
+    if (hasReplay) return null;
+    if (!isReplay && !isCompletedGame) return null;
+
+    return {
+        status: 'unavailable',
+        title: 'Replay unavailable',
+        message: 'No full-game replay is available for this game yet. Coaches, parents, and fans can still follow the saved plays and clips.'
+    };
+}
+
 function getLiveEmbedConfig(team) {
     const parentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
     if (team?.twitchChannel) {
@@ -541,6 +591,11 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
     const isActiveGame = game?.liveStatus === 'live' || game?.status === 'live';
     const activeLiveEmbed = isActiveGame ? getLiveEmbedConfig(team) : null;
     const canUseRecordedReplay = Boolean(recorded?.sourceUrl) && (isReplay || isCompletedGame);
+    const replayState = getReplayAvailabilityState(game, {
+        hasReplay: canUseRecordedReplay,
+        isReplay,
+        isCompletedGame
+    });
 
     if (activeLiveEmbed?.embedUrl) {
         return {
@@ -556,7 +611,27 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
             clipEndMs: null,
             savedHighlights,
             mediaHub,
-            gameClips
+            gameClips,
+            replayState: null
+        };
+    }
+
+    if (replayState?.status === 'processing' || replayState?.status === 'failed') {
+        return {
+            mode: 'none',
+            hasVideo: false,
+            sourceUrl: null,
+            publicUrl: null,
+            publicLabel: null,
+            posterUrl: null,
+            title: null,
+            durationMs: null,
+            clipStartMs: null,
+            clipEndMs: null,
+            savedHighlights,
+            mediaHub,
+            gameClips,
+            replayState
         };
     }
 
@@ -580,7 +655,8 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
             clipEndMs: activeClip?.endMs ?? null,
             savedHighlights,
             mediaHub,
-            gameClips
+            gameClips,
+            replayState: null
         };
     }
 
@@ -599,7 +675,8 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
             clipEndMs: null,
             savedHighlights,
             mediaHub,
-            gameClips
+            gameClips,
+            replayState: null
         };
     }
 
@@ -617,7 +694,8 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
             clipEndMs: null,
             savedHighlights,
             mediaHub,
-            gameClips
+            gameClips,
+            replayState: null
         };
     }
 
@@ -635,7 +713,8 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
             clipEndMs: null,
             savedHighlights,
             mediaHub,
-            gameClips
+            gameClips,
+            replayState: null
         };
     }
 
@@ -652,7 +731,8 @@ export function resolveReplayVideoOptions({ team, game, players = [], isReplay, 
         clipEndMs: null,
         savedHighlights,
         mediaHub,
-        gameClips
+        gameClips,
+        replayState
     };
 }
 
@@ -661,6 +741,12 @@ export function shouldReloadVideoPlayback(previousPlayback, nextPlayback) {
     const nextMode = nextPlayback?.mode || 'none';
 
     if (previousMode !== nextMode) {
+        return true;
+    }
+
+    const previousReplayState = previousPlayback?.replayState ? `${previousPlayback.replayState.status}:${previousPlayback.replayState.title}:${previousPlayback.replayState.message}` : '';
+    const nextReplayState = nextPlayback?.replayState ? `${nextPlayback.replayState.status}:${nextPlayback.replayState.title}:${nextPlayback.replayState.message}` : '';
+    if (previousReplayState !== nextReplayState) {
         return true;
     }
 
