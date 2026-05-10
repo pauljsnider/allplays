@@ -135,6 +135,20 @@ function hideLoading() {
 function showStudio() {
     document.getElementById('cert-studio')?.classList.remove('hidden');
     document.getElementById('cert-parent-view')?.classList.add('hidden');
+    setCoachActionButtonsVisible(true);
+}
+
+function setCoachActionButtonsVisible(visible) {
+    ['cert-new-run-btn', 'cert-view-saved-btn', 'cert-custom-recipient-btn'].forEach((id) => {
+        document.getElementById(id)?.classList.toggle('hidden', !visible);
+    });
+}
+
+function runCoachCertificateAction(action) {
+    const hasCoachStudioAccess = state.demoMode ||
+        (state.accessInfo?.hasAccess === true && state.accessInfo?.accessLevel !== 'parent');
+    if (!hasCoachStudioAccess || !state.shared) return;
+    action();
 }
 
 function getDefaultCustomColors(team = {}) {
@@ -852,7 +866,7 @@ function bindSetupEvents() {
                 renderSetup();
                 schedulePreviewRender();
 
-                const { uploadCertificateAsset } = await import('./assets.js?v=1');
+                const { uploadCertificateAsset } = await import('./assets.js?v=2');
                 const asset = await uploadCertificateAsset(state.teamId, file, kind, state.user?.uid || null);
                 state.assets.unshift(asset);
                 state.shared[slot] = asset;
@@ -899,7 +913,7 @@ function bindSetupEvents() {
             if (!file) return;
             const index = Number(input.dataset.signatureUpload);
             try {
-                const { uploadSignatureImage } = await import('./assets.js?v=1');
+                const { uploadSignatureImage } = await import('./assets.js?v=2');
                 const result = await uploadSignatureImage(state.user?.uid, file);
                 state.shared.signers[index].signatureStyle = 'image';
                 state.shared.signers[index].signatureImageUrl = result.url;
@@ -2017,6 +2031,7 @@ async function printSelectedDrafts() {
 function renderParentView(certificatesByPlayer = []) {
     hideLoading();
     document.getElementById('cert-studio')?.classList.add('hidden');
+    setCoachActionButtonsVisible(false);
     const container = document.getElementById('cert-parent-view');
     container.classList.remove('hidden');
     const certificates = certificatesByPlayer.flatMap((entry) => entry.certificates.map((cert) => ({ ...cert, playerName: entry.playerName })));
@@ -2042,6 +2057,7 @@ function renderParentView(certificatesByPlayer = []) {
 function renderParentCertificateDetail(certificate) {
     hideLoading();
     document.getElementById('cert-studio')?.classList.add('hidden');
+    setCoachActionButtonsVisible(false);
     const container = document.getElementById('cert-parent-view');
     container.classList.remove('hidden');
 
@@ -2333,9 +2349,9 @@ async function initAuthenticated(params) {
     });
 }
 
-document.getElementById('cert-new-run-btn')?.addEventListener('click', showSetupMode);
-document.getElementById('cert-view-saved-btn')?.addEventListener('click', showSavedWorkMode);
-document.getElementById('cert-custom-recipient-btn')?.addEventListener('click', startCustomCertificate);
+document.getElementById('cert-new-run-btn')?.addEventListener('click', () => runCoachCertificateAction(showSetupMode));
+document.getElementById('cert-view-saved-btn')?.addEventListener('click', () => runCoachCertificateAction(showSavedWorkMode));
+document.getElementById('cert-custom-recipient-btn')?.addEventListener('click', () => runCoachCertificateAction(startCustomCertificate));
 document.getElementById('cert-mobile-preview-btn')?.addEventListener('click', () => {
     document.getElementById(state.mode === 'review' ? 'cert-review-preview' : 'cert-preview')?.scrollIntoView({ behavior: 'smooth' });
 });

@@ -43,6 +43,29 @@ describe('firebase runtime config', () => {
         expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 
+    it('keeps hosted demo firebase config when served through local Firebase hosting', async () => {
+        resetGlobals();
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'demo-key',
+                authDomain: 'demo-allplays.firebaseapp.com',
+                projectId: 'demo-allplays',
+                messagingSenderId: '123',
+                appId: 'demo-app'
+            })
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config).toMatchObject({
+            apiKey: 'demo-key',
+            authDomain: 'demo-allplays.firebaseapp.com',
+            projectId: 'demo-allplays',
+            appId: 'demo-app'
+        });
+    });
+
     it('returns the bundled image firebase config when no inline image config is present', () => {
         resetGlobals();
 

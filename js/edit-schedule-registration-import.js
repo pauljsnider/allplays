@@ -72,9 +72,13 @@ function isUnchangedImportedEvent(payload = {}, existingEvent = {}) {
     const existingType = normalizeString(existingEvent.type || 'game').toLowerCase();
     const payloadType = normalizeString(payload.type || 'game').toLowerCase();
     const fields = ['opponent', 'title', 'location', 'notes', 'status', 'isHome'];
-    const fieldMatches = payloadType === existingType && fields.every((field) => normalizeComparableValue(payload[field]) === normalizeComparableValue(existingEvent[field]));
+    const fieldMatches = payloadType === existingType && fields.every((field) => (
+        !Object.prototype.hasOwnProperty.call(payload, field) ||
+        normalizeComparableValue(payload[field]) === normalizeComparableValue(existingEvent[field])
+    ));
     const dateMatches = normalizeComparableValue(payload.date) === normalizeComparableValue(existingEvent.date || existingEvent.start || existingEvent.startTime);
-    const endMatches = normalizeComparableValue(payload.end) === normalizeComparableValue(existingEvent.end || existingEvent.endTime || existingEvent.endsAt);
+    const endMatches = !Object.prototype.hasOwnProperty.call(payload, 'end') ||
+        normalizeComparableValue(payload.end) === normalizeComparableValue(existingEvent.end || existingEvent.endTime || existingEvent.endsAt);
     return fieldMatches && dateMatches && endMatches;
 }
 
@@ -130,7 +134,7 @@ export function buildRegistrationScheduleEventPayload(sourceEvent = {}, { Timest
     } else {
         payload.opponent = opponent || 'TBD';
         payload.title = title || null;
-        payload.isHome = typeof sourceEvent.isHome === 'boolean' ? sourceEvent.isHome : null;
+        if (typeof sourceEvent.isHome === 'boolean') payload.isHome = sourceEvent.isHome;
     }
 
     return payload;
