@@ -63,10 +63,11 @@ describe('registration roster import planning', () => {
         expect(plan.results).toMatchObject({
             added: 1,
             updated: 1,
+            unchanged: 0,
             skipped: 1,
             conflicted: 1
         });
-        expect(plan.results.conflicts).toEqual([{ externalPlayerId: 'ext-2', existingPlayerId: 'player-2' }]);
+        expect(plan.results.conflicts).toEqual([{ externalPlayerId: 'ext-2', existingPlayerId: 'player-2', conflictType: 'name-number' }]);
         expect(plan.operations).toHaveLength(2);
         expect(plan.operations[0]).toMatchObject({
             type: 'update',
@@ -83,6 +84,7 @@ describe('registration roster import planning', () => {
             }
         });
         expect(plan.operations[1]).toMatchObject({
+            id: 'source-ext-3',
             type: 'add',
             payload: {
                 name: 'Jordan Smith',
@@ -92,6 +94,43 @@ describe('registration roster import planning', () => {
                 }
             }
         });
+        expect(plan.previewRows.map((row) => row.status)).toEqual(['update', 'conflict', 'add']);
+    });
+
+    it('labels exact source matches as unchanged and avoids unnecessary writes', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            sourcePlayers: [
+                {
+                    externalPlayerId: 'ext-1',
+                    name: 'Avery Lee',
+                    number: '4',
+                    guardians: [{ name: 'Pat Lee', email: 'pat@example.com', relation: 'Parent' }]
+                }
+            ],
+            existingPlayers: [
+                {
+                    id: 'player-1',
+                    name: 'Avery Lee',
+                    number: '4',
+                    active: true,
+                    guardians: [{ name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent' }],
+                    sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1', importedAt: '2026-01-01T00:00:00.000Z' }
+                }
+            ]
+        });
+
+        expect(plan.results).toMatchObject({ added: 0, updated: 0, unchanged: 1, skipped: 0, conflicted: 0 });
+        expect(plan.operations).toHaveLength(0);
+        expect(plan.previewRows).toMatchObject([
+            {
+                status: 'unchanged',
+                externalPlayerId: 'ext-1',
+                playerName: 'Avery Lee',
+                existingPlayerId: 'player-1',
+                sourceMetadata: { sourceType: 'sports-connect', sourceId: 'league-1', externalPlayerId: 'ext-1' }
+            }
+        ]);
     });
 
     it('does not update an existing player from a different known source with the same external player ID', () => {
@@ -277,10 +316,10 @@ describe('registration roster import planning', () => {
     });
 
     it('formats import result counts for the UI', () => {
-        expect(formatRegistrationRosterImportResults({ added: 2, updated: 1, skipped: 0, conflicted: 3 }))
-            .toBe('2 added, 1 updated, 0 skipped, 3 conflicted');
-        expect(formatRegistrationRosterImportResults({ added: 1, updated: 0, skipped: 0, conflicted: 0, fieldsImported: 2, fieldsSkipped: 1, fieldSkipReasons: { invalid: 1 } }))
-            .toBe('1 added, 0 updated, 0 skipped, 0 conflicted, 2 configured field values imported, 1 configured field value skipped, skipped: 1 invalid option/date/checkbox');
+        expect(formatRegistrationRosterImportResults({ added: 2, updated: 1, unchanged: 4, skipped: 0, conflicted: 3 }))
+            .toBe('2 added, 1 updated, 4 unchanged, 0 skipped, 3 conflicted');
+        expect(formatRegistrationRosterImportResults({ added: 1, updated: 0, unchanged: 0, skipped: 0, conflicted: 0, fieldsImported: 2, fieldsSkipped: 1, fieldSkipReasons: { invalid: 1 } }))
+            .toBe('1 added, 0 updated, 0 unchanged, 0 skipped, 0 conflicted, 2 configured field values imported, 1 configured field value skipped, skipped: 1 invalid option/date/checkbox');
     });
 });
 
@@ -294,6 +333,9 @@ describe('registration roster import wiring', () => {
         expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';");
         expect(source).toContain('planRegistrationRosterImport({');
         expect(source).toContain('renderRegistrationRosterImportPreview');
+        expect(source).toContain('registration-roster-import-row');
+        expect(source).toContain('selectedOperationIds');
+        expect(source).toContain('Conflicted rows are skipped automatically');
         expect(source).toContain('No registration provider data is available yet.');
         expect(source).toContain('fields: rosterFieldDefinitions');
         expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields)');

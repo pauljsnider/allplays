@@ -1641,6 +1641,9 @@ function renderReviewGrid() {
                     <button id="cert-png-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">PNG selected</button>
                     <button id="cert-zip-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">ZIP</button>
                 </div>
+                <div class="mt-2 text-xs text-gray-500">
+                    Looking for frames? <a href="https://a.co/d/0ggfYYG5" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:underline">Buy certificate frames on Amazon</a>
+                </div>
             </div>
         </div>
         <div class="cert-panel-body overflow-auto">

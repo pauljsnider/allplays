@@ -732,30 +732,44 @@
             const importButton = document.getElementById('registration-roster-import-btn');
             if (!preview || !importButton || !plan) return;
 
-            const operationRows = plan.operations.map((operation) => {
-                const label = operation.type === 'update' ? 'Update existing player' : 'Add new player';
+            const statusLabels = {
+                add: 'Add',
+                update: 'Update',
+                unchanged: 'Unchanged',
+                conflict: 'Conflict'
+            };
+            const rowHtml = (plan.previewRows || []).map((row) => {
+                const isImportable = row.status === 'add' || row.status === 'update';
+                const isConflict = row.status === 'conflict';
+                const borderClass = isConflict ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-white';
+                const checkbox = isImportable
+                    ? `<label class="flex items-center gap-2 text-xs font-semibold text-emerald-800"><input type="checkbox" class="registration-roster-import-row rounded border-gray-300" data-operation-id="${escapeHtml(row.id)}" checked> Import this safe row</label>`
+                    : `<span class="text-xs font-semibold ${isConflict ? 'text-amber-800' : 'text-gray-500'}">${isConflict ? 'Skipped until reviewed' : 'No write needed'}</span>`;
+                const conflictText = row.conflict
+                    ? `<div class="text-xs mt-1">Conflicts with existing player ${escapeHtml(row.existingPlayerId || 'unknown')}${row.conflict.contact ? ` by ${escapeHtml(row.conflict.contact)}` : ' by name/number match'}.</div>`
+                    : '';
+
                 return `
-                    <div class="rounded-md border border-emerald-200 bg-white p-3">
-                        <div class="font-semibold text-gray-900">${escapeHtml(label)}: ${escapeHtml(operation.payload.name || 'Unnamed player')}${operation.payload.number ? ` #${escapeHtml(operation.payload.number)}` : ''}</div>
-                        <div class="text-xs text-gray-600 mt-1">Contacts: ${escapeHtml(formatRegistrationContacts(operation.payload))}</div>
-                        <div class="text-xs text-emerald-700 mt-1">Source: ${escapeHtml(operation.payload.sourceMetadata?.sourceType || 'registration')} · ${escapeHtml(operation.payload.sourceMetadata?.externalPlayerId || '')}</div>
+                    <div class="rounded-md border ${borderClass} p-3">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="font-semibold">${escapeHtml(statusLabels[row.status] || row.status)}: ${escapeHtml(row.playerName || 'Unnamed player')}${row.number ? ` #${escapeHtml(row.number)}` : ''}</div>
+                                <div class="text-xs text-gray-600 mt-1">Guardians/contacts: ${escapeHtml(formatRegistrationContacts(row))}</div>
+                                <div class="text-xs text-emerald-700 mt-1">Source: ${escapeHtml(row.sourceMetadata?.sourceType || 'registration')} · ${escapeHtml(row.sourceMetadata?.sourceId || 'registration')} · Player ${escapeHtml(row.externalPlayerId || '')}</div>
+                                ${conflictText}
+                            </div>
+                            ${checkbox}
+                        </div>
                     </div>
                 `;
             });
-            const conflictRows = (plan.results.conflicts || []).map((conflict) => `
-                <div class="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
-                    <div class="font-semibold">Review conflict before import</div>
-                    <div class="text-xs mt-1">External player ${escapeHtml(conflict.externalPlayerId || 'unknown')} likely conflicts with existing player ${escapeHtml(conflict.existingPlayerId || 'unknown')}${conflict.contact ? ` by ${escapeHtml(conflict.contact)}` : ' by name/number match'}.</div>
-                </div>
-            `);
 
             preview.classList.remove('hidden');
             preview.innerHTML = `
                 <div class="rounded-md border border-emerald-200 bg-emerald-100/60 p-3 font-semibold text-emerald-900">
-                    Preview: ${escapeHtml(formatRegistrationRosterImportResults(plan.results))}.
+                    Preview: ${escapeHtml(formatRegistrationRosterImportResults(plan.results))}. Conflicted rows are skipped automatically; uncheck any safe rows you do not want to import.
                 </div>
-                ${operationRows.length ? operationRows.join('') : '<div class="rounded-md border border-gray-200 bg-white p-3 text-gray-600">No importable player changes found.</div>'}
-                ${conflictRows.join('')}
+                ${rowHtml.length ? rowHtml.join('') : '<div class="rounded-md border border-gray-200 bg-white p-3 text-gray-600">No source roster rows found.</div>'}
             `;
             importButton.disabled = plan.operations.length === 0;
             importButton.classList.toggle('opacity-50', importButton.disabled);
@@ -837,7 +851,16 @@
                 button.textContent = 'Importing...';
                 status.textContent = 'Importing previewed roster changes...';
 
-                for (const operation of registrationRosterImportPlan.operations) {
+                const selectedOperationIds = new Set(Array.from(document.querySelectorAll('.registration-roster-import-row:checked')).map((input) => input.dataset.operationId));
+                const selectedOperations = registrationRosterImportPlan.operations.filter((operation) => selectedOperationIds.has(operation.id));
+                if (selectedOperations.length === 0) {
+                    status.textContent = 'No safe rows were selected for import.';
+                    registrationRosterImportPlan = null;
+                    renderRegistrationRosterImportPreview({ operations: [], previewRows: [], results: { added: 0, updated: 0, unchanged: 0, skipped: 0, conflicted: 0 } });
+                    return;
+                }
+
+                for (const operation of selectedOperations) {
                     let playerId = operation.playerId;
                     if (operation.type === 'update') {
                         await updatePlayer(currentTeamId, playerId, operation.payload);
@@ -849,7 +872,7 @@
                     }
                 }
 
-                status.textContent = `Import complete: ${formatRegistrationRosterImportResults(registrationRosterImportPlan.results)}.`;
+                status.textContent = `Import complete: ${selectedOperations.length} selected safe row${selectedOperations.length === 1 ? '' : 's'} applied from preview. ${formatRegistrationRosterImportResults(registrationRosterImportPlan.results)}.`;
                 if (registrationRosterImportPlan.results.conflicted > 0) {
                     status.textContent += ' Conflicts were left unchanged so local-only players are preserved.';
                 }

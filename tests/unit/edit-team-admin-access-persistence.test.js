@@ -251,6 +251,11 @@ function createEnvironment(initialState, overrides = {}) {
         'registrationExternalTeamId',
         'registrationCopiedTeamId',
         'registrationLastSyncStatus',
+        'registration-connection-status',
+        'registration-sync-status',
+        'registration-sync-time',
+        'registration-connection-help',
+        'registration-refresh-btn',
         'clear-registration-provider-btn',
         'save-admin-btn',
         'cancel-admin-btn',
@@ -707,14 +712,18 @@ describe('edit team admin access persistence', () => {
                 isPublic: true,
                 adminEmails: [],
                 registrationSource: {
-                    provider: 'Sports Connect',
+                    provider: 'sports-connect',
                     externalTeamId: 'SC-123',
                     sourceId: 'sports-connect',
                     externalTeamName: 'Sharks 12U',
                     season: 'Spring 2026',
                     division: '12U',
                     teamId: 'team-1',
-                    lastSyncStatus: 'Not synced'
+                    providerId: 'sports-connect',
+                    connectionStatus: 'metadata_configured',
+                    syncEnabled: false,
+                    lastSyncStatus: 'Not synced',
+                    lastSyncAt: '2026-05-10T18:30:00.000Z'
                 }
             },
             updateCalls: []
@@ -726,6 +735,9 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('registrationExternalTeamId').value).toBe('SC-123');
             expect(env.elements.get('registrationCopiedTeamId').value).toBe('team-1');
             expect(env.elements.get('registrationLastSyncStatus').value).toBe('Not synced');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata configured, not connected');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Not synced');
+            expect(env.elements.get('registration-sync-time').textContent).toContain('2026');
 
             env.elements.get('registrationProviderName').value = 'League Apps';
             env.elements.get('registrationExternalTeamId').value = 'LA-456';
@@ -741,7 +753,11 @@ describe('edit team admin access persistence', () => {
                 season: 'Spring 2026',
                 division: '12U',
                 teamId: 'team-1',
-                lastSyncStatus: 'Documented only'
+                providerId: null,
+                connectionStatus: 'metadata_configured',
+                syncEnabled: false,
+                lastSyncStatus: 'Documented only',
+                lastSyncAt: '2026-05-10T18:30:00.000Z'
             });
 
             await env.elements.get('clear-registration-provider-btn').click();
@@ -749,6 +765,53 @@ describe('edit team admin access persistence', () => {
 
             expect(env.state.updateCalls).toHaveLength(2);
             expect(env.state.updateCalls[1].teamData.registrationSource).toBeNull();
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('saves Sports Connect metadata as configured but not live synced', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('registrationProviderName').value = 'sports-connect';
+            env.elements.get('registrationExternalTeamId').value = 'SC-987';
+            await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
+
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata configured, not connected');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('does not contact Sports Connect');
+
+            await env.elements.get('registration-refresh-btn').click();
+            expect(env.alerts.at(-1)).toContain('No Sports Connect login, sync job, or network fetch is active yet');
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls[0].teamData.registrationSource).toEqual({
+                provider: 'sports-connect',
+                providerId: 'sports-connect',
+                externalTeamId: 'SC-987',
+                teamId: 'team-1',
+                connectionStatus: 'metadata_configured',
+                syncEnabled: false,
+                lastSyncStatus: 'Not synced'
+            });
         } finally {
             env.cleanup();
         }

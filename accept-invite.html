@@ -93,7 +93,7 @@
                     </button>
                 </form>
                 <p class="text-xs text-gray-500 mt-4 text-center">
-                    Need to create an account? <a href="login.html" class="text-indigo-600 hover:underline">Sign up here</a> with your invite code.
+                    Need to create an account? <a href="login.html" id="signup-link" class="text-indigo-600 hover:underline">Sign up here</a> with your invite code.
                 </p>
             </div>
 
@@ -146,6 +146,14 @@
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('code') || window.localStorage.getItem('inviteCode');
         const inviteType = urlParams.get('type') || window.localStorage.getItem('inviteType') || 'parent';
+
+        const signupLink = document.getElementById('signup-link');
+        if (signupLink && inviteCode) {
+            const signupParams = new URLSearchParams();
+            signupParams.set('code', String(inviteCode).trim().toUpperCase());
+            signupParams.set('type', String(inviteType).trim().toLowerCase());
+            signupLink.href = `login.html?${signupParams.toString()}`;
+        }
 
         // State elements
         const loadingState = document.getElementById('loading-state');
