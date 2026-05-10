@@ -164,13 +164,13 @@ describe('live game replay video helpers', () => {
         const clips = normalizeSavedHighlightClips({
             highlightClips: [
                 { title: 'Assist', startMs: 12_000, endMs: 42_000, taggedPlayerIds: ['player-3'] },
-                { title: 'Untagged', startMs: 45_000, endMs: 55_000 }
+                { title: 'Give and go', startMs: 45_000, endMs: 55_000, selectedPlayerIds: ['player-4'], playEventId: 'event-1' }
             ]
         });
 
         expect(clips).toMatchObject([
-            { title: 'Assist', startMs: 12_000, endMs: 42_000, taggedPlayerIds: ['player-3'] },
-            { title: 'Untagged', startMs: 45_000, endMs: 55_000 }
+            { title: 'Assist', startMs: 12_000, endMs: 42_000, durationMs: 30_000, taggedPlayerIds: ['player-3'] },
+            { title: 'Give and go', startMs: 45_000, endMs: 55_000, durationMs: 10_000, taggedPlayerIds: ['player-4'], playEventId: 'event-1' }
         ]);
     });
 
@@ -246,6 +246,43 @@ describe('live game replay video helpers', () => {
         expect(options.mode).toBe('none');
         expect(options.hasVideo).toBe(false);
         expect(options.gameClips).toEqual([]);
+    });
+
+    it('keeps saved highlight metadata visible when replay playback is unavailable', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                highlightClips: [
+                    {
+                        title: 'Saved runout',
+                        startMs: 8_000,
+                        endMs: 28_000,
+                        period: 'Q2',
+                        gameTime: '4:12',
+                        taggedPlayerIds: ['player-8'],
+                        description: 'Steal into a layup'
+                    }
+                ]
+            },
+            isReplay: false
+        });
+
+        expect(options.mode).toBe('none');
+        expect(options.hasVideo).toBe(false);
+        expect(options.savedHighlights).toMatchObject([
+            {
+                title: 'Saved runout',
+                startMs: 8_000,
+                endMs: 28_000,
+                durationMs: 20_000,
+                period: 'Q2',
+                gameTime: '4:12',
+                taggedPlayerIds: ['player-8'],
+                description: 'Steal into a layup'
+            }
+        ]);
+        expect(options.mediaHub.highlights).toHaveLength(1);
+        expect(options.mediaHub.replay).toBeNull();
     });
 
     it('normalizes attached scored play clips for the video tab', () => {
