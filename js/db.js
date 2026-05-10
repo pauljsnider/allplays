@@ -1061,6 +1061,45 @@ function sortRegistrationReviews(registrations = []) {
     });
 }
 
+export async function listTeamTrackingItems(teamId) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const snapshot = await getDocs(itemsRef);
+    return snapshot.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter((item) => item.active !== false && item.scope === 'players')
+        .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+export async function createTeamTrackingItem(teamId, itemData) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const docRef = await addDoc(itemsRef, {
+        ...itemData,
+        teamId,
+        scope: 'players',
+        active: itemData.active !== false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function listTeamTrackingStatuses(teamId, trackingItemId) {
+    const statusesRef = collection(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking`);
+    const snapshot = await getDocs(statusesRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function setTeamTrackingStatus(teamId, trackingItemId, playerId, statusData) {
+    const statusRef = doc(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking/${playerId}`);
+    await setDoc(statusRef, {
+        ...statusData,
+        teamId,
+        trackingItemId,
+        playerId,
+        updatedAt: serverTimestamp()
+    }, { merge: true });
+}
+
 export async function listTeamRegistrationForms(teamId) {
     if (!teamId) return [];
     const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
