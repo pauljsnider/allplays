@@ -193,7 +193,7 @@ describe('parent dashboard RSVP wiring', () => {
     it('imports the RSVP controller helper and preserves grouped plus per-child button datasets', () => {
         expect(html).toContain("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';");
         expect(html).toContain('const { submitGameRsvp, submitGameRsvpFromButton } = createParentDashboardRsvpController({');
-        expect(html).toContain('data-child-ids="${escapeAttr((ev.childIds || []).join(\',\'))}"');
+        expect(html).toContain('data-child-ids="${escapeAttr((event.childIds || []).join(\',\'))}"');
         expect(html).toContain('data-child-id="${escapeAttr(game.childId || game.playerId || \'\')}"');
     });
 
