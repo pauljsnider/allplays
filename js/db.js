@@ -863,6 +863,31 @@ export async function saveTeamAvailabilityPreferences(teamId, preferences) {
     return normalized;
 }
 
+export async function grantScorekeeperAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for scorekeeper access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function revokeScorekeeperAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for scorekeeper access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
 export async function addOfficial(teamId, officialData) {
     const payload = {
         ...normalizeOfficialDraft(officialData),
