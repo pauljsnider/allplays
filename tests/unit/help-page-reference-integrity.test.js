@@ -33,4 +33,13 @@ describe('help page reference integrity', () => {
             expect(existsSync(resolve(REPO_ROOT, file)), `${file} should exist in the repo`).toBe(true);
         });
     });
+
+    it('keeps the schedule workflow steps in one continuous ordered list', () => {
+        const workflowHtml = readRepoFile('workflow-schedule.html');
+        const workflowSection = workflowHtml.match(/<h2 id="step-by-step-workflow">Step-by-Step Workflow<\/h2>([\s\S]*?)<h2 id="common-questions">/)[1];
+
+        expect(workflowSection.match(/<ol class="ml-6 list-decimal space-y-4">/g)).toHaveLength(1);
+        expect(workflowSection.match(/<\/ol>/g)).toHaveLength(1);
+        expect(workflowSection.match(/^<li>$/gm)).toHaveLength(11);
+    });
 });
