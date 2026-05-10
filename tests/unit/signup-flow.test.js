@@ -28,6 +28,92 @@ function createDependencies(overrides = {}) {
 }
 
 describe('executeEmailPasswordSignup', () => {
+
+    it('rejects parent invite signup when signup email does not match invite email before creating auth user', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'parent_invite',
+                data: {
+                    code: 'PARENTCODE',
+                    email: 'Invited@Example.com'
+                }
+            })
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'attacker@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        })).rejects.toThrow('This invite was sent to invited@example.com. Sign up with that email to accept it.');
+
+        expect(dependencies.createUserWithEmailAndPassword).not.toHaveBeenCalled();
+        expect(dependencies.redeemParentInvite).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+    });
+
+    it('rejects admin invite signup when signup email does not match invite email before creating auth user', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'admin_invite',
+                codeId: 'code-admin-3',
+                data: {
+                    teamId: 'team-42',
+                    email: 'admin@example.com'
+                }
+            })
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'other@example.com',
+            password: 'password123',
+            activationCode: 'ADMIN003',
+            auth,
+            dependencies
+        })).rejects.toThrow('This invite was sent to admin@example.com. Sign up with that email to accept it.');
+
+        expect(dependencies.createUserWithEmailAndPassword).not.toHaveBeenCalled();
+        expect(dependencies.redeemAdminInviteAcceptance).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+        expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
+    });
+
+    it('accepts invite signup when email differs only by case or whitespace', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'parent_invite',
+                data: {
+                    code: 'PARENTCODE',
+                    email: ' invited@example.com '
+                }
+            })
+        });
+        const auth = {
+            currentUser: {
+                email: 'Invited@Example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        await executeEmailPasswordSignup({
+            email: 'Invited@Example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        });
+
+        expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
+        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE');
+    });
+
     it('throws when parent invite linking fails so signup does not report success', async () => {
         const expectedError = new Error('temporary backend failure');
         const deleteAuthUser = vi.fn().mockResolvedValue(undefined);

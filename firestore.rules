@@ -77,7 +77,7 @@ service cloud.firestore {
       return canVideographGame(teamId, gameId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
-               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt'
+               'replayVideo', 'recordedVideo', 'videoReplay', 'broadcastSession', 'updatedAt'
              ]);
     }
 

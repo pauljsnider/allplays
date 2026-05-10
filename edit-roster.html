@@ -513,7 +513,7 @@
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth, sendInviteEmail } from './js/auth.js?v=13';
+        import { checkAuth, sendInviteEmail } from './js/auth.js?v=14';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
@@ -1172,6 +1172,9 @@
                 const profileParents = parentsByPlayerId.get(p.id) || [];
                 const pendingRequests = pendingRequestsByPlayerId.get(p.id) || [];
                 const importSourceType = getPlayerImportSourceType(p);
+                const playerName = escapeHtml(p.name || 'Unnamed player');
+                const playerNumber = escapeHtml(p.number || '-');
+                const playerPhotoUrl = escapeHtml(p.photoUrl || '');
 
                 const parentChips = profileParents.length > 0 ? `
                                 <div class="mt-1 flex flex-wrap gap-1 text-xs">
@@ -1218,18 +1221,18 @@
                 return `
                 <tr class="hover:bg-gray-50 ${p.active === false ? 'bg-gray-50/60' : ''}">
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono align-middle">
-                        <a class="text-gray-600 hover:text-indigo-700" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">${p.number || '-'}</a>
+                        <a class="text-gray-600 hover:text-indigo-700" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">${playerNumber}</a>
                     </td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-indigo-700 hover:underline">
                             <a class="flex items-center gap-3 text-indigo-700 hover:underline" href="${latestGameId ? `player.html#teamId=${currentTeamId}&gameId=${latestGameId}&playerId=${p.id}` : `player.html#teamId=${currentTeamId}&playerId=${p.id}`}">
                                 <span class="inline-flex h-10 w-10 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
-                                ${p.photoUrl ? `<img src="${p.photoUrl}" alt="${p.name}" class="w-full h-full object-cover">` : `
+                                ${p.photoUrl ? `<img src="${playerPhotoUrl}" alt="${playerName}" class="w-full h-full object-cover">` : `
                                     <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A9 9 0 1119 12.999M15 21v-2a3 3 0 00-3-3H6a3 3 0 00-3 3v2"></path>
                                     </svg>
                                 `}
                                 </span>
-                                <span>${p.name}</span>
+                                <span>${playerName}</span>
                                 ${p.active === false ? '<span class="inline-flex ml-2 text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Inactive</span>' : ''}
                             </a>
                             <div class="mt-1">
