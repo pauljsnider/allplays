@@ -12,8 +12,18 @@ import {
     moveTeamMediaItems,
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover
-} from './db.js?v=13';
-import { canContributeTeamMedia, canDeleteTeamMediaItem, canManageTeamMedia, getTeamMediaItemUrl, getTeamMediaUploaderName, isSafeTeamMediaPhoto, isSafeTeamMediaUrl, isSupportedTeamMediaImage, sortByMediaOrder } from './team-media-utils.js?v=2';
+} from './db.js?v=14';
+import {
+    canContributeTeamMedia,
+    canDeleteTeamMediaItem,
+    canManageTeamMedia,
+    getTeamMediaItemUrl,
+    getTeamMediaUploaderName,
+    isSafeTeamMediaPhoto,
+    isSafeTeamMediaUrl,
+    isSupportedTeamMediaImage,
+    sortByMediaOrder
+} from './team-media-utils.js?v=2';
 
 const state = {
     teamId: '',

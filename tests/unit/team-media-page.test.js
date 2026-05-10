@@ -26,7 +26,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
         expect(pageJs).toContain("import { checkAuth } from './auth.js?v=13';");
-        expect(pageJs).toContain("from './db.js?v=13'");
+        expect(pageJs).toContain("from './db.js?v=14'");
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
         expect(pageJs).toContain('uploadTeamMediaPhoto');
