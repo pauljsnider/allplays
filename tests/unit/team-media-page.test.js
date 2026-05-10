@@ -21,15 +21,19 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=2"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=3"></script>');
         expect(pageHtml).toContain('id="team-media-upload-panel"');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
+        expect(pageHtml).toContain('Save folder');
+        expect(pageHtml).toContain('Save video link');
         expect(pageJs).toContain("import { checkAuth } from './auth.js?v=13';");
         expect(pageJs).toContain("from './db.js?v=14'");
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
         expect(pageJs).toContain('uploadTeamMediaPhoto');
+        expect(pageJs).toContain('Create a folder first');
+        expect(pageJs).toContain('getMediaPermissionMessage');
         expect(pageJs).toContain('bulkDeleteTeamMediaItems');
         expect(pageJs).toContain('setTeamMediaAlbumCover');
         expect(pageJs).toContain('download class="rounded-lg');

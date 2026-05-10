@@ -1,0 +1,719 @@
+import { test, expect } from '@playwright/test';
+
+const PERMISSION_ERROR = `
+function permissionDenied() {
+    const error = new Error('Missing or insufficient permissions.');
+    error.code = 'permission-denied';
+    return error;
+}
+`;
+
+const AUTH_STUB = `
+export function checkAuth(callback) {
+    callback({
+        uid: 'user-1',
+        email: 'coach@example.com',
+        isAdmin: false,
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    });
+}
+export async function sendInviteEmail() {}
+`;
+
+const UTILS_STUB = `
+export function renderHeader() {}
+export function renderFooter() {}
+export function getUrlParams() {
+    return { teamId: 'team-1' };
+}
+export function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+`;
+
+const TEAM_ADMIN_BANNER_STUB = `
+export function renderTeamAdminBanner() {}
+export function getTeamAccessInfo() {
+    return { hasAccess: true, accessLevel: 'full', exitUrl: 'dashboard.html' };
+}
+`;
+
+const TEAM_ACCESS_STUB = `
+export function hasFullTeamAccess() {
+    return true;
+}
+`;
+
+const FIREBASE_APP_STUB = `
+export function getApp() {
+    return {};
+}
+`;
+
+const FIREBASE_AI_STUB = `
+export class GoogleAIBackend {}
+export const Schema = {};
+export function getAI() {
+    return {};
+}
+export function getGenerativeModel() {
+    return {};
+}
+`;
+
+const ROSTER_PROFILE_FIELDS_STUB = `
+export function buildRosterFieldDefinitionPayload(field = {}, index = 0) {
+    return { key: field.key || 'field-' + index, label: field.label || 'Field' };
+}
+export function collectRosterProfileValues() {
+    return {};
+}
+export function getRosterProfileValues() {
+    return {};
+}
+export function normalizeRosterFieldDefinitions(fields = []) {
+    return Array.isArray(fields) ? fields : [];
+}
+export function planRosterCsvImport() {
+    return { operations: [], errors: [] };
+}
+export function renderRosterProfileFields(container) {
+    if (container) container.innerHTML = '';
+}
+export function validateRosterProfileValues() {
+    return [];
+}
+`;
+
+const REGISTRATION_IMPORT_STUB = `
+export function formatRegistrationRosterImportResults() {
+    return '0 players';
+}
+export function getRegistrationRosterPlayers() {
+    return [];
+}
+export function isExternallyLinkedRosterTeam() {
+    return false;
+}
+export function planRegistrationRosterImport() {
+    return { operations: [], results: { conflicts: [] } };
+}
+`;
+
+const ROSTER_DB_STUB = `
+${PERMISSION_ERROR}
+export async function getTeam(teamId) {
+    return { id: teamId, name: 'Roster Test Team', ownerId: 'user-1', adminEmails: [] };
+}
+export async function getPlayers() {
+    return [
+        { id: 'player-1', name: 'Avery Carter', number: '12', active: true },
+        { id: 'player-2', name: 'Jordan Reed', number: '22', active: true }
+    ];
+}
+export async function addPlayer() {}
+export async function deactivatePlayer() {}
+export async function reactivatePlayer() {}
+export async function getGames() {
+    return [];
+}
+export async function uploadPlayerPhoto() {
+    return '';
+}
+export async function updatePlayer() {}
+export async function setPlayerPrivateRosterProfileFields() {}
+export async function inviteParent() {
+    return {};
+}
+export async function removeParentFromPlayer() {}
+export async function getAllUsers() {
+    throw permissionDenied();
+}
+export async function getUnreadChatCount() {
+    return 0;
+}
+export async function listTeamParentMembershipRequests() {
+    throw permissionDenied();
+}
+export async function approveParentMembershipRequest() {}
+export async function denyParentMembershipRequest() {}
+export async function getRosterFieldDefinitions() {
+    return [];
+}
+export async function saveRosterFieldDefinition() {}
+export async function disableRosterFieldDefinition() {}
+export async function reorderRosterFieldDefinitions() {}
+export async function listTeamRegistrationForms() {
+    throw permissionDenied();
+}
+export async function listTeamRegistrationReviews() {
+    throw permissionDenied();
+}
+export async function approveTeamRegistration() {}
+export async function rejectTeamRegistration() {}
+export async function listTeamTrackingItems() {
+    throw permissionDenied();
+}
+export async function createTeamTrackingItem() {}
+export async function listTeamTrackingStatuses() {
+    return [];
+}
+export async function setTeamTrackingStatus() {}
+`;
+
+const CHAT_DB_STUB = `
+${PERMISSION_ERROR}
+const createdAt = {
+    toDate() {
+        return new Date('2026-05-09T16:00:00Z');
+    }
+};
+export async function getTeam(teamId) {
+    return { id: teamId, name: 'Chat Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getUserProfile() {
+    return { parentOf: [{ teamId: 'team-1', playerId: 'player-1' }], email: 'coach@example.com' };
+}
+export async function getPlayers() {
+    return [];
+}
+export async function getGames() {
+    return [];
+}
+export async function getGameEvents() {
+    return [];
+}
+export async function getAggregatedStatsForGames() {
+    return [];
+}
+export async function getChatConversations() {
+    throw permissionDenied();
+}
+export async function upsertChatConversation() {}
+export async function getChatMessages() {
+    return [];
+}
+export async function postChatMessage() {}
+export async function editChatMessage() {}
+export async function deleteChatMessage() {}
+export function canAccessTeamChat() {
+    return true;
+}
+export function canModerateChat() {
+    return false;
+}
+export async function updateChatLastRead() {}
+export function subscribeToChatMessages(teamId, options, onMessages) {
+    setTimeout(() => {
+        onMessages([
+            {
+                id: 'message-1',
+                text: 'Hello team',
+                senderId: 'coach-2',
+                senderName: 'Coach Lee',
+                createdAt,
+                reactions: {}
+            }
+        ], { id: 'oldest-doc' });
+    }, 0);
+    return () => {};
+}
+export async function uploadChatImage() {}
+export async function deleteUploadedChatAttachments() {}
+export async function toggleChatReaction() {}
+`;
+
+const MEDIA_DB_STUB = `
+${PERMISSION_ERROR}
+export async function getTeam(teamId) {
+    return { id: teamId, name: 'Media Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getTeamMediaFolders() {
+    throw permissionDenied();
+}
+export async function getTeamMediaItems() {
+    throw permissionDenied();
+}
+export async function createTeamMediaFolder() {}
+export async function createTeamMediaLink() {}
+export async function reorderTeamMediaFolders() {}
+export async function reorderTeamMediaItems() {}
+export async function moveTeamMediaItems() {}
+export async function bulkDeleteTeamMediaItems() {}
+export async function setTeamMediaAlbumCover() {}
+`;
+
+const MEDIA_DB_WITH_FOLDER_STUB = `
+export async function getTeam(teamId) {
+    return { id: teamId, name: 'Media Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getTeamMediaFolders() {
+    return [{ id: 'folder-1', name: 'Highlights', order: 0 }];
+}
+export async function getTeamMediaItems() {
+    return [];
+}
+export async function createTeamMediaFolder() {}
+export async function createTeamMediaLink() {}
+export async function reorderTeamMediaFolders() {}
+export async function reorderTeamMediaItems() {}
+export async function moveTeamMediaItems() {}
+export async function bulkDeleteTeamMediaItems() {}
+export async function setTeamMediaAlbumCover() {}
+`;
+
+const MEDIA_UTILS_STUB = `
+export function canManageTeamMedia() {
+    return false;
+}
+export function getTeamMediaItemUrl(item = {}) {
+    return item.url || item.downloadUrl || '';
+}
+export function getTeamMediaUploaderName() {
+    return '';
+}
+export function isSafeTeamMediaPhoto() {
+    return false;
+}
+export function isSafeTeamMediaUrl() {
+    return true;
+}
+export function sortByMediaOrder(items = []) {
+    return items;
+}
+`;
+
+const MEDIA_UTILS_ADMIN_STUB = `
+export function canManageTeamMedia() {
+    return true;
+}
+export function getTeamMediaItemUrl(item = {}) {
+    return item.url || item.downloadUrl || '';
+}
+export function getTeamMediaUploaderName() {
+    return '';
+}
+export function isSafeTeamMediaPhoto() {
+    return false;
+}
+export function isSafeTeamMediaUrl() {
+    return true;
+}
+export function sortByMediaOrder(items = []) {
+    return items;
+}
+`;
+
+const LIVE_GAME_UTILS_STUB = `
+export function renderHeader() {}
+export function renderFooter() {}
+export function getUrlParams() {
+    return { teamId: 'team-1', gameId: 'game-1', replay: 'true' };
+}
+export function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+export function formatShortDate() {
+    return 'May 9';
+}
+export function formatTime() {
+    return '7:00 PM';
+}
+export async function shareOrCopy() {
+    return { status: 'copied' };
+}
+`;
+
+const LIVE_GAME_DB_STUB = `
+export async function getTeam(teamId) {
+    return {
+        ...(window.__LIVE_GAME_TEAM__ || {}),
+        id: teamId,
+        name: 'Replay Test Team',
+        sport: 'basketball'
+    };
+}
+export async function getGame(gameId) {
+    return {
+        id: gameId,
+        date: '2026-05-09T19:00:00Z',
+        liveStatus: 'completed',
+        status: 'completed',
+        homeScore: 42,
+        awayScore: 38,
+        period: 'Final',
+        sport: 'basketball',
+        recordedVideo: { url: 'https://cdn.example.test/replay.mp4' }
+    };
+}
+export async function getPlayers() {
+    return [];
+}
+export function subscribeLiveEvents() {
+    return () => {};
+}
+export function subscribeLiveChat() {
+    return () => {};
+}
+export async function postLiveChatMessage() {}
+export function subscribeReactions() {
+    return () => {};
+}
+export async function sendReaction() {}
+export function trackViewerPresence() {
+    return () => {};
+}
+export async function getLiveEvents() {
+    return [];
+}
+export async function getLiveChatHistory() {
+    return [];
+}
+export async function getLiveReactions() {
+    return [];
+}
+export async function getConfigs() {
+    return [];
+}
+export function subscribeGame() {
+    return () => {};
+}
+export async function updateGame() {}
+export async function uploadGameClip() {
+    return { url: '' };
+}
+`;
+
+const LIVE_GAME_STREAM_UTILS_STUB = `
+export function computePanelVisibility() {
+    return {
+        showVideoPanel: true,
+        showVideoTab: true,
+        showExternalLink: false
+    };
+}
+`;
+
+const LIVE_GAME_ACCESS_STUB = `
+export function hasFullTeamAccess() {
+    return false;
+}
+`;
+
+const LIVE_GAME_CLIPS_STUB = `
+export function buildScoreLinkedClipRecord() {
+    return {};
+}
+export function isScoredPlayEvent() {
+    return false;
+}
+export function validateGameClipFile() {}
+`;
+
+const LIVE_GAME_CHAT_STUB = `
+export function isViewerChatEnabled() {
+    return false;
+}
+`;
+
+const LIVE_GAME_ANNOUNCER_STUB = `
+export function createPlayAnnouncer() {
+    return {
+        isSupported: () => false,
+        isEnabled: () => false,
+        isPaused: () => false,
+        setEnabled: () => false,
+        setPaused: () => false,
+        announceEvent: () => false
+    };
+}
+`;
+
+const LIVE_GAME_REPLAY_STUB = `
+export function buildReplaySessionState({ teamId, gameId, game = {} } = {}) {
+    return {
+        hasReplayEvents: false,
+        showReplayControls: true,
+        hideReactionsBar: true,
+        hideEndedOverlay: true,
+        replayGameHref: 'game.html#teamId=' + teamId + '&gameId=' + gameId,
+        emptyStateMessage: 'No play-by-play data available for this game.',
+        scoreboard: {
+            homeScore: game.homeScore || 0,
+            awayScore: game.awayScore || 0,
+            period: game.period || 'Final',
+            gameClockMs: 0
+        },
+        replayEvents: [],
+        replayChat: [],
+        replayReactions: [],
+        replayStartAt: 0
+    };
+}
+export function collectReplayEventWindow() {
+    return { events: [], nextReplayIndex: 0 };
+}
+export function collectReplayStreamWindow() {
+    return { chatMessages: [], nextReplayChatIndex: 0, reactions: [], nextReplayReactionIndex: 0 };
+}
+export function getReplayElapsedMs() {
+    return 0;
+}
+export function getReplayStartTimeAfterSpeedChange() {
+    return 0;
+}
+export function getReplayTimestampMs(value) {
+    return value?.toMillis?.() ?? value ?? null;
+}
+`;
+
+const LIVE_GAME_VIDEO_STUB = `
+export const MAX_HIGHLIGHT_CLIP_MS = 60000;
+export function buildHighlightShareUrl() {
+    return '';
+}
+export function canAccessNativeCameraCapture() {
+    return false;
+}
+export function createHighlightClipDraft() {
+    return { startMs: 0, endMs: 0, title: '' };
+}
+export function resolveReplayVideoOptions() {
+    return {
+        mode: 'recorded',
+        hasVideo: true,
+        sourceUrl: 'https://cdn.example.test/replay.mp4',
+        publicUrl: 'https://cdn.example.test/replay.mp4'
+    };
+}
+export function shouldReloadVideoPlayback() {
+    return true;
+}
+`;
+
+const LIVE_GAME_ENTITLEMENTS_STUB = `
+export const TEAM_PASS_FEATURES = { RECORDED_REPLAY: 'recorded-replay' };
+function firstBoolean(values) {
+    return values.find((value) => typeof value === 'boolean');
+}
+export function isRecordedReplayTeamPassGateEnabled({ game = {}, team = {} } = {}) {
+    const gameOverride = firstBoolean([
+        game.teamPassConfig?.recordedReplayPaywallEnabled,
+        game.recordedReplayPaywallEnabled,
+        game.recordedReplayTeamPassRequired
+    ]);
+    if (typeof gameOverride === 'boolean') return gameOverride;
+    return firstBoolean([
+        team.teamPassConfig?.recordedReplayPaywallEnabled,
+        team.recordedReplayPaywallEnabled,
+        team.recordedReplayTeamPassRequired
+    ]) === true;
+}
+export function canAccessPremiumFanFeature(featureKey, entitlementStatus = {}) {
+    return Boolean(featureKey && entitlementStatus.active);
+}
+export async function getTeamEntitlementStatus() {
+    window.__TEAM_PASS_ENTITLEMENT_READS__ = (window.__TEAM_PASS_ENTITLEMENT_READS__ || 0) + 1;
+    return { active: false, reason: 'not-active', seasonId: '2026', tier: 'team-pass' };
+}
+export function resolveTeamEntitlementSeasonId() {
+    return '2026';
+}
+`;
+
+const LIVE_GAME_STATE_STUB = `
+export function resolveOpponentDisplayName() {
+    return 'Opponent';
+}
+export function normalizeLiveStatColumns(columns) {
+    return columns || [];
+}
+export function resolveLiveStatColumns() {
+    return [];
+}
+export function renderViewerLineupSections() {
+    return { onCourtIds: [], benchIds: [], onCourtHtml: '', benchHtml: '' };
+}
+export function renderOpponentStatsCards() {
+    return '';
+}
+export function applyResetEventState() {}
+export function applyViewerEventToState() {}
+export function shouldResetViewerFromGameDoc() {
+    return false;
+}
+export function collectVisibleLiveEventsSequentially(events) {
+    return events || [];
+}
+`;
+
+const LIVE_GAME_SPORT_CONFIG_STUB = `
+export function getDefaultLivePeriod() {
+    return 'Final';
+}
+`;
+
+async function routeCommonPageStubs(page) {
+    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
+    await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
+    await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
+    await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+}
+
+async function routeLiveGameStubs(page) {
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_DB_STUB }));
+    await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_UTILS_STUB }));
+    await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ACCESS_STUB }));
+    await page.route(/\/js\/game-clips\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_CLIPS_STUB }));
+    await page.route(/\/js\/live-stream-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STREAM_UTILS_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/live-game-chat\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_CHAT_STUB }));
+    await page.route(/\/js\/live-game-announcer\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ANNOUNCER_STUB }));
+    await page.route(/\/js\/live-game-replay\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_REPLAY_STUB }));
+    await page.route(/\/js\/live-game-video\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_VIDEO_STUB }));
+    await page.route(/\/js\/team-entitlements\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_ENTITLEMENTS_STUB }));
+    await page.route(/\/js\/live-game-state\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
+    await page.route(/\/js\/live-sport-config\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_SPORT_CONFIG_STUB }));
+    await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
+    await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+    await page.route('https://cdn.example.test/replay.mp4', (route) => route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
+}
+
+async function collectPageErrors(page) {
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    return errors;
+}
+
+test('edit roster renders players when optional registration and parent reads are denied', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await routeCommonPageStubs(page);
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ROSTER_DB_STUB }));
+    await page.route('**/js/team-access.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
+    await page.route('**/js/roster-profile-fields.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ROSTER_PROFILE_FIELDS_STUB }));
+    await page.route('**/js/edit-roster-registration-import.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: REGISTRATION_IMPORT_STUB }));
+
+    await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-name-display')).toHaveText('Roster Test Team');
+    await expect(page.locator('#roster-list')).toContainText('Avery Carter');
+    await expect(page.locator('#roster-list')).toContainText('Jordan Reed');
+    await expect(page.locator('#registration-review-list')).toContainText('No registration forms configured for this team.');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team chat falls back to the team-wide channel when conversation listing is denied', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await routeCommonPageStubs(page);
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CHAT_DB_STUB }));
+
+    await page.goto(`${baseURL}/team-chat.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#conversations-list')).toContainText('Chat Test Team Team Chat');
+    await expect(page.locator('#messages-container')).toContainText('Hello team');
+    await expect(page.locator('#messages-container')).not.toContainText('Loading messages');
+    await expect(page.locator('#send-error')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('team media shows an empty library when media reads are denied', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
+    await page.route('**/js/team-media-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_STUB }));
+
+    await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-media-title')).toHaveText('Media Test Team Media');
+    await expect(page.locator('#folders-list')).toContainText('No media folders have been shared yet.');
+    await expect(page.locator('#folders-list')).not.toContainText('Unable to load team media');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team media shows a staff permission error when rules block management reads', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
+    await page.route('**/js/team-media-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+
+    await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-media-title')).toHaveText('Media Test Team Media');
+    await expect(page.locator('#team-media-admin-panel')).toBeHidden();
+    await expect(page.locator('#team-media-alert')).toContainText('Team media permissions are not enabled');
+    await expect(page.locator('#folders-list')).toContainText('Deploy the latest Firestore rules');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team media renders visible save actions for staff', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_WITH_FOLDER_STUB }));
+    await page.route('**/js/team-media-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+
+    await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    const folderButton = page.locator('#folder-submit');
+    const linkButton = page.locator('#link-submit');
+    await expect(folderButton).toBeVisible();
+    await expect(folderButton).toHaveText('Save folder');
+    await expect(linkButton).toBeVisible();
+    await expect(linkButton).toHaveText('Save video link');
+    await expect(page.locator('#link-folder')).toContainText('Highlights');
+
+    const colors = await page.evaluate(() => ({
+        folderBackground: getComputedStyle(document.querySelector('#folder-submit')).backgroundColor,
+        linkBackground: getComputedStyle(document.querySelector('#link-submit')).backgroundColor
+    }));
+    expect(colors.folderBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(colors.linkBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(pageErrors).toEqual([]);
+});
+
+test('live game archived replay Team Pass gate is off by default', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__LIVE_GAME_TEAM__ = {};
+        window.__TEAM_PASS_ENTITLEMENT_READS__ = 0;
+    });
+    await routeLiveGameStubs(page);
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#video-paywall')).toBeHidden();
+    await expect(page.locator('#recorded-replay-video')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
+    expect(pageErrors).toEqual([]);
+});
+
+test('live game archived replay Team Pass gate locks replay when config is enabled', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__LIVE_GAME_TEAM__ = {
+            teamPassConfig: { recordedReplayPaywallEnabled: true }
+        };
+        window.__TEAM_PASS_ENTITLEMENT_READS__ = 0;
+    });
+    await routeLiveGameStubs(page);
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#video-paywall')).toBeVisible();
+    await expect(page.locator('#video-paywall')).toContainText('Team Pass required');
+    await expect(page.locator('#recorded-replay-video')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(1);
+    expect(pageErrors).toEqual([]);
+});

@@ -208,6 +208,7 @@ function createEnvironment(initialState, overrides = {}) {
         'standingsMultiTeamTiebreakers',
         'zip',
         'isPublic',
+        'teamPassRecordedReplayPaywallEnabled',
         'streamUrl',
         'stream-detect',
         'team-permissions-empty',
@@ -748,6 +749,46 @@ describe('edit team admin access persistence', () => {
 
             expect(env.state.updateCalls).toHaveLength(2);
             expect(env.state.updateCalls[1].teamData.registrationSource).toBeNull();
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('round-trips the archived replay Team Pass gate setting', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: [],
+                teamPassConfig: {
+                    checkoutEnabled: false,
+                    recordedReplayPaywallEnabled: true
+                }
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            expect(env.elements.get('teamPassRecordedReplayPaywallEnabled').checked).toBe(true);
+
+            env.elements.get('teamPassRecordedReplayPaywallEnabled').checked = false;
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.teamPassConfig).toEqual({
+                checkoutEnabled: false,
+                recordedReplayPaywallEnabled: false
+            });
         } finally {
             env.cleanup();
         }

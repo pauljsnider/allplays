@@ -3,6 +3,29 @@ export const TEAM_PASS_FEATURES = Object.freeze({
     RECORDED_REPLAY: 'recorded-replay'
 });
 
+function firstBoolean(values) {
+    return values.find(value => typeof value === 'boolean');
+}
+
+export function isRecordedReplayTeamPassGateEnabled({ game = {}, team = {} } = {}) {
+    const gameOverride = firstBoolean([
+        game.teamPassConfig?.recordedReplayPaywallEnabled,
+        game.teamPass?.recordedReplayPaywallEnabled,
+        game.premiumFeatures?.recordedReplayPaywallEnabled,
+        game.recordedReplayPaywallEnabled,
+        game.recordedReplayTeamPassRequired
+    ]);
+    if (typeof gameOverride === 'boolean') return gameOverride;
+
+    return firstBoolean([
+        team.teamPassConfig?.recordedReplayPaywallEnabled,
+        team.teamPass?.recordedReplayPaywallEnabled,
+        team.premiumFeatures?.recordedReplayPaywallEnabled,
+        team.recordedReplayPaywallEnabled,
+        team.recordedReplayTeamPassRequired
+    ]) === true;
+}
+
 export function resolveTeamEntitlementSeasonId({ game = {}, team = {}, fallbackDate = new Date() } = {}) {
     const explicitSeason = game.seasonId || game.season || team.currentSeasonId || team.seasonId || team.season;
     if (explicitSeason) return String(explicitSeason).trim();

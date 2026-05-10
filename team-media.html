@@ -15,42 +15,52 @@
     <main class="container mx-auto px-4 py-8 max-w-6xl">
         <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-                <p class="text-xs font-semibold uppercase tracking-[0.25em] text-primary-600">Team Media</p>
+                <p class="text-xs font-semibold uppercase tracking-[0.25em] text-indigo-600">Team Media</p>
                 <h1 id="team-media-title" class="text-3xl font-bold">Media Library</h1>
                 <p id="team-media-subtitle" class="text-sm text-gray-500">Organized photos, video links, and highlights for this team.</p>
             </div>
-            <a id="team-back-link" href="team.html" class="text-sm font-semibold text-primary-700 hover:text-primary-900">Back to team</a>
+            <a id="team-back-link" href="team.html" class="text-sm font-semibold text-indigo-700 hover:text-indigo-900">Back to team</a>
         </div>
 
         <div id="team-media-alert" class="hidden mb-4 rounded-xl border px-4 py-3 text-sm"></div>
 
-        <section id="team-media-upload-panel" class="hidden mb-6 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
+        <section id="team-media-upload-panel" class="hidden mb-6 rounded-xl border border-indigo-100 bg-white p-5 shadow-sm">
             <form id="photo-upload-form" class="space-y-3">
                 <h2 class="font-semibold text-gray-900">Upload photos</h2>
                 <p class="text-sm text-gray-500">Choose an album and add one or more image files.</p>
                 <select id="photo-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
                 <input id="photo-files" type="file" accept="image/*" multiple class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required>
-                <button class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">Upload photos</button>
+                <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2">Upload photos</button>
                 <div id="upload-progress" class="space-y-2 text-sm"></div>
             </form>
         </section>
 
-        <section id="team-media-admin-panel" class="hidden mb-6 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
-            <div class="grid gap-4 lg:grid-cols-2">
+        <section id="team-media-admin-panel" class="hidden mb-6 rounded-xl border border-indigo-100 bg-white p-5 shadow-sm">
+            <div class="grid gap-5 lg:grid-cols-2">
                 <form id="folder-form" class="space-y-3">
-                    <h2 class="font-semibold text-gray-900">Add folder</h2>
-                    <div class="flex gap-2">
-                        <input id="folder-name" class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Folder name" required>
-                        <button class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">Add</button>
+                    <div>
+                        <h2 class="font-semibold text-gray-900">Folders</h2>
+                        <p class="text-xs text-gray-500">Create a folder before adding video links.</p>
+                    </div>
+                    <div class="flex flex-col gap-2 sm:flex-row">
+                        <label for="folder-name" class="sr-only">Folder name</label>
+                        <input id="folder-name" class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Folder name" required>
+                        <button id="folder-submit" type="submit" class="inline-flex justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2">Save folder</button>
                     </div>
                 </form>
 
                 <form id="link-form" class="space-y-3">
-                    <h2 class="font-semibold text-gray-900">Add video link</h2>
+                    <div>
+                        <h2 class="font-semibold text-gray-900">Video links</h2>
+                        <p id="link-form-help" class="text-xs text-gray-500">Choose a folder, then save the video link.</p>
+                    </div>
+                    <label for="link-folder" class="sr-only">Folder</label>
                     <select id="link-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
-                    <input id="link-title" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Title" required>
+                    <label for="link-title" class="sr-only">Video title</label>
+                    <input id="link-title" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Video title" required>
+                    <label for="link-url" class="sr-only">Video URL</label>
                     <input id="link-url" type="url" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="https://..." required>
-                    <button class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">Add link</button>
+                    <button id="link-submit" type="submit" class="inline-flex w-full justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2 sm:w-auto">Save video link</button>
                 </form>
             </div>
         </section>
@@ -60,7 +70,7 @@
                 <div class="text-sm font-semibold"><span id="selected-count">0</span> selected</div>
                 <div class="flex flex-wrap gap-2">
                     <select id="move-folder" class="rounded-lg border border-gray-300 px-3 py-2 text-sm"></select>
-                    <button id="move-selected" class="rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50">Move selected</button>
+                    <button id="move-selected" class="rounded-lg border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Move selected</button>
                     <button id="delete-selected" class="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">Delete selected</button>
                 </div>
             </div>
@@ -71,6 +81,6 @@
         </section>
     </main>
 
-    <script type="module" src="js/team-media.js?v=2"></script>
+    <script type="module" src="js/team-media.js?v=3"></script>
 </body>
 </html>

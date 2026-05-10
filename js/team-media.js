@@ -55,6 +55,8 @@ const els = {
     linkFolder: document.getElementById('link-folder'),
     linkTitle: document.getElementById('link-title'),
     linkUrl: document.getElementById('link-url'),
+    linkSubmit: document.getElementById('link-submit'),
+    linkFormHelp: document.getElementById('link-form-help'),
     moveFolder: document.getElementById('move-folder'),
     moveSelected: document.getElementById('move-selected'),
     deleteSelected: document.getElementById('delete-selected'),
@@ -98,11 +100,23 @@ function getItemsForFolder(folderId) {
 }
 
 function renderFolderOptions() {
+    const hasFolders = state.folders.length > 0;
     const options = state.folders.map((folder) => `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.name || 'Untitled folder')}</option>`).join('');
-    const placeholder = '<option value="">Choose folder</option>';
+    const placeholder = `<option value="">${hasFolders ? 'Choose folder' : 'Create a folder first'}</option>`;
     els.linkFolder.innerHTML = placeholder + options;
     els.photoFolder.innerHTML = placeholder + options;
     els.moveFolder.innerHTML = placeholder + options;
+    [els.linkFolder, els.linkTitle, els.linkUrl, els.linkSubmit].forEach((element) => {
+        if (!element) return;
+        element.disabled = !hasFolders;
+        element.classList.toggle('opacity-50', !hasFolders);
+        element.classList.toggle('cursor-not-allowed', !hasFolders);
+    });
+    if (els.linkFormHelp) {
+        els.linkFormHelp.textContent = hasFolders
+            ? 'Choose a folder, then save the video link.'
+            : 'Save a folder first. Video links need a folder destination.';
+    }
 }
 
 function renderBulkActions() {
@@ -161,14 +175,14 @@ function render() {
                         <div class="flex items-start gap-3">
                             ${state.canManage ? `<input type="checkbox" data-select-item="${escapeHtml(item.id)}" ${state.selectedIds.has(item.id) ? 'checked' : ''} class="mt-1 h-4 w-4 rounded border-gray-300">` : ''}
                             <div class="min-w-0 flex-1">
-                                <a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:text-primary-900">${escapeHtml(title)}</a>
+                                <a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-indigo-700 hover:text-indigo-900">${escapeHtml(title)}</a>
                                 <div class="text-xs text-gray-500">${escapeHtml(metadata || 'Media item')}</div>
                                 ${!isPhoto ? `<div class="break-all text-xs text-gray-500">${escapeHtml(itemUrl)}</div>` : ''}
                             </div>
                         </div>
                         <div class="mt-auto flex flex-wrap gap-2">
-                            <a href="${escapeHtml(itemUrl)}" download class="rounded-lg border border-primary-200 px-3 py-1 text-xs font-semibold text-primary-700 hover:bg-primary-50">Download</a>
-                            ${state.canManage && isPhoto ? `<button type="button" data-set-cover="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" class="rounded-lg border border-primary-200 px-3 py-1 text-xs font-semibold text-primary-700 hover:bg-primary-50">Set cover</button>` : ''}
+                            <a href="${escapeHtml(itemUrl)}" download class="rounded-lg border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Download</a>
+                            ${state.canManage && isPhoto ? `<button type="button" data-set-cover="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" class="rounded-lg border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Set cover</button>` : ''}
                             ${state.canManage ? `<button type="button" data-item-move="up" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
                             <button type="button" data-item-move="down" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === items.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>` : ''}
                             ${canDeleteItem ? `<button type="button" data-item-delete="${escapeHtml(item.id)}" class="rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50">Delete</button>` : ''}
@@ -194,9 +208,40 @@ function render() {
     }).join('');
 }
 
+function isPermissionDenied(error) {
+    return error?.code === 'permission-denied' ||
+        String(error?.message || '').toLowerCase().includes('permission');
+}
+
+function getMediaPermissionMessage() {
+    return 'Team media permissions are not enabled for this Firebase project yet. Deploy the latest Firestore rules before adding folders or video links.';
+}
+
 async function loadLibrary() {
-    state.folders = await getTeamMediaFolders(state.teamId);
-    state.items = await getTeamMediaItems(state.teamId);
+    try {
+        [state.folders, state.items] = await Promise.all([
+            getTeamMediaFolders(state.teamId),
+            getTeamMediaItems(state.teamId)
+        ]);
+    } catch (error) {
+        if (!isPermissionDenied(error)) {
+            throw error;
+        }
+        if (state.canManage) {
+            console.warn('Team media management is blocked by Firestore rules:', error);
+            state.folders = [];
+            state.items = [];
+            state.selectedIds.clear();
+            render();
+            els.adminPanel.classList.add('hidden');
+            showAlert(getMediaPermissionMessage(), 'error');
+            els.foldersList.innerHTML = `<div class="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">${escapeHtml(getMediaPermissionMessage())}</div>`;
+            return;
+        }
+        console.warn('Unable to load team media library; showing empty state:', error);
+        state.folders = [];
+        state.items = [];
+    }
     state.selectedIds = new Set([...state.selectedIds].filter((id) => state.items.some((item) => item.id === id)));
     render();
 }
@@ -209,7 +254,7 @@ async function persistAndReload(action, successMessage) {
         showAlert(successMessage, 'success');
     } catch (error) {
         console.error('Team media action failed:', error);
-        showAlert(error.message || 'Unable to save media changes. Refresh and try again.', 'error');
+        showAlert(isPermissionDenied(error) ? getMediaPermissionMessage() : (error.message || 'Unable to save media changes. Refresh and try again.'), 'error');
     }
 }
 
@@ -270,9 +315,10 @@ els.foldersList.addEventListener('change', (event) => {
 els.folderForm.addEventListener('submit', (event) => {
     event.preventDefault();
     persistAndReload(async () => {
-        await createTeamMediaFolder(state.teamId, els.folderName.value);
+        const folderName = els.folderName.value.trim();
+        await createTeamMediaFolder(state.teamId, folderName);
         els.folderName.value = '';
-    }, 'Folder added.');
+    }, 'Folder saved.');
 });
 
 els.linkForm.addEventListener('submit', (event) => {
@@ -284,7 +330,7 @@ els.linkForm.addEventListener('submit', (event) => {
         });
         els.linkTitle.value = '';
         els.linkUrl.value = '';
-    }, 'Video link added.');
+    }, 'Video link saved.');
 });
 
 els.uploadForm.addEventListener('submit', async (event) => {
@@ -304,7 +350,7 @@ els.uploadForm.addEventListener('submit', async (event) => {
     els.uploadProgress.innerHTML = files.map((file, index) => `
         <div data-upload-row="${index}" class="rounded-lg border border-gray-200 p-3">
             <div class="flex justify-between gap-3"><span>${escapeHtml(file.name)}</span><span data-upload-status="${index}">Waiting</span></div>
-            <div class="mt-2 h-2 rounded-full bg-gray-100"><div data-upload-bar="${index}" class="h-2 rounded-full bg-primary-600" style="width:0%"></div></div>
+            <div class="mt-2 h-2 rounded-full bg-gray-100"><div data-upload-bar="${index}" class="h-2 rounded-full bg-indigo-600" style="width:0%"></div></div>
         </div>`).join('');
 
     let uploadedCount = 0;

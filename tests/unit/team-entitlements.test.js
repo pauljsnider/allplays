@@ -4,6 +4,7 @@ import {
     TEAM_PASS_FEATURES,
     buildTeamEntitlementId,
     canAccessPremiumFanFeature,
+    isRecordedReplayTeamPassGateEnabled,
     isTeamEntitlementActive,
     resolveTeamEntitlementSeasonId
 } from '../../js/team-entitlements-core.js';
@@ -39,10 +40,22 @@ describe('team entitlement helpers', () => {
         expect(isTeamEntitlementActive(active, { seasonId: '2026', now: '2027-01-01T00:00:00Z' })).toBe(false);
     });
 
+    it('keeps the recorded replay Team Pass gate off unless config enables it', () => {
+        expect(isRecordedReplayTeamPassGateEnabled({ team: {} })).toBe(false);
+        expect(isRecordedReplayTeamPassGateEnabled({
+            team: { teamPassConfig: { recordedReplayPaywallEnabled: true } }
+        })).toBe(true);
+        expect(isRecordedReplayTeamPassGateEnabled({
+            team: { teamPassConfig: { recordedReplayPaywallEnabled: true } },
+            game: { teamPassConfig: { recordedReplayPaywallEnabled: false } }
+        })).toBe(false);
+    });
+
     it('wires live replay video behind the team entitlement helper', () => {
         const liveGame = readRepoFile('js/live-game.js');
         const html = readRepoFile('live-game.html');
 
+        expect(liveGame).toContain('isRecordedReplayTeamPassGateEnabled');
         expect(liveGame).toContain('getTeamEntitlementStatus');
         expect(liveGame).toContain("TEAM_PASS_FEATURES.RECORDED_REPLAY");
         expect(html).toContain('id="video-paywall"');

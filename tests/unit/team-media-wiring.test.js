@@ -14,11 +14,14 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=2"');
+        expect(page).toContain('src="js/team-media.js?v=3"');
+        expect(page).toContain('Save folder');
+        expect(page).toContain('Save video link');
         expect(source).toContain("from './db.js?v=14'");
         expect(source).toContain("import { checkAuth } from './auth.js?v=13';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
+        expect(source).toContain('Team media permissions are not enabled');
     });
 
     it('keeps media reads member-scoped and writes admin-scoped', () => {
