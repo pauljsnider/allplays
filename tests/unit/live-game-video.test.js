@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+    BROADCAST_SETUP_STATUSES,
     MAX_HIGHLIGHT_CLIP_MS,
+    buildBroadcastSetupSession,
     buildHighlightShareUrl,
     createHighlightClipDraft,
     normalizeGameClipRecords,
@@ -464,5 +466,53 @@ describe('native camera capture authorization', () => {
             team: { ownerId: 'owner-1', adminEmails: [] },
             game: { status: 'completed' }
         })).toBe(false);
+    });
+});
+
+describe('broadcast setup session helpers', () => {
+    it('builds a reusable ready session after camera and microphone verification', () => {
+        const session = buildBroadcastSetupSession({
+            sessionName: ' Varsity vs Central ',
+            user: { uid: 'coach-1', email: 'coach@example.com' },
+            permissions: { camera: true, microphone: true },
+            status: BROADCAST_SETUP_STATUSES.READY,
+            now: new Date('2026-05-10T07:30:00.000Z')
+        });
+
+        expect(session).toMatchObject({
+            id: 'broadcast-1778398200000',
+            name: 'Varsity vs Central',
+            status: 'ready_for_managed_stream',
+            setupOnly: true,
+            managedStreamReady: true,
+            permissions: { camera: true, microphone: true },
+            updatedBy: 'coach-1',
+            updatedByEmail: 'coach@example.com',
+            createdAt: '2026-05-10T07:30:00.000Z',
+            updatedAt: '2026-05-10T07:30:00.000Z'
+        });
+    });
+
+    it('preserves session identity and records retryable permission failures', () => {
+        const session = buildBroadcastSetupSession({
+            existingSession: { id: 'broadcast-existing', name: 'Existing session', createdAt: '2026-05-01T00:00:00.000Z' },
+            sessionName: '',
+            user: { uid: 'video-1' },
+            permissions: { camera: false, microphone: false },
+            status: BROADCAST_SETUP_STATUSES.FAILED,
+            errorMessage: 'Permission denied. Allow access and retry.',
+            now: new Date('2026-05-10T08:00:00.000Z')
+        });
+
+        expect(session).toMatchObject({
+            id: 'broadcast-existing',
+            name: 'Existing session',
+            status: 'permission_failed',
+            managedStreamReady: false,
+            permissions: { camera: false, microphone: false },
+            errorMessage: 'Permission denied. Allow access and retry.',
+            createdAt: '2026-05-01T00:00:00.000Z',
+            updatedAt: '2026-05-10T08:00:00.000Z'
+        });
     });
 });
