@@ -31,8 +31,8 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=4';
-import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=1';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=5';
+import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
@@ -474,8 +474,9 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
   state.videoPlayback = nextPlayback;
+  const recordedReplayGateEnabled = isRecordedReplayTeamPassGateEnabled({ game: state.game, team: state.team });
   const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
-  const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && !videoUnlocked;
+  const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled && !videoUnlocked;
   const canUseNativeCamera = userCanUseNativeCamera();
   const hasMediaHub = hasMediaHubContent(state.videoPlayback?.mediaHub);
   const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
@@ -2318,11 +2319,15 @@ async function init() {
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
   const seasonId = resolveTeamEntitlementSeasonId({ game, team });
-  try {
-    state.teamEntitlement = await getTeamEntitlementStatus({ teamId: state.teamId, seasonId });
-  } catch (error) {
-    console.warn('Failed to load team entitlement:', error);
-    state.teamEntitlement = { active: false, reason: 'load-failed', seasonId, tier: 'team-pass' };
+  if (isRecordedReplayTeamPassGateEnabled({ game, team })) {
+    try {
+      state.teamEntitlement = await getTeamEntitlementStatus({ teamId: state.teamId, seasonId });
+    } catch (error) {
+      console.warn('Failed to load team entitlement:', error);
+      state.teamEntitlement = { active: false, reason: 'load-failed', seasonId, tier: 'team-pass' };
+    }
+  } else {
+    state.teamEntitlement = { active: false, reason: 'feature-disabled', seasonId, tier: 'team-pass' };
   }
 
   refreshVideoPanel({ force: true });

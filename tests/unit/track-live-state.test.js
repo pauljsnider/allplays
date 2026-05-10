@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summarizePersistedTrackingState, buildTrackLiveResetUpdate } from '../../js/track-live-state.js';
+import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume } from '../../js/track-live-state.js';
 
 describe('track live state helpers', () => {
   it('summarizes when persisted data exists', () => {
@@ -51,6 +51,9 @@ describe('track live state helpers', () => {
       homeScore: 0,
       awayScore: 0,
       period: 'H2',
+      liveClockMs: 0,
+      liveClockRunning: false,
+      liveClockPeriod: 'H2',
       liveLineup: { onCourt: ['p1'], bench: ['p2', 'p3'] },
       opponentStats: {},
       liveStatus: 'scheduled',
@@ -75,6 +78,9 @@ describe('track live state helpers', () => {
     });
 
     expect(payload.period).toBe('Q1');
+    expect(payload.liveClockMs).toBe(0);
+    expect(payload.liveClockRunning).toBe(false);
+    expect(payload.liveClockPeriod).toBe('Q1');
     expect(payload.opponentTeamId).toBe('');
     expect(payload.opponentTeamName).toBe('');
     expect(payload.opponentTeamPhoto).toBe('');
@@ -103,5 +109,43 @@ describe('track live state helpers', () => {
     expect(buildTrackLiveResetUpdate({
       currentGame: { sport: 'Baseball' }
     }).period).toBe('T1');
+  });
+
+  it('restores persisted live clock and period from the game document', () => {
+    const resumed = resolveTrackLiveClockResume({
+      currentGame: {
+        liveClockMs: 125000,
+        liveClockRunning: false,
+        liveClockPeriod: 'H2',
+        period: 'H1'
+      },
+      currentPeriod: 'H1',
+      now: 1700000000000
+    });
+
+    expect(resumed).toEqual({
+      elapsed: 125000,
+      currentPeriod: 'H2',
+      wasRunning: false
+    });
+  });
+
+  it('advances a persisted running live clock from its last sync time', () => {
+    const resumed = resolveTrackLiveClockResume({
+      currentGame: {
+        liveClockMs: 60000,
+        liveClockRunning: true,
+        liveClockUpdatedAt: 1700000000000,
+        liveClockPeriod: 'Q3'
+      },
+      currentPeriod: 'Q1',
+      now: 1700000015000
+    });
+
+    expect(resumed).toEqual({
+      elapsed: 75000,
+      currentPeriod: 'Q3',
+      wasRunning: true
+    });
   });
 });
