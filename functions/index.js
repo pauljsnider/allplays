@@ -22,6 +22,7 @@ const {
   buildTeamFeePaidUpdate
 } = require('./team-fees-core.cjs');
 const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
+const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
@@ -481,6 +482,50 @@ const calendarServiceAccount =
 const fetchCalendarRuntime = calendarServiceAccount
   ? { serviceAccount: calendarServiceAccount }
   : {};
+
+exports.publicTeamGamesIcs = functions
+  .runWith(fetchCalendarRuntime)
+  .https
+  .onRequest(async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.status(405).send('Method not allowed');
+      return;
+    }
+
+    const teamId = String(req.query.teamId || '').trim();
+    if (!teamId || !/^[A-Za-z0-9_-]{1,128}$/.test(teamId)) {
+      res.status(400).send('Missing or invalid teamId');
+      return;
+    }
+
+    try {
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      if (!teamSnap.exists) {
+        res.status(404).send('Calendar not found');
+        return;
+      }
+
+      const team = { id: teamId, ...(teamSnap.data() || {}) };
+      const gamesSnap = await firestore.collection(`teams/${teamId}/games`).get();
+      const games = [];
+      gamesSnap.forEach((docSnap) => games.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
+      const publicGames = games.filter((game) => isPublicFanGame(team, game));
+
+      if (!publicGames.length && !canExposeEmptyPublicFeed(team)) {
+        res.status(404).send('Calendar not found');
+        return;
+      }
+
+      const icsText = buildPublicGamesIcs({ teamId, team, games: publicGames });
+      res.set('Content-Type', 'text/calendar; charset=utf-8');
+      res.set('Content-Disposition', `inline; filename="${teamId}-public-games.ics"`);
+      res.set('Cache-Control', 'public, max-age=300');
+      res.status(200).send(req.method === 'HEAD' ? '' : icsText);
+    } catch (error) {
+      console.error('Failed to build public team games ICS:', error);
+      res.status(500).send('Calendar unavailable');
+    }
+  });
 
 async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
   const tokenRef = firestore.doc(`teams/${teamId}/calendarTokens/${tokenHash}`);
