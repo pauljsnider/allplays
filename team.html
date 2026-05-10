@@ -307,7 +307,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=20';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=20';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -350,6 +350,7 @@
         let currentTeamId = null;
         let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
         let currentPlayers = [];
+        let currentTeamMemberUsers = [];
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -387,8 +388,107 @@
             return canManageTeamAvailability();
         }
 
+        function normalizeMemberUserId(value) {
+            return String(value || '').trim();
+        }
+
+        function getPlayerLinkedUserIds(player) {
+            const ids = new Set([
+                player?.userId,
+                player?.authUid,
+                player?.accountUserId,
+                player?.memberUserId
+            ].map(normalizeMemberUserId).filter(Boolean));
+            (Array.isArray(player?.parents) ? player.parents : []).forEach((parent) => {
+                [
+                    parent?.userId,
+                    parent?.uid,
+                    parent?.authUid,
+                    parent?.accountUserId,
+                    parent?.memberUserId
+                ].map(normalizeMemberUserId).filter(Boolean).forEach((id) => ids.add(id));
+            });
+            return Array.from(ids);
+        }
+
         function getPlayerMemberUserId(player) {
-            return String(player?.userId || player?.authUid || player?.accountUserId || '').trim();
+            return getPlayerLinkedUserIds(player)[0] || '';
+        }
+
+        function userProfileLinksPlayer(user, player, teamId = currentTeamId) {
+            const playerId = normalizeMemberUserId(player?.id || player?.playerId);
+            if (!teamId || !playerId) return false;
+            const playerKey = `${teamId}::${playerId}`;
+            const linkMatches = (link) => (
+                link?.teamId === teamId &&
+                (!link?.playerId || link.playerId === playerId)
+            );
+            return (Array.isArray(user?.parentOf) && user.parentOf.some(linkMatches)) ||
+                (Array.isArray(user?.playerOf) && user.playerOf.some(linkMatches)) ||
+                (Array.isArray(user?.playerKeys) && user.playerKeys.includes(playerKey)) ||
+                (Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(playerKey));
+        }
+
+        function buildScorekeeperGrantTargets(players = [], users = [], teamId = currentTeamId) {
+            const targetsByUserId = new Map();
+            const roster = Array.isArray(players) ? players : [];
+            const profiles = Array.isArray(users) ? users : [];
+
+            const addTarget = (userId, player, source = {}) => {
+                const normalizedUserId = normalizeMemberUserId(userId);
+                if (!normalizedUserId) return;
+                const sourceName = String(source.name || source.email || '').trim();
+                const sourceEmail = String(source.email || '').trim();
+                const existing = targetsByUserId.get(normalizedUserId) || {
+                    userId: normalizedUserId,
+                    name: sourceName || player?.name || 'Team member',
+                    email: sourceEmail,
+                    playerNames: []
+                };
+                const playerName = String(player?.name || '').trim();
+                if (playerName && !existing.playerNames.includes(playerName)) {
+                    existing.playerNames.push(playerName);
+                }
+                if (sourceName && (!existing.name || existing.name === playerName || existing.name === 'Team member')) {
+                    existing.name = sourceName;
+                }
+                existing.email = existing.email || sourceEmail;
+                targetsByUserId.set(normalizedUserId, existing);
+            };
+
+            roster.forEach((player) => {
+                getPlayerLinkedUserIds(player).forEach((userId) => addTarget(userId, player));
+                (Array.isArray(player?.parents) ? player.parents : []).forEach((parent) => {
+                    addTarget(parent?.userId || parent?.uid || parent?.authUid || parent?.accountUserId, player, {
+                        name: parent?.name,
+                        email: parent?.email
+                    });
+                });
+            });
+
+            profiles.forEach((user) => {
+                roster
+                    .filter((player) => userProfileLinksPlayer(user, player, teamId))
+                    .forEach((player) => {
+                        addTarget(user.id || user.uid, player, {
+                            name: user.fullName || user.displayName || user.email,
+                            email: user.email
+                        });
+                    });
+            });
+
+            return Array.from(targetsByUserId.values())
+                .sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        async function loadScorekeeperGrantUsers(teamId) {
+            if (!teamId || !canManageScorekeeperGrants()) return [];
+            try {
+                return await getAllUsers();
+            } catch (error) {
+                console.warn('Failed to load linked team members for scorekeeper grants:', error);
+                return [];
+            }
         }
 
         function getSelectedScorekeeperIds(team) {
@@ -409,9 +509,7 @@
             }
 
             const selectedScorekeeperIds = getSelectedScorekeeperIds(team);
-            const eligiblePlayers = (players || [])
-                .map((player) => ({ player, memberUserId: getPlayerMemberUserId(player) }))
-                .filter(({ memberUserId }) => memberUserId);
+            const grantTargets = buildScorekeeperGrantTargets(players, currentTeamMemberUsers, currentTeamId);
 
             section.classList.remove('hidden');
             section.innerHTML = `
@@ -422,17 +520,20 @@
                             <p class="text-sm text-gray-500 mt-1">Grant an existing team member scorekeeping access without making them a team admin.</p>
                         </div>
                     </div>
-                    ${eligiblePlayers.length ? `
+                    ${grantTargets.length ? `
                         <div class="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
-                            ${eligiblePlayers.map(({ player, memberUserId }) => {
-                                const granted = selectedScorekeeperIds.has(memberUserId);
+                            ${grantTargets.map((target) => {
+                                const granted = selectedScorekeeperIds.has(target.userId);
+                                const detail = target.playerNames.length
+                                    ? `Linked to ${target.playerNames.join(', ')}.`
+                                    : 'Linked team member account.';
                                 return `
                                     <div class="flex items-center justify-between gap-3 p-3">
                                         <div class="min-w-0">
-                                            <div class="font-semibold text-gray-900 truncate">${escapeHtml(player.name || 'Team member')}</div>
-                                            <div class="text-xs text-gray-500">${granted ? 'Can score games. No team admin access.' : 'No scorekeeper grant.'}</div>
+                                            <div class="font-semibold text-gray-900 truncate">${escapeHtml(target.name || 'Team member')}</div>
+                                            <div class="text-xs text-gray-500">${escapeHtml(granted ? `Can score games. ${detail}` : `No scorekeeper grant. ${detail}`)}</div>
                                         </div>
-                                        <button type="button" data-member-user-id="${escapeAttr(memberUserId)}" data-granted="${granted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="shrink-0 px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${granted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
+                                        <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${granted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="shrink-0 px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${granted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
                                             ${granted ? 'Revoke' : 'Grant'}
                                         </button>
                                     </div>
@@ -1432,6 +1533,7 @@
                     }
                 }
 
+                currentTeamMemberUsers = await loadScorekeeperGrantUsers(teamId);
                 renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
                 renderTeamPassCard(document.getElementById('team-pass-container'), {

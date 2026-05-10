@@ -18,6 +18,8 @@ function loadScorekeeperHelpers() {
     return new Function('context', `
         let currentUser = context.currentUser;
         let currentTeamAccessInfo = context.currentTeamAccessInfo;
+        let currentTeamId = context.teamId;
+        let currentTeamMemberUsers = context.users || [];
         function canManageTeamAvailability() {
             return !!currentUser && (
                 currentUser?.isAdmin ||
@@ -30,6 +32,12 @@ function loadScorekeeperHelpers() {
         return {
             canManageScorekeeperGrants: canManageScorekeeperGrants(),
             memberUserId: getPlayerMemberUserId(context.player),
+            grantTargets: buildScorekeeperGrantTargets(context.players || (context.player ? [context.player] : []), context.users || [], context.teamId).map((target) => ({
+                userId: target.userId,
+                name: target.name,
+                email: target.email,
+                playerNames: target.playerNames
+            })),
             selectedIds: Array.from(getSelectedScorekeeperIds(context.team))
         };
     `);
@@ -57,6 +65,12 @@ describe('team scorekeeper grants', () => {
         })).toEqual({
             canManageScorekeeperGrants: true,
             memberUserId: 'member-1',
+            grantTargets: [{
+                userId: 'member-1',
+                name: 'Player',
+                email: '',
+                playerNames: ['Player']
+            }],
             selectedIds: ['member-1']
         });
 
@@ -66,5 +80,54 @@ describe('team scorekeeper grants', () => {
             player: { name: 'Player', authUid: 'member-1' },
             team: { teamPermissions: { scorekeeping: { mode: 'selected', memberIds: ['member-1'] } } }
         }).canManageScorekeeperGrants).toBe(false);
+    });
+
+    it('resolves scorekeeper grant targets from profile and parent links', () => {
+        const helpers = loadScorekeeperHelpers();
+        const result = helpers({
+            currentUser: { uid: 'coach-1' },
+            currentTeamAccessInfo: { hasAccess: true, accessLevel: 'full' },
+            teamId: 'team-1',
+            players: [
+                {
+                    id: 'player-1',
+                    name: 'Player One',
+                    parents: [{ userId: ' parent-link-1 ', email: 'parent@example.com', name: 'Parent One' }]
+                },
+                {
+                    id: 'player-2',
+                    name: 'Player Two'
+                }
+            ],
+            users: [
+                {
+                    id: 'profile-link-1',
+                    displayName: 'Profile Parent',
+                    email: 'profile@example.com',
+                    parentOf: [{ teamId: 'team-1', playerId: 'player-2' }]
+                },
+                {
+                    id: 'other-team-link',
+                    displayName: 'Other Parent',
+                    parentOf: [{ teamId: 'other-team', playerId: 'player-1' }]
+                }
+            ],
+            team: { teamPermissions: { scorekeeping: { mode: 'selected', memberIds: [] } } }
+        });
+
+        expect(result.grantTargets).toEqual([
+            {
+                userId: 'parent-link-1',
+                name: 'Parent One',
+                email: 'parent@example.com',
+                playerNames: ['Player One']
+            },
+            {
+                userId: 'profile-link-1',
+                name: 'Profile Parent',
+                email: 'profile@example.com',
+                playerNames: ['Player Two']
+            }
+        ]);
     });
 });
