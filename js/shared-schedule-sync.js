@@ -39,7 +39,6 @@ export function buildMirroredGamePayload({
     date: sourceGame.date || null,
     opponent: sourceTeam.name || sourceGame.opponent || 'Opponent',
     location: sourceGame.location || '',
-    statTrackerConfigId: sourceGame.statTrackerConfigId || null,
     opponentTeamId: sourceTeamId || null,
     opponentTeamName: sourceTeam.name || sourceGame.opponent || null,
     opponentTeamPhoto: sourceTeam.photoUrl || null,
