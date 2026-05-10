@@ -2393,7 +2393,10 @@ export async function validateAccessCode(code) {
         return { valid: false, message: "Invalid access code" };
     }
 
-    const codeDoc = snapshot.docs[0];
+    const codeDoc = snapshot.docs.find((doc) => {
+        const codeData = doc.data() || {};
+        return codeData.used !== true && !isAccessCodeExpired(codeData.expiresAt);
+    }) || snapshot.docs[0];
     const data = codeDoc.data();
 
     if (data.used) {
