@@ -175,6 +175,7 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches[0].operations).toHaveLength(500);
         expect(harness.batches[1].operations).toHaveLength(450);
         expect(harness.batches[2].operations).toHaveLength(450);
+        expect(harness.batches[3]).toBeUndefined();
     });
 
     it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {
