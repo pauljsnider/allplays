@@ -49,6 +49,16 @@ service cloud.firestore {
              );
     }
 
+    function canVideographGame(teamId, gameId) {
+      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let permission = team.get('teamPermissions', {}).get('videography', {});
+      return isSignedIn() &&
+             !isTeamOwnerOrAdmin(teamId) &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
+             request.auth.uid in permission.get('memberIds', []);
+    }
+
     function keepsScorekeeperGameLifecycleVisible() {
       return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
              request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
@@ -61,6 +71,14 @@ service cloud.firestore {
                'completedAt', 'completedBy', 'completedByName', 'updatedAt'
              ]) &&
              keepsScorekeeperGameLifecycleVisible();
+    }
+
+    function isVideographyGameUpdate(teamId, gameId) {
+      return canVideographGame(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
+               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt'
+             ]);
     }
 
     // Check if user is a parent for a specific player.
@@ -80,6 +98,14 @@ service cloud.firestore {
       return isSignedIn() &&
              exists(userPath) &&
              teamId in get(userPath).data.get('parentTeamIds', []);
+    }
+
+    function isPublishedLinkedCertificate(teamId, data) {
+      let playerId = data.get('playerId', '');
+      return data.get('status', '') == 'published' &&
+             playerId is string &&
+             playerId.size() > 0 &&
+             isParentForPlayer(teamId, playerId);
     }
 
     function isPlayerSelf(teamId, playerId) {
@@ -342,6 +368,47 @@ service cloud.firestore {
         isGlobalAdmin();
 
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
+    }
+
+
+    function isTeamMediaPhotoCreate(teamId, data) {
+      return canAccessTeamChat(teamId) &&
+             data.keys().hasAll([
+               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.folderId is string &&
+             data.folderId.size() > 0 &&
+             data.type == 'photo' &&
+             data.url is string &&
+             data.storagePath is string &&
+             data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
+             data.uploadedBy == request.auth.uid &&
+             data.size is number &&
+             data.size > 0 &&
+             data.size <= 10485760 &&
+             data.mimeType is string &&
+             data.mimeType.matches('image/.*') &&
+             data.deleted == false &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    function isOwnTeamMediaPhotoSoftDelete(teamId) {
+      return canAccessTeamChat(teamId) &&
+             resource.data.type == 'photo' &&
+             resource.data.uploadedBy == request.auth.uid &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'deleted', 'deletedAt', 'deletedBy', 'updatedAt'
+             ]) &&
+             request.resource.data.deleted == true &&
+             request.resource.data.deletedBy == request.auth.uid &&
+             request.resource.data.deletedAt == request.time &&
+             request.resource.data.updatedAt == request.time;
     }
 
     function teamChatRecipientIds(teamId) {
@@ -693,7 +760,41 @@ service cloud.firestore {
 
       match /mediaItems/{itemId} {
         allow read: if canAccessTeamChat(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /settings/{settingId} {
+        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
+                                            isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateAssets/{assetId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateBatches/{batchId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
+      }
+
+      match /certificates/{certificateId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isPublishedLinkedCertificate(teamId, resource.data);
+        allow create, update: if isTeamOwnerOrAdmin(teamId);
+        allow delete: if isGlobalAdmin();
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
       }
 
       match /memberTracking/{trackingId} {
@@ -798,7 +899,8 @@ service cloud.firestore {
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
-                        isScorekeepingGameUpdate(teamId, gameId);
+                        isScorekeepingGameUpdate(teamId, gameId) ||
+                        isVideographyGameUpdate(teamId, gameId);
         allow update: if isOpenOfficiatingSelfAssignmentUpdate();
 
         // Events subcollection

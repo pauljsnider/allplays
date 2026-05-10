@@ -43,7 +43,14 @@ function icon(name) {
   }
   if (name === 'media') {
     return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 6h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2z"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 12l5 3-5 3v-6z"></path>
+    </svg>`;
+  }
+  if (name === 'certificates') {
+    return `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4h8a2 2 0 012 2v14l-4-2-4 2-4-2-4 2V6a2 2 0 012-2z"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 8h8M8 12h5"></path>
     </svg>`;
   }
   if (name === 'drills') {
@@ -135,6 +142,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
     stats: `edit-config.html#teamId=${teamId}`,
     chat: `team-chat.html#teamId=${teamId}`,
     media: `team-media.html#teamId=${teamId}`,
+    certificates: `certificates.html#teamId=${teamId}`,
     drills: `drills.html#teamId=${teamId}`,
     gameday: `game-day.html#teamId=${teamId}`,
     help: `help.html?context=team&teamId=${teamId}`,
@@ -154,6 +162,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
       ${actionCard({ href: hrefs.stats, label: 'Stats', iconName: 'stats', active: active === 'stats' })}
       ${actionCard({ href: hrefs.chat, label: 'Chat', iconName: 'chat', active: active === 'chat', unreadCount })}
       ${actionCard({ href: hrefs.media, label: 'Media', iconName: 'media', active: active === 'media' })}
+      ${actionCard({ href: hrefs.certificates, label: 'Certificates', iconName: 'certificates', active: active === 'certificates' })}
       ${actionCard({ href: hrefs.drills, label: 'Drills', iconName: 'drills', active: active === 'drills' })}
       ${actionCard({ href: hrefs.gameday, label: 'Game Day', iconName: 'gameday', active: active === 'gameday' })}
       ${actionCard({ href: `${hrefs.help}&role=${helpRole}`, label: 'Help', iconName: 'help', active: active === 'help' })}
@@ -170,7 +179,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
 
   // Determine grid columns based on number of items
   const gridCols = isFullAccess
-    ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-6'
+    ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-11'
     : 'grid-cols-2 sm:grid-cols-4';
 
   container.innerHTML = `

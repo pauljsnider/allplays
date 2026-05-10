@@ -49,10 +49,38 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
             guardianLabels.length ? guardianLabels : DEFAULT_GUARDIAN_LABELS,
             'guardian'
         ),
+        registrationOptions: normalizeRegistrationOptions(input.registrationOptions),
         waiverText: String(input.waiverText || '').trim(),
         status,
         published: status === 'published'
     };
+}
+
+export function normalizeRegistrationOptions(options = []) {
+    if (!Array.isArray(options)) return [];
+
+    return options
+        .map((option) => {
+            const label = String(option?.label || '').trim();
+            if (!label) return null;
+            const rawCapacity = option?.capacityLimit;
+            const capacityLimit = rawCapacity === '' || rawCapacity === null || rawCapacity === undefined
+                ? null
+                : Math.max(0, Math.floor(Number(rawCapacity) || 0));
+            return {
+                id: String(option?.id || '').trim(),
+                label,
+                capacityLimit,
+                active: option?.active !== false,
+                waitlistEnabled: option?.waitlistEnabled === true
+            };
+        })
+        .filter(Boolean)
+        .map((option, index) => ({
+            ...option,
+            id: option.id || `option_${index + 1}`,
+            sortOrder: index
+        }));
 }
 
 export function validateAdminRegistrationFormPayload(payload = {}) {
