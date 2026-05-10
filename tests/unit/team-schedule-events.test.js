@@ -79,6 +79,25 @@ ${body}
     return createGetNextGame(deps);
 }
 
+function buildCanExposePublicFanFeed() {
+    const source = readTeamPage();
+    const shareableBody = extractFunctionBody(source, 'isShareableFanGame', 'function isPublicFanFeedGame');
+    const fanGameBody = extractFunctionBody(source, 'isPublicFanFeedGame', 'function canExposePublicFanFeed');
+    const exposeBody = extractFunctionBody(source, 'canExposePublicFanFeed', 'function getPublicGamesFeedUrl');
+
+    return new Function(`
+        function isShareableFanGame(game = {}) {
+${shareableBody}
+        }
+        function isPublicFanFeedGame(team = {}, game = {}) {
+${fanGameBody}
+        }
+        return function canExposePublicFanFeed(team = {}, games = []) {
+${exposeBody}
+        };
+    `)();
+}
+
 describe('team page schedule event normalization', () => {
     it('preserves CTA-driving db game fields and marks cancelled games explicitly', async () => {
         const getAllEvents = buildGetAllEvents();
@@ -135,5 +154,30 @@ describe('team page schedule event normalization', () => {
         ]);
 
         expect(nextGame?.opponent).toBe('Playable Opponent');
+    });
+
+    it('only exposes the public fan feed when a public or shareable game exists', () => {
+        const canExposePublicFanFeed = buildCanExposePublicFanFeed();
+
+        expect(canExposePublicFanFeed({ isPublic: true }, [
+            { id: 'game-1', type: 'game', date: '2099-03-10T18:00:00.000Z' }
+        ])).toBe(true);
+
+        expect(canExposePublicFanFeed({ isPublic: true, active: false }, [
+            { id: 'inactive-game', type: 'game', date: '2099-03-10T18:00:00.000Z' }
+        ])).toBe(false);
+
+        expect(canExposePublicFanFeed({ isPublic: false }, [
+            { id: 'practice-1', type: 'practice', date: '2099-03-10T18:00:00.000Z' },
+            { id: 'private-game', type: 'game', visibility: 'private', date: '2099-03-10T19:00:00.000Z' }
+        ])).toBe(false);
+
+        expect(canExposePublicFanFeed({ isPublic: false }, [
+            { id: 'shareable-game', type: 'game', shareable: true, date: '2099-03-10T20:00:00.000Z' }
+        ])).toBe(true);
+
+        expect(canExposePublicFanFeed({ isPublic: true, active: false }, [
+            { id: 'shareable-inactive-game', type: 'game', shareable: true, date: '2099-03-10T20:00:00.000Z' }
+        ])).toBe(true);
     });
 });

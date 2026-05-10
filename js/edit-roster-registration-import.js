@@ -264,6 +264,53 @@ function mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existin
     };
 }
 
+function comparableImportValue(value) {
+    if (Array.isArray(value)) return value.map(comparableImportValue);
+    if (!value || typeof value !== 'object') return value ?? '';
+
+    return Object.keys(value).sort().reduce((result, key) => {
+        if (key === 'importedAt') return result;
+        result[key] = comparableImportValue(value[key]);
+        return result;
+    }, {});
+}
+
+function buildComparableExistingPlayer(existingPlayer = {}, payload = {}) {
+    return Object.keys(payload).reduce((result, key) => {
+        if (key === 'profile') {
+            result.profile = {
+                ...(existingPlayer.profile || {}),
+                customFields: getRosterProfileValues(existingPlayer)
+            };
+            return result;
+        }
+        result[key] = existingPlayer[key];
+        return result;
+    }, {});
+}
+
+function isUnchangedRegistrationImport(existingPlayer = {}, payload = {}) {
+    if (!existingPlayer?.id) return false;
+    const existingComparable = comparableImportValue(buildComparableExistingPlayer(existingPlayer, payload));
+    const payloadComparable = comparableImportValue(payload);
+    return JSON.stringify(existingComparable) === JSON.stringify(payloadComparable);
+}
+
+function buildPreviewRow({ status, sourcePlayer = {}, payload = null, existingPlayer = null, conflict = null, operationIndex = null } = {}) {
+    return {
+        id: `source-${getExternalPlayerId(sourcePlayer) || operationIndex || status}`,
+        status,
+        externalPlayerId: getExternalPlayerId(sourcePlayer),
+        playerName: payload?.name || getPlayerName(sourcePlayer),
+        number: payload?.number || normalizeString(sourcePlayer.number || sourcePlayer.jerseyNumber || sourcePlayer.jersey || sourcePlayer.uniformNumber),
+        guardians: payload?.guardians || normalizeContacts(sourcePlayer.guardians || sourcePlayer.parents || sourcePlayer.familyContacts),
+        contacts: payload?.contacts || normalizeContacts(sourcePlayer.contacts || sourcePlayer.contactFields),
+        sourceMetadata: payload?.sourceMetadata || null,
+        existingPlayerId: existingPlayer?.id || conflict?.existingPlayerId || null,
+        conflict
+    };
+}
+
 export function isExternallyLinkedRosterTeam(team = {}) {
     return !!(
         team.registrationSourceSnapshot ||
@@ -341,9 +388,11 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
     const seenExternalIds = new Set();
     const existingContactOwners = collectExistingContactOwners(existingPlayers);
     const operations = [];
+    const previewRows = [];
     const results = {
         added: 0,
         updated: 0,
+        unchanged: 0,
         skipped: 0,
         conflicted: 0,
         fieldsImported: 0,
@@ -370,8 +419,10 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
         if (!existing) {
             const conflict = (existingPlayers || []).find((candidate) => isSameLocalPlayer(sourcePlayer, candidate));
             if (conflict) {
+                const conflictDetail = { externalPlayerId, existingPlayerId: conflict.id || null, conflictType: 'name-number' };
                 results.conflicted += 1;
-                results.conflicts.push({ externalPlayerId, existingPlayerId: conflict.id || null });
+                results.conflicts.push(conflictDetail);
+                previewRows.push(buildPreviewRow({ status: 'conflict', sourcePlayer, payload, existingPlayer: conflict, conflict: conflictDetail }));
                 return;
             }
         }
@@ -379,13 +430,15 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
         const sourceContacts = [...(payload.guardians || []), ...(payload.contacts || [])];
         const contactConflict = findContactConflict(sourceContacts, existingContactOwners, existing);
         if (contactConflict) {
-            results.conflicted += 1;
-            results.conflicts.push({
+            const conflictDetail = {
                 externalPlayerId,
                 existingPlayerId: contactConflict.existingPlayerId,
                 conflictType: 'contact',
                 contact: contactConflict.contact
-            });
+            };
+            results.conflicted += 1;
+            results.conflicts.push(conflictDetail);
+            previewRows.push(buildPreviewRow({ status: 'conflict', sourcePlayer, payload, existingPlayer: existing, conflict: conflictDetail }));
             return;
         }
 
@@ -393,20 +446,29 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
         const merged = mergeRosterFieldValuesIntoPayload(payload, fieldValues, fields, existing || {});
 
         if (existing?.id) {
-            operations.push({ type: 'update', playerId: existing.id, payload: merged.payload, privateRosterFields: merged.privateRosterFields });
+            if (isUnchangedRegistrationImport(existing, merged.payload) && !merged.privateRosterFields) {
+                previewRows.push(buildPreviewRow({ status: 'unchanged', sourcePlayer, payload: merged.payload, existingPlayer: existing }));
+                results.unchanged += 1;
+                return;
+            }
+            const operationIndex = operations.length;
+            operations.push({ id: `source-${externalPlayerId}`, type: 'update', playerId: existing.id, payload: merged.payload, privateRosterFields: merged.privateRosterFields });
+            previewRows.push(buildPreviewRow({ status: 'update', sourcePlayer, payload: merged.payload, existingPlayer: existing, operationIndex }));
             results.updated += 1;
             return;
         }
 
-        operations.push({ type: 'add', payload: merged.payload, privateRosterFields: merged.privateRosterFields });
+        const operationIndex = operations.length;
+        operations.push({ id: `source-${externalPlayerId}`, type: 'add', payload: merged.payload, privateRosterFields: merged.privateRosterFields });
+        previewRows.push(buildPreviewRow({ status: 'add', sourcePlayer, payload: merged.payload, operationIndex }));
         results.added += 1;
     });
 
-    return { operations, results };
+    return { operations, previewRows, results };
 }
 
 export function formatRegistrationRosterImportResults(results = {}) {
-    const parts = [`${results.added || 0} added, ${results.updated || 0} updated, ${results.skipped || 0} skipped, ${results.conflicted || 0} conflicted`];
+    const parts = [`${results.added || 0} added, ${results.updated || 0} updated, ${results.unchanged || 0} unchanged, ${results.skipped || 0} skipped, ${results.conflicted || 0} conflicted`];
     if ((results.fieldsImported || 0) > 0 || (results.fieldsSkipped || 0) > 0) {
         parts.push(`${results.fieldsImported || 0} configured field value${(results.fieldsImported || 0) === 1 ? '' : 's'} imported`);
         parts.push(`${results.fieldsSkipped || 0} configured field value${(results.fieldsSkipped || 0) === 1 ? '' : 's'} skipped`);

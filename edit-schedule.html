@@ -916,7 +916,7 @@
         import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
-        import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=2';
+        import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=3';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1752,7 +1752,13 @@
                 return;
             }
 
-            status.textContent = `${sourceEvents.length} source event${sourceEvents.length === 1 ? '' : 's'} ready to review.`;
+            const lastImport = team.registrationScheduleImportStatus || {};
+            const lastImportedAt = lastImport.importedAt || team.registrationScheduleLastImportedAt;
+            const lastImportedDate = lastImportedAt?.toDate ? lastImportedAt.toDate() : (lastImportedAt ? new Date(lastImportedAt) : null);
+            const lastImportText = lastImportedDate && !Number.isNaN(lastImportedDate.getTime())
+                ? ` Last import: ${formatShortDate(lastImportedDate)} ${formatTime(lastImportedDate)}.`
+                : '';
+            status.textContent = `${sourceEvents.length} source event${sourceEvents.length === 1 ? '' : 's'} ready to review.${lastImportText}`;
             button.disabled = true;
             preview.innerHTML = '<p class="text-sm text-emerald-700">Loading existing schedule conflicts...</p>';
             try {
@@ -1784,6 +1790,8 @@
             const actionClasses = {
                 add: 'bg-green-100 text-green-800',
                 update: 'bg-blue-100 text-blue-800',
+                unchanged: 'bg-gray-100 text-gray-700',
+                duplicate: 'bg-purple-100 text-purple-800',
                 conflict: 'bg-amber-100 text-amber-800',
                 skipped: 'bg-gray-100 text-gray-700'
             };
@@ -1859,6 +1867,24 @@
                         await updateGame(currentTeamId, operation.eventId, operation.payload);
                     }
                 }
+
+                const importMetadata = {
+                    importedAt: Timestamp.now ? Timestamp.now() : new Date().toISOString(),
+                    source: getRegistrationSourceDescriptor(currentTeam),
+                    selectedCount: selectedSourceEvents.length,
+                    results: plan.results
+                };
+                await updateTeam(currentTeamId, {
+                    registrationScheduleImportStatus: importMetadata,
+                    registrationScheduleLastImportedAt: importMetadata.importedAt,
+                    registrationScheduleLastImportResults: plan.results
+                });
+                currentTeam = {
+                    ...currentTeam,
+                    registrationScheduleImportStatus: importMetadata,
+                    registrationScheduleLastImportedAt: importMetadata.importedAt,
+                    registrationScheduleLastImportResults: plan.results
+                };
 
                 status.textContent = `Import complete: ${formatRegistrationImportResults(plan.results)}.`;
                 await renderRegistrationScheduleImport(currentTeam);

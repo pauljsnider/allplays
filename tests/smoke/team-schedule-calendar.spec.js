@@ -271,6 +271,14 @@ export function collection() {
     return {};
 }
 
+export function query() {
+    return {};
+}
+
+export function where() {
+    return {};
+}
+
 export async function getDocs() {
     return {
         empty: true,

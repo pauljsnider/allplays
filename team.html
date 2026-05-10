@@ -84,6 +84,8 @@
 
         <section id="availability-settings-section" class="mb-8 hidden"></section>
 
+        <section id="team-staff-permissions-section" class="mb-8 hidden"></section>
+
         <section id="tournament-standings-section" class="mb-8 hidden">
             <div class="flex items-center gap-3 mb-4">
                 <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
@@ -211,6 +213,10 @@
                                 </svg>
                                 Sync Calendar
                             </button>
+                            <button id="public-games-feed" hidden
+                                class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                                Fan feed
+                            </button>
                         </div>
                     </div>
                     <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
@@ -318,7 +324,7 @@
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=14';
-        import { collection, getDocs } from "./js/firebase.js?v=11";
+        import { collection, getDocs, query, where } from "./js/firebase.js?v=11";
         import { db } from './js/firebase.js?v=11';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
@@ -327,6 +333,7 @@
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
         import { renderTeamPassCard } from './js/team-pass.js?v=2';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
+        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -633,6 +640,32 @@
                     <div id="availability-settings-status" class="mt-2 text-xs text-gray-500"></div>
                 </div>
             `;
+        }
+
+
+        async function loadPendingAdminInvites(teamId) {
+            if (!teamId) return [];
+            try {
+                const snapshot = await getDocs(query(collection(db, "accessCodes"), where("teamId", "==", teamId)));
+                return snapshot.docs
+                    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+                    .filter((invite) => invite.type === 'admin_invite' && invite.used !== true);
+            } catch (error) {
+                console.warn('Failed to load pending admin invites:', error);
+                return [];
+            }
+        }
+
+        function renderStaffPermissionsSection(team, pendingAdminInvites = []) {
+            const section = document.getElementById('team-staff-permissions-section');
+            renderTeamStaffPermissionsSection(section, {
+                team: { ...team, id: currentTeamId },
+                pendingAdminInvites,
+                canManage: canManageTeamAvailability()
+            });
+            if (getUrlParams().section === 'staff-permissions' && section && !section.classList.contains('hidden')) {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         }
 
         async function saveAvailabilityPreferences() {
@@ -1558,7 +1591,7 @@
                             {
                                 team,
                                 teamId,
-                                active: 'view',
+                                active: getUrlParams().section === 'staff-permissions' ? 'permissions' : 'view',
                                 unreadCount,
                                 accessLevel: accessInfo.accessLevel,
                                 exitUrl: accessInfo.exitUrl
@@ -1567,9 +1600,11 @@
                     }
                 }
 
+                const pendingAdminInvites = canManageTeamAvailability() ? await loadPendingAdminInvites(teamId) : [];
                 currentTeamMemberUsers = await loadScorekeeperGrantUsers(teamId);
                 renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
+                renderStaffPermissionsSection(team, pendingAdminInvites);
                 renderTeamPassCard(document.getElementById('team-pass-container'), {
                     user: currentUser,
                     team: { ...team, id: teamId }
@@ -1652,6 +1687,8 @@
                     console.error('Error loading sponsor ad placements:', error);
                     adSpaceSponsors = [];
                 }
+
+                updatePublicGamesFeedButton(team, dbGames);
 
                 // Fetch calendar events and render schedule
                 await renderSchedule(team, dbGames);
@@ -2709,6 +2746,48 @@
             }
         }
 
+        function isShareableFanGame(game = {}) {
+            const visibility = String(game?.visibility || '').toLowerCase();
+            if (visibility === 'private' || game?.isPrivate === true || game?.private === true) return false;
+            return visibility === 'public' ||
+                game?.isPublic === true ||
+                game?.public === true ||
+                game?.shareable === true ||
+                game?.isShareable === true ||
+                game?.publicCalendar === true;
+        }
+
+        function isPublicFanFeedGame(team = {}, game = {}) {
+            if (String(game?.type || 'game').toLowerCase() !== 'game') return false;
+            if (String(game?.visibility || '').toLowerCase() === 'private') return false;
+            if (game?.isPrivate === true || game?.private === true) return false;
+            if (String(game?.status || '').toLowerCase() === 'deleted') return false;
+            if (String(game?.liveStatus || '').toLowerCase() === 'deleted') return false;
+            return (team?.isPublic !== false && team?.active !== false) || isShareableFanGame(game);
+        }
+
+        function canExposePublicFanFeed(team = {}, games = []) {
+            return (games || []).some((game) => isPublicFanFeedGame(team, game));
+        }
+
+        function getPublicGamesFeedUrl() {
+            const configuredUrl = window.__ALLPLAYS_CONFIG__?.publicTeamGamesIcsFunctionUrl || window.ALLPLAYS_PUBLIC_GAMES_ICS_URL;
+            const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+            const baseUrl = (typeof configuredUrl === 'string' && configuredUrl.trim())
+                ? configuredUrl.trim()
+                : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
+                    ? fallbackUrl.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
+                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs');
+            const separator = baseUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(currentTeamId)}`;
+        }
+
+        function updatePublicGamesFeedButton(team, games) {
+            const button = document.getElementById('public-games-feed');
+            if (!button) return;
+            button.hidden = !canExposePublicFanFeed(team, games);
+        }
+
         function buildIcs(games) {
             const teamName = currentTeam?.name || 'Team';
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
@@ -2778,6 +2857,19 @@
         });
         document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
             copyPrivateCalendarFeedUrl(getPrivateCalendarFeedUrl());
+        });
+        document.getElementById('public-games-feed')?.addEventListener('click', () => {
+            const url = getPublicGamesFeedUrl();
+            shareOrCopy({
+                title: `${currentTeam?.name || 'Team'} public games`,
+                text: 'Subscribe to the public games-only calendar feed.',
+                url,
+                clipboardText: url
+            }).then((result) => {
+                if (result.status === 'shared') showToast('Fan feed opened!');
+                if (result.status === 'copied') showToast('Fan feed URL copied!');
+                if (result.status === 'failed') showToast('Failed to share fan feed.');
+            });
         });
 
         // Practice filter
