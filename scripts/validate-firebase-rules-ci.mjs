@@ -32,8 +32,14 @@ if (firebaseJson.firestore?.indexes !== 'firestore.indexes.json') {
 
 assertIncludes(firestoreRules, 'match /mediaFolders/{folderId}', 'Firestore media folder rules');
 assertIncludes(firestoreRules, 'match /mediaItems/{itemId}', 'Firestore media item rules');
-assertIncludes(firestoreRules, 'allow read: if canAccessTeamChat(teamId);', 'Firestore media read rules');
-assertIncludes(firestoreRules, 'allow create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media write rules');
+assertIncludes(firestoreRules, 'function canReadTeamMediaFolder(teamId, folderData)', 'Firestore media folder visibility rules');
+assertIncludes(firestoreRules, 'function canReadTeamMediaItem(teamId, itemData)', 'Firestore media item visibility rules');
+assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaFolder(teamId, resource.data);', 'Firestore media folder read rules');
+assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaItem(teamId, resource.data);', 'Firestore media item read rules');
+assertIncludes(firestoreRules, 'allow create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media folder write rules');
+assertIncludes(firestoreRules, 'allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);', 'Firestore media item create rules');
+assertIncludes(firestoreRules, 'allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);', 'Firestore media item update rules');
+assertIncludes(firestoreRules, 'allow delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media item delete rules');
 
 assertIncludes(deployProd, 'firestore:rules', 'Production deploy');
 assertIncludes(deployProd, 'firestore:indexes', 'Production deploy');

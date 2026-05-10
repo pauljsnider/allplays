@@ -96,7 +96,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -437,15 +437,21 @@ function getTeamMediaItemsRef(teamId) {
     return collection(db, `teams/${teamId}/mediaItems`);
 }
 
-export async function getTeamMediaFolders(teamId) {
+export async function getTeamMediaFolders(teamId, options = {}) {
     if (!teamId) return [];
-    const snapshot = await getDocs(getTeamMediaFoldersRef(teamId));
-    return sortByMediaOrder(snapshot.docs.map((folderDoc) => ({ id: folderDoc.id, ...folderDoc.data() })));
+    const includePrivate = options.includePrivate === true;
+    const foldersRef = getTeamMediaFoldersRef(teamId);
+    const snapshot = await getDocs(includePrivate ? foldersRef : query(foldersRef, where('visibility', '==', 'team')));
+    return sortByMediaOrder(snapshot.docs.map((folderDoc) => {
+        const data = folderDoc.data();
+        return { id: folderDoc.id, ...data, visibility: normalizeAlbumVisibility(data.visibility) };
+    }));
 }
 
 export async function getTeamMediaItems(teamId, folderId = null) {
     if (!teamId) return [];
-    const snapshot = await getDocs(getTeamMediaItemsRef(teamId));
+    const itemsRef = getTeamMediaItemsRef(teamId);
+    const snapshot = await getDocs(folderId ? query(itemsRef, where('folderId', '==', folderId)) : itemsRef);
     const items = snapshot.docs
         .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
         .filter((item) => item.deleted !== true)
@@ -453,17 +459,43 @@ export async function getTeamMediaItems(teamId, folderId = null) {
     return sortByMediaOrder(items);
 }
 
-export async function createTeamMediaFolder(teamId, name) {
-    const folderName = String(name || '').trim();
-    if (!teamId || !folderName) throw new Error('Folder name is required.');
-    const existingFolders = await getTeamMediaFolders(teamId);
+export async function createTeamMediaFolder(teamId, draft = {}) {
+    const folder = normalizeTeamMediaFolderDraft(typeof draft === 'string' ? { name: draft } : draft);
+    if (!teamId) throw new Error('Team is required.');
+    const existingFolders = await getTeamMediaFolders(teamId, { includePrivate: true });
     const docRef = await addDoc(getTeamMediaFoldersRef(teamId), {
-        name: folderName,
+        name: folder.name,
+        visibility: folder.visibility,
         order: existingFolders.length,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
     });
     return docRef.id;
+}
+
+export async function updateTeamMediaFolder(teamId, folderId, draft = {}) {
+    const folder = normalizeTeamMediaFolderDraft(draft);
+    if (!teamId || !folderId) throw new Error('Album is required.');
+    await updateDoc(doc(db, `teams/${teamId}/mediaFolders`, folderId), {
+        name: folder.name,
+        visibility: folder.visibility,
+        updatedAt: serverTimestamp()
+    });
+}
+
+export async function deleteTeamMediaFolder(teamId, folderId) {
+    if (!teamId || !folderId) throw new Error('Album is required.');
+    const folderItems = await getTeamMediaItems(teamId, folderId);
+    const batch = writeBatch(db);
+    batch.delete(doc(db, `teams/${teamId}/mediaFolders`, folderId));
+    folderItems.forEach((item) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+            deleted: true,
+            deletedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
 }
 
 export async function createTeamMediaLink(teamId, folderId, media = {}) {
