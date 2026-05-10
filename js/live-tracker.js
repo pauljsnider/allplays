@@ -1195,6 +1195,14 @@ function undo() {
   if (lastLog?.undoData?.type === 'stat' && isPointsColumn(lastLog.undoData.statKey)) {
     scheduleScoreSync();
   }
+  if (lastLog?.undoData?.type === 'stat') {
+    if (lastLog.undoData.isOpponent) {
+      scheduleOpponentStatsSync();
+    } else {
+      schedulePlayerStatsSync(lastLog.undoData.playerId);
+    }
+    scheduleLiveHasData();
+  }
   persistLocalTrackerState();
 
   if (liveState.isLive) {
