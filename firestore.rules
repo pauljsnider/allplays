@@ -1022,40 +1022,6 @@ service cloud.firestore {
         }
       }
 
-      // Team media library folders and video-link items
-      // Legacy policy markers: allow read: if canAccessTeamChat(teamId);
-      // Legacy policy markers: allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
-      match /mediaFolders/{folderId} {
-        allow read: if isTeamOwnerOrAdmin(teamId) ||
-          (canAccessTeamChat(teamId) && resource.data.get('visibility', 'members') == 'members');
-        allow create: if isTeamOwnerOrAdmin(teamId) &&
-          request.resource.data.keys().hasOnly(['name', 'visibility', 'order', 'createdAt', 'updatedAt', 'createdBy', 'createdByEmail']) &&
-          request.resource.data.name is string &&
-          request.resource.data.visibility in ['members', 'managers'];
-        allow update: if isTeamOwnerOrAdmin(teamId) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'visibility', 'order', 'updatedAt']) &&
-          request.resource.data.name is string &&
-          request.resource.data.visibility in ['members', 'managers'];
-        allow delete: if isTeamOwnerOrAdmin(teamId);
-
-        match /items/{itemId} {
-          allow read: if isTeamOwnerOrAdmin(teamId) ||
-            (canAccessTeamChat(teamId) &&
-             get(/databases/$(database)/documents/teams/$(teamId)/mediaFolders/$(folderId)).data.get('visibility', 'members') == 'members');
-          allow create: if isTeamOwnerOrAdmin(teamId) &&
-            request.resource.data.keys().hasOnly(['title', 'url', 'type', 'order', 'createdAt', 'updatedAt', 'createdBy', 'createdByEmail']) &&
-            request.resource.data.title is string &&
-            request.resource.data.url is string &&
-            request.resource.data.type == 'video_link';
-          allow update: if isTeamOwnerOrAdmin(teamId) &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'url', 'order', 'updatedAt']) &&
-            request.resource.data.title is string &&
-            request.resource.data.url is string &&
-            request.resource.data.type == 'video_link';
-          allow delete: if isTeamOwnerOrAdmin(teamId);
-        }
-      }
-
       // Chat messages subcollection
       match /chatMessages/{messageId} {
         // List queries are unfiltered by target metadata in existing clients.

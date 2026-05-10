@@ -1,14 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=G-3J13LHWFT3"></script>
-    <script>
-        window.dataLayer = window.dataLayer || [];
-        function gtag(){dataLayer.push(arguments);}
-        gtag('js', new Date());
-        gtag('config', 'G-3J13LHWFT3');
-    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="robots" content="noindex,nofollow">
@@ -17,75 +9,57 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
 </head>
-<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900 min-h-screen">
+<body class="bg-gray-50 text-gray-900">
     <div id="header-container"></div>
 
-    <main class="container mx-auto px-4 py-8">
-        <div id="team-nav-banner" class="mb-6"></div>
-
-        <section class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
-            <div class="p-6 border-b border-gray-100 bg-gray-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div>
-                    <p class="text-xs font-semibold uppercase tracking-[0.25em] text-primary-600">Team Media</p>
-                    <h1 id="team-media-title" class="text-2xl md:text-3xl font-bold text-gray-900">Media Library</h1>
-                    <p id="team-media-subtitle" class="text-sm text-gray-500 mt-1">Organize YouTube and Vimeo links for the team.</p>
-                </div>
-                <a id="team-back-link" href="team.html" class="text-sm font-semibold text-primary-700 hover:text-primary-900">Back to team</a>
+    <main class="container mx-auto px-4 py-8 max-w-6xl">
+        <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.25em] text-primary-600">Team Media</p>
+                <h1 id="team-media-title" class="text-3xl font-bold">Media Library</h1>
+                <p id="team-media-subtitle" class="text-sm text-gray-500">Organized video links and highlights for this team.</p>
             </div>
+            <a id="team-back-link" href="team.html" class="text-sm font-semibold text-primary-700 hover:text-primary-900">Back to team</a>
+        </div>
 
-            <div id="team-media-alert" class="hidden mx-6 mt-4 rounded-xl border px-4 py-3 text-sm"></div>
+        <div id="team-media-alert" class="hidden mb-4 rounded-xl border px-4 py-3 text-sm"></div>
 
-            <div id="team-media-admin-panel" class="hidden p-6 border-b border-gray-100 bg-white space-y-6">
-                <form id="folder-form" class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-3 items-end">
-                    <label class="block">
-                        <span class="text-sm font-semibold text-gray-700">Folder name</span>
-                        <input id="folder-name" type="text" maxlength="80" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500" placeholder="Game film, Highlights, Training clips">
-                    </label>
-                    <label class="block">
-                        <span class="text-sm font-semibold text-gray-700">Visibility</span>
-                        <select id="folder-visibility" class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500">
-                            <option value="members">Members</option>
-                            <option value="managers">Managers only</option>
-                        </select>
-                    </label>
-                    <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition">Create</button>
-                </form>
-
-                <form id="video-form" class="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
-                    <label class="block">
-                        <span class="text-sm font-semibold text-gray-700">Folder</span>
-                        <select id="video-folder" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500"></select>
-                    </label>
-                    <label class="block">
-                        <span class="text-sm font-semibold text-gray-700">Video title</span>
-                        <input id="video-title" type="text" maxlength="120" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500" placeholder="Quarter 1 clips">
-                    </label>
-                    <label class="block">
-                        <span class="text-sm font-semibold text-gray-700">YouTube or Vimeo URL</span>
-                        <input id="video-url" type="url" required class="mt-1 w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500" placeholder="https://youtu.be/...">
-                    </label>
-                    <button type="submit" class="px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition">Add Link</button>
-                </form>
-            </div>
-
-            <section id="bulk-actions" class="hidden sticky top-2 z-10 mx-6 mt-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-md">
-                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div class="text-sm font-semibold"><span id="selected-count">0</span> selected</div>
-                    <div class="flex flex-wrap gap-2">
-                        <select id="move-folder" class="rounded-lg border border-gray-300 px-3 py-2 text-sm"></select>
-                        <button id="move-selected" type="button" class="rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50">Move selected</button>
-                        <button id="delete-selected" type="button" class="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">Delete selected</button>
+        <section id="team-media-admin-panel" class="hidden mb-6 rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
+            <div class="grid gap-4 lg:grid-cols-2">
+                <form id="folder-form" class="space-y-3">
+                    <h2 class="font-semibold text-gray-900">Add folder</h2>
+                    <div class="flex gap-2">
+                        <input id="folder-name" class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Folder name" required>
+                        <button class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">Add</button>
                     </div>
-                </div>
-            </section>
+                </form>
 
-            <!-- Compatibility marker for older wiring checks: id="manager-tools" -->
-            <div id="status" class="px-6 pt-4 text-sm text-gray-500">Loading media library...</div>
-            <div id="media-folders" class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+                <form id="link-form" class="space-y-3">
+                    <h2 class="font-semibold text-gray-900">Add video link</h2>
+                    <select id="link-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
+                    <input id="link-title" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Title" required>
+                    <input id="link-url" type="url" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="https://..." required>
+                    <button class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">Add link</button>
+                </form>
+            </div>
+        </section>
+
+        <section id="bulk-actions" class="hidden sticky top-2 z-10 mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-md">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div class="text-sm font-semibold"><span id="selected-count">0</span> selected</div>
+                <div class="flex flex-wrap gap-2">
+                    <select id="move-folder" class="rounded-lg border border-gray-300 px-3 py-2 text-sm"></select>
+                    <button id="move-selected" class="rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50">Move selected</button>
+                    <button id="delete-selected" class="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">Delete selected</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="folders-list" class="space-y-4">
+            <div class="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500">Loading media library...</div>
         </section>
     </main>
 
-    <div id="footer-container"></div>
     <script type="module" src="js/team-media.js?v=1"></script>
 </body>
 </html>

@@ -15,7 +15,7 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
         expect(page).toContain('src="js/team-media.js?v=1"');
-        expect(source).toContain("from './db.js?v=13'");
+        expect(source).toContain("from './db.js?v=12'");
         expect(source).toContain("import { checkAuth } from './auth.js?v=13';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
