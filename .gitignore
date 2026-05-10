@@ -59,7 +59,6 @@ _migration/*
 !_migration/migrate-player-private-profile.js
 migrate_admin.js
 verify_admin.js
-check-admin-status.html
 
 # Temporary files
 _temp/

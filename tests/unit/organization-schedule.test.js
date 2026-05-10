@@ -156,6 +156,15 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('preview.validRows.length > ORGANIZATION_CSV_IMPORT_ROW_LIMIT');
     });
 
+    it('loads all active teams for platform admins before organization filtering', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('import { addGame, getTeam, getTeams, getUserTeamsWithAccess }');
+        expect(source).toContain('accessibleTeams = currentUser.isAdmin === true');
+        expect(source).toContain('? await getTeams()');
+        expect(source).toContain(': await getUserTeamsWithAccess(currentUser.uid, currentUser.email);');
+    });
+
     it('renders shared matchup success actions without using innerHTML', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 

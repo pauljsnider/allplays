@@ -12,19 +12,26 @@ function asTrimmedString(value) {
     return String(value || '').trim();
 }
 
-function getSupportedVideoUrl(value) {
+function getHttpUrl(value) {
     const raw = asTrimmedString(value);
     if (!raw) return null;
 
     try {
         const url = new URL(raw);
-        if (!['http:', 'https:'].includes(url.protocol)) return null;
-        const host = url.hostname.toLowerCase();
-        if (!VIDEO_HOST_PATTERNS.some((pattern) => pattern.test(host))) return null;
-        return url.toString();
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+        return url;
     } catch {
         return null;
     }
+}
+
+function getSafeVideoUrl(value) {
+    const url = getHttpUrl(value);
+    if (!url) return null;
+
+    const host = url.hostname.toLowerCase();
+    if (!VIDEO_HOST_PATTERNS.some((pattern) => pattern.test(host))) return null;
+    return url.toString();
 }
 
 export function canManageTeamMedia(user, team) {
@@ -38,7 +45,7 @@ export function canViewTeamMediaFolder(folder, accessLevel) {
 }
 
 export function isSupportedTeamMediaVideoUrl(value) {
-    return Boolean(getSupportedVideoUrl(value));
+    return Boolean(getSafeVideoUrl(value));
 }
 
 export function normalizeTeamMediaFolderDraft(draft = {}) {
@@ -57,7 +64,7 @@ export function normalizeTeamMediaFolderDraft(draft = {}) {
 
 export function normalizeTeamMediaVideoDraft(draft = {}) {
     const title = asTrimmedString(draft.title);
-    const url = getSupportedVideoUrl(draft.url);
+    const url = getSafeVideoUrl(draft.url);
 
     if (!title) {
         throw new Error('Video title is required.');
@@ -107,12 +114,7 @@ export function buildBulkDeleteUpdates(ids = []) {
 }
 
 export function isSafeTeamMediaUrl(value) {
-    try {
-        const url = new URL(String(value || '').trim());
-        return ['http:', 'https:'].includes(url.protocol);
-    } catch (error) {
-        return false;
-    }
+    return Boolean(getHttpUrl(value));
 }
 
 export function sortByMediaOrder(items = []) {

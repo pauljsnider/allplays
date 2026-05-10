@@ -526,9 +526,12 @@
             }
 
             const defaultKey = params.teamId && params.playerId ? `${params.teamId}::${params.playerId}` : '';
+            const defaultLink = defaultKey
+                ? availableLinks.find((link) => `${link.teamId}::${link.playerId}` === defaultKey)
+                : null;
             const selectedKeys = currentProfile?.seasons?.map((season) => season.seasonKey) || (defaultKey ? [defaultKey] : []);
 
-            document.getElementById('athlete-name').value = currentProfile?.athlete?.name || availableLinks[0]?.playerName || '';
+            document.getElementById('athlete-name').value = currentProfile?.athlete?.name || defaultLink?.playerName || availableLinks[0]?.playerName || '';
             document.getElementById('athlete-headline').value = currentProfile?.athlete?.headline || '';
             document.getElementById('athlete-position').value = currentProfile?.bio?.position || '';
             document.getElementById('athlete-grad-year').value = currentProfile?.bio?.graduationYear || '';
