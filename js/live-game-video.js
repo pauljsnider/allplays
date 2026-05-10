@@ -175,6 +175,18 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     return Boolean(userEmail && approvedEmailFields.some(values => normalizeStringSet(values).has(userEmail)));
 }
 
+export function canSaveBroadcastSetupSession({ user, team, game }) {
+    if (!user || !team || !isGameCameraEligible(game)) return false;
+
+    if (user.isAdmin) return true;
+    if (team.ownerId && user.uid === team.ownerId) return true;
+
+    const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
+    if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
+
+    return hasSelectedVideographerGrant(user, team);
+}
+
 export function buildBroadcastSetupSession({ existingSession = {}, sessionName = '', user = {}, permissions = {}, status = BROADCAST_SETUP_STATUSES.CHECKING, errorMessage = '', now = new Date() } = {}) {
     const timestamp = now instanceof Date ? now.toISOString() : String(now || new Date().toISOString());
     const safeName = toCleanString(sessionName) || toCleanString(existingSession.name) || 'Game broadcast setup';

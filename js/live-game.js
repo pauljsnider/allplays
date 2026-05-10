@@ -31,7 +31,7 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=6';
+import { BROADCAST_SETUP_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=7';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -356,6 +356,10 @@ function userCanUseNativeCamera() {
     user: state.user,
     team: state.team,
     game: state.game
+  }) && canSaveBroadcastSetupSession({
+    user: state.user,
+    team: state.team,
+    game: state.game
   });
 }
 
@@ -383,7 +387,9 @@ function renderBroadcastSessionName() {
 }
 
 async function saveBroadcastSetupSession(status, options = {}) {
-  if (!state.teamId || !state.gameId || !userCanUseNativeCamera()) return null;
+  if (!state.teamId || !state.gameId || !userCanUseNativeCamera()) {
+    throw new Error('You do not have permission to save broadcast setup for this game.');
+  }
   const session = buildBroadcastSetupSession({
     existingSession: state.game?.broadcastSession,
     sessionName: getBroadcastSessionName(),

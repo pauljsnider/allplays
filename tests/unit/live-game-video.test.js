@@ -9,6 +9,7 @@ import {
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
     canAccessNativeCameraCapture,
+    canSaveBroadcastSetupSession,
     resolveGameMediaHub,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
@@ -450,6 +451,38 @@ describe('native camera capture authorization', () => {
                     videography: { mode: 'selected', memberIds: ['video-1'] }
                 }
             },
+            game: scheduledGame
+        })).toBe(false);
+    });
+
+    it('mirrors Firestore broadcast-session write roles for setup saves', () => {
+        const selectedVideoTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            mediaContributorUids: ['streamer-1'],
+            teamPermissions: {
+                videography: { mode: 'selected', memberIds: ['video-1'] }
+            }
+        };
+
+        expect(canSaveBroadcastSetupSession({
+            user: { uid: 'owner-1', email: 'owner@example.com' },
+            team: selectedVideoTeam,
+            game: scheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: { uid: 'admin-1', email: 'Admin@Example.com' },
+            team: { ...selectedVideoTeam, adminEmails: ['admin@example.com'] },
+            game: scheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: { uid: 'video-1', email: 'video@example.com' },
+            team: selectedVideoTeam,
+            game: scheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: { uid: 'streamer-1', email: 'streamer@example.com' },
+            team: selectedVideoTeam,
             game: scheduledGame
         })).toBe(false);
     });
