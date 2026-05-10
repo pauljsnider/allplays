@@ -241,6 +241,8 @@ export async function getTeamMediaItems() {
     throw permissionDenied();
 }
 export async function createTeamMediaFolder() {}
+export async function updateTeamMediaFolder() {}
+export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
 export async function uploadTeamMediaPhoto() {}
 export async function deleteTeamMediaItem() {}
@@ -262,6 +264,8 @@ export async function getTeamMediaItems() {
     return [];
 }
 export async function createTeamMediaFolder() {}
+export async function updateTeamMediaFolder() {}
+export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
 export async function uploadTeamMediaPhoto() {}
 export async function deleteTeamMediaItem() {}
@@ -278,6 +282,9 @@ export function canManageTeamMedia() {
 }
 export function canContributeTeamMedia() {
     return false;
+}
+export function canReadTeamMediaAlbum(folder = {}, includePrivate = false) {
+    return includePrivate || folder.visibility !== 'private';
 }
 export function canDeleteTeamMediaItem() {
     return false;
@@ -307,6 +314,9 @@ export function canManageTeamMedia() {
     return true;
 }
 export function canContributeTeamMedia() {
+    return true;
+}
+export function canReadTeamMediaAlbum() {
     return true;
 }
 export function canDeleteTeamMediaItem() {
@@ -671,7 +681,7 @@ test('team media shows an empty library when media reads are denied', async ({ p
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#team-media-title')).toHaveText('Media Test Team Media');
-    await expect(page.locator('#folders-list')).toContainText('No media folders have been shared yet.');
+    await expect(page.locator('#folders-list')).toContainText('No team-visible albums have been shared yet.');
     await expect(page.locator('#folders-list')).not.toContainText('Unable to load team media');
     expect(pageErrors).toEqual([]);
 });
@@ -702,7 +712,7 @@ test('team media renders visible save actions for staff', async ({ page, baseURL
     const folderButton = page.locator('#folder-submit');
     const linkButton = page.locator('#link-submit');
     await expect(folderButton).toBeVisible();
-    await expect(folderButton).toHaveText('Save folder');
+    await expect(folderButton).toHaveText('Add album');
     await expect(linkButton).toBeVisible();
     await expect(linkButton).toHaveText('Save video link');
     await expect(page.locator('#link-folder')).toContainText('Highlights');

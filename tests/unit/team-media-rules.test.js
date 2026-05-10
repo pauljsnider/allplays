@@ -9,12 +9,15 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain('match /mediaItems/{itemId}');
     });
 
-    it('limits writes to team owners/admins and reads to team chat access', () => {
+    it('limits reads to visible albums while preserving controlled photo uploads', () => {
         const mediaRulesStart = rules.indexOf('match /mediaFolders/{folderId}');
         const mediaRulesEnd = rules.indexOf('// Chat messages subcollection', mediaRulesStart);
         const mediaRules = rules.slice(mediaRulesStart, mediaRulesEnd);
 
-        expect(mediaRules).toContain('allow read: if canAccessTeamChat(teamId);');
-        expect(mediaRules).toContain('allow create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
+        expect(mediaRules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
+        expect(mediaRules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);');
+        expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);');
+        expect(mediaRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
     });
 });
