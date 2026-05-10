@@ -25,8 +25,13 @@ describe('scoreboard widget embed', () => {
         expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=19';");
         expect(source).toContain('const REFRESH_MS = 60000;');
         expect(source).toContain('function selectWidgetGames(games)');
+        expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');
+        expect(source).not.toContain('|| !isCompleted(game) || isLive(game)');
         expect(source).toContain('function renderGame(game)');
         expect(source).toContain('live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}');
+        expect(source).toContain('function clearRefreshTimer()');
+        expect(source).toContain("window.addEventListener('pagehide', clearRefreshTimer);");
+        expect(source).toContain("window.addEventListener('beforeunload', clearRefreshTimer);");
         expect(source).toContain('Read-only public scoreboard');
     });
 });
