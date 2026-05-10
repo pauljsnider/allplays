@@ -33,10 +33,14 @@ export function buildTrackLiveResetUpdate({
 } = {}) {
   const onCourt = Array.isArray(liveLineup?.onCourt) ? [...liveLineup.onCourt] : [];
   const bench = Array.isArray(liveLineup?.bench) ? [...liveLineup.bench] : [];
+  const resetPeriod = period || getDefaultLivePeriod({ game: currentGame, config: currentConfig });
   const resetUpdate = {
     homeScore: 0,
     awayScore: 0,
-    period: period || getDefaultLivePeriod({ game: currentGame, config: currentConfig }),
+    period: resetPeriod,
+    liveClockMs: 0,
+    liveClockRunning: false,
+    liveClockPeriod: resetPeriod,
     liveLineup: { onCourt, bench },
     opponentStats: {},
     liveStatus: 'scheduled',
@@ -54,6 +58,33 @@ export function buildTrackLiveResetUpdate({
   }
 
   return resetUpdate;
+}
+
+function normalizeNonNegativeMs(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : 0;
+}
+
+export function resolveTrackLiveClockResume({
+  currentGame = {},
+  currentPeriod = '',
+  fallbackPeriod = getDefaultLivePeriod({ game: currentGame }),
+  now = Date.now()
+} = {}) {
+  const savedClockMs = normalizeNonNegativeMs(currentGame?.liveClockMs);
+  const savedUpdatedAt = normalizeNonNegativeMs(currentGame?.liveClockUpdatedAt);
+  const isRunning = currentGame?.liveClockRunning === true;
+  const elapsedSinceLastSync = isRunning && savedUpdatedAt > 0
+    ? Math.max(0, normalizeNonNegativeMs(now) - savedUpdatedAt)
+    : 0;
+  const liveClockPeriod = String(currentGame?.liveClockPeriod || '').trim();
+  const savedPeriod = String(currentGame?.period || '').trim();
+
+  return {
+    elapsed: savedClockMs + elapsedSinceLastSync,
+    currentPeriod: liveClockPeriod || savedPeriod || currentPeriod || fallbackPeriod,
+    wasRunning: isRunning
+  };
 }
 
 export async function runTrackLiveResetPersistence({
