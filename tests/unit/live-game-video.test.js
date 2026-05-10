@@ -395,6 +395,66 @@ describe('live game replay video helpers', () => {
         expect(options.savedHighlights).toHaveLength(1);
     });
 
+    it('reports a replay unavailable state for completed games without replay video', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                liveStatus: 'completed'
+            },
+            isReplay: true
+        });
+
+        expect(options.mode).toBe('none');
+        expect(options.hasVideo).toBe(false);
+        expect(options.sourceUrl).toBeNull();
+        expect(options.replayState).toMatchObject({
+            status: 'unavailable',
+            title: 'Replay unavailable'
+        });
+        expect(options.replayState.message).toContain('Coaches, parents, and fans');
+    });
+
+    it('blocks playback while replay processing is still pending', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                liveStatus: 'completed',
+                replayVideo: {
+                    status: 'processing',
+                    url: 'https://cdn.example.com/not-ready.mp4'
+                }
+            },
+            isReplay: true
+        });
+
+        expect(options.mode).toBe('none');
+        expect(options.hasVideo).toBe(false);
+        expect(options.sourceUrl).toBeNull();
+        expect(options.replayState).toMatchObject({
+            status: 'processing',
+            title: 'Replay is processing'
+        });
+    });
+
+    it('plays ready replay video through the recorded controls', () => {
+        const options = resolveReplayVideoOptions({
+            team: {},
+            game: {
+                liveStatus: 'completed',
+                replayVideo: {
+                    status: 'ready',
+                    url: 'https://cdn.example.com/ready.mp4'
+                }
+            },
+            isReplay: true
+        });
+
+        expect(options.mode).toBe('recorded');
+        expect(options.hasVideo).toBe(true);
+        expect(options.sourceUrl).toBe('https://cdn.example.com/ready.mp4');
+        expect(options.replayState).toBeNull();
+    });
+
     it('builds replay clip links with bounded start and end params', () => {
         const url = buildHighlightShareUrl({
             origin: 'https://allplays.example',
@@ -430,6 +490,13 @@ describe('live game replay video helpers', () => {
         expect(shouldReloadVideoPlayback(
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live123?autoplay=1&mute=1' },
             { mode: 'embed', sourceUrl: 'https://www.youtube.com/embed/live456?autoplay=1&mute=1' }
+        )).toBe(true);
+    });
+
+    it('refreshes the video panel when replay availability state changes', () => {
+        expect(shouldReloadVideoPlayback(
+            { mode: 'none', replayState: { status: 'processing', title: 'Replay is processing', message: 'Processing' } },
+            { mode: 'none', replayState: { status: 'failed', title: 'Replay unavailable', message: 'Failed' } }
         )).toBe(true);
     });
 });
