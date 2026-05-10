@@ -6,7 +6,7 @@ const VIDEO_HOST_PATTERNS = [
     /(^|\.)vimeo\.com$/
 ];
 
-export const TEAM_MEDIA_VISIBILITIES = ['members', 'managers'];
+export const TEAM_MEDIA_VISIBILITIES = ['team', 'private'];
 
 function asTrimmedString(value) {
     return String(value || '').trim();
@@ -38,10 +38,19 @@ export function canManageTeamMedia(user, team) {
     return hasFullTeamAccess(user, team);
 }
 
+export function normalizeAlbumVisibility(value) {
+    return asTrimmedString(value) === 'private' ? 'private' : 'team';
+}
+
+export function canReadTeamMediaAlbum(folder, canManage = false) {
+    if (canManage) return true;
+    return normalizeAlbumVisibility(folder?.visibility) === 'team';
+}
+
 export function canViewTeamMediaFolder(folder, accessLevel) {
     if (!folder) return false;
-    if (folder.visibility === 'managers') return accessLevel === 'full';
-    return ['full', 'parent'].includes(accessLevel);
+    if (accessLevel === 'full') return true;
+    return accessLevel === 'parent' && canReadTeamMediaAlbum(folder, false);
 }
 
 export function canContributeTeamMedia(user, team) {
@@ -68,10 +77,10 @@ export function canDeleteTeamMediaItem(user, team, item) {
 
 export function normalizeTeamMediaFolderDraft(draft = {}) {
     const name = asTrimmedString(draft.name);
-    const visibility = TEAM_MEDIA_VISIBILITIES.includes(draft.visibility) ? draft.visibility : 'members';
+    const visibility = normalizeAlbumVisibility(draft.visibility);
 
     if (!name) {
-        throw new Error('Folder name is required.');
+        throw new Error('Album name is required.');
     }
 
     return {

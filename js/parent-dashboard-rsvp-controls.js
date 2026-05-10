@@ -31,10 +31,15 @@ export function createParentDashboardRsvpController({
                     response
                 });
 
+            const submittedPlayerIds = new Set(playerIds);
             allScheduleEvents.forEach((event) => {
                 if (event?.teamId !== teamId || event?.id !== gameId) return;
-                if (isSinglePlayerSelection && (event?.childId || event?.playerId) !== playerIds[0]) return;
-                event.myRsvp = response;
+
+                const eventPlayerId = event?.childId || event?.playerId || '';
+                if (!isSinglePlayerSelection || submittedPlayerIds.has(eventPlayerId)) {
+                    event.myRsvp = response;
+                }
+
                 if (summary) event.rsvpSummary = summary;
                 else if (!event.rsvpSummary) event.rsvpSummary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0, total: 0 };
             });
