@@ -84,6 +84,8 @@
 
         <section id="availability-settings-section" class="mb-8 hidden"></section>
 
+        <section id="team-staff-permissions-section" class="mb-8 hidden"></section>
+
         <section id="tournament-standings-section" class="mb-8 hidden">
             <div class="flex items-center gap-3 mb-4">
                 <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
@@ -318,7 +320,7 @@
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=14';
-        import { collection, getDocs } from "./js/firebase.js?v=11";
+        import { collection, getDocs, query, where } from "./js/firebase.js?v=11";
         import { db } from './js/firebase.js?v=11';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { getVisibleRosterFieldValues } from './js/roster-field-privacy.js';
@@ -327,6 +329,7 @@
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
         import { renderTeamPassCard } from './js/team-pass.js?v=2';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
+        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -633,6 +636,32 @@
                     <div id="availability-settings-status" class="mt-2 text-xs text-gray-500"></div>
                 </div>
             `;
+        }
+
+
+        async function loadPendingAdminInvites(teamId) {
+            if (!teamId) return [];
+            try {
+                const snapshot = await getDocs(query(collection(db, "accessCodes"), where("teamId", "==", teamId)));
+                return snapshot.docs
+                    .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+                    .filter((invite) => invite.type === 'admin_invite' && invite.used !== true);
+            } catch (error) {
+                console.warn('Failed to load pending admin invites:', error);
+                return [];
+            }
+        }
+
+        function renderStaffPermissionsSection(team, pendingAdminInvites = []) {
+            const section = document.getElementById('team-staff-permissions-section');
+            renderTeamStaffPermissionsSection(section, {
+                team: { ...team, id: currentTeamId },
+                pendingAdminInvites,
+                canManage: canManageTeamAvailability()
+            });
+            if (getUrlParams().section === 'staff-permissions' && section && !section.classList.contains('hidden')) {
+                section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         }
 
         async function saveAvailabilityPreferences() {
@@ -1558,7 +1587,7 @@
                             {
                                 team,
                                 teamId,
-                                active: 'view',
+                                active: getUrlParams().section === 'staff-permissions' ? 'permissions' : 'view',
                                 unreadCount,
                                 accessLevel: accessInfo.accessLevel,
                                 exitUrl: accessInfo.exitUrl
@@ -1567,9 +1596,11 @@
                     }
                 }
 
+                const pendingAdminInvites = canManageTeamAvailability() ? await loadPendingAdminInvites(teamId) : [];
                 currentTeamMemberUsers = await loadScorekeeperGrantUsers(teamId);
                 renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
+                renderStaffPermissionsSection(team, pendingAdminInvites);
                 renderTeamPassCard(document.getElementById('team-pass-container'), {
                     user: currentUser,
                     team: { ...team, id: teamId }
