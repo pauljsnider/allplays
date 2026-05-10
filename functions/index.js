@@ -16,6 +16,7 @@ const {
   isEligibleTeamFeePayer,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
+  canReuseTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
   buildTeamFeePaidUpdate
@@ -152,12 +153,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }
 
   const amountCents = getTeamFeeBalanceCents(recipient);
-  if (
-    recipient.checkoutUrl &&
-    recipient.stripeCheckoutSessionId &&
-    recipient.checkoutStatus !== 'expired' &&
-    Number(recipient.checkoutAmountCents) === amountCents
-  ) {
+  if (canReuseTeamFeeCheckoutSession(recipient, amountCents)) {
     return { checkoutUrl: recipient.checkoutUrl, sessionId: recipient.stripeCheckoutSessionId };
   }
 

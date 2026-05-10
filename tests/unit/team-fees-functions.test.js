@@ -9,8 +9,10 @@ const {
     isEligibleTeamFeePayer,
     buildTeamFeeCheckoutUrls,
     buildTeamFeeCheckoutMetadata,
+    canReuseTeamFeeCheckoutSession,
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
+    getTeamFeeStripePaidAmountCents,
     buildTeamFeePaidUpdate
 } = require('../../functions/team-fees-core.cjs');
 
@@ -72,7 +74,21 @@ describe('team fee checkout function helpers', () => {
         });
     });
 
-    it('marks only paid completed team fee checkout sessions as paid', () => {
+    it('reuses only currently open checkout sessions for the same amount', () => {
+        const recipient = {
+            checkoutUrl: 'https://checkout.stripe.test/session',
+            stripeCheckoutSessionId: 'cs_123',
+            checkoutStatus: 'open',
+            checkoutAmountCents: 7500
+        };
+
+        expect(canReuseTeamFeeCheckoutSession(recipient, 7500)).toBe(true);
+        expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutStatus: 'payment_failed' }, 7500)).toBe(false);
+        expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutStatus: 'expired' }, 7500)).toBe(false);
+        expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutAmountCents: 8000 }, 7500)).toBe(false);
+    });
+
+    it('marks paid immediate and async team fee checkout sessions as paid', () => {
         const paidSession = {
             payment_status: 'paid',
             metadata: {
@@ -85,11 +101,30 @@ describe('team fee checkout function helpers', () => {
 
         expect(shouldMarkTeamFeePaidFromEvent({ type: 'checkout.session.completed', data: { object: paidSession } })).toBe(true);
         expect(shouldMarkTeamFeePaidFromEvent({
+            type: 'checkout.session.async_payment_succeeded',
+            data: { object: { ...paidSession, payment_status: 'unpaid' } }
+        })).toBe(true);
+        expect(shouldMarkTeamFeePaidFromEvent({
             type: 'checkout.session.completed',
             data: { object: { ...paidSession, payment_status: 'unpaid' } }
         })).toBe(false);
         expect(shouldMarkTeamFeePaidFromEvent({ type: 'checkout.session.expired', data: { object: paidSession } })).toBe(false);
         expect(shouldRecordTeamFeeCheckoutNotPaidFromEvent({ type: 'checkout.session.expired', data: { object: paidSession } })).toBe(true);
+        expect(shouldRecordTeamFeeCheckoutNotPaidFromEvent({ type: 'checkout.session.async_payment_failed', data: { object: paidSession } })).toBe(true);
+    });
+
+    it('uses immutable Stripe or matching checkout amounts for fee payment accounting', () => {
+        expect(getTeamFeeStripePaidAmountCents({
+            session: { id: 'cs_123', amount_total: 10000 }
+        })).toBe(10000);
+        expect(getTeamFeeStripePaidAmountCents({
+            recipient: { stripeCheckoutSessionId: 'cs_123', checkoutAmountCents: 9000 },
+            session: { id: 'cs_123' }
+        })).toBe(9000);
+        expect(getTeamFeeStripePaidAmountCents({
+            recipient: { stripeCheckoutSessionId: 'cs_other', checkoutAmountCents: 9000 },
+            session: { id: 'cs_123' }
+        })).toBe(0);
     });
 
     it('builds paid recipient updates without raw payment method data', () => {
@@ -101,6 +136,7 @@ describe('team fee checkout function helpers', () => {
                 id: 'cs_123',
                 payment_intent: 'pi_123',
                 customer: 'cus_123',
+                amount_total: 10000,
                 currency: 'usd',
                 customer_details: { email: 'parent@example.com' }
             }
@@ -116,18 +152,48 @@ describe('team fee checkout function helpers', () => {
             stripeCheckoutSessionId: 'cs_123',
             stripePaymentIntentId: 'pi_123',
             stripeCustomerId: 'cus_123',
+            stripePaymentAmountCents: 10000,
             stripeEventId: 'evt_123'
         });
         expect(update.receiptMetadata).toEqual({
             provider: 'stripe',
             checkoutSessionId: 'cs_123',
             paymentIntentId: 'pi_123',
-            amountPaidCents: 12500,
+            amountPaidCents: 10000,
+            totalPaidCents: 12500,
+            balanceDueCents: 0,
             currency: 'usd',
             receiptEmail: 'parent@example.com',
             eventId: 'evt_123'
         });
         expect(update).not.toHaveProperty('paymentMethod');
         expect(update.receiptMetadata).not.toHaveProperty('card');
+    });
+
+    it('does not mark the recipient fully paid when the balance grew after checkout creation', () => {
+        const update = buildTeamFeePaidUpdate({
+            recipient: { amountCents: 15000, paidAmountCents: 2500 },
+            eventId: 'evt_456',
+            receivedAt: 'now',
+            session: {
+                id: 'cs_456',
+                amount_total: 10000,
+                currency: 'usd'
+            }
+        });
+
+        expect(update).toMatchObject({
+            status: 'partial',
+            paidAmountCents: 12500,
+            amountPaidCents: 12500,
+            balanceDueCents: 2500,
+            checkoutStatus: 'paid',
+            stripePaymentAmountCents: 10000
+        });
+        expect(update.receiptMetadata).toMatchObject({
+            amountPaidCents: 10000,
+            totalPaidCents: 12500,
+            balanceDueCents: 2500
+        });
     });
 });
