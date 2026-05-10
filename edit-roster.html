@@ -1086,17 +1086,46 @@
             }
         }
 
+        async function loadOptionalRosterData(label, loader, fallback) {
+            try {
+                return await loader();
+            } catch (err) {
+                console.warn(`Failed to load ${label}:`, err);
+                return fallback;
+            }
+        }
+
         async function loadRoster() {
-            await refreshTrackingItems();
-            const [players, games, allUsers, membershipRequests, forms] = await Promise.all([
-                getPlayers(currentTeamId, { includeInactive: true }),
-                getGames(currentTeamId),
-                getAllUsers(),
-                listTeamParentMembershipRequests(currentTeamId),
-                listTeamRegistrationForms(currentTeamId)
+            const tbody = document.getElementById('roster-list');
+            try {
+                await refreshTrackingItems();
+            } catch (err) {
+                console.warn('Failed to load tracking items for roster:', err);
+                trackingItems = [];
+                selectedTrackingItemId = '';
+                renderTrackingItemSelect();
+            }
+
+            let players = [];
+            try {
+                players = await getPlayers(currentTeamId, { includeInactive: true });
+            } catch (err) {
+                console.error('Error loading roster players:', err);
+                tbody.innerHTML = `<tr><td colspan="3" class="px-6 py-4 text-center text-red-600">Unable to load roster players: ${escapeHtml(err?.message || 'Please try again.')}</td></tr>`;
+                return;
+            }
+
+            const [games, allUsers, membershipRequests, forms] = await Promise.all([
+                loadOptionalRosterData('games for roster links', () => getGames(currentTeamId), []),
+                loadOptionalRosterData('parent profiles for roster', () => getAllUsers(), []),
+                loadOptionalRosterData('parent membership requests for roster', () => listTeamParentMembershipRequests(currentTeamId), []),
+                loadOptionalRosterData('registration forms for roster', () => listTeamRegistrationForms(currentTeamId), [])
             ]);
             latestRosterPlayers = players;
             registrationForms = forms || [];
+            if (selectedRegistrationFormId && !registrationForms.some((form) => form.id === selectedRegistrationFormId)) {
+                selectedRegistrationFormId = '';
+            }
             if (!selectedRegistrationFormId && registrationForms.length > 0) {
                 selectedRegistrationFormId = registrationForms[0].id;
             }
@@ -1108,7 +1137,6 @@
                 const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
                 return bDate - aDate;
             })[0]?.id || null;
-            const tbody = document.getElementById('roster-list');
 
             // Build parent lookup from user profiles (single source of truth)
             const parentsByPlayerId = new Map();
