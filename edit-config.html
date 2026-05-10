@@ -59,9 +59,11 @@
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Quick Templates</label>
-                            <div class="flex gap-2 mt-1">
+                            <div class="flex flex-wrap gap-2 mt-1">
                                 <button type="button" id="basketball-template" class="flex-1 px-3 py-2 bg-orange-100 text-orange-700 rounded text-sm hover:bg-orange-200">Basketball</button>
                                 <button type="button" id="soccer-template" class="flex-1 px-3 py-2 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Soccer</button>
+                                <button type="button" id="baseball-template" class="flex-1 px-3 py-2 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Baseball</button>
+                                <button type="button" id="softball-template" class="flex-1 px-3 py-2 bg-pink-100 text-pink-700 rounded text-sm hover:bg-pink-200">Softball</button>
                             </div>
                         </div>
                         <div>
@@ -70,6 +72,8 @@
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
                                 <option value="Basketball">Basketball</option>
                                 <option value="Soccer">Soccer</option>
+                                <option value="Baseball">Baseball</option>
+                                <option value="Softball">Softball</option>
                                 <option value="Custom">Custom</option>
                             </select>
                         </div>
@@ -77,7 +81,7 @@
                             <label class="block text-sm font-medium text-gray-700">Columns (comma separated)</label>
                             <input type="text" id="columns" placeholder="PTS, REB, AST, STL, BLK" required
                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2">
-                            <p class="text-xs text-gray-500 mt-1">Max 5 columns recommended for mobile.</p>
+                            <p class="text-xs text-gray-500 mt-1">5 to 6 columns recommended for mobile.</p>
                         </div>
                         <button type="submit"
                             class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Create
@@ -109,6 +113,7 @@
         import { checkAuth } from './js/auth.js?v=9';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess } from './js/team-access.js';
+        import { getSportStatTemplate } from './js/sport-templates.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -155,16 +160,19 @@
             loadConfigs();
 
             // Template buttons
-            document.getElementById('basketball-template').addEventListener('click', () => {
-                document.getElementById('configName').value = 'Basketball Standard';
-                document.getElementById('baseType').value = 'Basketball';
-                document.getElementById('columns').value = 'PTS, REB, AST, STL, TO';
-            });
-
-            document.getElementById('soccer-template').addEventListener('click', () => {
-                document.getElementById('configName').value = 'Soccer Standard';
-                document.getElementById('baseType').value = 'Soccer';
-                document.getElementById('columns').value = 'GOALS, SHOTS, PASSES, BLOCKS, HUSTLE';
+            [
+                ['basketball-template', 'Basketball'],
+                ['soccer-template', 'Soccer'],
+                ['baseball-template', 'Baseball'],
+                ['softball-template', 'Softball']
+            ].forEach(([buttonId, sport]) => {
+                document.getElementById(buttonId).addEventListener('click', () => {
+                    const template = getSportStatTemplate(sport);
+                    if (!template) return;
+                    document.getElementById('configName').value = template.name;
+                    document.getElementById('baseType').value = template.baseType;
+                    document.getElementById('columns').value = template.columns.join(', ');
+                });
             });
         }
 

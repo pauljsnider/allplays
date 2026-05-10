@@ -3,10 +3,13 @@ export function buildRotationPlanFromGamePlan(gamePlan) {
   const plan = {};
   const legacyByPeriodPos = {};
   const numPeriods = Number.parseInt(gamePlan?.numPeriods, 10) || 2;
-  const periodPrefix = numPeriods === 4 ? 'Q' : 'H';
+  const formationId = String(gamePlan?.formationId || '').toLowerCase();
+  const periodPrefix = formationId.startsWith('baseball') || formationId.startsWith('softball')
+    ? 'I'
+    : (numPeriods === 4 ? 'Q' : 'H');
 
   Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
-    const currentMatch = /^([HQ]\d+)-(.+)$/.exec(key);
+    const currentMatch = /^([HQI]\d+)-(.+)$/.exec(key);
     if (currentMatch) {
       const period = currentMatch[1];
       const posId = currentMatch[2];

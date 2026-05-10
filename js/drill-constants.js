@@ -19,6 +19,28 @@ export const DRILL_SKILLS = {
         "First Touch": ["ground control", "aerial control", "turning with ball", "one-touch control"],
         "Fitness": ["speed", "agility", "endurance"],
         "Other": ["ice breaker", "strength building"]
+    },
+    Baseball: {
+        "Throwing": ["throwing", "catching", "partner catch", "long toss"],
+        "Fielding": ["ground balls", "fly balls", "fielding play", "throws to first", "communication"],
+        "Hitting": ["tee work", "soft toss", "contact", "bunting", "bat path"],
+        "Base Running": ["base running", "leads", "rounding bases", "sliding"],
+        "Team Defense": ["cutoffs", "relays", "situations", "backups"],
+        "Pitching": ["pitching basics", "accuracy", "balance"],
+        "Catching": ["blocking", "receiving", "throws to second"],
+        "Fitness": ["speed", "agility", "core"],
+        "Other": ["teamwork", "focus"]
+    },
+    Softball: {
+        "Throwing": ["throwing", "catching", "partner catch", "long toss"],
+        "Fielding": ["ground balls", "fly balls", "fielding play", "throws to first", "communication"],
+        "Hitting": ["tee work", "soft toss", "contact", "bunting", "bat path"],
+        "Base Running": ["base running", "leads", "rounding bases", "sliding"],
+        "Team Defense": ["cutoffs", "relays", "situations", "backups"],
+        "Pitching": ["pitching basics", "accuracy", "balance"],
+        "Catching": ["blocking", "receiving", "throws to second"],
+        "Fitness": ["speed", "agility", "core"],
+        "Other": ["teamwork", "focus"]
     }
 };
 

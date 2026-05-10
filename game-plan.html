@@ -148,6 +148,22 @@
                                 <p class="text-sm text-gray-600">5 court positions + bench</p>
                             </div>
                         </div>
+                        <div class="formation-card cursor-pointer border-2 border-gray-300 rounded-xl p-6 hover:border-primary-500 hover:bg-primary-50 transition"
+                             data-formation="baseball-9">
+                            <div class="text-center">
+                                <div class="text-4xl mb-3">Diamond</div>
+                                <h3 class="text-xl font-bold text-gray-900 mb-2">Baseball 9</h3>
+                                <p class="text-sm text-gray-600">9 defensive positions + batting order</p>
+                            </div>
+                        </div>
+                        <div class="formation-card cursor-pointer border-2 border-gray-300 rounded-xl p-6 hover:border-primary-500 hover:bg-primary-50 transition"
+                             data-formation="softball-10">
+                            <div class="text-center">
+                                <div class="text-4xl mb-3">Diamond</div>
+                                <h3 class="text-xl font-bold text-gray-900 mb-2">Softball 10</h3>
+                                <p class="text-sm text-gray-600">10 defensive positions + batting order</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -162,20 +178,20 @@
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                         <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-2">Number of Periods</label>
-                            <input type="number" id="num-periods" min="2" max="4" value="2"
+                            <label id="num-periods-label" class="block text-sm font-semibold text-gray-700 mb-2">Number of Periods</label>
+                            <input type="number" id="num-periods" min="2" max="9" value="2"
                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
-                            <p class="text-xs text-gray-500 mt-1">Typically 2 halves or 4 quarters</p>
+                            <p id="num-periods-help" class="text-xs text-gray-500 mt-1">Typically 2 halves or 4 quarters</p>
                         </div>
-                        <div>
-                            <label class="block text-sm font-semibold text-gray-700 mb-2">Minutes per Period</label>
+                        <div id="period-duration-field">
+                            <label id="period-duration-label" class="block text-sm font-semibold text-gray-700 mb-2">Minutes per Period</label>
                             <input type="number" id="period-duration" min="5" max="45" value="25"
                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
                         </div>
                     </div>
 
                     <div id="sub-times-config" class="mb-6">
-                        <label class="block text-sm font-semibold text-gray-700 mb-3">Substitution Times (minutes into each period)</label>
+                        <label id="sub-times-label" class="block text-sm font-semibold text-gray-700 mb-3">Substitution Times (minutes into each period)</label>
                         <div class="flex gap-2 mb-2">
                             <input type="text" id="sub-times-input" placeholder="e.g., 7,14,21"
                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
@@ -184,7 +200,7 @@
                             </button>
                         </div>
                         <div id="sub-times-display" class="flex flex-wrap gap-2"></div>
-                        <p class="text-xs text-gray-500 mt-2">Enter comma-separated minutes (e.g., 7,14,21 for subs at those times)</p>
+                        <p id="sub-times-help" class="text-xs text-gray-500 mt-2">Enter comma-separated minutes (e.g., 7,14,21 for subs at those times)</p>
                     </div>
 
                     <div class="flex gap-3">
@@ -214,9 +230,9 @@
                     <div id="plan-summary" class="mb-6 hidden">
                         <div class="bg-primary-50 border border-primary-200 rounded-xl p-4 flex flex-wrap items-center gap-4">
                             <div class="text-sm text-gray-700"><span class="font-semibold">Formation:</span> <span id="plan-summary-formation">—</span></div>
-                            <div class="text-sm text-gray-700"><span class="font-semibold">Periods:</span> <span id="plan-summary-periods">—</span></div>
-                            <div class="text-sm text-gray-700"><span class="font-semibold">Minutes/Period:</span> <span id="plan-summary-duration">—</span></div>
-                            <div class="text-sm text-gray-700"><span class="font-semibold">Sub times:</span> <span id="plan-summary-subs">—</span></div>
+                            <div class="text-sm text-gray-700"><span id="plan-summary-periods-label" class="font-semibold">Periods:</span> <span id="plan-summary-periods">—</span></div>
+                            <div id="plan-summary-duration-wrap" class="text-sm text-gray-700"><span class="font-semibold">Minutes/Period:</span> <span id="plan-summary-duration">—</span></div>
+                            <div class="text-sm text-gray-700"><span id="plan-summary-subs-label" class="font-semibold">Sub times:</span> <span id="plan-summary-subs">—</span></div>
                         </div>
                     </div>
 
@@ -235,6 +251,21 @@
                                 </table>
                             </div>
                         </div>
+                    </div>
+
+                    <!-- Batting Order -->
+                    <div id="batting-order-section" class="hidden bg-gradient-to-br from-amber-50 to-white rounded-xl p-6 border border-amber-200 mb-8">
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-gray-900">Batting Order</h3>
+                                <p class="text-sm text-gray-600">Set the lineup once; defensive assignments stay inning-by-inning above.</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button type="button" onclick="autoFillBattingOrder()" class="px-3 py-2 bg-amber-100 text-amber-800 rounded-lg text-sm font-semibold hover:bg-amber-200">Fill by roster</button>
+                                <button type="button" onclick="clearBattingOrder()" class="px-3 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg text-sm font-semibold hover:bg-gray-50">Clear</button>
+                            </div>
+                        </div>
+                        <div id="batting-order-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
                     </div>
 
                     <!-- Available Players Pool -->
@@ -263,7 +294,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=14';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=9';
         import { getTeamAccessInfo } from './js/team-access.js';
 
@@ -273,6 +304,9 @@
         const FORMATIONS = {
             'soccer-9v9': {
                 name: 'Soccer 9v9',
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
                 positions: [
                     { id: 'keeper', name: 'Keeper' },
                     { id: 'right-defense', name: 'Right - Defense' },
@@ -287,12 +321,54 @@
             },
             'basketball-5v5': {
                 name: 'Basketball 5v5',
+                numPeriods: 4,
+                periodDuration: 8,
+                subTimes: [4],
                 positions: [
                     { id: 'pg', name: 'Point Guard (PG)' },
                     { id: 'sg', name: 'Shooting Guard (SG)' },
                     { id: 'sf', name: 'Small Forward (SF)' },
                     { id: 'pf', name: 'Power Forward (PF)' },
                     { id: 'c', name: 'Center (C)' }
+                ]
+            },
+            'baseball-9': {
+                name: 'Baseball 9',
+                numPeriods: 7,
+                periodDuration: 1,
+                subTimes: [1],
+                periodPrefix: 'I',
+                diamond: true,
+                positions: [
+                    { id: 'p', name: 'Pitcher (P)' },
+                    { id: 'c', name: 'Catcher (C)' },
+                    { id: '1b', name: 'First Base (1B)' },
+                    { id: '2b', name: 'Second Base (2B)' },
+                    { id: '3b', name: 'Third Base (3B)' },
+                    { id: 'ss', name: 'Shortstop (SS)' },
+                    { id: 'lf', name: 'Left Field (LF)' },
+                    { id: 'cf', name: 'Center Field (CF)' },
+                    { id: 'rf', name: 'Right Field (RF)' }
+                ]
+            },
+            'softball-10': {
+                name: 'Softball 10',
+                numPeriods: 7,
+                periodDuration: 1,
+                subTimes: [1],
+                periodPrefix: 'I',
+                diamond: true,
+                positions: [
+                    { id: 'p', name: 'Pitcher (P)' },
+                    { id: 'c', name: 'Catcher (C)' },
+                    { id: '1b', name: 'First Base (1B)' },
+                    { id: '2b', name: 'Second Base (2B)' },
+                    { id: '3b', name: 'Third Base (3B)' },
+                    { id: 'ss', name: 'Shortstop (SS)' },
+                    { id: 'lf', name: 'Left Field (LF)' },
+                    { id: 'lcf', name: 'Left Center (LCF)' },
+                    { id: 'rcf', name: 'Right Center (RCF)' },
+                    { id: 'rf', name: 'Right Field (RF)' }
                 ]
             }
         };
@@ -311,13 +387,18 @@
         let plannerInitialized = false;
 
         // Game plan state
-        let gamePlan = {
-            numPeriods: 2,
-            periodDuration: 25,
-            subTimes: [7, 14, 21],
-            formationId: null,
-            lineups: {} // { 'period-time': { positionId: playerId } }
-        };
+        function createEmptyGamePlan() {
+            return {
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
+                formationId: null,
+                lineups: {},
+                battingOrder: []
+            };
+        }
+
+        let gamePlan = createEmptyGamePlan();
 
         let draggedPlayerId = null;
 
@@ -458,6 +539,7 @@
         async function loadGame(game) {
             currentGameId = game.id;
             currentGame = game;
+            gamePlan = createEmptyGamePlan();
 
             const date = game.date.toDate ? game.date.toDate() : new Date(game.date);
 
@@ -471,20 +553,19 @@
             // Load existing game plan if it exists
             if (game.gamePlan) {
                 gamePlan = { ...gamePlan, ...game.gamePlan };
+                gamePlan.battingOrder = Array.isArray(gamePlan.battingOrder) ? gamePlan.battingOrder : [];
             } else {
                 // Set defaults based on team sport
                 if (currentTeam.sport) {
                     const sport = currentTeam.sport.toLowerCase();
                     if (sport === 'basketball') {
-                        gamePlan.numPeriods = 4;
-                        gamePlan.periodDuration = 8;
-                        gamePlan.subTimes = [4];
-                        gamePlan.formationId = 'basketball-5v5';
+                        applyFormationDefaults('basketball-5v5');
                     } else if (sport === 'soccer') {
-                        gamePlan.numPeriods = 2;
-                        gamePlan.periodDuration = 25;
-                        gamePlan.subTimes = [7, 14, 21];
-                        gamePlan.formationId = 'soccer-9v9';
+                        applyFormationDefaults('soccer-9v9');
+                    } else if (sport === 'baseball') {
+                        applyFormationDefaults('baseball-9');
+                    } else if (sport === 'softball') {
+                        applyFormationDefaults('softball-10');
                     }
                 }
             }
@@ -500,6 +581,7 @@
             document.getElementById('num-periods').value = gamePlan.numPeriods;
             document.getElementById('period-duration').value = gamePlan.periodDuration;
             document.getElementById('sub-times-input').value = gamePlan.subTimes.join(',');
+            updatePeriodConfigControls();
             renderSubTimesDisplay();
 
             const hasPlan = gamePlan.formationId && (gamePlan.subTimes || []).length > 0;
@@ -514,6 +596,7 @@
                 document.getElementById('step-lineup').classList.remove('hidden');
                 renderPlayerPool();
                 renderSubMatrix();
+                renderBattingOrder();
                 renderPlayingTimeSummary();
                 updatePlanSummary();
             } else {
@@ -521,6 +604,7 @@
                 document.getElementById('step-formation').classList.remove('hidden');
                 document.getElementById('step-periods').classList.add('hidden');
                 document.getElementById('step-lineup').classList.add('hidden');
+                renderBattingOrder();
             }
         }
 
@@ -564,8 +648,49 @@
             }
         }
 
+        function getFormation() {
+            return FORMATIONS[gamePlan.formationId] || null;
+        }
+
+        function isDiamondPlan() {
+            return !!getFormation()?.diamond;
+        }
+
+        function applyFormationDefaults(formationId) {
+            const formation = FORMATIONS[formationId];
+            if (!formation) return;
+            gamePlan.formationId = formationId;
+            gamePlan.numPeriods = formation.numPeriods || gamePlan.numPeriods || 2;
+            gamePlan.periodDuration = formation.periodDuration || gamePlan.periodDuration || 25;
+            gamePlan.subTimes = Array.isArray(formation.subTimes) ? [...formation.subTimes] : (gamePlan.subTimes || []);
+            if (formation.diamond && !Array.isArray(gamePlan.battingOrder)) {
+                gamePlan.battingOrder = [];
+            }
+            document.getElementById('num-periods').value = gamePlan.numPeriods;
+            document.getElementById('period-duration').value = gamePlan.periodDuration;
+            document.getElementById('sub-times-input').value = gamePlan.subTimes.join(',');
+            updatePeriodConfigControls();
+            renderSubTimesDisplay();
+        }
+
+        function updatePeriodConfigControls() {
+            const diamond = isDiamondPlan();
+            document.getElementById('num-periods-label').textContent = diamond ? 'Number of Innings' : 'Number of Periods';
+            document.getElementById('num-periods-help').textContent = diamond ? 'Default is 7 innings' : 'Typically 2 halves or 4 quarters';
+            document.getElementById('period-duration-field').classList.toggle('hidden', diamond);
+            document.getElementById('sub-times-config').classList.toggle('hidden', diamond);
+            document.getElementById('sub-times-label').textContent = diamond ? 'Defensive Slots' : 'Substitution Times (minutes into each period)';
+            document.getElementById('sub-times-help').textContent = diamond
+                ? 'One defensive assignment column is planned for each inning.'
+                : 'Enter comma-separated minutes (e.g., 7,14,21 for subs at those times)';
+        }
+
         function renderSubTimesDisplay() {
             const display = document.getElementById('sub-times-display');
+            if (isDiamondPlan()) {
+                display.innerHTML = '<span class="inline-flex items-center gap-1 px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-sm font-semibold">One defensive lineup per inning</span>';
+                return;
+            }
             display.innerHTML = gamePlan.subTimes.map(time => `
                 <span class="inline-flex items-center gap-1 px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm font-semibold">
                     ${time} min
@@ -576,34 +701,49 @@
         function updatePlanSummary() {
             const summary = document.getElementById('plan-summary');
             if (!summary) return;
-            const formation = FORMATIONS[gamePlan.formationId];
+            const formation = getFormation();
+            const diamond = isDiamondPlan();
             const subTimesText = (gamePlan.subTimes && gamePlan.subTimes.length > 0)
                 ? gamePlan.subTimes.join(', ')
                 : '—';
             document.getElementById('plan-summary-formation').textContent = formation ? formation.name : 'Not set';
+            document.getElementById('plan-summary-periods-label').textContent = diamond ? 'Innings:' : 'Periods:';
             document.getElementById('plan-summary-periods').textContent = gamePlan.numPeriods || '—';
+            document.getElementById('plan-summary-duration-wrap').classList.toggle('hidden', diamond);
             document.getElementById('plan-summary-duration').textContent = gamePlan.periodDuration || '—';
-            document.getElementById('plan-summary-subs').textContent = subTimesText;
+            document.getElementById('plan-summary-subs-label').textContent = diamond ? 'Defense:' : 'Sub times:';
+            document.getElementById('plan-summary-subs').textContent = diamond ? 'Inning-by-inning' : subTimesText;
 
-            const ready = formation && subTimesText !== '—';
+            const ready = formation && (diamond || subTimesText !== '—');
             summary.classList.toggle('hidden', !ready);
         }
 
         function renderSubMatrix() {
             if (!gamePlan.formationId) return;
 
-            const formation = FORMATIONS[gamePlan.formationId];
+            const formation = getFormation();
             const header = document.getElementById('sub-matrix-header');
             const body = document.getElementById('sub-matrix-body');
+            const diamond = isDiamondPlan();
 
             // Build header with all time intervals
             const intervals = [];
             for (let period = 1; period <= gamePlan.numPeriods; period++) {
-                const periodName = gamePlan.numPeriods === 2 ? `H${period}` : `Q${period}`;
-                const periodLabel = gamePlan.numPeriods === 2 ? `Half ${period}` : `Quarter ${period}`;
-                gamePlan.subTimes.forEach(time => {
-                    intervals.push({ period, periodName, periodLabel, time, key: `${period}-${time}` });
-                });
+                if (diamond) {
+                    intervals.push({
+                        period,
+                        periodName: `${formation.periodPrefix || 'I'}${period}`,
+                        periodLabel: `Inning ${period}`,
+                        time: 1,
+                        key: `${period}-1`
+                    });
+                } else {
+                    const periodName = gamePlan.numPeriods === 2 ? `H${period}` : `Q${period}`;
+                    const periodLabel = gamePlan.numPeriods === 2 ? `Half ${period}` : `Quarter ${period}`;
+                    gamePlan.subTimes.forEach(time => {
+                        intervals.push({ period, periodName, periodLabel, time, key: `${period}-${time}` });
+                    });
+                }
             }
             intervalsCache = intervals;
 
@@ -612,7 +752,7 @@
                 ${intervals.map(int => `
                     <th class="px-4 py-3 text-center text-xs font-bold text-gray-700 uppercase tracking-wider whitespace-nowrap">
                         <div class="flex items-center justify-center gap-2">
-                            <span>${int.periodName}: ${int.time}'</span>
+                            <span>${diamond ? int.periodName : `${int.periodName}: ${int.time}'`}</span>
                             <button class="push-forward-btn text-gray-500 hover:text-primary-700 text-lg leading-none"
                                     title="Push assignments to next interval"
                                     data-interval="${int.key}">⇢</button>
@@ -812,8 +952,87 @@
             });
         }
 
+        function sortedPlayersForPlanning() {
+            return [...players].sort((a, b) => {
+                const aNum = Number.parseInt(a.number, 10);
+                const bNum = Number.parseInt(b.number, 10);
+                if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) return aNum - bNum;
+                return (a.name || '').localeCompare(b.name || '');
+            });
+        }
+
+        function normalizeBattingOrder(includeEmpty = true) {
+            const existing = Array.isArray(gamePlan.battingOrder) ? gamePlan.battingOrder : [];
+            const playerIds = new Set(players.map(p => p.id));
+            const bySlot = new Map();
+            existing.forEach((row, index) => {
+                const slot = Number.parseInt(row?.slot, 10) || index + 1;
+                const playerId = playerIds.has(row?.playerId) ? row.playerId : '';
+                bySlot.set(slot, playerId);
+            });
+            const slotCount = Math.max(players.length, bySlot.size, 1);
+            const rows = Array.from({ length: slotCount }, (_, index) => ({
+                slot: index + 1,
+                playerId: bySlot.get(index + 1) || ''
+            }));
+            return includeEmpty ? rows : rows.filter(row => row.playerId);
+        }
+
+        function renderBattingOrder() {
+            const section = document.getElementById('batting-order-section');
+            const list = document.getElementById('batting-order-list');
+            if (!section || !list) return;
+            const show = isDiamondPlan();
+            section.classList.toggle('hidden', !show);
+            if (!show) return;
+
+            gamePlan.battingOrder = normalizeBattingOrder(true);
+            const options = sortedPlayersForPlanning().map(player =>
+                `<option value="${escapeHtml(player.id)}">#${escapeHtml(player.number || '?')} ${escapeHtml(player.name || 'Unnamed')}</option>`
+            ).join('');
+
+            list.innerHTML = gamePlan.battingOrder.map(row => `
+                <label class="flex items-center gap-3 bg-white border border-amber-100 rounded-lg p-3">
+                    <span class="w-8 h-8 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center text-sm font-bold">${row.slot}</span>
+                    <select class="flex-1 border border-gray-200 rounded-md px-3 py-2 text-sm"
+                        onchange="updateBattingOrderSlot(${row.slot}, this.value)">
+                        <option value="">Select player...</option>
+                        ${options}
+                    </select>
+                </label>
+            `).join('');
+
+            const selects = list.querySelectorAll('select');
+            gamePlan.battingOrder.forEach((row, index) => {
+                if (selects[index]) selects[index].value = row.playerId || '';
+            });
+        }
+
+        window.updateBattingOrderSlot = function(slot, playerId) {
+            const nextSlot = Number.parseInt(slot, 10);
+            gamePlan.battingOrder = normalizeBattingOrder(true).map(row => {
+                if (row.slot === nextSlot) return { ...row, playerId };
+                if (playerId && row.playerId === playerId) return { ...row, playerId: '' };
+                return row;
+            });
+            renderBattingOrder();
+        };
+
+        window.autoFillBattingOrder = function() {
+            gamePlan.battingOrder = sortedPlayersForPlanning().map((player, index) => ({
+                slot: index + 1,
+                playerId: player.id
+            }));
+            renderBattingOrder();
+        };
+
+        window.clearBattingOrder = function() {
+            gamePlan.battingOrder = normalizeBattingOrder(true).map(row => ({ ...row, playerId: '' }));
+            renderBattingOrder();
+        };
+
         function getBenchPlayersForInterval(intervalKey) {
-            const formation = FORMATIONS[gamePlan.formationId];
+            const formation = getFormation();
             const assignedPlayerIds = new Set();
 
             // Get all players assigned in this interval
@@ -833,7 +1052,7 @@
             if (!gamePlan.formationId) return;
 
             const summaryDiv = document.getElementById('playing-time-summary');
-            const formation = FORMATIONS[gamePlan.formationId];
+            const formation = getFormation();
             if (!formation) {
                 summaryDiv.innerHTML = '<div class="text-sm text-gray-500">Select a formation to see playing time.</div>';
                 return;
@@ -850,9 +1069,11 @@
             });
 
             // Count intervals each player is in
-            const intervalsPerPeriod = Math.max(1, gamePlan.subTimes.length || 0);
-            const minutesPerInterval = gamePlan.periodDuration / intervalsPerPeriod;
-            const intervalTimes = intervalsPerPeriod === 1 ? ['full'] : gamePlan.subTimes;
+            const diamond = isDiamondPlan();
+            const intervalsPerPeriod = diamond ? 1 : Math.max(1, gamePlan.subTimes.length || 0);
+            const minutesPerInterval = diamond ? 1 : gamePlan.periodDuration / intervalsPerPeriod;
+            const intervalTimes = diamond ? [1] : ((gamePlan.subTimes && gamePlan.subTimes.length) ? gamePlan.subTimes : ['full']);
+            const unitLabel = diamond ? 'innings' : 'minutes';
 
             for (let period = 1; period <= gamePlan.numPeriods; period++) {
                 intervalTimes.forEach(time => {
@@ -868,7 +1089,7 @@
                 });
             }
 
-            const totalPlayerMinutes = gamePlan.numPeriods * gamePlan.periodDuration * formation.positions.length;
+            const totalPlayerMinutes = gamePlan.numPeriods * minutesPerInterval * formation.positions.length * intervalsPerPeriod;
             const targetTime = totalPlayerMinutes / players.length;
 
             summaryDiv.innerHTML = players
@@ -905,7 +1126,7 @@
                                 </div>
                                 <div class="text-right">
                                 <div class="text-2xl font-bold text-${statusColor}-600">${minutes}</div>
-                                    <div class="text-xs text-gray-600">minutes vs target ${targetTime.toFixed(0)}</div>
+                                    <div class="text-xs text-gray-600">${unitLabel} vs target ${targetTime.toFixed(0)}</div>
                                 </div>
                             </div>
                             <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
@@ -925,7 +1146,7 @@
         };
 
         function playerAssignedInInterval(playerId, intervalKey) {
-            const formation = FORMATIONS[gamePlan.formationId];
+            const formation = getFormation();
             let found = false;
             formation.positions.forEach(pos => {
                 const checkKey = `${intervalKey}-${pos.id}`;
@@ -940,7 +1161,7 @@
             const idx = intervalsCache.findIndex(int => int.key === intervalKey);
             if (idx === -1 || idx === intervalsCache.length - 1) return;
             const nextInterval = intervalsCache[idx + 1];
-            const formation = FORMATIONS[gamePlan.formationId];
+            const formation = getFormation();
 
             formation.positions.forEach(pos => {
                 const sourceKey = `${intervalKey}-${pos.id}`;
@@ -989,7 +1210,12 @@
         // Formation selection (Step 1 -> Step 2)
         document.querySelectorAll('.formation-card').forEach(card => {
             card.addEventListener('click', () => {
-                gamePlan.formationId = card.dataset.formation;
+                const nextFormationId = card.dataset.formation;
+                const formationChanged = gamePlan.formationId && gamePlan.formationId !== nextFormationId;
+                applyFormationDefaults(nextFormationId);
+                if (formationChanged) {
+                    gamePlan.lineups = {};
+                }
 
                 document.getElementById('step-formation').classList.add('hidden');
                 document.getElementById('step-periods').classList.remove('hidden');
@@ -1007,12 +1233,17 @@
         // From Step 2 (Periods) to Step 3 (Lineup)
         document.getElementById('next-to-lineup')?.addEventListener('click', () => {
             gamePlan.numPeriods = parseInt(document.getElementById('num-periods').value);
-            gamePlan.periodDuration = parseInt(document.getElementById('period-duration').value);
+            gamePlan.periodDuration = isDiamondPlan() ? 1 : parseInt(document.getElementById('period-duration').value);
+            if (isDiamondPlan()) {
+                gamePlan.subTimes = [1];
+            }
 
             document.getElementById('step-periods').classList.add('hidden');
             document.getElementById('step-lineup').classList.remove('hidden');
 
+            renderPlayerPool();
             renderSubMatrix();
+            renderBattingOrder();
             renderPlayingTimeSummary();
             updatePlanSummary();
         });
@@ -1028,6 +1259,7 @@
         // Save game plan
         document.getElementById('save-plan-btn')?.addEventListener('click', async () => {
             try {
+                gamePlan.battingOrder = isDiamondPlan() ? normalizeBattingOrder(false) : [];
                 await updateGame(currentTeamId, currentGameId, { gamePlan });
                 alert('Game plan saved successfully!');
             } catch (error) {

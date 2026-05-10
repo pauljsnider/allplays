@@ -145,6 +145,10 @@ const mentionState = { active: false, atPos: null };
 const statKeyMap = {
   PTS: 'pts',
   POINTS: 'pts',
+  GOALS: 'goals',
+  R: 'r',
+  RUN: 'r',
+  RUNS: 'r',
   REB: 'reb',
   AST: 'ast',
   STL: 'stl',
@@ -156,6 +160,11 @@ const statKeyMap = {
   FOULS: 'fouls',
   FLS: 'fouls'
 };
+
+function isScoringStatKey(statKey) {
+  const key = String(statKey || '').toLowerCase();
+  return key === 'pts' || key === 'points' || key === 'goals' || key === 'r' || key === 'run' || key === 'runs';
+}
 
 function q(selector) {
   return document.querySelector(selector);
@@ -356,7 +365,7 @@ function renderPlayByPlay(event, isNew = false) {
         ${event.playerName ? `<p class="text-sand/60 text-sm">#${escapeHtml(event.playerNumber || '')} ${escapeHtml(event.playerName)}</p>` : ''}
         ${event.isOpponent && (event.opponentPlayerName || event.opponentPlayerNumber) ? `<p class="text-sand/60 text-sm">${opponentLabel}</p>` : ''}
       </div>
-      ${event.statKey === 'pts' && event.value ? `
+      ${isScoringStatKey(event.statKey) && event.value ? `
         <span class="text-2xl font-bold ${event.value === 3 ? 'text-gold' : 'text-teal'}">+${event.value}</span>
       ` : ''}
     </div>
@@ -852,11 +861,12 @@ function processNewEvents(events) {
       renderLineup();
     }
 
-    renderScoreboard(event.type === 'stat' && event.statKey === 'pts');
+    const isScoringStat = event.type === 'stat' && isScoringStatKey(event.statKey);
+    renderScoreboard(isScoringStat);
     renderPlayByPlay(event, true);
     renderStats();
 
-    if (event.type === 'stat' && event.statKey === 'pts') {
+    if (isScoringStat) {
       showScoreCelebration(event);
       updateMomentum(event);
     } else {
@@ -1260,13 +1270,19 @@ async function generateAiResponse(question) {
 
 function buildAiPrompt(question) {
   const recentEvents = state.events.slice(-20).map(ev => `${ev.period || ''} ${formatClock(ev.gameClockMs || 0)} - ${ev.description}`).join('\n');
+  const columns = normalizeLiveStatColumns(state.statColumns).slice(0, 4);
   const statLines = state.players.map(p => {
     const stats = state.stats[p.id] || {};
-    return `#${p.num || ''} ${p.name}: ${stats.pts || 0} PTS, ${stats.reb || 0} REB, ${stats.ast || 0} AST`;
+    const statText = columns.map((col) => {
+      const key = statKeyMap[col] || col.toLowerCase();
+      return `${col}:${stats[key] || 0}`;
+    }).join(', ');
+    return `#${p.num || ''} ${p.name}: ${statText || 'No stats'}`;
   }).join('\n');
   const chatContext = state.chatMessages.slice(-10).map(m => `${m.senderName || 'Fan'}: ${m.text}`).join('\n');
 
-  return `You are ALL PLAYS, a helpful game assistant for a live basketball broadcast.\n\nCurrent score: ${state.homeScore} - ${state.awayScore}\nPeriod: ${state.period}\nClock: ${formatClock(state.gameClockMs)}\n\nRecent plays:\n${recentEvents || 'No events yet.'}\n\nPlayer stats:\n${statLines || 'No stats yet.'}\n\nRecent chat:\n${chatContext || 'No chat yet.'}\n\nQuestion: ${question}\n\nRespond in a concise, friendly broadcast tone.`;
+  const sport = state.team?.sport || state.game?.sport || 'sports';
+  return `You are ALL PLAYS, a helpful game assistant for a live ${sport} broadcast.\n\nCurrent score: ${state.homeScore} - ${state.awayScore}\nPeriod: ${state.period}\nClock: ${formatClock(state.gameClockMs)}\n\nRecent plays:\n${recentEvents || 'No events yet.'}\n\nPlayer stats:\n${statLines || 'No stats yet.'}\n\nRecent chat:\n${chatContext || 'No chat yet.'}\n\nQuestion: ${question}\n\nRespond in a concise, friendly broadcast tone.`;
 }
 
 function showAiThinking() {

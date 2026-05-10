@@ -291,7 +291,7 @@
             </div>
 
             <!-- Period Selector -->
-            <div class="flex justify-center gap-1 mb-2">
+            <div id="period-selector" class="flex flex-wrap justify-center gap-1 mb-2">
                 <button
                     class="period-btn period-active px-3 py-1 rounded text-xs"
                     data-period="Q1">Q1</button>
@@ -700,13 +700,7 @@
                     };
                 }
 
-                const periodLabels = getSportPeriodLabels({ team: currentTeam, config: currentConfig }).slice(0, 5);
-                const periodButtons = document.querySelectorAll('.period-btn');
-                periodButtons.forEach((btn, index) => {
-                    const label = periodLabels[index] || periodLabels[0];
-                    btn.dataset.period = label;
-                    btn.textContent = label;
-                });
+                const periodLabels = renderPeriodSelector();
                 gameState.currentPeriod = periodLabels[0] || getDefaultLivePeriod({ team: currentTeam, config: currentConfig });
 
                 // Load existing aggregated stats from Firestore into gameState
@@ -717,9 +711,12 @@
 
                 // Also load existing scores from aggregated stats
                 let totalHomePoints = 0;
+                const scoreKey = (currentConfig.columns || [])
+                    .map(col => col.toLowerCase())
+                    .find(key => ['pts', 'points', 'goals', 'r', 'run', 'runs'].includes(key)) || 'pts';
                 players.forEach(p => {
                     if (gameState.playerStats[p.id]) {
-                        const pts = gameState.playerStats[p.id].pts || gameState.playerStats[p.id].points || 0;
+                        const pts = gameState.playerStats[p.id][scoreKey] || 0;
                         totalHomePoints += pts;
                     }
                 });
@@ -751,16 +748,8 @@
                 // Add period button listeners
                 document.querySelectorAll('.period-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        // Update UI
-                        document.querySelectorAll('.period-btn').forEach(b => {
-                            b.classList.remove('period-active');
-                            b.classList.add('period-inactive');
-                        });
-                        btn.classList.remove('period-inactive');
-                        btn.classList.add('period-active');
-
-                        // Update state
                         gameState.currentPeriod = btn.dataset.period;
+                        setPeriodButtonState(gameState.currentPeriod);
                         addLogEntry(`Period changed to ${gameState.currentPeriod}`);
                     });
                 });
@@ -774,6 +763,38 @@
         function updateScoreDisplay() {
             document.getElementById('home-score').textContent = homeScore;
             document.getElementById('away-score').textContent = awayScore;
+        }
+
+        function isScoringStatKey(statKey) {
+            return ['pts', 'points', 'goals', 'r', 'run', 'runs'].includes(String(statKey || '').toLowerCase());
+        }
+
+        function isMultiValueScoreStatKey(statKey) {
+            return ['pts', 'points'].includes(String(statKey || '').toLowerCase());
+        }
+
+        function renderPeriodSelector() {
+            const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig });
+            const selector = document.getElementById('period-selector');
+            if (!selector) return labels;
+            const active = labels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+            selector.innerHTML = labels.map(label => `
+                <button class="period-btn period-inactive px-3 py-1 rounded text-xs"
+                    data-period="${escapeHtml(label)}">${escapeHtml(label)}</button>
+            `).join('');
+            setPeriodButtonState(active);
+            return labels;
+        }
+
+        function setPeriodButtonState(period) {
+            document.querySelectorAll('.period-btn').forEach(b => {
+                b.classList.remove('period-active');
+                b.classList.add('period-inactive');
+                if (b.dataset.period === period) {
+                    b.classList.remove('period-inactive');
+                    b.classList.add('period-active');
+                }
+            });
         }
 
         function formatFieldTime(ms) {
@@ -957,7 +978,7 @@
             let headersHTML = '<th class="player-name text-left p-1">Player</th>';
             headersHTML += '<th class="stat-cell-wide p-1">Status</th>';
             currentConfig.columns.forEach(col => {
-                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
+                const isPoints = isMultiValueScoreStatKey(col);
                 headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
             });
             thead.innerHTML = headersHTML;
@@ -992,7 +1013,7 @@
                 </td>`;
 
                 currentConfig.columns.forEach(col => {
-                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
+                    const isPoints = isMultiValueScoreStatKey(col);
                     const statKey = col.toLowerCase();
 
                     if (isPoints) {
@@ -1037,7 +1058,7 @@
             let headersHTML = '<th class="player-name text-left p-1">Player</th>';
             headersHTML += '<th class="stat-cell-wide p-1">Status</th>';
             currentConfig.columns.forEach(col => {
-                const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
+                const isPoints = isMultiValueScoreStatKey(col);
                 headersHTML += `<th class="${isPoints ? 'stat-cell-wide' : 'stat-cell'} p-1">${col}</th>`;
             });
             thead.innerHTML = headersHTML;
@@ -1054,7 +1075,7 @@
                 </td>`;
 
                 currentConfig.columns.forEach(col => {
-                    const isPoints = col.toUpperCase() === 'PTS' || col.toUpperCase() === 'POINTS' || col.toUpperCase() === 'GOALS';
+                    const isPoints = isMultiValueScoreStatKey(col);
                     const statKey = col.toLowerCase();
                     const existingVal = gameState.opponentStats[opp.id]?.[statKey] || 0;
 
@@ -1228,7 +1249,7 @@
             const newVal = currentVal + value;
             statEl.textContent = newVal;
 
-            const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
+            const isPoints = isScoringStatKey(statKey);
 
             if (isOpponent) {
                 gameState.opponentStats[playerId][statKey] = newVal;
@@ -1316,9 +1337,9 @@
             if (currentVal === 0) return;
 
             let value = 1;
-            const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
+            const isPoints = isScoringStatKey(statKey);
 
-            if (isPoints && currentVal >= 3) {
+            if (isMultiValueScoreStatKey(statKey) && currentVal >= 3) {
                 value = confirm('Remove 3 points?') ? 3 : confirm('Remove 2 points?') ? 2 : 1;
             }
 
@@ -1772,7 +1793,7 @@
             if (undoData && undoData.type === 'stat') {
                 const { playerId, statKey, value, isOpponent } = undoData;
                 const statEl = document.getElementById(`stat-${playerId}-${statKey}`);
-                const isPoints = statKey === 'pts' || statKey === 'points' || statKey === 'goals';
+                const isPoints = isScoringStatKey(statKey);
                 const parsedValue = Number(value) || 0;
 
                 if (isOpponent) {
