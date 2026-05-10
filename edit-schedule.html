@@ -81,14 +81,15 @@
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
                     <h3 class="font-semibold text-emerald-900">Registration Schedule Sync</h3>
-                    <p class="text-sm text-emerald-800">Refresh this team's schedule from the latest linked registration snapshot.</p>
+                    <p class="text-sm text-emerald-800">Preview source games and practices, review conflicts, then import selected entries.</p>
                     <p id="registration-schedule-import-status" class="mt-2 text-sm text-emerald-700"></p>
                 </div>
                 <button id="registration-schedule-import-btn" type="button"
                     class="bg-emerald-600 text-white px-4 py-2 rounded-md text-sm font-semibold hover:bg-emerald-700 transition">
-                    Re-import Schedule
+                    Import Selected
                 </button>
             </div>
+            <div id="registration-schedule-import-preview" class="mt-4 overflow-x-auto"></div>
         </div>
 
         <div id="schedule-notification-settings" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
@@ -915,7 +916,7 @@
         import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
-        import { formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=1';
+        import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1736,16 +1737,87 @@
             };
         }
 
-        function renderRegistrationScheduleImport(team = {}) {
+        async function renderRegistrationScheduleImport(team = {}) {
             const container = document.getElementById('registration-schedule-import');
             const status = document.getElementById('registration-schedule-import-status');
-            if (!container || !status) return;
+            const preview = document.getElementById('registration-schedule-import-preview');
+            const button = document.getElementById('registration-schedule-import-btn');
+            if (!container || !status || !preview || !button) return;
 
             const sourceEvents = getRegistrationScheduleEvents(team);
-            container.classList.toggle('hidden', !isExternallyLinkedRegistrationTeam(team));
-            status.textContent = sourceEvents.length
-                ? `${sourceEvents.length} source event${sourceEvents.length === 1 ? '' : 's'} ready to review.`
-                : 'No source schedule snapshot is available yet.';
+            const showImport = isExternallyLinkedRegistrationTeam(team) && sourceEvents.length > 0;
+            container.classList.toggle('hidden', !showImport);
+            if (!showImport) {
+                preview.innerHTML = '';
+                return;
+            }
+
+            status.textContent = `${sourceEvents.length} source event${sourceEvents.length === 1 ? '' : 's'} ready to review.`;
+            button.disabled = true;
+            preview.innerHTML = '<p class="text-sm text-emerald-700">Loading existing schedule conflicts...</p>';
+            try {
+                const existingEvents = await getEvents(currentTeamId);
+                const rows = buildRegistrationScheduleImportPreview({
+                    sourceEvents,
+                    existingEvents,
+                    Timestamp,
+                    source: getRegistrationSourceDescriptor(team)
+                });
+                button.disabled = !rows.some((row) => row.selectable);
+                preview.innerHTML = renderRegistrationScheduleImportPreviewRows(rows);
+            } catch (error) {
+                console.error('Registration schedule preview failed:', error);
+                status.textContent = `Preview failed: ${error.message}`;
+                preview.innerHTML = '';
+                button.disabled = false;
+            }
+        }
+
+        function formatRegistrationSourceDate(dateValue) {
+            const date = dateValue?.toDate ? dateValue.toDate() : new Date(dateValue);
+            if (!dateValue || Number.isNaN(date.getTime())) return 'Date TBD';
+            return `${formatShortDate(date)} ${formatTime(date)}`;
+        }
+
+        function renderRegistrationScheduleImportPreviewRows(rows = []) {
+            if (!rows.length) return '<p class="text-sm text-emerald-700">No source schedule entries are available.</p>';
+            const actionClasses = {
+                add: 'bg-green-100 text-green-800',
+                update: 'bg-blue-100 text-blue-800',
+                conflict: 'bg-amber-100 text-amber-800',
+                skipped: 'bg-gray-100 text-gray-700'
+            };
+            return `
+                <table class="min-w-full divide-y divide-emerald-200 text-sm bg-white rounded border border-emerald-200">
+                    <thead class="bg-emerald-100 text-emerald-900">
+                        <tr>
+                            <th class="px-3 py-2 text-left">Import</th>
+                            <th class="px-3 py-2 text-left">Date/time</th>
+                            <th class="px-3 py-2 text-left">Type</th>
+                            <th class="px-3 py-2 text-left">Opponent/title</th>
+                            <th class="px-3 py-2 text-left">Location</th>
+                            <th class="px-3 py-2 text-left">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-emerald-100">
+                        ${rows.map((row) => `
+                            <tr>
+                                <td class="px-3 py-2">
+                                    <input type="checkbox" class="registration-schedule-import-choice rounded border-gray-300 text-emerald-600 focus:ring-emerald-500" data-source-index="${row.index}" ${row.selectable ? 'checked' : 'disabled'}>
+                                </td>
+                                <td class="px-3 py-2 whitespace-nowrap">${escapeHtml(formatRegistrationSourceDate(row.sourceEvent.date || row.sourceEvent.start || row.sourceEvent.startTime || row.sourceEvent.startsAt))}</td>
+                                <td class="px-3 py-2 capitalize">${escapeHtml(row.payload?.type || row.sourceEvent.type || row.sourceEvent.eventType || 'game')}</td>
+                                <td class="px-3 py-2">${escapeHtml(row.sourceEvent.opponent || row.sourceEvent.title || row.sourceEvent.summary || 'TBD')}</td>
+                                <td class="px-3 py-2">${escapeHtml(row.sourceEvent.location || row.sourceEvent.venue || '')}</td>
+                                <td class="px-3 py-2">
+                                    <span class="inline-flex px-2 py-1 rounded-full text-xs font-semibold ${actionClasses[row.action] || actionClasses.skipped}">${escapeHtml(row.action)}</span>
+                                    <span class="block mt-1 text-xs text-gray-600">${escapeHtml(row.reason || '')}</span>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
         }
 
         async function handleRegistrationScheduleImport() {
@@ -1760,9 +1832,17 @@
             button.disabled = true;
             button.textContent = 'Re-importing...';
             try {
+                const selectedIndexes = new Set(Array.from(document.querySelectorAll('.registration-schedule-import-choice:checked'))
+                    .map((input) => Number(input.dataset.sourceIndex)));
+                const selectedSourceEvents = sourceEvents.filter((_, index) => selectedIndexes.has(index));
+                if (!selectedSourceEvents.length) {
+                    status.textContent = 'Select at least one non-conflicting schedule entry to import.';
+                    return;
+                }
+
                 const existingEvents = await getEvents(currentTeamId);
                 const plan = planRegistrationScheduleImport({
-                    sourceEvents,
+                    sourceEvents: selectedSourceEvents,
                     existingEvents,
                     Timestamp,
                     source: getRegistrationSourceDescriptor(currentTeam)
@@ -1781,13 +1861,14 @@
                 }
 
                 status.textContent = `Import complete: ${formatRegistrationImportResults(plan.results)}.`;
+                await renderRegistrationScheduleImport(currentTeam);
                 await loadSchedule();
             } catch (error) {
                 console.error('Registration schedule import failed:', error);
                 status.textContent = `Import failed: ${error.message}`;
             } finally {
                 button.disabled = false;
-                button.textContent = 'Re-import Schedule';
+                button.textContent = 'Import Selected';
             }
         }
 
@@ -1916,7 +1997,11 @@
                             countsTowardSeasonRecord: event.countsTowardSeasonRecord
                         }),
                         arrivalTime: event.arrivalTime || null,
+                        statTrackerConfigId: event.statTrackerConfigId || null,
                         assignments: Array.isArray(event.assignments) ? event.assignments : [],
+                        officiatingSlots: Array.isArray(event.officiatingSlots) ? event.officiatingSlots : [],
+                        officiatingSelfAssignmentEnabled: event.officiatingSelfAssignmentEnabled === true,
+                        officiatingCoverageStatus: event.officiatingCoverageStatus || null,
                         rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
                         sourceMetadata: event.sourceMetadata || null,

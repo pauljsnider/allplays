@@ -56,4 +56,15 @@ describe('parent dashboard practice session visibility', () => {
         expect(isCancelledPracticeSession(session, [])).toBe(false);
         expect(filterVisiblePracticeSessions([session], []).map((candidate) => candidate.id)).toEqual(['draft-session']);
     });
+
+    it('keeps standalone draft sessions without event IDs visible', () => {
+        const session = {
+            id: 'standalone-draft',
+            eventId: null,
+            date: '2026-03-24T18:00:00.000Z'
+        };
+
+        expect(isCancelledPracticeSession(session, [])).toBe(false);
+        expect(filterVisiblePracticeSessions([session], []).map((candidate) => candidate.id)).toEqual(['standalone-draft']);
+    });
 });

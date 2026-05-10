@@ -59,6 +59,8 @@ describe('registration review helpers', () => {
         expect(matchesRegistrationReviewStatus({ status: 'approved' }, 'enrolled')).toBe(true);
         expect(matchesRegistrationReviewStatus({ registrationApproved: true }, 'registration-approved')).toBe(true);
         expect(matchesRegistrationReviewStatus({ rosterApproved: true }, 'roster-approved')).toBe(true);
+        expect(matchesRegistrationReviewStatus({ registrationApproved: true }, 'roster-approved')).toBe(false);
+        expect(matchesRegistrationReviewStatus({ rosterApproved: true }, 'registration-approved')).toBe(false);
         expect(matchesRegistrationReviewStatus({ registrationApproved: false }, 'rejected')).toBe(true);
         expect(matchesRegistrationReviewStatus({ rosterApproved: false }, 'rejected')).toBe(true);
         expect(matchesRegistrationReviewStatus({ rosterApproved: false }, 'roster-approved')).toBe(false);

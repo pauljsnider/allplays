@@ -46,6 +46,15 @@ import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
+    DEFAULT_TEAM_CONVERSATION_ID,
+    buildConversationId,
+    buildDefaultTeamConversation,
+    isDefaultTeamConversation,
+    isUserInConversation,
+    normalizeConversationParticipantIds,
+    normalizeConversationType
+} from './team-chat-conversations.js';
+import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
     buildMirroredGamePayload,
@@ -76,6 +85,7 @@ import {
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
     buildRegistrationStatusUpdate,
@@ -86,6 +96,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -416,6 +427,135 @@ export async function getTeam(teamId, options = {}) {
     } else {
         return null;
     }
+}
+
+function getTeamMediaFoldersRef(teamId) {
+    return collection(db, `teams/${teamId}/mediaFolders`);
+}
+
+function getTeamMediaItemsRef(teamId) {
+    return collection(db, `teams/${teamId}/mediaItems`);
+}
+
+export async function getTeamMediaFolders(teamId) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(getTeamMediaFoldersRef(teamId));
+    return sortByMediaOrder(snapshot.docs.map((folderDoc) => ({ id: folderDoc.id, ...folderDoc.data() })));
+}
+
+export async function getTeamMediaItems(teamId, folderId = null) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(getTeamMediaItemsRef(teamId));
+    const items = snapshot.docs
+        .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
+        .filter((item) => item.deleted !== true)
+        .filter((item) => !folderId || item.folderId === folderId);
+    return sortByMediaOrder(items);
+}
+
+export async function createTeamMediaFolder(teamId, name) {
+    const folderName = String(name || '').trim();
+    if (!teamId || !folderName) throw new Error('Folder name is required.');
+    const existingFolders = await getTeamMediaFolders(teamId);
+    const docRef = await addDoc(getTeamMediaFoldersRef(teamId), {
+        name: folderName,
+        order: existingFolders.length,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function createTeamMediaLink(teamId, folderId, media = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    const title = String(media.title || '').trim();
+    const url = String(media.url || '').trim();
+    if (!teamId || !cleanFolderId) throw new Error('Choose a folder for this media link.');
+    if (!title || !url) throw new Error('Media title and URL are required.');
+    if (!isSafeTeamMediaUrl(url)) throw new Error('Use a valid http or https media link.');
+    const existingItems = await getTeamMediaItems(teamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(teamId), {
+        folderId: cleanFolderId,
+        title,
+        url,
+        type: 'video-link',
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function setTeamMediaAlbumCover(teamId, folderId, item = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    const itemId = String(item.id || '').trim();
+    const coverPhotoUrl = String(item.downloadUrl || item.url || item.src || '').trim();
+    if (!teamId || !cleanFolderId || !itemId) throw new Error('Choose a photo to use as the album cover.');
+    if (!isSafeTeamMediaUrl(coverPhotoUrl)) throw new Error('Album cover must use a valid photo URL.');
+    await updateDoc(doc(db, `teams/${teamId}/mediaFolders`, cleanFolderId), {
+        coverPhotoId: itemId,
+        coverPhotoUrl,
+        coverPhotoTitle: String(item.title || item.fileName || '').trim(),
+        updatedAt: serverTimestamp()
+    });
+}
+
+export async function reorderTeamMediaFolders(teamId, folderIds = []) {
+    const updates = buildReorderUpdates(folderIds);
+    if (!teamId || updates.length === 0) return;
+    const batch = writeBatch(db);
+    updates.forEach(({ id, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaFolders`, id), {
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function reorderTeamMediaItems(teamId, itemIds = []) {
+    const updates = buildReorderUpdates(itemIds);
+    if (!teamId || updates.length === 0) return;
+    const batch = writeBatch(db);
+    updates.forEach(({ id, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
+    if (!teamId) throw new Error('Team is required.');
+    const targetItems = await getTeamMediaItems(teamId, targetFolderId);
+    const updates = buildMoveUpdates(itemIds, targetFolderId, targetItems.length);
+    if (updates.length === 0) throw new Error('Select at least one media item to move.');
+    const batch = writeBatch(db);
+    updates.forEach(({ id, folderId, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            folderId,
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function bulkDeleteTeamMediaItems(teamId, itemIds = []) {
+    const updates = buildBulkDeleteUpdates(itemIds);
+    if (!teamId) throw new Error('Team is required.');
+    if (updates.length === 0) throw new Error('Select at least one media item to delete.');
+    const batch = writeBatch(db);
+    updates.forEach(({ id }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            deleted: true,
+            deletedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
 }
 
 async function getPublishedSponsors(teamId) {
@@ -934,6 +1074,45 @@ function sortRegistrationReviews(registrations = []) {
         const bTime = b?.submittedAt?.toMillis ? b.submittedAt.toMillis() : (b?.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b?.submittedAt || b?.createdAt || 0).getTime());
         return bTime - aTime;
     });
+}
+
+export async function listTeamTrackingItems(teamId) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const snapshot = await getDocs(itemsRef);
+    return snapshot.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter((item) => item.active !== false && item.scope === 'players')
+        .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+export async function createTeamTrackingItem(teamId, itemData) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const docRef = await addDoc(itemsRef, {
+        ...itemData,
+        teamId,
+        scope: 'players',
+        active: itemData.active !== false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function listTeamTrackingStatuses(teamId, trackingItemId) {
+    const statusesRef = collection(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking`);
+    const snapshot = await getDocs(statusesRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function setTeamTrackingStatus(teamId, trackingItemId, playerId, statusData) {
+    const statusRef = doc(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking/${playerId}`);
+    await setDoc(statusRef, {
+        ...statusData,
+        teamId,
+        trackingItemId,
+        playerId,
+        updatedAt: serverTimestamp()
+    }, { merge: true });
 }
 
 export async function listTeamRegistrationForms(teamId) {
@@ -3248,12 +3427,94 @@ export function canModerateChat(user, team) {
     return false;
 }
 
+function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+    if (isDefaultTeamConversation(conversationId)) {
+        return collection(db, 'teams', teamId, 'chatMessages');
+    }
+    return collection(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages');
+}
+
+/**
+ * Get conversations for a team. The default team-wide channel is virtual and keeps
+ * using teams/{teamId}/chatMessages for backwards compatibility.
+ */
+export async function getChatConversations(teamId, user = null, { team = null, canModerate = false } = {}) {
+    const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
+    const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
+    const participantQueries = canModerate
+        ? [query(conversationsRef, orderBy('updatedAt', 'desc'))]
+        : [
+            ...(user?.uid ? [
+                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc')),
+                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            ...(normalizedEmail ? [
+                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            query(conversationsRef, where('participantRoles', 'array-contains', 'team'), orderBy('updatedAt', 'desc'))
+        ];
+    const snapshots = participantQueries.length > 0
+        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        : [];
+    const conversationsById = new Map();
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((d) => {
+            conversationsById.set(d.id, { id: d.id, ...d.data() });
+        });
+    });
+    const stored = Array.from(conversationsById.values())
+        .filter((conversation) => !user || isUserInConversation(conversation, user, { canModerate }));
+    stored.sort((a, b) => {
+        const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : new Date(a.updatedAt || 0).getTime();
+        const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : new Date(b.updatedAt || 0).getTime();
+        return bTime - aTime;
+    });
+
+    return [buildDefaultTeamConversation(team), ...stored];
+}
+
+/**
+ * Create or update a lightweight conversation record.
+ */
+export async function upsertChatConversation(teamId, {
+    type = 'group',
+    participantIds = [],
+    participantRoles = [],
+    mutedBy = [],
+    name = null
+} = {}) {
+    const normalizedType = normalizeConversationType(type);
+    const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
+    const conversationId = buildConversationId(normalizedType, normalizedParticipantIds);
+    const now = Timestamp.now();
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+    const existing = await getDoc(conversationRef);
+    const payload = {
+        type: normalizedType,
+        participantIds: normalizedParticipantIds,
+        participantRoles: Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
+            .map((role) => String(role || '').trim())
+            .filter(Boolean)))
+            .sort(),
+        mutedBy: Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : [])),
+        updatedAt: now
+    };
+    if (name) {
+        payload.name = name;
+    }
+    if (!existing.exists()) {
+        payload.createdAt = now;
+    }
+    await setDoc(conversationRef, payload, { merge: true });
+    return { id: conversationId, ...payload };
+}
+
 /**
  * Get chat messages for a team with pagination support.
  * Returns messages ordered by createdAt descending (newest first).
  */
-export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null } = {}) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
 
     if (startAfterDoc) {
@@ -3268,8 +3529,8 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  * Subscribe to chat messages in real time (newest first).
  * Returns an unsubscribe function.
  */
-export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
@@ -3299,9 +3560,10 @@ export async function postChatMessage(teamId, {
     aiMeta = null,
     targetType = 'full_team',
     recipientIds = [],
-    targetRole = null
+    targetRole = null,
+    conversationId = DEFAULT_TEAM_CONVERSATION_ID
 }) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const createdAt = Timestamp.now();
     const normalizedMedia = normalizeChatAttachments(
         attachments.length > 0
@@ -3328,7 +3590,7 @@ export async function postChatMessage(teamId, {
     const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
         ? 'full_team'
         : normalizedTargetType;
-    return await addDoc(messagesRef, {
+    const docRef = await addDoc(messagesRef, {
         text,
         senderId,
         senderName: senderName || null,
@@ -3351,15 +3613,28 @@ export async function postChatMessage(teamId, {
         aiMeta: aiMeta || null,
         targetType: effectiveTargetType,
         recipientIds: normalizedRecipientIds,
-        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null
+        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null,
+        conversationId: isDefaultTeamConversation(conversationId) ? null : conversationId
     });
+
+    if (!isDefaultTeamConversation(conversationId)) {
+        const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+        await setDoc(conversationRef, {
+            lastMessageAt: createdAt,
+            updatedAt: createdAt
+        }, { merge: true });
+    }
+
+    return docRef;
 }
 
 /**
  * Edit an existing chat message (sender only).
  */
-export async function editChatMessage(teamId, messageId, newText) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function editChatMessage(teamId, messageId, newText, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         text: newText,
         editedAt: Timestamp.now()
@@ -3369,14 +3644,16 @@ export async function editChatMessage(teamId, messageId, newText) {
 /**
  * Soft-delete a chat message.
  */
-export async function deleteChatMessage(teamId, messageId) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function deleteChatMessage(teamId, messageId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         deleted: true
     });
 }
 
-export async function toggleChatReaction(teamId, messageId, reactionKey, userId) {
+export async function toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     if (!CHAT_REACTION_KEYS.has(reactionKey)) {
         throw new Error('Unsupported reaction key');
     }
@@ -3384,7 +3661,9 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId)
         throw new Error('Missing userId for reaction');
     }
 
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     const snap = await getDoc(messageRef);
     if (!snap.exists()) {
         throw new Error('Message not found');
@@ -3466,6 +3745,85 @@ export async function getUnreadChatCounts(userId, teamIds) {
         }
     }));
     return counts;
+}
+
+
+function normalizeGameDateValue(value) {
+    if (!value) return null;
+    if (typeof value?.toDate === 'function') return value.toDate();
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function compareGamesByDateAsc(a, b) {
+    const aDate = normalizeGameDateValue(a?.date);
+    const bDate = normalizeGameDateValue(b?.date);
+    if (!aDate && !bDate) return 0;
+    if (!aDate) return 1;
+    if (!bDate) return -1;
+    return aDate - bDate;
+}
+
+function compareGamesByDateDesc(a, b) {
+    return compareGamesByDateAsc(b, a);
+}
+
+function getSharedHomepageTeamIds(sharedGame) {
+    return Array.from(new Set([
+        sharedGame?.homeTeamId,
+        sharedGame?.awayTeamId,
+        ...(Array.isArray(sharedGame?.teamIds) ? sharedGame.teamIds : [])
+    ].filter(Boolean)));
+}
+
+async function projectSharedHomepageGame(sharedGame, shouldIncludeTeam) {
+    const teamIds = getSharedHomepageTeamIds(sharedGame);
+
+    for (const teamId of teamIds) {
+        const teamSnap = await getDoc(doc(db, 'teams', teamId));
+        if (!teamSnap.exists()) {
+            continue;
+        }
+
+        const team = { id: teamSnap.id, ...teamSnap.data() };
+        if (!shouldIncludeTeam(team)) {
+            continue;
+        }
+
+        const projectedGame = projectSharedGameForTeam(sharedGame, teamId);
+        if (!projectedGame) {
+            continue;
+        }
+
+        return {
+            ...projectedGame,
+            team
+        };
+    }
+
+    return null;
+}
+
+async function getSharedHomepageGames(queryConstraints, shouldIncludeTeam, maxResults) {
+    const sharedGamesRef = collectionGroup(db, 'sharedGames');
+    const snapshot = await getDocs(query(sharedGamesRef, ...queryConstraints));
+    const games = [];
+
+    for (const docSnap of snapshot.docs) {
+        const sharedGame = normalizeSharedGameSnapshot(docSnap);
+        const projectedGame = await projectSharedHomepageGame(sharedGame, shouldIncludeTeam);
+        if (!projectedGame) {
+            continue;
+        }
+
+        games.push(projectedGame);
+        if (maxResults && games.length >= maxResults) {
+            break;
+        }
+    }
+
+    return games;
 }
 
 // ============ LIVE GAME EVENTS ============
@@ -3665,6 +4023,18 @@ export function trackViewerPresence(teamId, gameId, onCountChange) {
 /**
  * Get upcoming live games across all public teams
  */
+function isExcludedHomepageUpcomingStatus(status) {
+    if (typeof status !== 'string') {
+        return false;
+    }
+
+    const normalizedStatus = status.trim().toLowerCase();
+    return normalizedStatus === 'completed'
+        || normalizedStatus === 'cancelled'
+        || normalizedStatus === 'canceled'
+        || normalizedStatus === 'deleted';
+}
+
 export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -3700,7 +4070,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
             for (const docSnap of snapshot.docs) {
                 const gameData = { id: docSnap.id, ...docSnap.data() };
-                if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+                if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                     continue;
                 }
                 if (!gameData.type) {
@@ -3737,7 +4107,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         snapshot = await getDocs(fallbackQuery);
         for (const docSnap of snapshot.docs) {
             const gameData = { id: docSnap.id, ...docSnap.data() };
-            if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+            if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                 continue;
             }
             if (!gameData.type) {
@@ -3766,11 +4136,21 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         }
     }
 
-    games.sort((a, b) => {
-        const aDate = a.date?.toDate ? a.date.toDate() : new Date(a.date);
-        const bDate = b.date?.toDate ? b.date.toDate() : new Date(b.date);
-        return aDate - bDate;
-    });
+    try {
+        const sharedGames = await getSharedHomepageGames([
+            ...queryConstraints,
+            limitQuery(fetchBatchSize)
+        ], shouldIncludeTeamInLiveOrUpcoming);
+        games.push(...sharedGames.filter((game) => {
+            return game.type !== 'practice'
+                && !isExcludedHomepageUpcomingStatus(game.status)
+                && game.liveStatus !== 'completed';
+        }));
+    } catch (error) {
+        console.warn('Could not load shared upcoming live games:', error?.message || error);
+    }
+
+    games.sort(compareGamesByDateAsc);
 
     return games.slice(0, limitCount);
 }
@@ -4229,6 +4609,15 @@ export async function getLiveGamesNow() {
         games.push(gameData);
     }
 
+    try {
+        const sharedGames = await getSharedHomepageGames([
+            where('liveStatus', '==', 'live')
+        ], shouldIncludeTeamInLiveOrUpcoming);
+        games.push(...sharedGames);
+    } catch (error) {
+        console.warn('Could not load shared live games:', error?.message || error);
+    }
+
     return games;
 }
 
@@ -4238,14 +4627,17 @@ export async function getLiveGamesNow() {
 export async function getRecentLiveTrackedGames(limitCount = 6) {
     const now = new Date();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    const gamesRef = collectionGroup(db, 'games');
-    const q = query(
-        gamesRef,
+    const recentQueryConstraints = [
         where('liveStatus', '==', 'completed'),
         where('date', '>=', Timestamp.fromDate(oneWeekAgo)),
         orderBy('date', 'desc'),
         limitQuery(limitCount)
+    ];
+
+    const gamesRef = collectionGroup(db, 'games');
+    const q = query(
+        gamesRef,
+        ...recentQueryConstraints
     );
 
     const snapshot = await getDocs(q);
@@ -4267,7 +4659,16 @@ export async function getRecentLiveTrackedGames(limitCount = 6) {
         games.push(gameData);
     }
 
-    return games;
+    try {
+        const sharedGames = await getSharedHomepageGames(recentQueryConstraints, shouldIncludeTeamInReplay, limitCount);
+        games.push(...sharedGames);
+    } catch (error) {
+        console.warn('Could not load shared replay games:', error?.message || error);
+    }
+
+    games.sort(compareGamesByDateDesc);
+
+    return games.slice(0, limitCount);
 }
 
 // ============================================
@@ -4372,10 +4773,17 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
                 timestamp: Timestamp.now()
             });
         }
+        const officiatingAuthorizedUserIds = new Set(game.officiatingAuthorizedUserIds || []);
+        const officiatingAuthorizedEmails = new Set(game.officiatingAuthorizedEmails || []);
+        if (official?.uid) officiatingAuthorizedUserIds.add(official.uid);
+        if (official?.email) officiatingAuthorizedEmails.add(String(official.email).trim().toLowerCase());
+
         transaction.update(docRef, {
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now()
+            officiatingUpdatedAt: Timestamp.now(),
+            officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds),
+            officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)
         });
     });
 
@@ -5023,4 +5431,44 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
     return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+}
+
+export async function getPublicTrackingItems(teamId) {
+    const snap = await getDocs(query(
+        collection(db, `teams/${teamId}/trackingItems`),
+        where('public', '==', true),
+        where('private', '==', false),
+        where('isPrivate', '==', false)
+    ));
+    return snap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter(isPublicTrackingItem);
+}
+
+export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
+    const uniquePlayerIds = Array.from(new Set((Array.isArray(playerIds) ? playerIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)));
+    if (uniquePlayerIds.length === 0) return [];
+
+    const playerIdFields = ['playerId', 'childId', 'memberId'];
+    const trackingCollection = collection(db, `teams/${teamId}/memberTracking`);
+    const snapshots = await Promise.all(uniquePlayerIds.flatMap((playerId) => (
+        playerIdFields.map((fieldName) => getDocs(query(
+            trackingCollection,
+            where(fieldName, '==', playerId),
+            where('public', '==', true)
+        )))
+    )));
+
+    const statusesById = new Map();
+    snapshots.forEach((snap) => {
+        snap.docs.forEach((docSnap) => {
+            statusesById.set(docSnap.id, normalizeTrackingStatus({
+                id: docSnap.id,
+                ...docSnap.data()
+            }));
+        });
+    });
+    return Array.from(statusesById.values());
 }

@@ -170,11 +170,11 @@ export function matchesRegistrationReviewStatus(registration = {}, status = 'all
             return true;
         case 'approved':
         case 'enrolled':
+            return normalizeRegistrationStatus(registration.status) === 'enrolled';
         case 'registration-approved':
+            return registration.registrationApproved === true;
         case 'roster-approved':
-            return normalizeRegistrationStatus(registration.status) === 'enrolled' ||
-                registration.registrationApproved === true ||
-                registration.rosterApproved === true;
+            return registration.rosterApproved === true;
         case 'rejected':
             return normalizeRegistrationStatus(registration.status) === 'rejected' ||
                 registration.registrationApproved === false ||

@@ -291,6 +291,26 @@
                     </div>
                 </section>
 
+                <section class="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div class="p-6 border-b border-gray-200 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold">Roster Tracking</h2>
+                            <p class="text-sm text-gray-600 mt-1">Select one checklist item and mark active players complete or incomplete.</p>
+                            <p id="tracking-status-summary" class="text-sm font-semibold text-indigo-700 mt-2">No tracking item selected.</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                            <select id="tracking-item-select" class="rounded-md border-gray-300 shadow-sm border p-2 text-sm min-w-56">
+                                <option value="">No tracking items</option>
+                            </select>
+                            <input id="new-tracking-item-title" type="text" placeholder="New item title" class="rounded-md border-gray-300 shadow-sm border p-2 text-sm min-w-48">
+                            <button id="create-tracking-item-btn" type="button" class="px-3 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-md hover:bg-indigo-700">Add Item</button>
+                        </div>
+                    </div>
+                    <div id="tracking-status-matrix" class="p-6 space-y-2">
+                        <p class="text-sm text-gray-500">Add or select a tracking item to edit roster completion.</p>
+                    </div>
+                </section>
+
                 <div class="bg-white rounded-lg shadow-md overflow-hidden">
                     <div class="p-6 border-b border-gray-200 flex justify-between items-center">
                         <h2 class="text-xl font-bold">Current Roster</h2>
@@ -489,8 +509,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist } from './js/db.js?v=31';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=31';
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
+        import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=13';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -512,6 +533,10 @@
         let registrationForms = [];
         let selectedRegistrationFormId = '';
         let registrationRosterImportPlan = null;
+        let trackingItems = [];
+        let selectedTrackingItemId = '';
+        let latestRosterPlayers = [];
+        let trackingStatusRenderToken = 0;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
@@ -560,7 +585,121 @@
                 loadRegistrationReviews();
             });
             document.getElementById('registration-status-filter').addEventListener('change', () => loadRegistrationReviews());
+            document.getElementById('tracking-item-select').addEventListener('change', (event) => {
+                selectedTrackingItemId = event.target.value;
+                renderTrackingStatusMatrix();
+            });
+            document.getElementById('create-tracking-item-btn').addEventListener('click', handleCreateTrackingItem);
             loadRoster();
+        }
+
+        async function refreshTrackingItems() {
+            trackingItems = await listTeamTrackingItems(currentTeamId);
+            if (!selectedTrackingItemId && trackingItems.length > 0) {
+                selectedTrackingItemId = trackingItems[0].id;
+            }
+            if (selectedTrackingItemId && !trackingItems.some((item) => item.id === selectedTrackingItemId)) {
+                selectedTrackingItemId = trackingItems[0]?.id || '';
+            }
+            renderTrackingItemSelect();
+        }
+
+        function renderTrackingItemSelect() {
+            const select = document.getElementById('tracking-item-select');
+            if (!select) return;
+            if (!trackingItems.length) {
+                select.innerHTML = '<option value="">No tracking items</option>';
+                return;
+            }
+            select.innerHTML = trackingItems.map((item) => `
+                <option value="${escapeHtml(item.id)}" ${item.id === selectedTrackingItemId ? 'selected' : ''}>${escapeHtml(item.title || item.id)}</option>
+            `).join('');
+        }
+
+        async function handleCreateTrackingItem() {
+            const input = document.getElementById('new-tracking-item-title');
+            const button = document.getElementById('create-tracking-item-btn');
+            try {
+                button.disabled = true;
+                const draft = normalizeTrackingItemDraft({ title: input.value });
+                selectedTrackingItemId = await createTeamTrackingItem(currentTeamId, draft);
+                input.value = '';
+                await refreshTrackingItems();
+                await renderTrackingStatusMatrix();
+            } catch (error) {
+                alert(error?.message || 'Unable to create tracking item.');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        async function renderTrackingStatusMatrix() {
+            const container = document.getElementById('tracking-status-matrix');
+            const summaryEl = document.getElementById('tracking-status-summary');
+            if (!container || !summaryEl) return;
+
+            const renderToken = ++trackingStatusRenderToken;
+            const trackingItemId = selectedTrackingItemId;
+            const rosterPlayers = [...latestRosterPlayers];
+            const selectedItem = trackingItems.find((item) => item.id === trackingItemId);
+            if (!selectedItem) {
+                summaryEl.textContent = 'No tracking item selected.';
+                container.innerHTML = '<p class="text-sm text-gray-500">Add or select a tracking item to edit roster completion.</p>';
+                return;
+            }
+
+            container.innerHTML = '<p class="text-sm text-gray-500">Loading roster tracking statuses...</p>';
+            const statuses = await listTeamTrackingStatuses(currentTeamId, trackingItemId);
+            if (renderToken !== trackingStatusRenderToken || trackingItemId !== selectedTrackingItemId) {
+                return;
+            }
+            const rows = mergeTrackingStatusRows(rosterPlayers, statuses);
+            const summary = summarizeTrackingStatus(rows);
+            summaryEl.textContent = `${summary.complete} of ${summary.total} complete for ${selectedItem.title || 'selected item'} (${summary.incomplete} incomplete).`;
+
+            if (rows.length === 0) {
+                container.innerHTML = '<p class="text-sm text-gray-500">No active roster players to track.</p>';
+                return;
+            }
+
+            container.innerHTML = rows.map(({ player, complete }) => `
+                <label class="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-3 hover:bg-gray-50">
+                    <span class="min-w-0">
+                        <span class="font-semibold text-gray-900">${escapeHtml(player.name || 'Unnamed player')}</span>
+                        ${player.number ? `<span class="ml-2 text-xs text-gray-500">#${escapeHtml(player.number)}</span>` : ''}
+                    </span>
+                    <span class="flex items-center gap-3">
+                        <span class="tracking-status-label text-sm font-semibold ${complete ? 'text-emerald-700' : 'text-gray-500'}">${complete ? 'Complete' : 'Incomplete'}</span>
+                        <input type="checkbox" class="tracking-status-toggle rounded text-indigo-600 focus:ring-indigo-500" data-player-id="${escapeHtml(player.id)}" ${complete ? 'checked' : ''}>
+                    </span>
+                </label>
+            `).join('');
+
+            document.querySelectorAll('.tracking-status-toggle').forEach((input) => {
+                input.addEventListener('change', async (event) => {
+                    const checkbox = event.currentTarget;
+                    const player = rosterPlayers.find((item) => item.id === checkbox.dataset.playerId);
+                    if (!player) return;
+                    checkbox.disabled = true;
+                    try {
+                        const payload = buildTrackingStatusPayload({
+                            teamId: currentTeamId,
+                            itemId: trackingItemId,
+                            player,
+                            complete: checkbox.checked,
+                            actorId: currentUser.uid,
+                            actorEmail: currentUser.email
+                        });
+                        await setTeamTrackingStatus(currentTeamId, trackingItemId, player.id, payload);
+                        await renderTrackingStatusMatrix();
+                    } catch (error) {
+                        console.error('Error saving tracking status', error);
+                        alert('Unable to save tracking status: ' + (error?.message || 'Please try again.'));
+                        checkbox.checked = !checkbox.checked;
+                        checkbox.disabled = false;
+                    }
+                });
+            });
         }
 
         function getRegistrationSourceDescriptor(team = {}) {
@@ -948,6 +1087,7 @@
         }
 
         async function loadRoster() {
+            await refreshTrackingItems();
             const [players, games, allUsers, membershipRequests, forms] = await Promise.all([
                 getPlayers(currentTeamId, { includeInactive: true }),
                 getGames(currentTeamId),
@@ -955,12 +1095,14 @@
                 listTeamParentMembershipRequests(currentTeamId),
                 listTeamRegistrationForms(currentTeamId)
             ]);
+            latestRosterPlayers = players;
             registrationForms = forms || [];
             if (!selectedRegistrationFormId && registrationForms.length > 0) {
                 selectedRegistrationFormId = registrationForms[0].id;
             }
             renderRegistrationFormFilter();
             await loadRegistrationReviews();
+            await renderTrackingStatusMatrix();
             const latestGameId = [...games].sort((a, b) => {
                 const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
                 const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);

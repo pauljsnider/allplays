@@ -213,6 +213,7 @@ function createEnvironment(initialState, overrides = {}) {
         'scorekeeping-member-list',
         'streamingAccessMode',
         'streaming-member-list',
+        'videography-member-list',
         'streamAccessMode',
         'stream-volunteer-panel',
         'stream-volunteer-list',
@@ -243,6 +244,11 @@ function createEnvironment(initialState, overrides = {}) {
         'team-id-text',
         'team-id-status',
         'copy-team-id-btn',
+        'registrationProviderName',
+        'registrationExternalTeamId',
+        'registrationCopiedTeamId',
+        'registrationLastSyncStatus',
+        'clear-registration-provider-btn',
         'save-admin-btn',
         'cancel-admin-btn',
         'manage-roster-btn',
@@ -340,7 +346,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=2';",
+            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=3';",
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
@@ -676,6 +682,70 @@ describe('edit team admin access persistence', () => {
             expect(env.state.createCalls[0].teamData.accessRolloverAudit.staffAdmins).toEqual([
                 { email: 'coach-a@example.com', sourceTeamId: 'source-1', rolledOverAt: expect.any(String) }
             ]);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+
+    it('allows admins to edit and clear registration provider metadata without external calls', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: [],
+                registrationSource: {
+                    provider: 'Sports Connect',
+                    externalTeamId: 'SC-123',
+                    sourceId: 'sports-connect',
+                    externalTeamName: 'Sharks 12U',
+                    season: 'Spring 2026',
+                    division: '12U',
+                    teamId: 'team-1',
+                    lastSyncStatus: 'Not synced'
+                }
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            expect(env.elements.get('registrationProviderName').value).toBe('Sports Connect');
+            expect(env.elements.get('registrationExternalTeamId').value).toBe('SC-123');
+            expect(env.elements.get('registrationCopiedTeamId').value).toBe('team-1');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Not synced');
+
+            env.elements.get('registrationProviderName').value = 'League Apps';
+            env.elements.get('registrationExternalTeamId').value = 'LA-456';
+            env.elements.get('registrationLastSyncStatus').value = 'Documented only';
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.registrationSource).toEqual({
+                provider: 'League Apps',
+                externalTeamId: 'LA-456',
+                sourceId: 'sports-connect',
+                externalTeamName: 'Sharks 12U',
+                season: 'Spring 2026',
+                division: '12U',
+                teamId: 'team-1',
+                lastSyncStatus: 'Documented only'
+            });
+
+            await env.elements.get('clear-registration-provider-btn').click();
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(2);
+            expect(env.state.updateCalls[1].teamData.registrationSource).toBeNull();
         } finally {
             env.cleanup();
         }

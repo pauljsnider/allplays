@@ -47,6 +47,16 @@ export async function listTeamRegistrationReviews() {
 }
 export async function approveTeamRegistration() {}
 export async function rejectTeamRegistration() {}
+export async function listTeamTrackingItems() {
+    return [];
+}
+export async function createTeamTrackingItem() {
+    return 'tracking-item-1';
+}
+export async function listTeamTrackingStatuses() {
+    return [];
+}
+export async function setTeamTrackingStatus() {}
 `;
 
 const UTILS_STUB = `

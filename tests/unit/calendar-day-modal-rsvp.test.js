@@ -189,6 +189,7 @@ function createEnvironment() {
 }
 
 function createDeps(submitRecorder, overrides = {}) {
+    const getMyRsvpCalls = [];
     const eventDate = overrides.eventDate || new Date('2026-03-15T18:00:00.000Z');
     const initialSummary = overrides.initialSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 };
     const updatedSummary = overrides.updatedSummary || { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 };
@@ -237,7 +238,7 @@ function createDeps(submitRecorder, overrides = {}) {
             },
             async getUserProfile() {
                 return {
-                    parentOf: [
+                    parentOf: overrides.parentOf || [
                         { teamId: 'team-1', playerId: 'player-1', playerName: 'Avery' }
                     ]
                 };
@@ -249,8 +250,9 @@ function createDeps(submitRecorder, overrides = {}) {
             async submitRsvpForPlayer() {
                 throw new Error('Unexpected submitRsvpForPlayer call');
             },
-            async getMyRsvp() {
-                return null;
+            async getMyRsvp(teamId, gameId, userId, playerIds) {
+                getMyRsvpCalls.push({ teamId, gameId, userId, playerIds });
+                return overrides.myRsvp || null;
             },
             async getRsvpSummaries() {
                 return new Map([['game-1', initialSummary]]);
@@ -391,7 +393,8 @@ function createDeps(submitRecorder, overrides = {}) {
         },
         eventDate,
         initialSummary,
-        updatedSummary
+        updatedSummary,
+        getMyRsvpCalls
     };
 }
 
@@ -413,6 +416,32 @@ async function bootCalendar(overrides = {}) {
 }
 
 describe('calendar day modal RSVP refresh', () => {
+    it('hydrates calendar RSVP state from linked player RSVP docs', async () => {
+        const { elements, getMyRsvpCalls, window } = await bootCalendar({
+            parentOf: [
+                { teamId: 'team-1', playerId: 'player-1', playerName: 'Avery' },
+                { teamId: 'team-1', playerId: 'player-2', playerName: 'Blake' }
+            ],
+            myRsvp: {
+                id: 'user-1__player-1',
+                userId: 'user-1',
+                playerId: 'player-1',
+                response: 'going'
+            }
+        });
+
+        expect(getMyRsvpCalls).toContainEqual({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            userId: 'user-1',
+            playerIds: ['player-1', 'player-2']
+        });
+
+        window.setTimeRange('all');
+
+        expect(elements.get('calendar-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
+    });
+
     it('keeps the day-detail modal open and refreshes RSVP state after a save', async () => {
         const { elements, submitRecorder, updatedSummary, eventDate, window } = await bootCalendar();
 
