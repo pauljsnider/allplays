@@ -165,7 +165,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(exporter).toContain('export async function printCertificateBlobs');
         expect(exporter).toContain('cert-print-image');
         expect(exporter).toContain('cert-print-dom-frame');
-        expect(css).toContain('size: landscape');
+        expect(css).toContain('size: letter landscape');
         expect(css).toContain('.cert-print-image');
         expect(css).toContain('.cert-print-dom-frame');
     });
