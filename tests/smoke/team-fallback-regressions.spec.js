@@ -502,11 +502,22 @@ export function getReplayTimestampMs(value) {
 `;
 
 const LIVE_GAME_VIDEO_STUB = `
+export const BROADCAST_SETUP_STATUSES = {
+    CHECKING: 'checking_permissions',
+    READY: 'ready_for_managed_stream',
+    FAILED: 'permission_failed'
+};
 export const MAX_HIGHLIGHT_CLIP_MS = 60000;
+export function buildBroadcastSetupSession() {
+    return {};
+}
 export function buildHighlightShareUrl() {
     return '';
 }
 export function canAccessNativeCameraCapture() {
+    return false;
+}
+export function canSaveBroadcastSetupSession() {
     return false;
 }
 export function createHighlightClipDraft() {

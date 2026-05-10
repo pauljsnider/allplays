@@ -18,4 +18,17 @@ describe('edit roster tracking status matrix wiring', () => {
         expect(source).toContain('itemId: trackingItemId');
         expect(source).toContain('await setTeamTrackingStatus(currentTeamId, trackingItemId, player.id, payload);');
     });
+
+    it('escapes roster player values before inserting them into the table HTML', () => {
+        const source = readEditRoster();
+        const rosterRender = source.slice(source.indexOf('tbody.innerHTML = players.map(p => {'), source.indexOf("document.querySelectorAll('.deactivate-btn')"));
+
+        expect(rosterRender).toContain("const playerName = escapeHtml(p.name || 'Unnamed player');");
+        expect(rosterRender).toContain("const playerNumber = escapeHtml(p.number || '-');");
+        expect(rosterRender).toContain("const playerPhotoUrl = escapeHtml(p.photoUrl || '');");
+        expect(rosterRender).toContain('<span>${playerName}</span>');
+        expect(rosterRender).toContain('alt="${playerName}"');
+        expect(rosterRender).not.toContain('<span>${p.name}</span>');
+        expect(rosterRender).not.toContain('alt="${p.name}"');
+    });
 });
