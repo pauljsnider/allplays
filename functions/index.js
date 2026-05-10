@@ -22,6 +22,10 @@ const {
   buildTeamFeePaidUpdate
 } = require('./team-fees-core.cjs');
 const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
+const {
+  buildTeamCalendarIcs,
+  normalizeCalendarRequest
+} = require('./team-calendar-feed-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -477,6 +481,92 @@ const calendarServiceAccount =
 const fetchCalendarRuntime = calendarServiceAccount
   ? { serviceAccount: calendarServiceAccount }
   : {};
+
+async function getCalendarTokenSnapshot(teamId, tokenHash, token) {
+  const tokenRef = firestore.doc(`teams/${teamId}/calendarTokens/${tokenHash}`);
+  const tokenSnap = await tokenRef.get();
+  if (tokenSnap.exists) return tokenSnap;
+
+  // Backward-compatible fallback for any pre-existing URL-safe raw-token documents.
+  if (!/^[A-Za-z0-9_-]+$/.test(token)) return tokenSnap;
+  const legacyRef = firestore.doc(`teams/${teamId}/calendarTokens/${token}`);
+  return legacyRef.get();
+}
+
+async function getCalendarTokenHolderUser(tokenData) {
+  const uid = tokenData.uid || tokenData.userId || tokenData.createdBy || null;
+  if (!uid) return null;
+  const userSnap = await firestore.doc(`users/${uid}`).get();
+  if (!userSnap.exists) return null;
+  return { uid, ...(userSnap.data() || {}) };
+}
+
+function calendarTokenHasTeamAccess({ team, user, tokenData }) {
+  if (!team || !tokenData) return false;
+  const uid = user?.uid || tokenData.uid || tokenData.userId || tokenData.createdBy || null;
+  const email = String(user?.email || tokenData.email || tokenData.userEmail || '').trim().toLowerCase();
+  const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').toLowerCase()) : [];
+  const parentTeamIds = Array.isArray(user?.parentTeamIds) ? user.parentTeamIds : [];
+  return team.ownerId === uid ||
+    (email && adminEmails.includes(email)) ||
+    parentTeamIds.includes(tokenData.teamId);
+}
+
+exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
+  if (req.method !== 'GET') {
+    res.status(405).send('Method not allowed');
+    return;
+  }
+
+  const { teamId, token, tokenHash } = normalizeCalendarRequest(req.query || {});
+  if (!teamId || !token || !tokenHash) {
+    res.status(401).send('Missing calendar token');
+    return;
+  }
+
+  try {
+    const [teamSnap, tokenSnap] = await Promise.all([
+      firestore.doc(`teams/${teamId}`).get(),
+      getCalendarTokenSnapshot(teamId, tokenHash, token)
+    ]);
+
+    if (!teamSnap.exists || !tokenSnap.exists) {
+      res.status(403).send('Invalid calendar token');
+      return;
+    }
+
+    const team = teamSnap.data() || {};
+    const tokenData = { ...(tokenSnap.data() || {}), teamId };
+    if (tokenData.revoked === true || tokenData.disabled === true || tokenData.active === false) {
+      res.status(403).send('Revoked calendar token');
+      return;
+    }
+
+    const expiresAt = tokenData.expiresAt?.toDate ? tokenData.expiresAt.toDate() : (tokenData.expiresAt ? new Date(tokenData.expiresAt) : null);
+    if (expiresAt && !Number.isNaN(expiresAt.getTime()) && expiresAt <= new Date()) {
+      res.status(403).send('Expired calendar token');
+      return;
+    }
+
+    const tokenUser = await getCalendarTokenHolderUser(tokenData);
+    if (!calendarTokenHasTeamAccess({ team, user: tokenUser, tokenData })) {
+      res.status(403).send('Calendar token no longer has team access');
+      return;
+    }
+
+    const eventsSnap = await firestore.collection(`teams/${teamId}/games`).orderBy('date').get();
+    const events = eventsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    const icsText = buildTeamCalendarIcs({ teamId, team, events });
+
+    res.set('Content-Type', 'text/calendar; charset=utf-8');
+    res.set('Content-Disposition', `inline; filename="${teamId}-schedule.ics"`);
+    res.set('Cache-Control', 'private, max-age=300');
+    res.status(200).send(icsText);
+  } catch (error) {
+    console.error('Failed to build team calendar feed:', error);
+    res.status(500).send('Calendar feed failed');
+  }
+});
 
 exports.fetchCalendarIcs = functions
   .runWith(fetchCalendarRuntime)
