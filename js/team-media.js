@@ -11,7 +11,7 @@ import {
     reorderTeamMediaItems,
     moveTeamMediaItems,
     bulkDeleteTeamMediaItems
-} from './db.js?v=12';
+} from './db.js?v=13';
 import { renderTeamAdminBanner, getTeamAccessInfo } from './team-admin-banner.js';
 import { canViewTeamMediaFolder, isSupportedTeamMediaVideoUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
 
