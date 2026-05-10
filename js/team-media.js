@@ -37,7 +37,8 @@ const state = {
     folders: [],
     items: [],
     selectedFolderId: '',
-    selectedIds: new Set()
+    selectedIds: new Set(),
+    actionInFlight: false
 };
 
 const els = {
@@ -295,6 +296,8 @@ async function loadLibrary() {
 }
 
 async function persistAndReload(action, successMessage) {
+    if (state.actionInFlight) return;
+    state.actionInFlight = true;
     clearAlert();
     try {
         await action();
@@ -303,6 +306,8 @@ async function persistAndReload(action, successMessage) {
     } catch (error) {
         console.error('Team media action failed:', error);
         showAlert(isPermissionDenied(error) ? getMediaPermissionMessage() : (error.message || 'Unable to save media changes. Refresh and try again.'), 'error');
+    } finally {
+        state.actionInFlight = false;
     }
 }
 

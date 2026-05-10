@@ -373,7 +373,7 @@ service cloud.firestore {
 
     function canReadTeamMediaFolder(teamId, folderData) {
       return isTeamOwnerOrAdmin(teamId) ||
-             (canAccessTeamChat(teamId) && folderData.get('visibility', 'private') == 'team');
+             (canAccessTeamChat(teamId) && folderData.get('visibility', 'team') == 'team');
     }
 
     function canReadTeamMediaItem(teamId, itemData) {
@@ -383,7 +383,7 @@ service cloud.firestore {
              (canAccessTeamChat(teamId) &&
               folderId is string &&
               exists(folderPath) &&
-              get(folderPath).data.get('visibility', 'private') == 'team');
+              get(folderPath).data.get('visibility', 'team') == 'team');
     }
 
     function isTeamMediaPhotoCreate(teamId, data) {

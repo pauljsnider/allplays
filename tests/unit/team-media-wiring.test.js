@@ -24,6 +24,9 @@ describe('team media page wiring', () => {
         expect(source).toContain('Team media permissions are not enabled');
         expect(source).toContain('updateTeamMediaFolder');
         expect(source).toContain('deleteTeamMediaFolder');
+        expect(source).toContain('actionInFlight: false');
+        expect(source).toContain('if (state.actionInFlight) return;');
+        expect(source).toContain('state.actionInFlight = false;');
     });
 
     it('keeps media reads member-scoped and writes admin-scoped', () => {
@@ -33,6 +36,8 @@ describe('team media page wiring', () => {
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
         expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);');
         expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);');
+        expect(rules).toContain("folderData.get('visibility', 'team') == 'team'");
+        expect(rules).toContain("get(folderPath).data.get('visibility', 'team') == 'team'");
     });
 
     it('configures team-scoped storage rules for album photos', () => {
