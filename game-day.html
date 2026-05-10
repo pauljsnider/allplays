@@ -498,11 +498,12 @@
         import {
             shouldPromptWrapupOnCompletion,
             getWrapupFormState,
+            getWrapupScore,
             buildFinishGamePayload,
             buildMatchReportUrl,
             buildPracticeFeedPrompt,
             buildGameSummaryPrompt
-        } from './js/game-day-wrapup.js?v=1';
+        } from './js/game-day-wrapup.js?v=2';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
         import {
@@ -2363,12 +2364,16 @@ Respond ONLY with valid JSON.`;
                 const model = getAIModel();
                 const events = state.liveEvents.slice(-30);
                 const notes = document.getElementById('post-game-notes').value;
+                const wrapupScore = getWrapupScore({
+                    homeScoreValue: document.getElementById('wrapup-home-score').value,
+                    awayScoreValue: document.getElementById('wrapup-away-score').value
+                });
 
                 const prompt = buildPracticeFeedPrompt({
                     game: state.game,
                     team: state.team,
                     config: state.statConfig,
-                    score: state.score,
+                    score: wrapupScore,
                     coachingNotes: state.coachingNotes,
                     notes,
                     events
@@ -2401,11 +2406,15 @@ Respond ONLY with valid JSON.`;
             try {
                 const model = getAIModel();
                 const notes = document.getElementById('post-game-notes').value;
+                const wrapupScore = getWrapupScore({
+                    homeScoreValue: document.getElementById('wrapup-home-score').value,
+                    awayScoreValue: document.getElementById('wrapup-away-score').value
+                });
                 const prompt = buildGameSummaryPrompt({
                     game: state.game,
                     team: state.team,
                     config: state.statConfig,
-                    score: state.score,
+                    score: wrapupScore,
                     coachingNotes: state.coachingNotes,
                     notes
                 });

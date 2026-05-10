@@ -14,10 +14,19 @@ export function getWrapupFormState({ score, game }) {
     };
 }
 
-export function buildFinishGamePayload({ homeScoreValue, awayScoreValue, postGameNotesValue }) {
+export function getWrapupScore({ homeScoreValue, awayScoreValue }) {
     return {
-        homeScore: parseInt(homeScoreValue, 10) || 0,
-        awayScore: parseInt(awayScoreValue, 10) || 0,
+        home: parseInt(homeScoreValue, 10) || 0,
+        away: parseInt(awayScoreValue, 10) || 0
+    };
+}
+
+export function buildFinishGamePayload({ homeScoreValue, awayScoreValue, postGameNotesValue }) {
+    const score = getWrapupScore({ homeScoreValue, awayScoreValue });
+
+    return {
+        homeScore: score.home,
+        awayScore: score.away,
         postGameNotes: (postGameNotesValue || '').trim(),
         status: 'completed',
         liveStatus: 'completed'
