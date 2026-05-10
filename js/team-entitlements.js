@@ -3,16 +3,18 @@ import {
     TEAM_PASS_TIER,
     buildTeamEntitlementId,
     canAccessPremiumFanFeature,
+    isRecordedReplayTeamPassGateEnabled,
     isTeamEntitlementActive,
     resolveTeamEntitlementSeasonId,
     TEAM_PASS_FEATURES
-} from './team-entitlements-core.js?v=1';
+} from './team-entitlements-core.js?v=2';
 
 export {
     TEAM_PASS_TIER,
     TEAM_PASS_FEATURES,
     buildTeamEntitlementId,
     canAccessPremiumFanFeature,
+    isRecordedReplayTeamPassGateEnabled,
     isTeamEntitlementActive,
     resolveTeamEntitlementSeasonId
 };
