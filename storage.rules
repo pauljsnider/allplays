@@ -1,0 +1,55 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isGlobalAdmin() {
+      return isSignedIn() &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    function isTeamOwnerOrAdmin(teamId) {
+      let team = firestore.get(/databases/(default)/documents/teams/$(teamId)).data;
+      return isSignedIn() &&
+        (team.ownerId == request.auth.uid ||
+         (request.auth.token.email != null &&
+          request.auth.token.email.lower() in team.get('adminEmails', [])) ||
+         isGlobalAdmin());
+    }
+
+    function isParentForTeam(teamId) {
+      let userPath = /databases/(default)/documents/users/$(request.auth.uid);
+      return isSignedIn() &&
+        firestore.exists(userPath) &&
+        teamId in firestore.get(userPath).data.get('parentTeamIds', []);
+    }
+
+    function canAccessTeamMedia(teamId) {
+      return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+    }
+
+    match /team-media/{teamId}/{folderId}/{userId}/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if canAccessTeamMedia(teamId) &&
+        request.auth.uid == userId &&
+        request.resource.size > 0 &&
+        request.resource.size <= 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /stat-sheets/{fileName=**} {
+      allow get, create, delete: if isSignedIn();
+      allow list, update: if false;
+    }
+
+    match /game-clips/{fileName=**} {
+      allow get, create, delete: if isSignedIn();
+      allow list, update: if false;
+    }
+  }
+}

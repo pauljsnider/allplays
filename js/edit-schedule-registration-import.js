@@ -105,7 +105,7 @@ export function buildRegistrationScheduleEventPayload(sourceEvent = {}, { Timest
     return payload;
 }
 
-export function planRegistrationScheduleImport({ sourceEvents = [], existingEvents = [], Timestamp, source = {} } = {}) {
+export function buildRegistrationScheduleImportPreview({ sourceEvents = [], existingEvents = [], Timestamp, source = {} } = {}) {
     const existingByExternalId = new Map();
     (existingEvents || []).forEach((event) => {
         const externalEventId = getExistingExternalEventId(event);
@@ -113,6 +113,29 @@ export function planRegistrationScheduleImport({ sourceEvents = [], existingEven
     });
 
     const seenExternalIds = new Set();
+    return (sourceEvents || []).map((sourceEvent, index) => {
+        const externalEventId = getExternalEventId(sourceEvent);
+        const payload = buildRegistrationScheduleEventPayload(sourceEvent, { Timestamp, source });
+        if (!externalEventId || seenExternalIds.has(externalEventId) || !payload) {
+            return { index, sourceEvent, payload, externalEventId, action: 'skipped', selectable: false, reason: 'Missing or duplicate source event id/date' };
+        }
+        seenExternalIds.add(externalEventId);
+
+        const existing = existingByExternalId.get(externalEventId);
+        if (existing?.id) {
+            return { index, sourceEvent, payload, externalEventId, action: 'update', selectable: true, existingEventId: existing.id, reason: 'Matches an imported event' };
+        }
+
+        const conflict = (existingEvents || []).find((candidate) => !getExistingExternalEventId(candidate) && isSameLocalEvent(sourceEvent, candidate));
+        if (conflict) {
+            return { index, sourceEvent, payload, externalEventId, action: 'conflict', selectable: false, existingEventId: conflict.id || null, reason: 'Likely duplicate: same date/time and opponent/title already exists' };
+        }
+
+        return { index, sourceEvent, payload, externalEventId, action: 'add', selectable: true, reason: 'Ready to import' };
+    });
+}
+
+export function planRegistrationScheduleImport({ sourceEvents = [], existingEvents = [], Timestamp, source = {} } = {}) {
     const operations = [];
     const results = {
         added: 0,
@@ -122,38 +145,26 @@ export function planRegistrationScheduleImport({ sourceEvents = [], existingEven
         conflicts: []
     };
 
-    (sourceEvents || []).forEach((sourceEvent) => {
-        const externalEventId = getExternalEventId(sourceEvent);
-        if (!externalEventId || seenExternalIds.has(externalEventId)) {
+    buildRegistrationScheduleImportPreview({ sourceEvents, existingEvents, Timestamp, source }).forEach((row) => {
+        if (row.action === 'skipped') {
             results.skipped += 1;
             return;
         }
-        seenExternalIds.add(externalEventId);
-
-        const payload = buildRegistrationScheduleEventPayload(sourceEvent, { Timestamp, source });
-        if (!payload) {
-            results.skipped += 1;
+        if (row.action === 'conflict') {
+            results.conflicted += 1;
+            results.conflicts.push({ externalEventId: row.externalEventId, existingEventId: row.existingEventId || null });
             return;
         }
-
-        const existing = existingByExternalId.get(externalEventId);
-        if (existing?.id) {
-            operations.push({ type: 'update', eventId: existing.id, eventType: payload.type, payload });
+        if (row.action === 'update') {
+            operations.push({ type: 'update', eventId: row.existingEventId, eventType: row.payload.type, payload: row.payload });
             results.updated += 1;
             return;
         }
 
-        const conflict = (existingEvents || []).find((candidate) => !getExistingExternalEventId(candidate) && isSameLocalEvent(sourceEvent, candidate));
-        if (conflict) {
-            results.conflicted += 1;
-            results.conflicts.push({ externalEventId, existingEventId: conflict.id || null });
-            return;
-        }
-
-        const addPayload = payload.type === 'game'
-            ? { status: 'scheduled', homeScore: 0, awayScore: 0, ...payload }
-            : payload;
-        operations.push({ type: 'add', eventType: payload.type, payload: addPayload });
+        const addPayload = row.payload.type === 'game'
+            ? { status: 'scheduled', homeScore: 0, awayScore: 0, ...row.payload }
+            : row.payload;
+        operations.push({ type: 'add', eventType: row.payload.type, payload: addPayload });
         results.added += 1;
     });
 

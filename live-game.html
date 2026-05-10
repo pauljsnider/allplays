@@ -263,6 +263,13 @@
           <span>&#9654;</span>
           Play-by-Play
         </h2>
+        <div class="mb-3 rounded-xl border border-teal/20 bg-ink/55 p-3 shrink-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <button id="announcer-toggle" type="button" class="rounded-lg border border-teal/30 px-3 py-2 text-xs font-semibold text-teal hover:bg-slate/70 disabled:cursor-not-allowed disabled:opacity-50">Listen live</button>
+            <button id="announcer-pause" type="button" class="hidden rounded-lg border border-sand/20 px-3 py-2 text-xs font-semibold text-sand/80 hover:bg-slate/70">Pause</button>
+          </div>
+          <p id="announcer-status" class="mt-2 text-xs text-sand/55">Opt in to hear new plays during live games and replay.</p>
+        </div>
         <div id="plays-feed" class="space-y-2 overflow-y-auto flex-1 pr-1">
           <div data-placeholder="plays" class="text-center text-sand/40 py-8">Waiting for game to start...</div>
         </div>
@@ -277,7 +284,7 @@
           playsinline
           preload="metadata"
         ></video>
-        <div id="video-paywall" class="hidden flex-1 rounded-xl border border-gold/25 bg-ink/70 p-6 text-center md:flex md:flex-col md:items-center md:justify-center">
+        <div id="video-paywall" class="hidden flex-1 rounded-xl border border-gold/25 bg-ink/70 p-6 text-center">
           <p class="text-[11px] uppercase tracking-[0.25em] text-gold/80">Team Pass required</p>
           <h2 class="mt-2 text-xl font-display font-bold text-sand">Archived replay video is locked</h2>
           <p class="mt-2 max-w-md text-sm text-sand/70">This premium fan feature unlocks when your team has an active paid Team Pass for the season. Ask a coach or team admin to activate access.</p>
@@ -568,6 +575,6 @@
 
   <div id="footer-container"></div>
 
-  <script type="module" src="js/live-game.js?v=4"></script>
+  <script type="module" src="js/live-game.js?v=6"></script>
 </body>
 </html>

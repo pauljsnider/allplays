@@ -49,6 +49,16 @@ service cloud.firestore {
              );
     }
 
+    function canVideographGame(teamId, gameId) {
+      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let permission = team.get('teamPermissions', {}).get('videography', {});
+      return isSignedIn() &&
+             !isTeamOwnerOrAdmin(teamId) &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
+             request.auth.uid in permission.get('memberIds', []);
+    }
+
     function keepsScorekeeperGameLifecycleVisible() {
       return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
              request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
@@ -61,6 +71,14 @@ service cloud.firestore {
                'completedAt', 'completedBy', 'completedByName', 'updatedAt'
              ]) &&
              keepsScorekeeperGameLifecycleVisible();
+    }
+
+    function isVideographyGameUpdate(teamId, gameId) {
+      return canVideographGame(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
+               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt'
+             ]);
     }
 
     // Check if user is a parent for a specific player.
@@ -80,6 +98,14 @@ service cloud.firestore {
       return isSignedIn() &&
              exists(userPath) &&
              teamId in get(userPath).data.get('parentTeamIds', []);
+    }
+
+    function isPublishedLinkedCertificate(teamId, data) {
+      let playerId = data.get('playerId', '');
+      return data.get('status', '') == 'published' &&
+             playerId is string &&
+             playerId.size() > 0 &&
+             isParentForPlayer(teamId, playerId);
     }
 
     function isPlayerSelf(teamId, playerId) {
@@ -344,6 +370,128 @@ service cloud.firestore {
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
     }
 
+
+    function isTeamMediaPhotoCreate(teamId, data) {
+      return canAccessTeamChat(teamId) &&
+             data.keys().hasAll([
+               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.folderId is string &&
+             data.folderId.size() > 0 &&
+             data.type == 'photo' &&
+             data.url is string &&
+             data.storagePath is string &&
+             data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
+             data.uploadedBy == request.auth.uid &&
+             data.size is number &&
+             data.size > 0 &&
+             data.size <= 10485760 &&
+             data.mimeType is string &&
+             data.mimeType.matches('image/.*') &&
+             data.deleted == false &&
+             data.createdAt == request.time &&
+             data.updatedAt == request.time;
+    }
+
+    function isOwnTeamMediaPhotoSoftDelete(teamId) {
+      return canAccessTeamChat(teamId) &&
+             resource.data.type == 'photo' &&
+             resource.data.uploadedBy == request.auth.uid &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'deleted', 'deletedAt', 'deletedBy', 'updatedAt'
+             ]) &&
+             request.resource.data.deleted == true &&
+             request.resource.data.deletedBy == request.auth.uid &&
+             request.resource.data.deletedAt == request.time &&
+             request.resource.data.updatedAt == request.time;
+    }
+
+    function teamChatRecipientIds(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data.get('chatMemberIds', []);
+    }
+
+    function hasEmptyChatRecipients(data) {
+      return !data.keys().hasAny(['recipientIds']) ||
+             (data.recipientIds is list && data.recipientIds.size() == 0);
+    }
+
+    function hasValidChatRecipientIds(teamId, data) {
+      return data.recipientIds is list &&
+             data.recipientIds.size() > 0 &&
+             data.recipientIds.size() <= 50 &&
+             data.recipientIds.hasOnly(teamChatRecipientIds(teamId));
+    }
+
+    function isFullTeamChatMessage(data) {
+      return data.get('targetType', 'full_team') == 'full_team' &&
+             hasEmptyChatRecipients(data);
+    }
+
+    function isStaffChatMessage(data) {
+      return data.get('targetType', 'full_team') == 'staff' &&
+             data.get('targetRole', 'staff') == 'staff' &&
+             hasEmptyChatRecipients(data);
+    }
+
+    function isIndividualChatMessage(teamId, data) {
+      return data.get('targetType', 'full_team') == 'individuals' &&
+             hasValidChatRecipientIds(teamId, data);
+    }
+
+    function isValidChatMessageTarget(teamId, data) {
+      return isFullTeamChatMessage(data) ||
+             isStaffChatMessage(data) ||
+             isIndividualChatMessage(teamId, data);
+    }
+
+    function isCurrentChatRecipient(data) {
+      return request.auth.uid in data.recipientIds ||
+             ('user:' + request.auth.uid) in data.recipientIds ||
+             (request.auth.token.email != null &&
+              (('email:' + request.auth.token.email) in data.recipientIds ||
+               ('email:' + request.auth.token.email.lower()) in data.recipientIds));
+    }
+
+    function canReadChatMessage(teamId, data) {
+      return canAccessTeamChat(teamId) &&
+             (
+               isFullTeamChatMessage(data) ||
+               isTeamOwnerOrAdmin(teamId) ||
+               data.senderId == request.auth.uid ||
+               (isIndividualChatMessage(teamId, data) && isCurrentChatRecipient(data))
+             );
+    }
+
+    function canAccessChatConversation(teamId, conversationData) {
+      let participantIds = conversationData.get('participantIds', []);
+      let participantRoles = conversationData.get('participantRoles', []);
+      return canAccessTeamChat(teamId) &&
+             (
+               conversationData.get('type', '') == 'team' ||
+               isTeamOwnerOrAdmin(teamId) ||
+               request.auth.uid in participantIds ||
+               ('user:' + request.auth.uid) in participantIds ||
+               (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds) ||
+               'team' in participantRoles
+             );
+    }
+
+    function isChatConversationPayloadValid(data) {
+      return data.keys().hasOnly([
+               'type', 'name', 'participantIds', 'participantRoles', 'lastMessageAt',
+               'mutedBy', 'createdAt', 'updatedAt'
+             ]) &&
+             data.get('type', '') in ['team', 'group', 'direct'] &&
+             data.get('participantIds', []) is list &&
+             data.get('participantRoles', []) is list &&
+             data.get('mutedBy', []) is list;
+    }
+
     function rideshareOfferPath(teamId, gameId, offerId) {
       return /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId);
     }
@@ -605,9 +753,48 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
-      match /trackingItems/{itemId} {
-        allow read: if isTeamOwnerOrAdmin(teamId) || isPublicTrackingItem(resource.data);
+      match /mediaFolders/{folderId} {
+        allow read: if canAccessTeamChat(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /mediaItems/{itemId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /settings/{settingId} {
+        allow read, create, update, delete: if settingId == 'certificateDefaults' &&
+                                            isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateAssets/{assetId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /certificateBatches/{batchId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
+      }
+
+      match /certificates/{certificateId} {
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isPublishedLinkedCertificate(teamId, resource.data);
+        allow create, update: if isTeamOwnerOrAdmin(teamId);
+        allow delete: if isGlobalAdmin();
+
+        match /audit/{eventId} {
+          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow create: if isTeamOwnerOrAdmin(teamId);
+          allow update, delete: if false;
+        }
       }
 
       match /memberTracking/{trackingId} {
@@ -712,7 +899,8 @@ service cloud.firestore {
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
-                        isScorekeepingGameUpdate(teamId, gameId);
+                        isScorekeepingGameUpdate(teamId, gameId) ||
+                        isVideographyGameUpdate(teamId, gameId);
         allow update: if isOpenOfficiatingSelfAssignmentUpdate();
 
         // Events subcollection
@@ -938,12 +1126,15 @@ service cloud.firestore {
 
       // Chat messages subcollection
       match /chatMessages/{messageId} {
-        // Read: any team member (owner, admin, global admin, parent)
-        allow read: if canAccessTeamChat(teamId);
+        // List queries are unfiltered by target metadata in existing clients.
+        // Direct document reads still enforce targeted-message recipient checks.
+        allow list: if canAccessTeamChat(teamId);
+        allow get: if canReadChatMessage(teamId, resource.data);
 
-        // Create: any team member, must be their own senderId
+        // Create: any team member, must be their own senderId and valid target metadata.
         allow create: if canAccessTeamChat(teamId) &&
-                         request.resource.data.senderId == request.auth.uid;
+                         request.resource.data.senderId == request.auth.uid &&
+                         isValidChatMessageTarget(teamId, request.resource.data);
 
         // Update for editing: only message sender, only text and editedAt fields
         allow update: if canAccessTeamChat(teamId) &&
@@ -985,6 +1176,61 @@ service cloud.firestore {
                              ])
                            )
                          );
+      }
+
+      // First-class team messaging conversations. The default team-wide channel
+      // remains teams/{teamId}/chatMessages for compatibility; targeted threads
+      // store messages under their conversation record.
+      match /chatConversations/{conversationId} {
+        allow read: if canAccessChatConversation(teamId, resource.data);
+        allow create: if canAccessTeamChat(teamId) &&
+                         isChatConversationPayloadValid(request.resource.data) &&
+                         canAccessChatConversation(teamId, request.resource.data);
+        allow update: if canAccessChatConversation(teamId, resource.data) &&
+                         canAccessChatConversation(teamId, request.resource.data) &&
+                         isChatConversationPayloadValid(request.resource.data) &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['name', 'participantIds', 'participantRoles', 'lastMessageAt', 'mutedBy', 'updatedAt']);
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /chatMessages/{messageId} {
+          allow read: if canAccessChatConversation(teamId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data);
+          allow create: if canAccessChatConversation(teamId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+                           request.resource.data.senderId == request.auth.uid;
+          allow update: if canAccessChatConversation(teamId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+                           resource.data.senderId == request.auth.uid &&
+                           request.resource.data.diff(resource.data).affectedKeys()
+                               .hasOnly(['text', 'editedAt']);
+          allow update: if canAccessChatConversation(teamId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+                           request.resource.data.diff(resource.data).affectedKeys()
+                               .hasOnly(['deleted']) &&
+                           request.resource.data.deleted == true &&
+                           (resource.data.senderId == request.auth.uid ||
+                            isTeamOwnerOrAdmin(teamId));
+          allow update: if canAccessChatConversation(teamId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
+                           (
+                             request.resource.data.diff(resource.data).affectedKeys()
+                               .hasOnly([
+                                 'reactions.thumbs_up',
+                                 'reactions.heart',
+                                 'reactions.joy',
+                                 'reactions.wow',
+                                 'reactions.sad',
+                                 'reactions.clap'
+                               ]) ||
+                             (
+                               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
+                               request.resource.data.get('reactions', {}).keys().hasOnly([
+                                 'thumbs_up',
+                                 'heart',
+                                 'joy',
+                                 'wow',
+                                 'sad',
+                                 'clap'
+                               ])
+                             )
+                           );
+        }
       }
     }
 

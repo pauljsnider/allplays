@@ -226,11 +226,21 @@ describe('homepage index workflow', () => {
         expect(elements.get('past-games-list').textContent).toBe('Unable to load replays');
     });
 
-    it('excludes cancelled upcoming games from the homepage list', async () => {
+    it('excludes canceled and deleted upcoming games from the homepage list', async () => {
         const cancelledGame = createGame({
             id: 'game-cancelled',
             opponent: 'Cancelled Falcons',
             status: 'cancelled'
+        });
+        const canceledGame = createGame({
+            id: 'game-canceled',
+            opponent: 'Canceled Bears',
+            status: 'canceled'
+        });
+        const deletedGame = createGame({
+            id: 'game-deleted',
+            opponent: 'Deleted Hawks',
+            status: 'deleted'
         });
         const scheduledGame = createGame({
             id: 'game-4',
@@ -238,7 +248,7 @@ describe('homepage index workflow', () => {
         });
 
         const { elements } = await runHomepage({
-            upcomingGames: [cancelledGame, scheduledGame]
+            upcomingGames: [cancelledGame, canceledGame, deletedGame, scheduledGame]
         });
 
         const liveMarkup = elements.get('live-games-list').innerHTML;
@@ -246,6 +256,10 @@ describe('homepage index workflow', () => {
         expect(liveMarkup).toContain('vs Owls');
         expect(liveMarkup).not.toContain('gameId=game-cancelled');
         expect(liveMarkup).not.toContain('Cancelled Falcons');
+        expect(liveMarkup).not.toContain('gameId=game-canceled');
+        expect(liveMarkup).not.toContain('Canceled Bears');
+        expect(liveMarkup).not.toContain('gameId=game-deleted');
+        expect(liveMarkup).not.toContain('Deleted Hawks');
     });
 
     it('escapes untrusted homepage game fields before inserting markup', async () => {

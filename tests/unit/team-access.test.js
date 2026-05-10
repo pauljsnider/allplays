@@ -158,10 +158,12 @@ describe('team access helpers', () => {
   it('normalizes scoped volunteer permissions without granting admin access', () => {
     expect(normalizeTeamPermissions({
       scorekeeping: { mode: 'selected', memberIds: [' user-1 ', 'user-1', '', null, 'user-2'] },
-      streaming: { mode: 'all_confirmed', memberIds: ['user-3'] }
+      streaming: { mode: 'all_confirmed', memberIds: ['user-3'] },
+      videography: { mode: 'selected', memberIds: [' video-1 ', 'video-1'] }
     })).toEqual({
       scorekeeping: { mode: 'selected', memberIds: ['user-1', 'user-2'] },
-      streaming: { mode: 'all_confirmed', memberIds: [] }
+      streaming: { mode: 'all_confirmed', memberIds: [] },
+      videography: { mode: 'selected', memberIds: ['video-1'] }
     });
 
     expect(hasFullTeamAccess({ uid: 'user-1' }, {
@@ -170,6 +172,14 @@ describe('team access helpers', () => {
         scorekeeping: { mode: 'selected', memberIds: ['user-1'] }
       }
     })).toBe(false);
+  });
+
+  it('defaults videography to selected members only', () => {
+    expect(normalizeTeamPermissions()).toEqual({
+      scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+      streaming: { mode: 'all_confirmed', memberIds: [] },
+      videography: { mode: 'selected', memberIds: [] }
+    });
   });
 
 });

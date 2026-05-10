@@ -1,0 +1,172 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+function readRepoFile(relativePath) {
+    return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
+
+describe('awards and certificates workflow wiring', () => {
+    it('adds the certificates studio page with the expected workflow mount points', () => {
+        const html = readRepoFile('certificates.html');
+        const studio = readRepoFile('js/certificates/studio.js');
+        const css = readRepoFile('css/certificates.css');
+        const assets = readRepoFile('js/certificates/assets.js');
+        const firebaseConfig = readRepoFile('firebase.json');
+        const packageJson = readRepoFile('package.json');
+
+        expect(html).toContain('<link rel="stylesheet" href="css/certificates.css?v=5">');
+        expect(html).toContain('id="cert-setup"');
+        expect(html).toContain('id="cert-player-selection"');
+        expect(html).toContain('id="cert-review-grid"');
+        expect(html).toContain('id="cert-preview"');
+        expect(html).toContain('id="cert-custom-recipient-btn"');
+        expect(html).toContain('Start new run');
+        expect(html).toContain('View saved work');
+        expect(html).toContain('Create one-off certificate');
+        expect(html).toContain('./js/certificates/studio.js?v=7');
+        expect(studio).toContain("from './templates.js?v=2'");
+        expect(studio).toContain("from './renderer.js?v=2'");
+        expect(studio).toContain("from './aiDescriptions.js?v=4'");
+        expect(studio).toContain("from '../db.js?v=33'");
+
+        expect(studio).toContain('Create drafts for selected players');
+        expect(studio).toContain('Saved work');
+        expect(studio).toContain('showSavedWorkMode');
+        expect(studio).toContain('renderSavedWorkLanding');
+        expect(studio).toContain('Save setup for future runs');
+        expect(studio).toContain('Reset setup');
+        expect(studio).toContain('data-font-slot');
+        expect(studio).toContain('Previous uploads');
+        expect(studio).toContain('Save progress');
+        expect(studio).toContain('Publish certificates');
+        expect(studio).toContain('Print selected');
+        expect(studio).toContain('PNG selected');
+        expect(studio).toContain('downloadDraftPngById');
+        expect(studio).toContain('data-open-batch');
+        expect(studio).toContain('data-open-certificate');
+        expect(studio).toContain('data-share-batch');
+        expect(studio).toContain('data-share-certificate');
+        expect(studio).toContain('data-toggle-saved-list');
+        expect(studio).toContain('Show fewer');
+        expect(studio).toContain('formatSavedTime');
+        expect(studio).toContain('shareSavedWork');
+        expect(studio).toContain('certificateLimit = 6');
+        expect(studio).toContain('Showing ${visible.length} of ${items.length}');
+        expect(studio).toContain('openSavedBatch');
+        expect(studio).toContain('openSavedCertificate');
+        expect(studio).toContain("params.get('certificateId')");
+        expect(studio).toContain("params.get('batchId')");
+        expect(studio).toContain('renderParentCertificateDetail');
+        expect(studio).toContain('cert-parent-png-btn');
+        expect(studio).toContain('getParentCertificateLinks');
+        expect(studio).toContain('parentPlayerKeys');
+        expect(studio).toContain('saveDraftsToLocalHistory');
+        expect(studio).toContain('startCustomCertificate');
+        expect(studio).toContain('selectRecentCompletedGames');
+        expect(studio).toContain("'allplays.ai'");
+        expect(studio).toContain("window.location.href = 'login.html'");
+        expect(studio).toContain('loadOptionalCertificateResource');
+        expect(studio).toContain('certificatePersistenceUnavailable');
+        expect(studio).toContain('Deploy the Firestore certificate rules');
+        expect(studio).toContain('readFileAsDataUrl');
+        expect(studio).toContain('formatImageUploadError');
+        expect(studio).toContain('Local preview only');
+        expect(studio).toContain('Uploaded for this run');
+        expect(studio).toContain('backgroundOpacity');
+        expect(css).toContain('@media print');
+        expect(css).toContain('.cert-template-banner');
+        expect(css).toContain('.cert-image-thumb');
+        expect(css).toContain('.cert-upload-button');
+        expect(css).toContain('.cert-image-badge');
+        expect(css).toContain('.cert-image-stack');
+        expect(css).toContain('.cert-image-opacity');
+        expect(assets).toContain('MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024');
+        expect(assets).toContain("image/png', 'image/jpeg', 'image/jpg', 'image/webp");
+        expect(assets).toContain('sanitizeCertificateFilename');
+        expect(assets).toContain('validateCertificateStorageId');
+        expect(assets).toContain('/^[A-Za-z0-9_-]+$/');
+        expect(firebaseConfig).toContain('"host": "localhost"');
+        expect(firebaseConfig).toContain('"port": 8000');
+        expect(packageJson).toContain('"serve:firebase"');
+    });
+
+    it('keeps generate/edit/print local until the coach explicitly saves or publishes', () => {
+        const studio = readRepoFile('js/certificates/studio.js');
+        const generateBody = studio.match(/async function generateTeamCertificates\(\) \{[\s\S]*?function renderReview\(\)/)?.[0] || '';
+        const saveBody = studio.match(/async function saveDrafts\(status\) \{[\s\S]*?function renderReviewPreview\(\)/)?.[0] || '';
+
+        expect(generateBody).toContain('const batchId = state.demoMode ? `demo-batch-${Date.now()}` : null;');
+        expect(generateBody).not.toContain('createCertificateBatch(state.teamId');
+        expect(generateBody).not.toContain('createCertificate(state.teamId');
+        expect(saveBody).toContain('createCertificateBatch(state.teamId');
+        expect(saveBody).toContain('createCertificate(state.teamId');
+    });
+
+    it('adds coach and parent navigation without exposing certificates on the public team page', () => {
+        const banner = readRepoFile('js/team-admin-banner.js');
+        const dashboard = readRepoFile('dashboard.html');
+        const parentDashboard = readRepoFile('parent-dashboard.html');
+        const publicTeam = readRepoFile('team.html');
+
+        expect(banner).toContain('certificates: `certificates.html#teamId=${teamId}`');
+        expect(banner).toContain("label: 'Certificates', iconName: 'certificates', active: active === 'certificates'");
+        expect(dashboard).toContain('href="certificates.html#teamId=${team.id}"');
+        expect(parentDashboard).toContain('listCertificatesForPlayer');
+        expect(parentDashboard).toContain('Certificates');
+        expect(publicTeam).not.toContain('certificates.html#teamId=');
+    });
+
+    it('adds Firestore certificate helpers, rules, and indexes', () => {
+        const db = readRepoFile('js/db.js');
+        const rules = readRepoFile('firestore.rules');
+        const indexes = readRepoFile('firestore.indexes.json');
+
+        [
+            'getCertificateDefaults',
+            'setCertificateDefaults',
+            'createCertificateBatch',
+            'listCertificateBatches',
+            'createCertificate',
+            'updateCertificate',
+            'getCertificate',
+            'archiveCertificate',
+            'listCertificatesForPlayer'
+        ].forEach((helperName) => {
+            expect(db).toContain(`export async function ${helperName}`);
+        });
+        expect(db).toContain('export function canAccessCertificates');
+        expect(db).toContain('export function canViewSavedCertificate');
+        expect(db).toContain('options.limit || 250');
+        expect(db).toContain('options.limit || 100');
+
+        expect(rules).toContain('match /certificateBatches/{batchId}');
+        expect(rules).toContain('match /certificates/{certificateId}');
+        expect(rules).toContain('isPublishedLinkedCertificate(teamId, resource.data)');
+        expect(rules).toContain('match /settings/{settingId}');
+
+        expect(indexes).toContain('"collectionGroup": "certificates"');
+        expect(indexes).toContain('"collectionGroup": "certificateBatches"');
+        expect(indexes).toContain('"fieldPath": "playerId"');
+    });
+
+    it('wires team color editing for certificate palettes and PNG-backed print', () => {
+        const editTeam = readRepoFile('edit-team.html');
+        const studio = readRepoFile('js/certificates/studio.js');
+        const exporter = readRepoFile('js/certificates/exporter.js');
+        const css = readRepoFile('css/certificates.css');
+
+        expect(editTeam).toContain('id="teamColorPrimary"');
+        expect(editTeam).toContain('id="teamColorSecondary"');
+        expect(editTeam).toContain('colors: {');
+        expect(editTeam).toContain("primary: normalizeHexColor(document.getElementById('teamColorPrimary').value");
+        expect(studio).toContain('printCertificateBlobs');
+        expect(studio).toContain('blobs.push(await renderDraftToBlob(draft));');
+        expect(studio).toContain('printCertificates(drafts.map');
+        expect(exporter).toContain('export async function printCertificateBlobs');
+        expect(exporter).toContain('cert-print-image');
+        expect(exporter).toContain('cert-print-dom-frame');
+        expect(css).toContain('size: 11in 8.5in');
+        expect(css).toContain('.cert-print-image');
+        expect(css).toContain('.cert-print-dom-frame');
+    });
+});

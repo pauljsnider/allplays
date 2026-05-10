@@ -22,6 +22,7 @@ import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } f
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
 import { checkAuth } from './auth.js?v=13';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
+import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
   buildReplaySessionState,
   collectReplayEventWindow,
@@ -30,8 +31,8 @@ import {
   getReplayStartTimeAfterSpeedChange,
   getReplayTimestampMs
 } from './live-game-replay.js?v=3';
-import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=4';
-import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=1';
+import { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=5';
+import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
@@ -99,6 +100,8 @@ const state = {
   selectedClipEvent: null
 };
 
+const playAnnouncer = createPlayAnnouncer();
+
 const els = {
   homeTeamName: q('#home-team-name'),
   awayTeamName: q('#away-team-name'),
@@ -113,6 +116,9 @@ const els = {
   connectionBanner: q('#connection-banner'),
 
   playsFeed: q('#plays-feed'),
+  announcerToggle: q('#announcer-toggle'),
+  announcerPause: q('#announcer-pause'),
+  announcerStatus: q('#announcer-status'),
   statsList: q('#stats-list'),
   opponentStats: q('#opponent-stats'),
   lineupOnCourt: q('#lineup-oncourt'),
@@ -249,6 +255,51 @@ function updateShareButton() {
 
 function canAttachScoreLinkedClips() {
   return hasFullTeamAccess(state.user, state.team);
+}
+
+function renderAnnouncerControls() {
+  if (!els.announcerToggle || !els.announcerPause || !els.announcerStatus) return;
+  const supported = playAnnouncer.isSupported();
+  const enabled = playAnnouncer.isEnabled();
+  const paused = playAnnouncer.isPaused();
+
+  els.announcerToggle.disabled = !supported;
+  els.announcerToggle.textContent = enabled ? 'Stop announcer' : 'Listen live';
+  els.announcerToggle.classList.toggle('bg-teal', enabled);
+  els.announcerToggle.classList.toggle('text-ink', enabled);
+  els.announcerPause.classList.toggle('hidden', !enabled);
+  els.announcerPause.textContent = paused ? 'Resume' : 'Pause';
+
+  if (!supported) {
+    els.announcerStatus.textContent = 'Play Announcer is not supported in this browser.';
+  } else if (!enabled) {
+    els.announcerStatus.textContent = 'Opt in to hear new plays during live games and replay.';
+  } else if (paused) {
+    els.announcerStatus.textContent = 'Announcer paused.';
+  } else {
+    els.announcerStatus.textContent = state.isReplay ? 'Replay announcer on.' : 'Live announcer on.';
+  }
+}
+
+function initAnnouncerControls() {
+  renderAnnouncerControls();
+  if (els.announcerToggle) {
+    els.announcerToggle.addEventListener('click', () => {
+      playAnnouncer.setEnabled(!playAnnouncer.isEnabled());
+      renderAnnouncerControls();
+    });
+  }
+  if (els.announcerPause) {
+    els.announcerPause.addEventListener('click', () => {
+      playAnnouncer.setPaused(!playAnnouncer.isPaused());
+      renderAnnouncerControls();
+    });
+  }
+}
+
+function announcePlayEvent(event, shouldAnnounce = true) {
+  if (!shouldAnnounce) return;
+  playAnnouncer.announceEvent(event, { playbackSessionId: state.isReplay ? 'replay' : 'live' });
 }
 
 function initTabs() {
@@ -423,8 +474,9 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
   const previousPlayback = state.videoPlayback;
   const shouldReloadPlayback = shouldReloadVideoPlayback(previousPlayback, nextPlayback);
   state.videoPlayback = nextPlayback;
+  const recordedReplayGateEnabled = isRecordedReplayTeamPassGateEnabled({ game: state.game, team: state.team });
   const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
-  const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && !videoUnlocked;
+  const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled && !videoUnlocked;
   const canUseNativeCamera = userCanUseNativeCamera();
   const hasMediaHub = hasMediaHubContent(state.videoPlayback?.mediaHub);
   const hasGameClips = Boolean(state.videoPlayback?.gameClips?.length);
@@ -1601,7 +1653,7 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
   renderLineup();
 }
 
-function processNewEvents(events) {
+function processNewEvents(events, { announce = true } = {}) {
   const newEvents = collectVisibleLiveEventsSequentially(events, {
     seenIds: state.eventIds,
     resetBoundaryMs: state.lastResetAt
@@ -1635,6 +1687,7 @@ function processNewEvents(events) {
     }
     if (transition.shouldRenderPlayByPlay) {
       renderPlayByPlay(event, true);
+      announcePlayEvent(event, announce);
     }
     if (transition.shouldRenderStats) {
       renderStats();
@@ -1694,6 +1747,7 @@ function startLiveEvents() {
   state.liveEventsFirstLoad = true;
   const unsubEvents = subscribeLiveEvents(state.teamId, state.gameId, (events) => {
     setConnectionBanner(false);
+    const isInitialLiveEventsLoad = state.liveEventsFirstLoad;
     if (state.liveEventsFirstLoad && events.length === 0) {
       // Show a message while waiting for first events
       const placeholder = els.playsFeed?.querySelector?.('[data-placeholder="plays"]');
@@ -1708,7 +1762,7 @@ function startLiveEvents() {
       }
     }
     state.liveEventsFirstLoad = false;
-    processNewEvents(events);
+    processNewEvents(events, { announce: !isInitialLiveEventsLoad });
   }, (error) => {
     console.warn('Live events subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));
@@ -1926,7 +1980,7 @@ function seekReplay(targetMs) {
     elapsedMs: targetMs
   });
   if (replayWindow.events.length) {
-    processNewEvents(replayWindow.events);
+    processNewEvents(replayWindow.events, { announce: false });
   }
   state.replayIndex = replayWindow.nextReplayIndex;
 
@@ -2265,11 +2319,15 @@ async function init() {
   state.lastResetAt = getTimestampMs(game.liveResetAt) || 0;
 
   const seasonId = resolveTeamEntitlementSeasonId({ game, team });
-  try {
-    state.teamEntitlement = await getTeamEntitlementStatus({ teamId: state.teamId, seasonId });
-  } catch (error) {
-    console.warn('Failed to load team entitlement:', error);
-    state.teamEntitlement = { active: false, reason: 'load-failed', seasonId, tier: 'team-pass' };
+  if (isRecordedReplayTeamPassGateEnabled({ game, team })) {
+    try {
+      state.teamEntitlement = await getTeamEntitlementStatus({ teamId: state.teamId, seasonId });
+    } catch (error) {
+      console.warn('Failed to load team entitlement:', error);
+      state.teamEntitlement = { active: false, reason: 'load-failed', seasonId, tier: 'team-pass' };
+    }
+  } else {
+    state.teamEntitlement = { active: false, reason: 'feature-disabled', seasonId, tier: 'team-pass' };
   }
 
   refreshVideoPanel({ force: true });
@@ -2282,6 +2340,7 @@ async function init() {
   initReplayControls();
   initRecordedReplayControls();
   initNativeCameraControls();
+  initAnnouncerControls();
   if (els.shareGameBtn) {
     els.shareGameBtn.addEventListener('click', async () => {
       const isReport = state.isReplay || state.game?.status === 'completed' || state.game?.liveStatus === 'completed';
