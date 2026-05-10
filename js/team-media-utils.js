@@ -1,3 +1,5 @@
+import { hasFullTeamAccess } from './team-access.js';
+
 const VIDEO_HOST_PATTERNS = [
     /(^|\.)youtube\.com$/,
     /(^|\.)youtu\.be$/,
@@ -10,13 +12,13 @@ function asTrimmedString(value) {
     return String(value || '').trim();
 }
 
-function getSafeUrl(value) {
+function getSupportedVideoUrl(value) {
     const raw = asTrimmedString(value);
     if (!raw) return null;
 
     try {
         const url = new URL(raw);
-        if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+        if (!['http:', 'https:'].includes(url.protocol)) return null;
         const host = url.hostname.toLowerCase();
         if (!VIDEO_HOST_PATTERNS.some((pattern) => pattern.test(host))) return null;
         return url.toString();
@@ -25,8 +27,18 @@ function getSafeUrl(value) {
     }
 }
 
+export function canManageTeamMedia(user, team) {
+    return hasFullTeamAccess(user, team);
+}
+
+export function canViewTeamMediaFolder(folder, accessLevel) {
+    if (!folder) return false;
+    if (folder.visibility === 'managers') return accessLevel === 'full';
+    return ['full', 'parent'].includes(accessLevel);
+}
+
 export function isSupportedTeamMediaVideoUrl(value) {
-    return Boolean(getSafeUrl(value));
+    return Boolean(getSupportedVideoUrl(value));
 }
 
 export function normalizeTeamMediaFolderDraft(draft = {}) {
@@ -45,7 +57,7 @@ export function normalizeTeamMediaFolderDraft(draft = {}) {
 
 export function normalizeTeamMediaVideoDraft(draft = {}) {
     const title = asTrimmedString(draft.title);
-    const url = getSafeUrl(draft.url);
+    const url = getSupportedVideoUrl(draft.url);
 
     if (!title) {
         throw new Error('Video title is required.');
@@ -62,8 +74,52 @@ export function normalizeTeamMediaVideoDraft(draft = {}) {
     };
 }
 
-export function canViewTeamMediaFolder(folder, accessLevel) {
-    if (!folder) return false;
-    if (folder.visibility === 'managers') return accessLevel === 'full';
-    return ['full', 'parent'].includes(accessLevel);
+export function normalizeMediaOrderIds(ids = []) {
+    return Array.from(new Set((Array.isArray(ids) ? ids : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)));
+}
+
+export function buildReorderUpdates(ids = []) {
+    return normalizeMediaOrderIds(ids).map((id, index) => ({ id, order: index }));
+}
+
+export function normalizeSelectedMediaIds(ids = []) {
+    return normalizeMediaOrderIds(ids);
+}
+
+export function buildMoveUpdates(ids = [], targetFolderId, startOrder = 0) {
+    const folderId = String(targetFolderId || '').trim();
+    if (!folderId) {
+        throw new Error('Choose a destination folder.');
+    }
+
+    const firstOrder = Number.isFinite(Number(startOrder)) ? Number(startOrder) : 0;
+    return normalizeSelectedMediaIds(ids).map((id, index) => ({
+        id,
+        folderId,
+        order: firstOrder + index
+    }));
+}
+
+export function buildBulkDeleteUpdates(ids = []) {
+    return normalizeSelectedMediaIds(ids).map((id) => ({ id, deleted: true }));
+}
+
+export function isSafeTeamMediaUrl(value) {
+    try {
+        const url = new URL(String(value || '').trim());
+        return ['http:', 'https:'].includes(url.protocol);
+    } catch (error) {
+        return false;
+    }
+}
+
+export function sortByMediaOrder(items = []) {
+    return [...items].sort((a, b) => {
+        const aOrder = Number.isFinite(Number(a?.order)) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
+        const bOrder = Number.isFinite(Number(b?.order)) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return String(a?.name || a?.title || a?.id || '').localeCompare(String(b?.name || b?.title || b?.id || ''));
+    });
 }

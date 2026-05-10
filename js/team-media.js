@@ -1,224 +1,258 @@
-import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=13';
 import {
     getTeam,
-    getUserProfile,
-    getUnreadChatCounts,
-    subscribeToTeamMediaFolders,
+    getTeamMediaFolders,
+    getTeamMediaItems,
     createTeamMediaFolder,
-    addTeamMediaVideoLink
-} from './db.js?v=31';
-import { renderTeamAdminBanner, getTeamAccessInfo } from './team-admin-banner.js';
-import { canViewTeamMediaFolder, isSupportedTeamMediaVideoUrl } from './team-media-utils.js?v=1';
+    createTeamMediaLink,
+    reorderTeamMediaFolders,
+    reorderTeamMediaItems,
+    moveTeamMediaItems,
+    bulkDeleteTeamMediaItems
+} from './db.js?v=12';
+import { canManageTeamMedia, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
 
-const els = {
-    header: document.getElementById('header-container'),
-    footer: document.getElementById('footer-container'),
-    banner: document.getElementById('team-nav-banner'),
-    managerTools: document.getElementById('manager-tools'),
-    folderForm: document.getElementById('folder-form'),
-    folderName: document.getElementById('folder-name'),
-    folderVisibility: document.getElementById('folder-visibility'),
-    videoForm: document.getElementById('video-form'),
-    videoFolder: document.getElementById('video-folder'),
-    videoTitle: document.getElementById('video-title'),
-    videoUrl: document.getElementById('video-url'),
-    status: document.getElementById('status'),
-    folders: document.getElementById('media-folders')
+const state = {
+    teamId: '',
+    team: null,
+    user: null,
+    canManage: false,
+    folders: [],
+    items: [],
+    selectedIds: new Set()
 };
 
-let currentUser = null;
-let currentTeam = null;
-let accessInfo = { hasAccess: false, accessLevel: null };
-let unsubscribe = null;
-let allFolders = [];
+const els = {
+    title: document.getElementById('team-media-title'),
+    subtitle: document.getElementById('team-media-subtitle'),
+    alert: document.getElementById('team-media-alert'),
+    adminPanel: document.getElementById('team-media-admin-panel'),
+    bulkActions: document.getElementById('bulk-actions'),
+    selectedCount: document.getElementById('selected-count'),
+    foldersList: document.getElementById('folders-list'),
+    folderForm: document.getElementById('folder-form'),
+    folderName: document.getElementById('folder-name'),
+    linkForm: document.getElementById('link-form'),
+    linkFolder: document.getElementById('link-folder'),
+    linkTitle: document.getElementById('link-title'),
+    linkUrl: document.getElementById('link-url'),
+    moveFolder: document.getElementById('move-folder'),
+    moveSelected: document.getElementById('move-selected'),
+    deleteSelected: document.getElementById('delete-selected'),
+    backLink: document.getElementById('team-back-link')
+};
 
-renderFooter(els.footer);
-
-function getTeamIdFromUrl() {
-    const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
-    const searchParams = new URLSearchParams(window.location.search);
-    return hashParams.get('teamId') || searchParams.get('teamId');
+function getTeamIdFromLocation() {
+    const params = new URLSearchParams(window.location.search);
+    const queryTeamId = params.get('teamId');
+    if (queryTeamId) return queryTeamId;
+    return String(window.location.hash || '').replace(/^#teamId=/, '').replace(/^#/, '');
 }
 
-function setStatus(message, isError = false) {
-    els.status.textContent = message || '';
-    els.status.className = `px-6 pt-4 text-sm ${isError ? 'text-red-600' : 'text-gray-500'}`;
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[char]));
 }
 
-function renderVideoFolderOptions() {
-    const managerFolders = allFolders.filter((folder) => canViewTeamMediaFolder(folder, 'full'));
-    els.videoFolder.innerHTML = managerFolders.length
-        ? managerFolders.map((folder) => `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.name || 'Untitled folder')}</option>`).join('')
-        : '<option value="">Create a folder first</option>';
-    els.videoForm.querySelector('button[type="submit"]').disabled = managerFolders.length === 0;
+function showAlert(message, type = 'info') {
+    els.alert.textContent = message;
+    els.alert.className = `mb-4 rounded-xl border px-4 py-3 text-sm ${type === 'error'
+        ? 'border-red-200 bg-red-50 text-red-700'
+        : 'border-green-200 bg-green-50 text-green-700'}`;
+    els.alert.classList.remove('hidden');
 }
 
-function renderFolders() {
-    const visibleFolders = allFolders.filter((folder) => canViewTeamMediaFolder(folder, accessInfo.accessLevel));
+function clearAlert() {
+    els.alert.classList.add('hidden');
+    els.alert.textContent = '';
+}
 
-    if (accessInfo.accessLevel === 'full') {
-        renderVideoFolderOptions();
-    }
+function getItemsForFolder(folderId) {
+    return sortByMediaOrder(state.items
+        .filter((item) => item.folderId === folderId)
+        .filter((item) => isSafeTeamMediaUrl(item.url)));
+}
 
-    if (visibleFolders.length === 0) {
-        els.folders.innerHTML = `
-            <div class="lg:col-span-2 text-center py-10 text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-300">
-                No media folders are visible yet.
-            </div>
-        `;
-        setStatus('');
+function renderFolderOptions() {
+    const options = state.folders.map((folder) => `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.name || 'Untitled folder')}</option>`).join('');
+    const placeholder = '<option value="">Choose folder</option>';
+    els.linkFolder.innerHTML = placeholder + options;
+    els.moveFolder.innerHTML = placeholder + options;
+}
+
+function renderBulkActions() {
+    const count = state.selectedIds.size;
+    els.selectedCount.textContent = String(count);
+    els.bulkActions.classList.toggle('hidden', !state.canManage || count === 0);
+}
+
+function render() {
+    els.title.textContent = state.team?.name ? `${state.team.name} Media` : 'Media Library';
+    els.subtitle.textContent = state.canManage
+        ? 'Select video links to move or delete. Use up/down controls to persist ordering.'
+        : 'Organized video links and highlights for this team.';
+    els.adminPanel.classList.toggle('hidden', !state.canManage);
+    els.backLink.href = state.teamId ? `team.html#teamId=${encodeURIComponent(state.teamId)}` : 'team.html';
+    renderFolderOptions();
+    renderBulkActions();
+
+    if (state.folders.length === 0) {
+        els.foldersList.innerHTML = `<div class="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500">${state.canManage ? 'No folders yet. Add one to start organizing video links.' : 'No media folders have been shared yet.'}</div>`;
         return;
     }
 
-    els.folders.innerHTML = visibleFolders.map((folder) => {
-        const visibilityLabel = folder.visibility === 'managers' ? 'Managers only' : 'Members';
-        const items = Array.isArray(folder.items) ? folder.items : [];
-        const itemHtml = items.length
-            ? items.map((item) => `
-                <li class="flex items-start gap-3 py-3 border-t border-gray-100 first:border-t-0">
-                    <div class="w-9 h-9 rounded-lg bg-red-50 text-red-600 flex items-center justify-center shrink-0">▶</div>
-                    <div class="min-w-0 flex-1">
-                        <a href="${escapeHtml(item.url || '#')}" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:text-primary-900 break-words">${escapeHtml(item.title || 'Untitled video')}</a>
-                        <div class="text-xs text-gray-500 break-all mt-1">${escapeHtml(item.url || '')}</div>
+    els.foldersList.innerHTML = state.folders.map((folder, folderIndex) => {
+        const items = getItemsForFolder(folder.id);
+        const folderControls = state.canManage ? `
+            <div class="flex gap-2">
+                <button type="button" data-folder-move="up" data-folder-id="${escapeHtml(folder.id)}" ${folderIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
+                <button type="button" data-folder-move="down" data-folder-id="${escapeHtml(folder.id)}" ${folderIndex === state.folders.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>
+            </div>` : '';
+        const itemRows = items.length === 0
+            ? '<div class="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500">No video links in this folder.</div>'
+            : items.map((item, itemIndex) => `
+                <div class="flex flex-col gap-3 rounded-xl border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between" data-item-id="${escapeHtml(item.id)}">
+                    <div class="flex items-start gap-3">
+                        ${state.canManage ? `<input type="checkbox" data-select-item="${escapeHtml(item.id)}" ${state.selectedIds.has(item.id) ? 'checked' : ''} class="mt-1 h-4 w-4 rounded border-gray-300">` : ''}
+                        <div>
+                            <a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:text-primary-900">${escapeHtml(item.title || 'Untitled video')}</a>
+                            <div class="break-all text-xs text-gray-500">${escapeHtml(item.url)}</div>
+                        </div>
                     </div>
-                </li>
-            `).join('')
-            : '<li class="py-4 text-sm text-gray-500 border-t border-gray-100">No video links in this folder yet.</li>';
+                    ${state.canManage ? `<div class="flex gap-2">
+                        <button type="button" data-item-move="up" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
+                        <button type="button" data-item-move="down" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === items.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>
+                    </div>` : ''}
+                </div>
+            `).join('');
 
         return `
-            <article class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                <div class="p-5 border-b border-gray-100 bg-gray-50">
-                    <div class="flex items-start justify-between gap-3">
-                        <h2 class="text-lg font-bold text-gray-900">${escapeHtml(folder.name || 'Untitled folder')}</h2>
-                        <span class="text-xs font-semibold rounded-full px-2.5 py-1 ${folder.visibility === 'managers' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}">${visibilityLabel}</span>
+            <article class="rounded-2xl border border-gray-200 bg-white shadow-sm">
+                <header class="flex items-center justify-between gap-3 border-b border-gray-100 p-5">
+                    <div>
+                        <h2 class="text-xl font-bold">${escapeHtml(folder.name || 'Untitled folder')}</h2>
+                        <p class="text-sm text-gray-500">${items.length} item${items.length === 1 ? '' : 's'}</p>
                     </div>
-                </div>
-                <ul class="px-5 divide-y-0">${itemHtml}</ul>
-            </article>
-        `;
+                    ${folderControls}
+                </header>
+                <div class="space-y-3 p-5">${itemRows}</div>
+            </article>`;
     }).join('');
-
-    setStatus('');
 }
 
-function subscribe(teamId) {
-    if (unsubscribe) unsubscribe();
-    const visibility = accessInfo.accessLevel === 'parent' ? 'members' : null;
-    unsubscribe = subscribeToTeamMediaFolders(teamId, { visibility }, (folders) => {
-        allFolders = folders;
-        renderFolders();
-    }, (error) => {
-        console.error('Failed to load media folders', error);
-        setStatus('Could not load media folders. Check your team access and try again.', true);
-    });
+async function loadLibrary() {
+    state.folders = await getTeamMediaFolders(state.teamId);
+    state.items = await getTeamMediaItems(state.teamId);
+    state.selectedIds = new Set([...state.selectedIds].filter((id) => state.items.some((item) => item.id === id)));
+    render();
 }
 
-async function initialize(user) {
-    if (!user) {
-        window.location.href = 'login.html';
-        return;
-    }
-
-    currentUser = user;
-    renderHeader(els.header, user);
-
-    const teamId = getTeamIdFromUrl();
-    if (!teamId) {
-        window.location.href = 'dashboard.html';
-        return;
-    }
-
-    currentTeam = await getTeam(teamId);
-    if (!currentTeam) {
-        window.location.href = 'dashboard.html';
-        return;
-    }
-    currentTeam.id = teamId;
-
-    const profile = await getUserProfile(user.uid);
-    const parentOf = Array.isArray(profile?.parentOf) ? [...profile.parentOf] : [];
-    if (Array.isArray(profile?.parentTeamIds) && profile.parentTeamIds.includes(teamId) && !parentOf.some((entry) => entry.teamId === teamId)) {
-        parentOf.push({ teamId });
-    }
-
-    const userWithProfile = {
-        ...user,
-        parentOf,
-        coachOf: profile?.coachOf || [],
-        isAdmin: profile?.isAdmin === true,
-        profileEmail: profile?.email || profile?.profileEmail
-    };
-    accessInfo = getTeamAccessInfo(userWithProfile, currentTeam);
-
-    if (!accessInfo.hasAccess || !['full', 'parent'].includes(accessInfo.accessLevel)) {
-        setStatus('You do not have access to this team media library.', true);
-        return;
-    }
-
-    let unreadCount = 0;
+async function persistAndReload(action, successMessage) {
+    clearAlert();
     try {
-        const counts = await getUnreadChatCounts(user.uid, [teamId]);
-        unreadCount = counts[teamId] || 0;
+        await action();
+        await loadLibrary();
+        showAlert(successMessage, 'success');
     } catch (error) {
-        console.error('Error fetching unread counts:', error);
+        console.error('Team media action failed:', error);
+        showAlert(error.message || 'Unable to save media changes. Refresh and try again.', 'error');
     }
-
-    renderTeamAdminBanner(els.banner, {
-        team: currentTeam,
-        teamId,
-        active: 'media',
-        unreadCount,
-        accessLevel: accessInfo.accessLevel,
-        exitUrl: accessInfo.exitUrl
-    });
-
-    if (accessInfo.accessLevel === 'full') {
-        els.managerTools.classList.remove('hidden');
-    }
-
-    subscribe(teamId);
 }
 
-els.folderForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    try {
-        await createTeamMediaFolder(currentTeam.id, {
-            name: els.folderName.value,
-            visibility: els.folderVisibility.value
-        }, currentUser);
-        els.folderForm.reset();
-        setStatus('Folder created.');
-    } catch (error) {
-        setStatus(error.message || 'Could not create folder.', true);
+function moveInArray(items, id, direction) {
+    const next = [...items];
+    const index = next.findIndex((item) => item.id === id);
+    const target = direction === 'up' ? index - 1 : index + 1;
+    if (index < 0 || target < 0 || target >= next.length) return next;
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+}
+
+els.foldersList.addEventListener('click', (event) => {
+    if (!state.canManage) return;
+    const folderButton = event.target.closest('[data-folder-move]');
+    if (folderButton) {
+        const reordered = moveInArray(state.folders, folderButton.dataset.folderId, folderButton.dataset.folderMove);
+        persistAndReload(() => reorderTeamMediaFolders(state.teamId, reordered.map((folder) => folder.id)), 'Folder order saved.');
+        return;
+    }
+
+    const itemButton = event.target.closest('[data-item-move]');
+    if (itemButton) {
+        const items = getItemsForFolder(itemButton.dataset.folderId);
+        const reordered = moveInArray(items, itemButton.dataset.itemId, itemButton.dataset.itemMove);
+        persistAndReload(() => reorderTeamMediaItems(state.teamId, reordered.map((item) => item.id)), 'Item order saved.');
     }
 });
 
-els.videoForm.addEventListener('submit', async (event) => {
+els.foldersList.addEventListener('change', (event) => {
+    if (!state.canManage) return;
+    const checkbox = event.target.closest('[data-select-item]');
+    if (!checkbox) return;
+    if (checkbox.checked) {
+        state.selectedIds.add(checkbox.dataset.selectItem);
+    } else {
+        state.selectedIds.delete(checkbox.dataset.selectItem);
+    }
+    renderBulkActions();
+});
+
+els.folderForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    const folderId = els.videoFolder.value;
-    if (!folderId) return;
-    if (!isSupportedTeamMediaVideoUrl(els.videoUrl.value)) {
-        setStatus('Enter a valid YouTube or Vimeo URL.', true);
+    persistAndReload(async () => {
+        await createTeamMediaFolder(state.teamId, els.folderName.value);
+        els.folderName.value = '';
+    }, 'Folder added.');
+});
+
+els.linkForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    persistAndReload(async () => {
+        await createTeamMediaLink(state.teamId, els.linkFolder.value, {
+            title: els.linkTitle.value,
+            url: els.linkUrl.value
+        });
+        els.linkTitle.value = '';
+        els.linkUrl.value = '';
+    }, 'Video link added.');
+});
+
+els.moveSelected.addEventListener('click', () => {
+    const ids = [...state.selectedIds];
+    persistAndReload(async () => {
+        await moveTeamMediaItems(state.teamId, ids, els.moveFolder.value);
+        state.selectedIds.clear();
+    }, 'Selected media moved.');
+});
+
+els.deleteSelected.addEventListener('click', () => {
+    const ids = [...state.selectedIds];
+    if (!window.confirm(`Delete ${ids.length} selected media item${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+    persistAndReload(async () => {
+        await bulkDeleteTeamMediaItems(state.teamId, ids);
+        state.selectedIds.clear();
+    }, 'Selected media deleted.');
+});
+
+checkAuth(async (user) => {
+    state.user = user;
+    state.teamId = getTeamIdFromLocation();
+    if (!state.teamId) {
+        els.foldersList.innerHTML = '<div class="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">Missing team id.</div>';
         return;
     }
 
     try {
-        await addTeamMediaVideoLink(currentTeam.id, folderId, {
-            title: els.videoTitle.value,
-            url: els.videoUrl.value
-        }, currentUser);
-        els.videoTitle.value = '';
-        els.videoUrl.value = '';
-        setStatus('Video link added.');
+        state.team = await getTeam(state.teamId, { includeInactive: true });
+        state.canManage = canManageTeamMedia(user, state.team);
+        await loadLibrary();
     } catch (error) {
-        setStatus(error.message || 'Could not add video link.', true);
+        console.error('Unable to load team media:', error);
+        els.foldersList.innerHTML = '<div class="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">Unable to load team media.</div>';
     }
-});
-
-checkAuth((user) => {
-    initialize(user).catch((error) => {
-        console.error('Failed to initialize team media', error);
-        setStatus('Could not open team media. Try refreshing.', true);
-    });
 });
