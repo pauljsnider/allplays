@@ -145,9 +145,17 @@ function normalizeCapabilityPermission(permission) {
   };
 }
 
+function normalizeSelectedMemberPermission(permission) {
+  return {
+    mode: 'selected',
+    memberIds: normalizeMemberIdList(permission?.memberIds)
+  };
+}
+
 export function normalizeTeamPermissions(teamPermissions = {}) {
   return {
     scorekeeping: normalizeCapabilityPermission(teamPermissions.scorekeeping),
-    streaming: normalizeCapabilityPermission(teamPermissions.streaming)
+    streaming: normalizeCapabilityPermission(teamPermissions.streaming),
+    videography: normalizeSelectedMemberPermission(teamPermissions.videography)
   };
 }

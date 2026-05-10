@@ -49,6 +49,16 @@ service cloud.firestore {
              );
     }
 
+    function canVideographGame(teamId, gameId) {
+      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let permission = team.get('teamPermissions', {}).get('videography', {});
+      return isSignedIn() &&
+             !isTeamOwnerOrAdmin(teamId) &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
+             request.auth.uid in permission.get('memberIds', []);
+    }
+
     function keepsScorekeeperGameLifecycleVisible() {
       return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
              request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
@@ -61,6 +71,14 @@ service cloud.firestore {
                'completedAt', 'completedBy', 'completedByName', 'updatedAt'
              ]) &&
              keepsScorekeeperGameLifecycleVisible();
+    }
+
+    function isVideographyGameUpdate(teamId, gameId) {
+      return canVideographGame(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
+               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt'
+             ]);
     }
 
     // Check if user is a parent for a specific player.
@@ -352,6 +370,62 @@ service cloud.firestore {
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
     }
 
+    function teamChatRecipientIds(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data.get('chatMemberIds', []);
+    }
+
+    function hasEmptyChatRecipients(data) {
+      return !data.keys().hasAny(['recipientIds']) ||
+             (data.recipientIds is list && data.recipientIds.size() == 0);
+    }
+
+    function hasValidChatRecipientIds(teamId, data) {
+      return data.recipientIds is list &&
+             data.recipientIds.size() > 0 &&
+             data.recipientIds.size() <= 50 &&
+             data.recipientIds.hasOnly(teamChatRecipientIds(teamId));
+    }
+
+    function isFullTeamChatMessage(data) {
+      return data.get('targetType', 'full_team') == 'full_team' &&
+             hasEmptyChatRecipients(data);
+    }
+
+    function isStaffChatMessage(data) {
+      return data.get('targetType', 'full_team') == 'staff' &&
+             data.get('targetRole', 'staff') == 'staff' &&
+             hasEmptyChatRecipients(data);
+    }
+
+    function isIndividualChatMessage(teamId, data) {
+      return data.get('targetType', 'full_team') == 'individuals' &&
+             hasValidChatRecipientIds(teamId, data);
+    }
+
+    function isValidChatMessageTarget(teamId, data) {
+      return isFullTeamChatMessage(data) ||
+             isStaffChatMessage(data) ||
+             isIndividualChatMessage(teamId, data);
+    }
+
+    function isCurrentChatRecipient(data) {
+      return request.auth.uid in data.recipientIds ||
+             ('user:' + request.auth.uid) in data.recipientIds ||
+             (request.auth.token.email != null &&
+              (('email:' + request.auth.token.email) in data.recipientIds ||
+               ('email:' + request.auth.token.email.lower()) in data.recipientIds));
+    }
+
+    function canReadChatMessage(teamId, data) {
+      return canAccessTeamChat(teamId) &&
+             (
+               isFullTeamChatMessage(data) ||
+               isTeamOwnerOrAdmin(teamId) ||
+               data.senderId == request.auth.uid ||
+               (isIndividualChatMessage(teamId, data) && isCurrentChatRecipient(data))
+             );
+    }
+
     function canAccessChatConversation(teamId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       let participantRoles = conversationData.get('participantRoles', []);
@@ -638,8 +712,13 @@ service cloud.firestore {
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
-      match /trackingItems/{itemId} {
-        allow read: if isTeamOwnerOrAdmin(teamId) || isPublicTrackingItem(resource.data);
+      match /mediaFolders/{folderId} {
+        allow read: if canAccessTeamChat(teamId);
+        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /mediaItems/{itemId} {
+        allow read: if canAccessTeamChat(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -777,7 +856,8 @@ service cloud.firestore {
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
-                        isScorekeepingGameUpdate(teamId, gameId);
+                        isScorekeepingGameUpdate(teamId, gameId) ||
+                        isVideographyGameUpdate(teamId, gameId);
         allow update: if isOpenOfficiatingSelfAssignmentUpdate();
 
         // Events subcollection
@@ -1001,20 +1081,17 @@ service cloud.firestore {
         }
       }
 
-      // Team media folders subcollection (read-only entry point)
-      match /mediaFolders/{folderId} {
-        allow read: if canAccessTeamChat(teamId);
-        allow create, update, delete: if false;
-      }
-
       // Chat messages subcollection
       match /chatMessages/{messageId} {
-        // Read: any team member (owner, admin, global admin, parent)
-        allow read: if canAccessTeamChat(teamId);
+        // List queries are unfiltered by target metadata in existing clients.
+        // Direct document reads still enforce targeted-message recipient checks.
+        allow list: if canAccessTeamChat(teamId);
+        allow get: if canReadChatMessage(teamId, resource.data);
 
-        // Create: any team member, must be their own senderId
+        // Create: any team member, must be their own senderId and valid target metadata.
         allow create: if canAccessTeamChat(teamId) &&
-                         request.resource.data.senderId == request.auth.uid;
+                         request.resource.data.senderId == request.auth.uid &&
+                         isValidChatMessageTarget(teamId, request.resource.data);
 
         // Update for editing: only message sender, only text and editedAt fields
         allow update: if canAccessTeamChat(teamId) &&

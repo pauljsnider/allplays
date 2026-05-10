@@ -95,6 +95,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -425,6 +426,121 @@ export async function getTeam(teamId, options = {}) {
     } else {
         return null;
     }
+}
+
+function getTeamMediaFoldersRef(teamId) {
+    return collection(db, `teams/${teamId}/mediaFolders`);
+}
+
+function getTeamMediaItemsRef(teamId) {
+    return collection(db, `teams/${teamId}/mediaItems`);
+}
+
+export async function getTeamMediaFolders(teamId) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(getTeamMediaFoldersRef(teamId));
+    return sortByMediaOrder(snapshot.docs.map((folderDoc) => ({ id: folderDoc.id, ...folderDoc.data() })));
+}
+
+export async function getTeamMediaItems(teamId, folderId = null) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(getTeamMediaItemsRef(teamId));
+    const items = snapshot.docs
+        .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
+        .filter((item) => item.deleted !== true)
+        .filter((item) => !folderId || item.folderId === folderId);
+    return sortByMediaOrder(items);
+}
+
+export async function createTeamMediaFolder(teamId, name) {
+    const folderName = String(name || '').trim();
+    if (!teamId || !folderName) throw new Error('Folder name is required.');
+    const existingFolders = await getTeamMediaFolders(teamId);
+    const docRef = await addDoc(getTeamMediaFoldersRef(teamId), {
+        name: folderName,
+        order: existingFolders.length,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function createTeamMediaLink(teamId, folderId, media = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    const title = String(media.title || '').trim();
+    const url = String(media.url || '').trim();
+    if (!teamId || !cleanFolderId) throw new Error('Choose a folder for this media link.');
+    if (!title || !url) throw new Error('Media title and URL are required.');
+    if (!isSafeTeamMediaUrl(url)) throw new Error('Use a valid http or https media link.');
+    const existingItems = await getTeamMediaItems(teamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(teamId), {
+        folderId: cleanFolderId,
+        title,
+        url,
+        type: 'video-link',
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function reorderTeamMediaFolders(teamId, folderIds = []) {
+    const updates = buildReorderUpdates(folderIds);
+    if (!teamId || updates.length === 0) return;
+    const batch = writeBatch(db);
+    updates.forEach(({ id, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaFolders`, id), {
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function reorderTeamMediaItems(teamId, itemIds = []) {
+    const updates = buildReorderUpdates(itemIds);
+    if (!teamId || updates.length === 0) return;
+    const batch = writeBatch(db);
+    updates.forEach(({ id, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
+    if (!teamId) throw new Error('Team is required.');
+    const targetItems = await getTeamMediaItems(teamId, targetFolderId);
+    const updates = buildMoveUpdates(itemIds, targetFolderId, targetItems.length);
+    if (updates.length === 0) throw new Error('Select at least one media item to move.');
+    const batch = writeBatch(db);
+    updates.forEach(({ id, folderId, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            folderId,
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function bulkDeleteTeamMediaItems(teamId, itemIds = []) {
+    const updates = buildBulkDeleteUpdates(itemIds);
+    if (!teamId) throw new Error('Team is required.');
+    if (updates.length === 0) throw new Error('Select at least one media item to delete.');
+    const batch = writeBatch(db);
+    updates.forEach(({ id }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            deleted: true,
+            deletedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
 }
 
 async function getPublishedSponsors(teamId) {
@@ -943,6 +1059,45 @@ function sortRegistrationReviews(registrations = []) {
         const bTime = b?.submittedAt?.toMillis ? b.submittedAt.toMillis() : (b?.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b?.submittedAt || b?.createdAt || 0).getTime());
         return bTime - aTime;
     });
+}
+
+export async function listTeamTrackingItems(teamId) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const snapshot = await getDocs(itemsRef);
+    return snapshot.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter((item) => item.active !== false && item.scope === 'players')
+        .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+export async function createTeamTrackingItem(teamId, itemData) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const docRef = await addDoc(itemsRef, {
+        ...itemData,
+        teamId,
+        scope: 'players',
+        active: itemData.active !== false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function listTeamTrackingStatuses(teamId, trackingItemId) {
+    const statusesRef = collection(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking`);
+    const snapshot = await getDocs(statusesRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function setTeamTrackingStatus(teamId, trackingItemId, playerId, statusData) {
+    const statusRef = doc(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking/${playerId}`);
+    await setDoc(statusRef, {
+        ...statusData,
+        teamId,
+        trackingItemId,
+        playerId,
+        updatedAt: serverTimestamp()
+    }, { merge: true });
 }
 
 export async function listTeamRegistrationForms(teamId) {
@@ -4055,6 +4210,18 @@ export function trackViewerPresence(teamId, gameId, onCountChange) {
 /**
  * Get upcoming live games across all public teams
  */
+function isExcludedHomepageUpcomingStatus(status) {
+    if (typeof status !== 'string') {
+        return false;
+    }
+
+    const normalizedStatus = status.trim().toLowerCase();
+    return normalizedStatus === 'completed'
+        || normalizedStatus === 'cancelled'
+        || normalizedStatus === 'canceled'
+        || normalizedStatus === 'deleted';
+}
+
 export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -4090,7 +4257,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
             for (const docSnap of snapshot.docs) {
                 const gameData = { id: docSnap.id, ...docSnap.data() };
-                if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+                if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                     continue;
                 }
                 if (!gameData.type) {
@@ -4127,7 +4294,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         snapshot = await getDocs(fallbackQuery);
         for (const docSnap of snapshot.docs) {
             const gameData = { id: docSnap.id, ...docSnap.data() };
-            if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+            if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                 continue;
             }
             if (!gameData.type) {
@@ -4163,8 +4330,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         ], shouldIncludeTeamInLiveOrUpcoming);
         games.push(...sharedGames.filter((game) => {
             return game.type !== 'practice'
-                && game.status !== 'completed'
-                && game.status !== 'cancelled'
+                && !isExcludedHomepageUpcomingStatus(game.status)
                 && game.liveStatus !== 'completed';
         }));
     } catch (error) {

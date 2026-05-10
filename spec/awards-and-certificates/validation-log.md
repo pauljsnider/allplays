@@ -395,3 +395,16 @@ npm run test:unit
 SMOKE_BASE_URL=http://localhost:8000 npm run test:smoke -- tests/smoke/certificates-workflow.spec.js
 git diff --check
 ```
+
+## PR Merge Readiness Validation - 2026-05-10
+
+Merged current `origin/master` into `awards` after draft PR creation showed a merge conflict. The only manual conflict was in `js/team-media.js`; kept the newer master media-management implementation because the awards branch only had older import/cache-bust changes in that file.
+
+Commands run:
+
+```bash
+node --check js/certificates/studio.js && node --check js/certificates/templates.js && node --check js/certificates/renderer.js && node --check js/certificates/aiDescriptions.js && node --check js/certificates/assets.js && node --check js/certificates/exporter.js && node --check js/certificates/signers.js && node --check js/player-profile-stats.js && node --check js/organization-schedule.js && node --check js/team-media.js
+git diff --cached --check
+npm run test:unit
+SMOKE_BASE_URL=http://localhost:8000 npm run test:smoke -- tests/smoke/certificates-workflow.spec.js
+```
