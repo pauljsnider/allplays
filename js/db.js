@@ -1813,6 +1813,13 @@ export async function addGame(teamId, gameData) {
             await syncSharedScheduleCounterpart(teamId, docRef.id, { ...gameData, id: docRef.id });
         } catch (error) {
             console.warn('Failed to create shared schedule counterpart:', error);
+            try {
+                await deleteDoc(docRef);
+            } catch (rollbackError) {
+                console.warn('Failed to roll back shared schedule source game:', rollbackError);
+            }
+            const detail = error?.message ? ` ${error.message}` : '';
+            throw new Error(`Shared matchup was not fully published.${detail}`);
         }
     }
     return docRef.id;
