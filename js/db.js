@@ -32,6 +32,7 @@ import {
     deleteObject
 } from './firebase.js?v=11';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
+import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
@@ -45,6 +46,15 @@ import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
+import {
+    DEFAULT_TEAM_CONVERSATION_ID,
+    buildConversationId,
+    buildDefaultTeamConversation,
+    isDefaultTeamConversation,
+    isUserInConversation,
+    normalizeConversationParticipantIds,
+    normalizeConversationType
+} from './team-chat-conversations.js';
 import {
     shouldMirrorSharedGame,
     createSharedScheduleId,
@@ -76,6 +86,7 @@ import {
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
     getRegistrationGuardianDrafts,
@@ -85,6 +96,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, sortByMediaOrder } from './team-media-utils.js?v=1';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -415,6 +427,220 @@ export async function getTeam(teamId, options = {}) {
     } else {
         return null;
     }
+}
+
+function getTeamMediaFoldersRef(teamId) {
+    return collection(db, `teams/${teamId}/mediaFolders`);
+}
+
+function getTeamMediaItemsRef(teamId) {
+    return collection(db, `teams/${teamId}/mediaItems`);
+}
+
+export async function getTeamMediaFolders(teamId) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(getTeamMediaFoldersRef(teamId));
+    return sortByMediaOrder(snapshot.docs.map((folderDoc) => ({ id: folderDoc.id, ...folderDoc.data() })));
+}
+
+export async function getTeamMediaItems(teamId, folderId = null) {
+    if (!teamId) return [];
+    const snapshot = await getDocs(getTeamMediaItemsRef(teamId));
+    const items = snapshot.docs
+        .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
+        .filter((item) => item.deleted !== true)
+        .filter((item) => !folderId || item.folderId === folderId);
+    return sortByMediaOrder(items);
+}
+
+export async function createTeamMediaFolder(teamId, name) {
+    const folderName = String(name || '').trim();
+    if (!teamId || !folderName) throw new Error('Folder name is required.');
+    const existingFolders = await getTeamMediaFolders(teamId);
+    const docRef = await addDoc(getTeamMediaFoldersRef(teamId), {
+        name: folderName,
+        order: existingFolders.length,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function createTeamMediaLink(teamId, folderId, media = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    const title = String(media.title || '').trim();
+    const url = String(media.url || '').trim();
+    if (!teamId || !cleanFolderId) throw new Error('Choose a folder for this media link.');
+    if (!title || !url) throw new Error('Media title and URL are required.');
+    if (!isSafeTeamMediaUrl(url)) throw new Error('Use a valid http or https media link.');
+    const existingItems = await getTeamMediaItems(teamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(teamId), {
+        folderId: cleanFolderId,
+        title,
+        url,
+        type: 'video-link',
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function setTeamMediaAlbumCover(teamId, folderId, item = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    const itemId = String(item.id || '').trim();
+    const coverPhotoUrl = String(item.downloadUrl || item.url || item.src || '').trim();
+    if (!teamId || !cleanFolderId || !itemId) throw new Error('Choose a photo to use as the album cover.');
+    if (!isSafeTeamMediaUrl(coverPhotoUrl)) throw new Error('Album cover must use a valid photo URL.');
+    await updateDoc(doc(db, `teams/${teamId}/mediaFolders`, cleanFolderId), {
+        coverPhotoId: itemId,
+        coverPhotoUrl,
+        coverPhotoTitle: String(item.title || item.fileName || '').trim(),
+        updatedAt: serverTimestamp()
+    });
+}
+
+function sanitizeTeamMediaFileName(name) {
+    return String(name || 'photo')
+        .trim()
+        .replace(/[^a-zA-Z0-9._-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 120) || 'photo';
+}
+
+export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanFolderId = String(folderId || '').trim();
+    const currentUser = auth.currentUser;
+    if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading photos.');
+    if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
+    if (!file || !String(file.type || '').startsWith('image/')) throw new Error('Choose a supported image file.');
+
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type || 'image/jpeg' });
+
+    const snapshot = await new Promise((resolve, reject) => {
+        uploadTask.on('state_changed', (progressSnapshot) => {
+            if (typeof options.onProgress === 'function') {
+                const percent = progressSnapshot.totalBytes > 0
+                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                    : 0;
+                options.onProgress({
+                    bytesTransferred: progressSnapshot.bytesTransferred,
+                    totalBytes: progressSnapshot.totalBytes,
+                    percent
+                });
+            }
+        }, reject, () => resolve(uploadTask.snapshot));
+    });
+
+    const url = await getDownloadURL(snapshot.ref);
+    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+        folderId: cleanFolderId,
+        title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
+        type: 'photo',
+        url,
+        storagePath,
+        uploadedBy: currentUser.uid,
+        size: Number(file.size || 0),
+        mimeType: file.type || 'image/jpeg',
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function deleteTeamMediaItem(teamId, item) {
+    const cleanTeamId = String(teamId || '').trim();
+    const itemId = String(item?.id || '').trim();
+    if (!cleanTeamId || !itemId) throw new Error('Media item is required.');
+    if (item?.type === 'photo' && !item.storagePath) {
+        console.error('Media object missing file reference:', itemId);
+        throw new Error('Cannot delete media: missing file reference');
+    }
+
+    const mediaDocRef = doc(db, `teams/${cleanTeamId}/mediaItems`, itemId);
+    if (!mediaDocRef) {
+        console.error('Media object missing document reference:', itemId);
+        throw new Error('Cannot delete media: missing document reference');
+    }
+
+    await updateDoc(mediaDocRef, {
+        deleted: true,
+        deletedAt: serverTimestamp(),
+        deletedBy: auth.currentUser?.uid || null,
+        updatedAt: serverTimestamp()
+    });
+
+    if (item?.type === 'photo') {
+        try {
+            await deleteObject(ref(storage, item.storagePath));
+        } catch (error) {
+            console.warn('Unable to delete team media storage object:', error);
+        }
+    }
+}
+
+export async function reorderTeamMediaFolders(teamId, folderIds = []) {
+    const updates = buildReorderUpdates(folderIds);
+    if (!teamId || updates.length === 0) return;
+    const batch = writeBatch(db);
+    updates.forEach(({ id, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaFolders`, id), {
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function reorderTeamMediaItems(teamId, itemIds = []) {
+    const updates = buildReorderUpdates(itemIds);
+    if (!teamId || updates.length === 0) return;
+    const batch = writeBatch(db);
+    updates.forEach(({ id, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
+    if (!teamId) throw new Error('Team is required.');
+    const targetItems = await getTeamMediaItems(teamId, targetFolderId);
+    const updates = buildMoveUpdates(itemIds, targetFolderId, targetItems.length);
+    if (updates.length === 0) throw new Error('Select at least one media item to move.');
+    const batch = writeBatch(db);
+    updates.forEach(({ id, folderId, order }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            folderId,
+            order,
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
+}
+
+export async function bulkDeleteTeamMediaItems(teamId, itemIds = []) {
+    const updates = buildBulkDeleteUpdates(itemIds);
+    if (!teamId) throw new Error('Team is required.');
+    if (updates.length === 0) throw new Error('Select at least one media item to delete.');
+    const batch = writeBatch(db);
+    updates.forEach(({ id }) => {
+        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
+            deleted: true,
+            deletedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+    });
+    await batch.commit();
 }
 
 async function getPublishedSponsors(teamId) {
@@ -933,6 +1159,45 @@ function sortRegistrationReviews(registrations = []) {
         const bTime = b?.submittedAt?.toMillis ? b.submittedAt.toMillis() : (b?.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b?.submittedAt || b?.createdAt || 0).getTime());
         return bTime - aTime;
     });
+}
+
+export async function listTeamTrackingItems(teamId) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const snapshot = await getDocs(itemsRef);
+    return snapshot.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter((item) => item.active !== false && item.scope === 'players')
+        .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+}
+
+export async function createTeamTrackingItem(teamId, itemData) {
+    const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
+    const docRef = await addDoc(itemsRef, {
+        ...itemData,
+        teamId,
+        scope: 'players',
+        active: itemData.active !== false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
+export async function listTeamTrackingStatuses(teamId, trackingItemId) {
+    const statusesRef = collection(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking`);
+    const snapshot = await getDocs(statusesRef);
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function setTeamTrackingStatus(teamId, trackingItemId, playerId, statusData) {
+    const statusRef = doc(db, `teams/${teamId}/trackingItems/${trackingItemId}/memberTracking/${playerId}`);
+    await setDoc(statusRef, {
+        ...statusData,
+        teamId,
+        trackingItemId,
+        playerId,
+        updatedAt: serverTimestamp()
+    }, { merge: true });
 }
 
 export async function listTeamRegistrationForms(teamId) {
@@ -3202,12 +3467,341 @@ export function canModerateChat(user, team) {
     return false;
 }
 
+function getNormalizedCertificateEmail(user) {
+    return String(user?.email || user?.profileEmail || '').trim().toLowerCase();
+}
+
+function hasCertificateCoachAccess(user, team) {
+    if (!user || !team) return false;
+    if (team.ownerId === user.uid) return true;
+    if (user.isAdmin === true) return true;
+
+    const email = getNormalizedCertificateEmail(user);
+    const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails : [];
+    return Boolean(email && adminEmails.map((item) => String(item || '').trim().toLowerCase()).includes(email));
+}
+
+function hasCertificateParentPlayerAccess(user, teamId, playerId) {
+    if (!user || !teamId || !playerId) return false;
+    const key = `${teamId}::${playerId}`;
+    if (Array.isArray(user.parentPlayerKeys) && user.parentPlayerKeys.includes(key)) return true;
+    return Array.isArray(user.parentOf) && user.parentOf.some((entry) => (
+        entry?.teamId === teamId && entry?.playerId === playerId
+    ));
+}
+
+export function canAccessCertificates(user, team) {
+    return hasCertificateCoachAccess(user, team);
+}
+
+export function canViewSavedCertificate(user, team, certificate) {
+    if (!user || !team || !certificate) return false;
+    if (hasCertificateCoachAccess(user, team)) return true;
+    return certificate.status === 'published'
+        && hasCertificateParentPlayerAccess(user, team.id, certificate.playerId);
+}
+
+function getCertificateActor() {
+    const user = auth.currentUser || {};
+    return {
+        actorId: user.uid || null,
+        actorEmail: user.email || null
+    };
+}
+
+function getCertificateTimestamp(value = null) {
+    return value || Timestamp.now();
+}
+
+function getUpdatedCertificatePayload(data = {}, now = Timestamp.now()) {
+    const actor = getCertificateActor();
+    return {
+        ...data,
+        updatedAt: getCertificateTimestamp(data.updatedAt || now),
+        updatedBy: data.updatedBy || actor.actorId
+    };
+}
+
+async function writeCertificateAudit(teamId, certificateId, event = {}) {
+    if (!teamId || !certificateId) return null;
+    const actor = getCertificateActor();
+    const eventRef = await addDoc(collection(db, 'teams', teamId, 'certificates', certificateId, 'audit'), {
+        action: event.action || 'updated',
+        format: event.format || null,
+        actorId: event.actorId || actor.actorId,
+        actorEmail: event.actorEmail || actor.actorEmail,
+        at: event.at || Timestamp.now()
+    });
+    return eventRef.id;
+}
+
+export async function getCertificateDefaults(teamId) {
+    if (!teamId) return null;
+    const snap = await getDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function setCertificateDefaults(teamId, defaults = {}) {
+    if (!teamId) throw new Error('Missing team for certificate defaults');
+    const actor = getCertificateActor();
+    const payload = {
+        ...defaults,
+        updatedAt: Timestamp.now(),
+        updatedBy: actor.actorId
+    };
+    await setDoc(doc(db, 'teams', teamId, 'settings', 'certificateDefaults'), payload, { merge: true });
+    return payload;
+}
+
+export async function listCertificateAssets(teamId) {
+    if (!teamId) return [];
+    const assetsRef = collection(db, 'teams', teamId, 'certificateAssets');
+    try {
+        const snapshot = await getDocs(query(assetsRef, orderBy('uploadedAt', 'desc')));
+        return snapshot.docs.map((assetDoc) => ({ id: assetDoc.id, ...assetDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(assetsRef);
+        return snapshot.docs
+            .map((assetDoc) => ({ id: assetDoc.id, ...assetDoc.data() }))
+            .sort((a, b) => {
+                const aTime = a.uploadedAt?.toMillis ? a.uploadedAt.toMillis() : 0;
+                const bTime = b.uploadedAt?.toMillis ? b.uploadedAt.toMillis() : 0;
+                return bTime - aTime;
+            });
+    }
+}
+
+export async function writeCertificateBatchAudit(teamId, batchId, event = {}) {
+    if (!teamId || !batchId) return null;
+    const actor = getCertificateActor();
+    const eventRef = await addDoc(collection(db, 'teams', teamId, 'certificateBatches', batchId, 'audit'), {
+        action: event.action || 'updated',
+        actorId: event.actorId || actor.actorId,
+        actorEmail: event.actorEmail || actor.actorEmail,
+        at: event.at || Timestamp.now()
+    });
+    return eventRef.id;
+}
+
+export async function createCertificateBatch(teamId, data = {}) {
+    if (!teamId) throw new Error('Missing team for certificate batch');
+    const actor = getCertificateActor();
+    const now = Timestamp.now();
+    const docRef = await addDoc(collection(db, 'teams', teamId, 'certificateBatches'), {
+        ...data,
+        status: data.status || 'draft',
+        createdBy: data.createdBy || actor.actorId,
+        createdAt: data.createdAt || now,
+        updatedBy: data.updatedBy || actor.actorId,
+        updatedAt: data.updatedAt || now
+    });
+    await writeCertificateBatchAudit(teamId, docRef.id, { action: 'created' });
+    return docRef.id;
+}
+
+export async function updateCertificateBatch(teamId, batchId, data = {}) {
+    if (!teamId || !batchId) throw new Error('Missing certificate batch');
+    const payload = getUpdatedCertificatePayload(data);
+    await updateDoc(doc(db, 'teams', teamId, 'certificateBatches', batchId), payload);
+    await writeCertificateBatchAudit(teamId, batchId, { action: data.status === 'published' ? 'published' : 'updated' });
+}
+
+export async function listCertificateBatches(teamId, options = {}) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'certificateBatches');
+    const status = String(options.status || '').trim();
+    try {
+        const baseQuery = status
+            ? query(batchesRef, where('status', '==', status), orderBy('updatedAt', 'desc'), limit(options.limit || 100))
+            : query(batchesRef, orderBy('updatedAt', 'desc'), limit(options.limit || 100));
+        const snapshot = await getDocs(baseQuery);
+        return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(batchesRef);
+        return snapshot.docs
+            .map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }))
+            .filter((batch) => !status || batch.status === status)
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            })
+            .slice(0, options.limit || 100);
+    }
+}
+
+export async function createCertificate(teamId, data = {}) {
+    if (!teamId) throw new Error('Missing team for certificate');
+    const actor = getCertificateActor();
+    const now = Timestamp.now();
+    const docRef = await addDoc(collection(db, 'teams', teamId, 'certificates'), {
+        ...data,
+        status: data.status || 'draft',
+        createdBy: data.createdBy || actor.actorId,
+        createdAt: data.createdAt || now,
+        updatedBy: data.updatedBy || actor.actorId,
+        updatedAt: data.updatedAt || now
+    });
+    await writeCertificateAudit(teamId, docRef.id, { action: 'created' });
+    return docRef.id;
+}
+
+export async function updateCertificate(teamId, certificateId, data = {}, auditEvent = null) {
+    if (!teamId || !certificateId) throw new Error('Missing certificate');
+    const payload = getUpdatedCertificatePayload(data);
+    await updateDoc(doc(db, 'teams', teamId, 'certificates', certificateId), payload);
+    await writeCertificateAudit(teamId, certificateId, auditEvent || { action: data.status === 'published' ? 'published' : 'updated' });
+}
+
+export async function getCertificate(teamId, certificateId) {
+    if (!teamId || !certificateId) return null;
+    const snap = await getDoc(doc(db, 'teams', teamId, 'certificates', certificateId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export async function listCertificates(teamId, options = {}) {
+    if (!teamId) return [];
+    const certsRef = collection(db, 'teams', teamId, 'certificates');
+    const status = String(options.status || '').trim();
+    try {
+        const baseQuery = status
+            ? query(certsRef, where('status', '==', status), orderBy('updatedAt', 'desc'), limit(options.limit || 250))
+            : query(certsRef, orderBy('updatedAt', 'desc'), limit(options.limit || 250));
+        const snapshot = await getDocs(baseQuery);
+        return snapshot.docs.map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(certsRef);
+        return snapshot.docs
+            .map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }))
+            .filter((cert) => !status || cert.status === status)
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            })
+            .slice(0, options.limit || 250);
+    }
+}
+
+export async function listCertificatesForPlayer(teamId, playerId, options = {}) {
+    if (!teamId || !playerId) return [];
+    const certsRef = collection(db, 'teams', teamId, 'certificates');
+    const status = String(options.status || 'published').trim();
+    try {
+        const snapshot = await getDocs(query(
+            certsRef,
+            where('playerId', '==', playerId),
+            where('status', '==', status),
+            orderBy('updatedAt', 'desc'),
+            limit(options.limit || 25)
+        ));
+        return snapshot.docs.map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(certsRef);
+        return snapshot.docs
+            .map((certDoc) => ({ id: certDoc.id, ...certDoc.data() }))
+            .filter((cert) => cert.playerId === playerId && (!status || cert.status === status))
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            })
+            .slice(0, options.limit || 25);
+    }
+}
+
+export async function archiveCertificate(teamId, certificateId) {
+    await updateCertificate(teamId, certificateId, { status: 'archived' }, { action: 'archived' });
+}
+
+function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+    if (isDefaultTeamConversation(conversationId)) {
+        return collection(db, 'teams', teamId, 'chatMessages');
+    }
+    return collection(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages');
+}
+
+/**
+ * Get conversations for a team. The default team-wide channel is virtual and keeps
+ * using teams/{teamId}/chatMessages for backwards compatibility.
+ */
+export async function getChatConversations(teamId, user = null, { team = null, canModerate = false } = {}) {
+    const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
+    const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
+    const participantQueries = canModerate
+        ? [query(conversationsRef, orderBy('updatedAt', 'desc'))]
+        : [
+            ...(user?.uid ? [
+                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc')),
+                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            ...(normalizedEmail ? [
+                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
+            ] : []),
+            query(conversationsRef, where('participantRoles', 'array-contains', 'team'), orderBy('updatedAt', 'desc'))
+        ];
+    const snapshots = participantQueries.length > 0
+        ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))
+        : [];
+    const conversationsById = new Map();
+    snapshots.forEach((snapshot) => {
+        snapshot.docs.forEach((d) => {
+            conversationsById.set(d.id, { id: d.id, ...d.data() });
+        });
+    });
+    const stored = Array.from(conversationsById.values())
+        .filter((conversation) => !user || isUserInConversation(conversation, user, { canModerate }));
+    stored.sort((a, b) => {
+        const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : new Date(a.updatedAt || 0).getTime();
+        const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : new Date(b.updatedAt || 0).getTime();
+        return bTime - aTime;
+    });
+
+    return [buildDefaultTeamConversation(team), ...stored];
+}
+
+/**
+ * Create or update a lightweight conversation record.
+ */
+export async function upsertChatConversation(teamId, {
+    type = 'group',
+    participantIds = [],
+    participantRoles = [],
+    mutedBy = [],
+    name = null
+} = {}) {
+    const normalizedType = normalizeConversationType(type);
+    const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
+    const conversationId = buildConversationId(normalizedType, normalizedParticipantIds);
+    const now = Timestamp.now();
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+    const existing = await getDoc(conversationRef);
+    const payload = {
+        type: normalizedType,
+        participantIds: normalizedParticipantIds,
+        participantRoles: Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
+            .map((role) => String(role || '').trim())
+            .filter(Boolean)))
+            .sort(),
+        mutedBy: Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : [])),
+        updatedAt: now
+    };
+    if (name) {
+        payload.name = name;
+    }
+    if (!existing.exists()) {
+        payload.createdAt = now;
+    }
+    await setDoc(conversationRef, payload, { merge: true });
+    return { id: conversationId, ...payload };
+}
+
 /**
  * Get chat messages for a team with pagination support.
  * Returns messages ordered by createdAt descending (newest first).
  */
-export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null } = {}) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
 
     if (startAfterDoc) {
@@ -3222,8 +3816,8 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  * Subscribe to chat messages in real time (newest first).
  * Returns an unsubscribe function.
  */
-export function subscribeToChatMessages(teamId, { limit = 50 } = {}, onMessages) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages) {
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
@@ -3253,9 +3847,10 @@ export async function postChatMessage(teamId, {
     aiMeta = null,
     targetType = 'full_team',
     recipientIds = [],
-    targetRole = null
+    targetRole = null,
+    conversationId = DEFAULT_TEAM_CONVERSATION_ID
 }) {
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const createdAt = Timestamp.now();
     const normalizedMedia = normalizeChatAttachments(
         attachments.length > 0
@@ -3282,7 +3877,7 @@ export async function postChatMessage(teamId, {
     const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
         ? 'full_team'
         : normalizedTargetType;
-    return await addDoc(messagesRef, {
+    const docRef = await addDoc(messagesRef, {
         text,
         senderId,
         senderName: senderName || null,
@@ -3305,15 +3900,28 @@ export async function postChatMessage(teamId, {
         aiMeta: aiMeta || null,
         targetType: effectiveTargetType,
         recipientIds: normalizedRecipientIds,
-        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null
+        targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null,
+        conversationId: isDefaultTeamConversation(conversationId) ? null : conversationId
     });
+
+    if (!isDefaultTeamConversation(conversationId)) {
+        const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+        await setDoc(conversationRef, {
+            lastMessageAt: createdAt,
+            updatedAt: createdAt
+        }, { merge: true });
+    }
+
+    return docRef;
 }
 
 /**
  * Edit an existing chat message (sender only).
  */
-export async function editChatMessage(teamId, messageId, newText) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function editChatMessage(teamId, messageId, newText, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         text: newText,
         editedAt: Timestamp.now()
@@ -3323,14 +3931,16 @@ export async function editChatMessage(teamId, messageId, newText) {
 /**
  * Soft-delete a chat message.
  */
-export async function deleteChatMessage(teamId, messageId) {
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+export async function deleteChatMessage(teamId, messageId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         deleted: true
     });
 }
 
-export async function toggleChatReaction(teamId, messageId, reactionKey, userId) {
+export async function toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     if (!CHAT_REACTION_KEYS.has(reactionKey)) {
         throw new Error('Unsupported reaction key');
     }
@@ -3338,7 +3948,9 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId)
         throw new Error('Missing userId for reaction');
     }
 
-    const messageRef = doc(db, 'teams', teamId, 'chatMessages', messageId);
+    const messageRef = isDefaultTeamConversation(conversationId)
+        ? doc(db, 'teams', teamId, 'chatMessages', messageId)
+        : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     const snap = await getDoc(messageRef);
     if (!snap.exists()) {
         throw new Error('Message not found');
@@ -3698,6 +4310,18 @@ export function trackViewerPresence(teamId, gameId, onCountChange) {
 /**
  * Get upcoming live games across all public teams
  */
+function isExcludedHomepageUpcomingStatus(status) {
+    if (typeof status !== 'string') {
+        return false;
+    }
+
+    const normalizedStatus = status.trim().toLowerCase();
+    return normalizedStatus === 'completed'
+        || normalizedStatus === 'cancelled'
+        || normalizedStatus === 'canceled'
+        || normalizedStatus === 'deleted';
+}
+
 export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -3733,7 +4357,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
             for (const docSnap of snapshot.docs) {
                 const gameData = { id: docSnap.id, ...docSnap.data() };
-                if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+                if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                     continue;
                 }
                 if (!gameData.type) {
@@ -3770,7 +4394,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         snapshot = await getDocs(fallbackQuery);
         for (const docSnap of snapshot.docs) {
             const gameData = { id: docSnap.id, ...docSnap.data() };
-            if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+            if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                 continue;
             }
             if (!gameData.type) {
@@ -3806,8 +4430,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         ], shouldIncludeTeamInLiveOrUpcoming);
         games.push(...sharedGames.filter((game) => {
             return game.type !== 'practice'
-                && game.status !== 'completed'
-                && game.status !== 'cancelled'
+                && !isExcludedHomepageUpcomingStatus(game.status)
                 && game.liveStatus !== 'completed';
         }));
     } catch (error) {
@@ -5095,4 +5718,44 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
     return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+}
+
+export async function getPublicTrackingItems(teamId) {
+    const snap = await getDocs(query(
+        collection(db, `teams/${teamId}/trackingItems`),
+        where('public', '==', true),
+        where('private', '==', false),
+        where('isPrivate', '==', false)
+    ));
+    return snap.docs
+        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+        .filter(isPublicTrackingItem);
+}
+
+export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
+    const uniquePlayerIds = Array.from(new Set((Array.isArray(playerIds) ? playerIds : [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean)));
+    if (uniquePlayerIds.length === 0) return [];
+
+    const playerIdFields = ['playerId', 'childId', 'memberId'];
+    const trackingCollection = collection(db, `teams/${teamId}/memberTracking`);
+    const snapshots = await Promise.all(uniquePlayerIds.flatMap((playerId) => (
+        playerIdFields.map((fieldName) => getDocs(query(
+            trackingCollection,
+            where(fieldName, '==', playerId),
+            where('public', '==', true)
+        )))
+    )));
+
+    const statusesById = new Map();
+    snapshots.forEach((snap) => {
+        snap.docs.forEach((docSnap) => {
+            statusesById.set(docSnap.id, normalizeTrackingStatus({
+                id: docSnap.id,
+                ...docSnap.data()
+            }));
+        });
+    });
+    return Array.from(statusesById.values());
 }

@@ -8,7 +8,7 @@ import {
     formatFieldLabels,
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
-} from './admin-registration-forms.js?v=1';
+} from './admin-registration-forms.js?v=2';
 
 let allTeams = [];
 let allUsers = [];
@@ -16,6 +16,7 @@ let currentUser = null; // Declare currentUser
 let showInactiveTeams = false;
 let activeRegistrationTeam = null;
 let activeRegistrationForms = [];
+let activeRegistrationOptions = [];
 
 function inlineJsString(value) {
     return escapeHtml(JSON.stringify(String(value || '')));
@@ -86,6 +87,8 @@ async function loadGameStats() {
 
 function updateDashboard() {
     const visibleTeams = getVisibleTeams();
+    const visibleTeamIds = new Set(visibleTeams.map(team => team.id));
+    const visibleGames = allGames.filter(game => visibleTeamIds.has(game.teamId));
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -101,13 +104,13 @@ function updateDashboard() {
     document.getElementById('stat-users-growth').textContent = `+${newUsersLast30} this month`;
 
     // Total games
-    const completedGames = allGames.filter(g => g.status === 'completed').length;
-    const scheduledGames = allGames.filter(g => g.status === 'scheduled').length;
-    document.getElementById('stat-total-games').textContent = allGames.length;
+    const completedGames = visibleGames.filter(g => g.status === 'completed').length;
+    const scheduledGames = visibleGames.filter(g => g.status === 'scheduled').length;
+    document.getElementById('stat-total-games').textContent = visibleGames.length;
     document.getElementById('stat-games-breakdown').textContent = `${completedGames} played, ${scheduledGames} scheduled`;
 
     // Activity (teams with games in last 7 days)
-    const activeTeams = new Set(allGames.filter(g => {
+    const activeTeams = new Set(visibleGames.filter(g => {
         const gameDate = g.date.toDate ? g.date.toDate() : new Date(g.date);
         return gameDate > sevenDaysAgo;
     }).map(g => g.teamId)).size;
@@ -132,7 +135,7 @@ function updateDashboard() {
     // Team details
     const publicTeams = visibleTeams.filter(t => t.isPublic !== false).length;
     const privateTeams = visibleTeams.length - publicTeams;
-    const teamsWithGames = new Set(allGames.map(g => g.teamId)).size;
+    const teamsWithGames = new Set(visibleGames.map(g => g.teamId)).size;
     document.getElementById('stat-team-details').innerHTML = `
         <div class="flex justify-between items-center">
             <span class="text-gray-700">Public</span>
@@ -310,11 +313,88 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-fee').value = Number(form.feeAmountCents || 0) / 100;
     document.getElementById('registration-participant-fields').value = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
     document.getElementById('registration-guardian-fields').value = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
+    activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
+    renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
     document.getElementById('registration-status').value = form.status === 'published' || form.published === true ? 'published' : 'draft';
     document.getElementById('registration-form-message').textContent = '';
     editor.classList.remove('hidden');
 };
+
+window.addRegistrationOptionAdmin = function () {
+    syncActiveRegistrationOptionsFromEditor();
+    activeRegistrationOptions.push({
+        id: `option_${Date.now()}`,
+        label: '',
+        capacityLimit: null,
+        active: true,
+        waitlistEnabled: false
+    });
+    renderRegistrationOptionsEditor();
+};
+
+window.removeRegistrationOptionAdmin = function (index) {
+    syncActiveRegistrationOptionsFromEditor();
+    activeRegistrationOptions.splice(index, 1);
+    renderRegistrationOptionsEditor();
+};
+
+window.moveRegistrationOptionAdmin = function (index, direction) {
+    syncActiveRegistrationOptionsFromEditor();
+    const target = index + direction;
+    if (target < 0 || target >= activeRegistrationOptions.length) return;
+    const [option] = activeRegistrationOptions.splice(index, 1);
+    activeRegistrationOptions.splice(target, 0, option);
+    renderRegistrationOptionsEditor();
+};
+
+function renderRegistrationOptionsEditor() {
+    const list = document.getElementById('registration-options-list');
+    if (!list) return;
+    if (!activeRegistrationOptions.length) {
+        list.innerHTML = '<p class="text-sm text-gray-500">No options configured. Add options only when this form needs capacity or waitlist setup.</p>';
+        return;
+    }
+
+    list.innerHTML = activeRegistrationOptions.map((option, index) => `
+        <div class="registration-option-row rounded border border-gray-200 bg-gray-50 p-3" data-option-id="${escapeHtml(option.id || '')}">
+            <div class="grid gap-3 md:grid-cols-2">
+                <label class="text-sm font-medium text-gray-700">Label
+                    <input class="registration-option-label mt-1 w-full rounded border border-gray-300 p-2" value="${escapeHtml(option.label || '')}" placeholder="Early bird" aria-label="Registration option label">
+                </label>
+                <label class="text-sm font-medium text-gray-700">Capacity limit
+                    <input class="registration-option-capacity mt-1 w-full rounded border border-gray-300 p-2" type="number" min="0" step="1" value="${option.capacityLimit === null || option.capacityLimit === undefined || option.capacityLimit === '' ? '' : Number(option.capacityLimit)}" placeholder="Optional" aria-label="Registration option capacity limit">
+                </label>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap gap-4 text-sm text-gray-700">
+                    <label class="inline-flex items-center gap-2"><input class="registration-option-active rounded border-gray-300" type="checkbox" ${option.active === false ? '' : 'checked'}> Active</label>
+                    <label class="inline-flex items-center gap-2"><input class="registration-option-waitlist rounded border-gray-300" type="checkbox" ${option.waitlistEnabled === true ? 'checked' : ''}> Waitlist when full</label>
+                </div>
+                <div class="flex gap-2 text-sm">
+                    <button type="button" onclick="window.moveRegistrationOptionAdmin(${index}, -1)" class="rounded px-2 py-1 text-gray-600 hover:bg-gray-200" ${index === 0 ? 'disabled' : ''}>↑</button>
+                    <button type="button" onclick="window.moveRegistrationOptionAdmin(${index}, 1)" class="rounded px-2 py-1 text-gray-600 hover:bg-gray-200" ${index === activeRegistrationOptions.length - 1 ? 'disabled' : ''}>↓</button>
+                    <button type="button" onclick="window.removeRegistrationOptionAdmin(${index})" class="rounded px-2 py-1 text-red-600 hover:bg-red-50">Remove</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function collectRegistrationOptionsFromEditor() {
+    const rows = Array.from(document.querySelectorAll('#registration-options-list .registration-option-row'));
+    return rows.map((row) => ({
+        id: row.dataset.optionId,
+        label: row.querySelector('.registration-option-label')?.value || '',
+        capacityLimit: row.querySelector('.registration-option-capacity')?.value || '',
+        active: row.querySelector('.registration-option-active')?.checked === true,
+        waitlistEnabled: row.querySelector('.registration-option-waitlist')?.checked === true
+    }));
+}
+
+function syncActiveRegistrationOptionsFromEditor() {
+    activeRegistrationOptions = collectRegistrationOptionsFromEditor();
+}
 
 window.copyRegistrationLinkAdmin = async function (teamId, formId) {
     const url = getAdminRegistrationShareUrl(teamId, formId, window.location.origin);
@@ -392,6 +472,7 @@ async function saveRegistrationForm(event) {
         feeAmount: document.getElementById('registration-fee').value,
         participantFieldsText: document.getElementById('registration-participant-fields').value,
         guardianFieldsText: document.getElementById('registration-guardian-fields').value,
+        registrationOptions: collectRegistrationOptionsFromEditor(),
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
     }, { teamId });

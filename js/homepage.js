@@ -29,7 +29,10 @@ function buildLiveGameHref(game, replay = false) {
 }
 
 function isVisibleUpcomingHomepageGame(game) {
-    return (game?.status || '').toLowerCase() !== 'cancelled';
+    const status = (game?.status || '').toLowerCase();
+    return status !== 'cancelled'
+        && status !== 'canceled'
+        && status !== 'deleted';
 }
 
 function renderTeamAvatar(game) {

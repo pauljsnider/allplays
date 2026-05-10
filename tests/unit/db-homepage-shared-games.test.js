@@ -27,6 +27,10 @@ describe('homepage shared game discovery queries', () => {
         expect(upcomingSource).toContain('getSharedHomepageGames');
         expect(upcomingSource).toContain('shouldIncludeTeamInLiveOrUpcoming');
         expect(upcomingSource).toContain('games.sort(compareGamesByDateAsc)');
+        expect(upcomingSource).toContain('isExcludedHomepageUpcomingStatus(gameData.status)');
+        expect(upcomingSource).toContain('isExcludedHomepageUpcomingStatus(game.status)');
+        expect(source).toContain("normalizedStatus === 'canceled'");
+        expect(source).toContain("normalizedStatus === 'deleted'");
 
         const liveSource = getFunctionSource(source, 'getLiveGamesNow');
         expect(liveSource).toContain('getSharedHomepageGames');

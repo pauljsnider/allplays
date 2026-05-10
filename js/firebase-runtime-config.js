@@ -30,6 +30,11 @@ function readWindowGlobal(name) {
     return typeof window !== 'undefined' ? window[name] : undefined;
 }
 
+function isLocalHost() {
+    if (typeof window === 'undefined') return false;
+    return ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
+}
+
 function normalizeFirebaseConfig(rawConfig) {
     if (!rawConfig || typeof rawConfig !== 'object') {
         return null;
@@ -73,7 +78,11 @@ export async function resolvePrimaryFirebaseConfig() {
     }
 
     try {
-        return await fetchFirebaseConfigFromHosting();
+        const hostedConfig = await fetchFirebaseConfigFromHosting();
+        if (isLocalHost() && hostedConfig.projectId?.startsWith('demo-')) {
+            return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
+        }
+        return hostedConfig;
     } catch (error) {
         console.warn('Falling back to bundled Firebase config.', error);
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };

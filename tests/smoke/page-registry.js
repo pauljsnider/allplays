@@ -105,6 +105,12 @@ export function getPreviewBootPages(context) {
             titlePatterns: [/Team Chat - ALL PLAYS/i, /Login - ALL PLAYS/i],
             readySelectors: ['#messages-container', '#login-form']
         },
+        {
+            name: 'certificates demo boot',
+            path: '/certificates.html?demo=1#teamId=demo-junior-current',
+            titlePatterns: [/Certificates - ALL PLAYS/i],
+            readySelectors: ['#cert-setup', '#cert-preview']
+        },
         ...buildOptionalCorePages(context)
     ];
 }
@@ -136,6 +142,12 @@ export function getAuthenticatedSmokePages(context) {
             path: `/team-chat.html#teamId=${teamId}`,
             titlePatterns: [/Team Chat - ALL PLAYS/i],
             readySelectors: ['#messages-container', '#message-input']
+        },
+        {
+            name: 'certificates',
+            path: `/certificates.html#teamId=${teamId}`,
+            titlePatterns: [/Certificates - ALL PLAYS/i],
+            readySelectors: ['#cert-setup', '#cert-parent-view']
         },
         ...buildOptionalCorePages(context)
     ];

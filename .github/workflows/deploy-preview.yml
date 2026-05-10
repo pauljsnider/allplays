@@ -32,9 +32,47 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit:ci
 
+  regression-guards:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Firebase rules and deploy gates
+        run: npm run ci:firebase-rules
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start local static server
+        run: python3 -m http.server 4173 >/tmp/allplays-preview-regression-guards.log 2>&1 &
+
+      - name: Run roster/chat/media/replay regression smoke
+        run: npm run test:smoke:team-fallback
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:4173
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-regression-guards-http-log
+          path: /tmp/allplays-preview-regression-guards.log
+
   deploy:
     if: github.event.pull_request.head.repo.full_name == github.repository
-    needs: unit-tests
+    needs: [unit-tests, regression-guards]
     runs-on: ubuntu-latest
     permissions:
       checks: write

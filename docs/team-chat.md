@@ -16,6 +16,7 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
 - Pagination (50 messages per load)
 - Manual refresh button
 - Coach/admin recipient picker for full team, staff-only, or selected roster/community members
+- Lightweight conversations list for the default team-wide channel plus targeted direct/group conversation records
 
 ### Deferred Features
 - Real-time updates (Firestore onSnapshot) - using manual refresh instead
@@ -33,7 +34,21 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
 - Data stays inside each `team` namespace to match the rest of the app
 
 ## Data Model (Firestore)
-- Collection: `teams/{teamId}/chatMessages/{messageId}`
+- Legacy/default team channel: `teams/{teamId}/chatMessages/{messageId}`
+  - This remains the compatibility path for the team-wide stream and existing clients.
+- Targeted conversations: `teams/{teamId}/chatConversations/{conversationId}`
+  - `type: "team" | "group" | "direct"`
+  - `name: string | null`
+  - `participantIds: string[]` (user IDs or stable recipient identifiers such as `user:{uid}`, `email:{email}`, or `player:{playerId}`)
+  - `participantRoles: string[]` (for role conversations such as `staff`)
+  - `lastMessageAt: Timestamp` (set after the first message)
+  - `mutedBy: string[]`
+  - `createdAt: Timestamp`
+  - `updatedAt: Timestamp`
+- Targeted conversation messages: `teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}`
+  - Same message shape as the default channel, with `conversationId` populated.
+
+### Message Fields
   - `text: string`
   - `senderId: string`
   - `senderName: string`
@@ -64,7 +79,8 @@ Moderation (delete others' messages):
 ## Files Changed
 | File | Changes |
 |------|---------|
-| `js/db.js` | Added `uploadUserPhoto`, `canAccessTeamChat`, `canModerateChat`, `getChatMessages`, `postChatMessage`, `editChatMessage`, `deleteChatMessage` |
+| `js/db.js` | Added `uploadUserPhoto`, `canAccessTeamChat`, `canModerateChat`, `getChatConversations`, `upsertChatConversation`, `getChatMessages`, `postChatMessage`, `editChatMessage`, `deleteChatMessage` |
+| `js/team-chat-conversations.js` | Conversation normalization, default channel, display name, and participation helpers |
 | `profile.html` | Added profile photo upload section |
 | `dashboard.html` | Added Chat button to team cards |
 | `parent-dashboard.html` | Added Team Chats section |
@@ -92,7 +108,9 @@ This index may be auto-created when the first query runs, or can be created manu
 - [x] User without team access redirected to dashboard
 - [x] Send message appears in list
 - [x] Coach/admin can choose full team, staff-only, or selected roster/community recipients before sending
-- [x] Targeted sends persist `targetType`, `recipientIds`, and `targetRole` metadata with the chat message
+- [x] Team chat shows the default team-wide channel and targeted conversations the signed-in user participates in
+- [x] Opening a targeted conversation loads and sends under `chatConversations/{conversationId}/chatMessages`
+- [x] Targeted sends persist `targetType`, `recipientIds`, `targetRole`, and conversation metadata
 - [x] Edit own message shows "edited" indicator
 - [x] Delete own message shows "Message removed"
 - [x] Coach/Admin can delete any message (moderation)
