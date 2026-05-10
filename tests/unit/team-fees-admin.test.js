@@ -177,12 +177,13 @@ describe('team fees admin helpers', () => {
         });
 
         expect(buildManualPaymentUpdate({
-            amount: '50.00',
+            amount: '75.00',
             date: '2026-05-05',
             currentBalanceCents: 5000
         })).toMatchObject({
             status: 'paid',
-            amountPaidCents: 5000
+            amountPaidCents: 7500,
+            remainingBalanceCents: 0
         });
     });
 

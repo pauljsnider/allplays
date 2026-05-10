@@ -225,7 +225,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : paymentAmountCents;
     const priorPaid = Number(currentPaidCents);
     const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
-    const amountPaidCents = Math.min(balanceCents, priorPaidCents + paymentAmountCents);
+    const amountPaidCents = priorPaidCents + paymentAmountCents;
     const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
     const status = normalizeLedgerStatus(balanceCents, amountPaidCents);
     const noteText = normalizeString(note);
