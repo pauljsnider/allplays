@@ -18,6 +18,16 @@ const STATUS_META = {
         label: 'Adjusted',
         badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
         accentClass: 'border-l-amber-500'
+    },
+    partial: {
+        label: 'Partially paid',
+        badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+        accentClass: 'border-l-blue-500'
+    },
+    partially_paid: {
+        label: 'Partially paid',
+        badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+        accentClass: 'border-l-blue-500'
     }
 };
 
@@ -37,11 +47,39 @@ function getFeeInstallments(fee) {
 }
 
 function getFeeBalanceCents(fee) {
-    return getFirstDefined(fee?.balanceDueCents, fee?.remainingBalanceCents, fee?.amountDueCents);
+    const explicitBalance = getFirstDefined(fee?.balanceDueCents, fee?.remainingBalanceCents, fee?.amountDueCents);
+    if (explicitBalance !== undefined) return explicitBalance;
+
+    const totalCents = getFeeTotalCents(fee);
+    const paidCents = getFeePaidCents(fee);
+    if (totalCents === undefined || paidCents === undefined) return undefined;
+    return Math.max(0, Number(totalCents) - Number(paidCents));
+}
+
+function getFeeTotalCents(fee) {
+    return getFirstDefined(fee?.totalAmountCents, fee?.totalCents, fee?.adjustedAmountCents, fee?.amountCents, fee?.amountDueCents, fee?.amount);
+}
+
+function getFeePaidCents(fee) {
+    return getFirstDefined(fee?.paidAmountCents, fee?.amountPaidCents, fee?.totalPaidCents, fee?.paidCents);
 }
 
 function getFeeCheckoutUrl(fee) {
     return getFirstDefined(fee?.checkoutUrl, fee?.checkoutURL, fee?.paymentLink, fee?.paymentLinkUrl, fee?.paymentUrl);
+}
+
+function getFeeLedgerEntries(fee) {
+    const rawEntries = getFirstDefined(fee?.ledgerEntries, fee?.paymentLedger, fee?.activity, fee?.receipts, fee?.payments, fee?.adjustments);
+    return Array.isArray(rawEntries) ? rawEntries.filter(Boolean) : [];
+}
+
+function isPayActionAllowed(fee) {
+    if (!fee?.checkoutUrl) return false;
+    if (fee.status === 'paid' || fee.status === 'canceled') return false;
+
+    const balanceCents = Number(fee.balanceDueCents);
+    if (Number.isFinite(balanceCents)) return balanceCents > 0;
+    return fee.status === 'unpaid' || fee.status === 'partial' || fee.status === 'partially_paid';
 }
 
 function formatCents(value) {
@@ -131,6 +169,41 @@ function renderInstallmentSchedule(fee) {
     `;
 }
 
+function renderReceiptActivity(fee) {
+    const entries = getFeeLedgerEntries(fee);
+    if (!entries.length) return '';
+
+    const rows = entries.map((entry, index) => {
+        const label = getFirstDefined(entry?.label, entry?.title, entry?.type, entry?.kind, `Activity ${index + 1}`);
+        const dateValue = getFirstDefined(entry?.date, entry?.postedAt, entry?.createdAt, entry?.paidAt, entry?.adjustedAt);
+        const amount = formatCents(getFirstDefined(entry?.amountCents, entry?.paidAmountCents, entry?.adjustmentAmountCents, entry?.totalCents));
+        const note = getFirstDefined(entry?.note, entry?.memo, entry?.description, entry?.receiptNumber, entry?.reference);
+        const status = getFirstDefined(entry?.status, entry?.paymentStatus);
+        const details = [
+            dateValue ? formatParentFeeDueDate(dateValue) : '',
+            status ? String(status) : '',
+            note ? String(note) : ''
+        ].filter(Boolean).join(' · ');
+
+        return `
+            <div class="flex items-start justify-between gap-3 py-2 border-t border-gray-100 first:border-t-0">
+                <div>
+                    <div class="font-medium text-gray-900 capitalize">${escapeHtml(label)}</div>
+                    ${details ? `<div class="text-xs text-gray-500 mt-0.5">${escapeHtml(details)}</div>` : ''}
+                </div>
+                <div class="font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(amount || 'Amount not set')}</div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+            <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold mb-1">Receipts & activity</div>
+            ${rows}
+        </div>
+    `;
+}
+
 function escapeHtml(value) {
     return String(value ?? '')
         .replace(/&/g, '&amp;')
@@ -163,7 +236,7 @@ export function getParentFeeStatusMeta(status) {
 }
 
 export function formatParentFeeAmount(fee) {
-    const raw = fee?.amountDueCents ?? fee?.adjustedAmountCents ?? fee?.amountCents ?? fee?.amount;
+    const raw = getFeeTotalCents(fee);
     return formatCents(raw) || 'Amount not set';
 }
 
@@ -187,6 +260,8 @@ export function normalizeParentFeeRecord(fee) {
         dueDate: fee?.dueDate || fee?.dueAt || null,
         notes: fee?.notes || fee?.feeNotes || '',
         offlinePaymentInstructions: fee?.offlinePaymentInstructions || fee?.paymentInstructions || '',
+        totalAmountCents: getFeeTotalCents(fee),
+        paidAmountCents: getFeePaidCents(fee),
         balanceDueCents: getFeeBalanceCents(fee),
         checkoutUrl: getFeeCheckoutUrl(fee)
     };
@@ -216,12 +291,16 @@ export function renderParentTeamFees(fees) {
         const instructions = fee.offlinePaymentInstructions
             ? `<p class="text-sm text-gray-700 mt-2"><span class="font-semibold">Offline payment:</span> ${escapeHtml(fee.offlinePaymentInstructions)}</p>`
             : '';
+        const paid = fee.paidAmountCents !== undefined && fee.paidAmountCents !== null
+            ? `<div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Paid</div><div class="font-bold text-gray-900">${escapeHtml(formatCents(fee.paidAmountCents) || 'Amount not set')}</div></div>`
+            : '';
         const balance = fee.balanceDueCents !== undefined && fee.balanceDueCents !== null
-            ? `<div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Balance</div><div class="font-bold text-gray-900">${escapeHtml(formatCents(fee.balanceDueCents) || 'Amount not set')}</div></div>`
+            ? `<div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2"><div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Remaining balance</div><div class="font-bold text-gray-900">${escapeHtml(formatCents(fee.balanceDueCents) || 'Amount not set')}</div></div>`
             : '';
         const lineItems = renderInvoiceLineItems(fee);
         const installmentSchedule = renderInstallmentSchedule(fee);
-        const payLink = fee.checkoutUrl
+        const receiptActivity = renderReceiptActivity(fee);
+        const payLink = isPayActionAllowed(fee)
             ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay</a>`
             : '';
 
@@ -242,17 +321,24 @@ export function renderParentTeamFees(fees) {
                 </div>
                 <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                     <div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
-                        <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Amount owed</div>
+                        <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Total amount</div>
                         <div class="font-bold text-gray-900">${formatParentFeeAmount(fee)}</div>
                     </div>
                     <div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
                         <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Due date</div>
                         <div class="font-bold text-gray-900">${escapeHtml(formatParentFeeDueDate(fee.dueDate))}</div>
                     </div>
+                    ${paid}
                     ${balance}
                 </div>
-                ${lineItems}
-                ${installmentSchedule}
+                <details class="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <summary class="cursor-pointer text-sm font-bold text-blue-700 hover:text-blue-800">View fee details</summary>
+                    <div class="mt-3 text-sm text-gray-700">
+                        ${lineItems || '<div class="rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-500">No line items recorded.</div>'}
+                        ${installmentSchedule}
+                        ${receiptActivity}
+                    </div>
+                </details>
                 ${notes}
                 ${instructions}
             </div>
