@@ -16,7 +16,7 @@ import {
     updatePassword
 } from './firebase.js?v=11';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests } from './db.js?v=29';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=2';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=3';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
 
