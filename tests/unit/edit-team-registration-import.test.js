@@ -21,10 +21,29 @@ describe('edit team registration import', () => {
         expect(source).toContain('season: selectedRegistrationTeam.season || null');
         expect(source).toContain('division: selectedRegistrationTeam.division || null');
         expect(source).toContain('registrationSource:');
-        expect(source).toContain('provider: selectedRegistrationTeam.provider');
+        expect(source).toContain('registrationSourcePayload');
         expect(source).toContain('sourceId: selectedRegistrationTeam.sourceId');
-        expect(source).toContain('externalTeamId: selectedRegistrationTeam.externalTeamId');
         expect(source).toContain('externalTeamName: selectedRegistrationTeam.externalTeamName');
+    });
+
+    it('adds editable registration provider fields without live provider calls', () => {
+        const source = readRepoFile('edit-team.html');
+
+        expect(source).toContain('Registration Provider Connection');
+        expect(source).toContain('registrationProviderName');
+        expect(source).toContain('registrationExternalTeamId');
+        expect(source).toContain('registrationCopiedTeamId');
+        expect(source).toContain('registrationLastSyncStatus');
+        expect(source).toContain('No provider login, sync job, or network call runs from these fields');
+    });
+
+    it('renders registration provider metadata on the team page', () => {
+        const source = readRepoFile('team.html');
+
+        expect(source).toContain('registrationProviderHtml(team, teamId)');
+        expect(source).toContain('Registration Provider');
+        expect(source).toContain('External Team ID');
+        expect(source).toContain('Last Sync Status');
     });
 
     it('documents the registration import path in the team setup workflow', () => {

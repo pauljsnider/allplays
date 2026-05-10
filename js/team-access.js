@@ -51,6 +51,17 @@ export function hasStreamTeamAccess(user, team, game = null, rsvp = null) {
   if (!user || !team || !isScheduledGame(game)) return false;
   if (hasFullTeamAccess(user, team)) return true;
 
+  if (team.teamPermissions?.streaming) {
+    const permissions = normalizeTeamPermissions(team.teamPermissions);
+    const streaming = permissions.streaming;
+    if (streaming.mode === 'all_confirmed' && hasConfirmedRsvp(rsvp)) {
+      return true;
+    }
+    if (streaming.mode === 'selected' && normalizeMemberIdList(streaming.memberIds).includes(String(user.uid || '').trim())) {
+      return true;
+    }
+  }
+
   const mode = String(team.streamAccessMode || 'admins').trim().toLowerCase();
   if (mode === 'confirmed_members' || mode === 'all_confirmed') {
     return hasConfirmedRsvp(rsvp);
@@ -134,9 +145,17 @@ function normalizeCapabilityPermission(permission) {
   };
 }
 
+function normalizeSelectedMemberPermission(permission) {
+  return {
+    mode: 'selected',
+    memberIds: normalizeMemberIdList(permission?.memberIds)
+  };
+}
+
 export function normalizeTeamPermissions(teamPermissions = {}) {
   return {
     scorekeeping: normalizeCapabilityPermission(teamPermissions.scorekeeping),
-    streaming: normalizeCapabilityPermission(teamPermissions.streaming)
+    streaming: normalizeCapabilityPermission(teamPermissions.streaming),
+    videography: normalizeSelectedMemberPermission(teamPermissions.videography)
   };
 }

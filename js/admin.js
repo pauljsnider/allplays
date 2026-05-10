@@ -87,6 +87,8 @@ async function loadGameStats() {
 
 function updateDashboard() {
     const visibleTeams = getVisibleTeams();
+    const visibleTeamIds = new Set(visibleTeams.map(team => team.id));
+    const visibleGames = allGames.filter(game => visibleTeamIds.has(game.teamId));
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -102,13 +104,13 @@ function updateDashboard() {
     document.getElementById('stat-users-growth').textContent = `+${newUsersLast30} this month`;
 
     // Total games
-    const completedGames = allGames.filter(g => g.status === 'completed').length;
-    const scheduledGames = allGames.filter(g => g.status === 'scheduled').length;
-    document.getElementById('stat-total-games').textContent = allGames.length;
+    const completedGames = visibleGames.filter(g => g.status === 'completed').length;
+    const scheduledGames = visibleGames.filter(g => g.status === 'scheduled').length;
+    document.getElementById('stat-total-games').textContent = visibleGames.length;
     document.getElementById('stat-games-breakdown').textContent = `${completedGames} played, ${scheduledGames} scheduled`;
 
     // Activity (teams with games in last 7 days)
-    const activeTeams = new Set(allGames.filter(g => {
+    const activeTeams = new Set(visibleGames.filter(g => {
         const gameDate = g.date.toDate ? g.date.toDate() : new Date(g.date);
         return gameDate > sevenDaysAgo;
     }).map(g => g.teamId)).size;
@@ -133,7 +135,7 @@ function updateDashboard() {
     // Team details
     const publicTeams = visibleTeams.filter(t => t.isPublic !== false).length;
     const privateTeams = visibleTeams.length - publicTeams;
-    const teamsWithGames = new Set(allGames.map(g => g.teamId)).size;
+    const teamsWithGames = new Set(visibleGames.map(g => g.teamId)).size;
     document.getElementById('stat-team-details').innerHTML = `
         <div class="flex justify-between items-center">
             <span class="text-gray-700">Public</span>

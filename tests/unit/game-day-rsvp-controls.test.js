@@ -119,4 +119,10 @@ describe('game day RSVP wiring', () => {
         expect(source).toContain('window.setCoachPlayerRsvp = gameDayRsvpController.setCoachPlayerRsvp;');
         expect(source).toContain('gameDayRsvpController.renderRsvpPanel();');
     });
+
+    it('loads RSVP context for all-confirmed streaming team permissions', () => {
+        const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+        expect(source).toContain("String(team.teamPermissions?.streaming?.mode || '').toLowerCase() === 'all_confirmed'");
+    });
 });

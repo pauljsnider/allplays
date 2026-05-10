@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+    buildRegistrationScheduleImportPreview,
     formatRegistrationImportResults,
     getRegistrationScheduleEvents,
     isExternallyLinkedRegistrationTeam,
@@ -104,6 +105,40 @@ describe('registration schedule import planning', () => {
         });
     });
 
+    it('builds preview rows for selectable imports and local conflicts', () => {
+        const rows = buildRegistrationScheduleImportPreview({
+            Timestamp,
+            sourceEvents: [
+                {
+                    externalEventId: 'ext-new',
+                    type: 'practice',
+                    start: '2026-05-01T18:00:00.000Z',
+                    title: 'Practice',
+                    location: 'Gym'
+                },
+                {
+                    externalEventId: 'ext-conflict',
+                    type: 'game',
+                    start: '2026-05-02T18:00:00.000Z',
+                    opponent: 'Bears'
+                }
+            ],
+            existingEvents: [
+                {
+                    id: 'game-2',
+                    type: 'game',
+                    date: new Date('2026-05-02T18:00:00.000Z'),
+                    opponent: 'Bears'
+                }
+            ]
+        });
+
+        expect(rows).toEqual([
+            expect.objectContaining({ action: 'add', selectable: true, payload: expect.objectContaining({ type: 'practice', title: 'Practice', location: 'Gym' }) }),
+            expect.objectContaining({ action: 'conflict', selectable: false, existingEventId: 'game-2' })
+        ]);
+    });
+
     it('formats import result counts for the UI', () => {
         expect(formatRegistrationImportResults({ added: 2, updated: 1, skipped: 0, conflicted: 3 }))
             .toBe('2 added, 1 updated, 0 skipped, 3 conflicted');
@@ -115,9 +150,11 @@ describe('registration schedule import wiring', () => {
         const source = readEditSchedule();
 
         expect(source).toContain('id="registration-schedule-import"');
-        expect(source).toContain('Re-import Schedule');
-        expect(source).toContain("import { formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=1';");
-        expect(source).toContain('planRegistrationScheduleImport({');
+        expect(source).toContain('id="registration-schedule-import-preview"');
+        expect(source).toContain('Import Selected');
+        expect(source).toContain("import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=2';");
+        expect(source).toContain('buildRegistrationScheduleImportPreview({');
+        expect(source).toContain('registration-schedule-import-choice:checked');
         expect(source).toContain('sourceMetadata?.externalEventId');
     });
 });

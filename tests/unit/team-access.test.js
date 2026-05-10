@@ -76,6 +76,36 @@ describe('team access helpers', () => {
     expect(hasStreamTeamAccess({ uid: 'u6', email: 'parent@example.com' }, team, game, { response: 'maybe' })).toBe(false);
   });
 
+  it('grants limited stream access to selected team permission members', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        streaming: { mode: 'selected', memberIds: [' selected-user ', 'selected-user'] }
+      }
+    };
+    const game = { id: 'game-1', status: 'scheduled' };
+
+    expect(hasStreamTeamAccess({ uid: 'selected-user', email: 'parent@example.com' }, team, game)).toBe(true);
+    expect(getTeamAccessInfo({ uid: 'selected-user', email: 'parent@example.com' }, team, { game })).toEqual({
+      hasAccess: true,
+      accessLevel: 'stream',
+      exitUrl: 'team.html#teamId=team-1'
+    });
+  });
+
+  it('grants limited stream access to all confirmed team permission members', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        streaming: { mode: 'all_confirmed' }
+      }
+    };
+    const game = { id: 'game-1', status: 'scheduled' };
+
+    expect(hasStreamTeamAccess({ uid: 'u6', email: 'parent@example.com' }, team, game, { response: 'going' })).toBe(true);
+    expect(hasStreamTeamAccess({ uid: 'u6', email: 'parent@example.com' }, team, game, { response: 'maybe' })).toBe(false);
+  });
+
   it('denies limited stream access to unrelated users', () => {
     const team = { ...TEAM, streamAccessMode: 'selected_volunteers', streamVolunteerEmails: ['video@example.com'] };
     const game = { id: 'game-1', status: 'scheduled' };
@@ -94,10 +124,12 @@ describe('team access helpers', () => {
   it('normalizes scoped volunteer permissions without granting admin access', () => {
     expect(normalizeTeamPermissions({
       scorekeeping: { mode: 'selected', memberIds: [' user-1 ', 'user-1', '', null, 'user-2'] },
-      streaming: { mode: 'all_confirmed', memberIds: ['user-3'] }
+      streaming: { mode: 'all_confirmed', memberIds: ['user-3'] },
+      videography: { mode: 'selected', memberIds: [' video-1 ', 'video-1'] }
     })).toEqual({
       scorekeeping: { mode: 'selected', memberIds: ['user-1', 'user-2'] },
-      streaming: { mode: 'all_confirmed', memberIds: [] }
+      streaming: { mode: 'all_confirmed', memberIds: [] },
+      videography: { mode: 'selected', memberIds: ['video-1'] }
     });
 
     expect(hasFullTeamAccess({ uid: 'user-1' }, {
@@ -106,6 +138,14 @@ describe('team access helpers', () => {
         scorekeeping: { mode: 'selected', memberIds: ['user-1'] }
       }
     })).toBe(false);
+  });
+
+  it('defaults videography to selected members only', () => {
+    expect(normalizeTeamPermissions()).toEqual({
+      scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+      streaming: { mode: 'all_confirmed', memberIds: [] },
+      videography: { mode: 'selected', memberIds: [] }
+    });
   });
 
 });
