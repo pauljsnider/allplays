@@ -259,6 +259,14 @@ service cloud.firestore {
       return data.updatedBy == request.auth.uid;
     }
 
+    function registrationFormPath(teamId, formId) {
+      return /databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId);
+    }
+
+    function registrationDocPath(teamId, formId, registrationId) {
+      return /databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)/registrations/$(registrationId);
+    }
+
     function hasOnlyFlatStringValues(data) {
       return data is map &&
              data.keys().size() <= 20 &&
@@ -284,6 +292,22 @@ service cloud.firestore {
              (data.keys().size() < 20 || data[data.keys()[19]] is string);
     }
 
+    function hasConfiguredRegistrationOptions(data) {
+      return (data.get('registrationOptions', []) is list && data.get('registrationOptions', []).size() > 0) ||
+             (data.get('options', []) is list && data.get('options', []).size() > 0);
+    }
+
+    function isRegistrationSelectedOptionPayloadValid(option) {
+      return option is map &&
+             option.keys().hasOnly(['id', 'countKey', 'title', 'feeAmountCents', 'capacityLimit', 'waitlistEnabled']) &&
+             option.id is string &&
+             option.countKey is string &&
+             option.title is string &&
+             option.feeAmountCents is int &&
+             (option.capacityLimit == null || option.capacityLimit is int) &&
+             option.waitlistEnabled is bool;
+    }
+
     function isPendingRegistrationPayloadValid(teamId, formId, data) {
       return data.keys().hasOnly([
                'teamId',
@@ -297,16 +321,89 @@ service cloud.firestore {
                'waiverText',
                'status',
                'submittedAt',
+               'waitlistedAt',
+               'selectedOption',
                'source'
              ]) &&
              data.teamId == teamId &&
              data.formId == formId &&
-             data.status == 'pending' &&
+             data.status in ['pending', 'waitlisted'] &&
              data.waiverAccepted == true &&
              hasOnlyFlatStringValues(data.participant) &&
              hasOnlyFlatStringValues(data.guardian) &&
+             (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
+             (data.status == 'waitlisted' || !data.keys().hasAny(['waitlistedAt'])) &&
+             (data.status != 'waitlisted' || data.keys().hasAny(['waitlistedAt'])) &&
              data.source == 'public-registration';
 
+    }
+
+    function hasExpectedRegistrationCounterDelta(registration, beforeCounts, afterCounts) {
+      let option = registration.selectedOption;
+      let countKey = option.countKey;
+      let beforeOption = beforeCounts.get(countKey, {});
+      let afterOption = afterCounts.get(countKey, {});
+      let beforeEnrolled = beforeOption.get('enrolled', 0);
+      let beforeWaitlisted = beforeOption.get('waitlisted', 0);
+      let afterEnrolled = afterOption.get('enrolled', 0);
+      let afterWaitlisted = afterOption.get('waitlisted', 0);
+      let capacityLimit = option.get('capacityLimit', null);
+      return beforeCounts.keys().hasAll([countKey]) &&
+             afterCounts.keys().hasAll([countKey]) &&
+             beforeEnrolled is int &&
+             beforeWaitlisted is int &&
+             afterEnrolled is int &&
+             afterWaitlisted is int &&
+             afterCounts.diff(beforeCounts).affectedKeys().hasOnly([countKey]) &&
+             afterOption.diff(beforeOption).affectedKeys().hasOnly(['enrolled', 'waitlisted']) &&
+             (
+               (registration.status == 'pending' &&
+                afterEnrolled == beforeEnrolled + 1 &&
+                afterWaitlisted == beforeWaitlisted &&
+                (capacityLimit == null || afterEnrolled <= capacityLimit)) ||
+               (registration.status == 'waitlisted' &&
+                option.waitlistEnabled == true &&
+                capacityLimit is int &&
+                beforeEnrolled >= capacityLimit &&
+                afterEnrolled == beforeEnrolled &&
+                afterWaitlisted == beforeWaitlisted + 1)
+             );
+    }
+
+    function isRegistrationCapacityTransitionValid(formBefore, formAfter, registration) {
+      return registration.keys().hasAny(['selectedOption']) &&
+             hasExpectedRegistrationCounterDelta(
+               registration,
+               formBefore.get('registrationOptionCounts', {}),
+               formAfter.get('registrationOptionCounts', {})
+             );
+    }
+
+    function isPublicRegistrationCapacityCounterUpdate(teamId, formId) {
+      let registrationId = request.resource.data.get('registrationCapacityUpdateId', '');
+      let registrationPath = registrationDocPath(teamId, formId, registrationId);
+      return isPublishedRegistrationForm(resource.data) &&
+             registrationId is string &&
+             registrationId != '' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registrationOptionCounts', 'registrationCapacityUpdateId', 'updatedAt']) &&
+             !exists(registrationPath) &&
+             existsAfter(registrationPath) &&
+             isPendingRegistrationPayloadValid(teamId, formId, getAfter(registrationPath).data) &&
+             isRegistrationCapacityTransitionValid(resource.data, request.resource.data, getAfter(registrationPath).data);
+    }
+
+    function isPublicPendingRegistrationCreate(teamId, formId, registrationId) {
+      let formPath = registrationFormPath(teamId, formId);
+      return isPublishedRegistrationForm(get(formPath).data) &&
+             isPendingRegistrationPayloadValid(teamId, formId, request.resource.data) &&
+             (
+               (!hasConfiguredRegistrationOptions(get(formPath).data) &&
+                request.resource.data.status == 'pending' &&
+                !request.resource.data.keys().hasAny(['selectedOption', 'waitlistedAt'])) ||
+               (hasConfiguredRegistrationOptions(get(formPath).data) &&
+                getAfter(formPath).data.get('registrationCapacityUpdateId', '') == registrationId &&
+                isRegistrationCapacityTransitionValid(get(formPath).data, getAfter(formPath).data, request.resource.data))
+             );
     }
 
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
@@ -819,15 +916,15 @@ service cloud.firestore {
 
       match /registrationForms/{formId} {
         allow read: if isPublishedRegistrationForm(resource.data) || isTeamOwnerOrAdmin(teamId);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, delete: if isTeamOwnerOrAdmin(teamId);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isPublicRegistrationCapacityCounterUpdate(teamId, formId);
 
         match /registrations/{registrationId} {
           allow read: if isTeamOwnerOrAdmin(teamId);
           allow update: if isTeamOwnerOrAdmin(teamId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
           allow create: if (isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending') ||
-                          (isPublishedRegistrationForm(get(/databases/$(database)/documents/teams/$(teamId)/registrationForms/$(formId)).data) &&
-                           isPendingRegistrationPayloadValid(teamId, formId, request.resource.data));
+                          isPublicPendingRegistrationCreate(teamId, formId, registrationId);
         }
       }
 
