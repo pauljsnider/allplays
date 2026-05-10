@@ -36,13 +36,10 @@ export function buildTeamStaffPermissionsViewModel(team = {}, pendingAdminInvite
     }
     adminEmails.forEach((email) => staff.push({ label: email, role: 'Admin' }));
 
-    const existingStaffEmails = new Set(adminEmails);
-    if (normalizeEmail(team.ownerEmail)) existingStaffEmails.add(normalizeEmail(team.ownerEmail));
-
     const pendingInvites = (Array.isArray(pendingAdminInvites) ? pendingAdminInvites : [])
         .filter((invite) => invite && invite.used !== true)
         .map((invite) => normalizeEmail(invite.email))
-        .filter((email) => email && !existingStaffEmails.has(email));
+        .filter(Boolean);
 
     const uniquePendingInvites = Array.from(new Set(pendingInvites));
     const permissions = normalizeTeamPermissions(team.teamPermissions || {});

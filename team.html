@@ -80,6 +80,8 @@
             </div>
         </div>
 
+        <section id="team-scorekeeper-section" class="mb-8 hidden"></section>
+
         <section id="availability-settings-section" class="mb-8 hidden"></section>
 
         <section id="team-staff-permissions-section" class="mb-8 hidden"></section>
@@ -309,7 +311,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, saveTeamAvailabilityPreferences, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=19';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=20';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -353,6 +355,7 @@
         let currentTeamId = null;
         let currentTeamAccessInfo = { hasAccess: false, accessLevel: null };
         let currentPlayers = [];
+        let currentTeamMemberUsers = [];
         let showPractices = false;
         let latestGameId = null;
         let nextGameCountdown = null;
@@ -375,6 +378,7 @@
         window.openScheduleDayModal = openScheduleDayModal;
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
+        window.toggleScorekeeperGrant = toggleScorekeeperGrant;
 
         function canManageTeamAvailability() {
             return !!currentUser && (
@@ -383,6 +387,207 @@
                 currentTeamAccessInfo?.accessLevel === 'owner' ||
                 currentTeamAccessInfo?.accessLevel === 'admin'
             );
+        }
+
+        function canManageScorekeeperGrants() {
+            return canManageTeamAvailability();
+        }
+
+        function normalizeMemberUserId(value) {
+            return String(value || '').trim();
+        }
+
+        function getPlayerLinkedUserIds(player) {
+            const ids = new Set([
+                player?.userId,
+                player?.authUid,
+                player?.accountUserId,
+                player?.memberUserId
+            ].map(normalizeMemberUserId).filter(Boolean));
+            (Array.isArray(player?.parents) ? player.parents : []).forEach((parent) => {
+                [
+                    parent?.userId,
+                    parent?.uid,
+                    parent?.authUid,
+                    parent?.accountUserId,
+                    parent?.memberUserId
+                ].map(normalizeMemberUserId).filter(Boolean).forEach((id) => ids.add(id));
+            });
+            return Array.from(ids);
+        }
+
+        function getPlayerMemberUserId(player) {
+            return getPlayerLinkedUserIds(player)[0] || '';
+        }
+
+        function userProfileLinksPlayer(user, player, teamId = currentTeamId) {
+            const playerId = normalizeMemberUserId(player?.id || player?.playerId);
+            if (!teamId || !playerId) return false;
+            const playerKey = `${teamId}::${playerId}`;
+            const linkMatches = (link) => (
+                link?.teamId === teamId &&
+                (!link?.playerId || link.playerId === playerId)
+            );
+            return (Array.isArray(user?.parentOf) && user.parentOf.some(linkMatches)) ||
+                (Array.isArray(user?.playerOf) && user.playerOf.some(linkMatches)) ||
+                (Array.isArray(user?.playerKeys) && user.playerKeys.includes(playerKey)) ||
+                (Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(playerKey));
+        }
+
+        function buildScorekeeperGrantTargets(players = [], users = [], teamId = currentTeamId) {
+            const targetsByUserId = new Map();
+            const roster = Array.isArray(players) ? players : [];
+            const profiles = Array.isArray(users) ? users : [];
+
+            const addTarget = (userId, player, source = {}) => {
+                const normalizedUserId = normalizeMemberUserId(userId);
+                if (!normalizedUserId) return;
+                const sourceName = String(source.name || source.email || '').trim();
+                const sourceEmail = String(source.email || '').trim();
+                const existing = targetsByUserId.get(normalizedUserId) || {
+                    userId: normalizedUserId,
+                    name: sourceName || player?.name || 'Team member',
+                    email: sourceEmail,
+                    playerNames: []
+                };
+                const playerName = String(player?.name || '').trim();
+                if (playerName && !existing.playerNames.includes(playerName)) {
+                    existing.playerNames.push(playerName);
+                }
+                if (sourceName && (!existing.name || existing.name === playerName || existing.name === 'Team member')) {
+                    existing.name = sourceName;
+                }
+                existing.email = existing.email || sourceEmail;
+                targetsByUserId.set(normalizedUserId, existing);
+            };
+
+            roster.forEach((player) => {
+                getPlayerLinkedUserIds(player).forEach((userId) => addTarget(userId, player));
+                (Array.isArray(player?.parents) ? player.parents : []).forEach((parent) => {
+                    addTarget(parent?.userId || parent?.uid || parent?.authUid || parent?.accountUserId, player, {
+                        name: parent?.name,
+                        email: parent?.email
+                    });
+                });
+            });
+
+            profiles.forEach((user) => {
+                roster
+                    .filter((player) => userProfileLinksPlayer(user, player, teamId))
+                    .forEach((player) => {
+                        addTarget(user.id || user.uid, player, {
+                            name: user.fullName || user.displayName || user.email,
+                            email: user.email
+                        });
+                    });
+            });
+
+            return Array.from(targetsByUserId.values())
+                .sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        async function loadScorekeeperGrantUsers(teamId) {
+            if (!teamId || !canManageScorekeeperGrants()) return [];
+            try {
+                return await getAllUsers();
+            } catch (error) {
+                console.warn('Failed to load linked team members for scorekeeper grants:', error);
+                return [];
+            }
+        }
+
+        function getSelectedScorekeeperIds(team) {
+            const scorekeeping = team?.teamPermissions?.scorekeeping || {};
+            if (scorekeeping.mode !== 'selected') return new Set();
+            return new Set((Array.isArray(scorekeeping.memberIds) ? scorekeeping.memberIds : [])
+                .map((id) => String(id || '').trim())
+                .filter(Boolean));
+        }
+
+        function renderScorekeeperGrantControls(team, players = []) {
+            const section = document.getElementById('team-scorekeeper-section');
+            if (!section) return;
+            if (!canManageScorekeeperGrants()) {
+                section.classList.add('hidden');
+                section.innerHTML = '';
+                return;
+            }
+
+            const selectedScorekeeperIds = getSelectedScorekeeperIds(team);
+            const grantTargets = buildScorekeeperGrantTargets(players, currentTeamMemberUsers, currentTeamId);
+
+            section.classList.remove('hidden');
+            section.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
+                    <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-900">Scorekeeper access</h2>
+                            <p class="text-sm text-gray-500 mt-1">Grant an existing team member scorekeeping access without making them a team admin.</p>
+                        </div>
+                    </div>
+                    ${grantTargets.length ? `
+                        <div class="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
+                            ${grantTargets.map((target) => {
+                                const granted = selectedScorekeeperIds.has(target.userId);
+                                const detail = target.playerNames.length
+                                    ? `Linked to ${target.playerNames.join(', ')}.`
+                                    : 'Linked team member account.';
+                                return `
+                                    <div class="flex items-center justify-between gap-3 p-3">
+                                        <div class="min-w-0">
+                                            <div class="font-semibold text-gray-900 truncate">${escapeHtml(target.name || 'Team member')}</div>
+                                            <div class="text-xs text-gray-500">${escapeHtml(granted ? `Can score games. ${detail}` : `No scorekeeper grant. ${detail}`)}</div>
+                                        </div>
+                                        <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${granted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="shrink-0 px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${granted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
+                                            ${granted ? 'Revoke' : 'Grant'}
+                                        </button>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    ` : '<p class="text-sm text-gray-500">No linked team member accounts found on the roster yet.</p>'}
+                    <div id="team-scorekeeper-status" class="mt-2 text-xs text-gray-500" aria-live="polite"></div>
+                </div>
+            `;
+        }
+
+        async function toggleScorekeeperGrant(button) {
+            if (!button || button.disabled || !currentTeamId) return;
+            const memberUserId = String(button.dataset.memberUserId || '').trim();
+            if (!memberUserId) return;
+            const wasGranted = button.dataset.granted === 'true';
+            const status = document.getElementById('team-scorekeeper-status');
+            try {
+                button.disabled = true;
+                if (status) status.textContent = wasGranted ? 'Revoking scorekeeper access...' : 'Granting scorekeeper access...';
+                if (wasGranted) {
+                    await revokeScorekeeperAccess(currentTeamId, memberUserId);
+                } else {
+                    await grantScorekeeperAccess(currentTeamId, memberUserId);
+                }
+                const nextIds = getSelectedScorekeeperIds(currentTeam);
+                if (wasGranted) {
+                    nextIds.delete(memberUserId);
+                } else {
+                    nextIds.add(memberUserId);
+                }
+                currentTeam = {
+                    ...currentTeam,
+                    teamPermissions: {
+                        ...(currentTeam?.teamPermissions || {}),
+                        scorekeeping: {
+                            mode: 'selected',
+                            memberIds: Array.from(nextIds)
+                        }
+                    }
+                };
+                renderScorekeeperGrantControls(currentTeam, currentPlayers);
+                const nextStatus = document.getElementById('team-scorekeeper-status');
+                if (nextStatus) nextStatus.textContent = wasGranted ? 'Scorekeeper access revoked.' : 'Scorekeeper access granted.';
+            } catch (err) {
+                button.disabled = false;
+                if (status) status.textContent = `Unable to update scorekeeper access: ${err?.message || err}`;
+            }
         }
 
         function renderAvailabilitySettings(team) {
@@ -1392,6 +1597,8 @@
                 }
 
                 const pendingAdminInvites = canManageTeamAvailability() ? await loadPendingAdminInvites(teamId) : [];
+                currentTeamMemberUsers = await loadScorekeeperGrantUsers(teamId);
+                renderScorekeeperGrantControls(team, players);
                 renderAvailabilitySettings(team);
                 renderStaffPermissionsSection(team, pendingAdminInvites);
                 renderTeamPassCard(document.getElementById('team-pass-container'), {

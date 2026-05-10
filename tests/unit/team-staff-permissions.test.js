@@ -23,7 +23,7 @@ describe('team staff and permissions view model', () => {
             { label: 'owner@example.com', role: 'Owner' },
             { label: 'coach@example.com', role: 'Admin' }
         ]);
-        expect(viewModel.pendingInvites).toEqual(['pending@example.com']);
+        expect(viewModel.pendingInvites).toEqual(['pending@example.com', 'coach@example.com']);
         expect(viewModel.helperPermissions).toEqual([
             expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1'] }),
             expect.objectContaining({ key: 'videographer', grants: ['video-1', 'video@example.com'] }),

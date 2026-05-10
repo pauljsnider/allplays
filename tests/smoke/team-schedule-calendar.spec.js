@@ -80,7 +80,19 @@ export async function getUserProfile() {
     return null;
 }
 
+export async function getAllUsers() {
+    return [];
+}
+
 export async function saveTeamAvailabilityPreferences() {
+    return undefined;
+}
+
+export async function grantScorekeeperAccess() {
+    return undefined;
+}
+
+export async function revokeScorekeeperAccess() {
     return undefined;
 }
 
@@ -256,6 +268,14 @@ const FIREBASE_STUB = `
 export const db = {};
 
 export function collection() {
+    return {};
+}
+
+export function query() {
+    return {};
+}
+
+export function where() {
     return {};
 }
 
