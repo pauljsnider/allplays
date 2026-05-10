@@ -242,6 +242,8 @@ export async function getTeamMediaItems() {
 }
 export async function createTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
+export async function uploadTeamMediaPhoto() {}
+export async function deleteTeamMediaItem() {}
 export async function reorderTeamMediaFolders() {}
 export async function reorderTeamMediaItems() {}
 export async function moveTeamMediaItems() {}
@@ -261,6 +263,8 @@ export async function getTeamMediaItems() {
 }
 export async function createTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
+export async function uploadTeamMediaPhoto() {}
+export async function deleteTeamMediaItem() {}
 export async function reorderTeamMediaFolders() {}
 export async function reorderTeamMediaItems() {}
 export async function moveTeamMediaItems() {}
@@ -272,6 +276,12 @@ const MEDIA_UTILS_STUB = `
 export function canManageTeamMedia() {
     return false;
 }
+export function canContributeTeamMedia() {
+    return false;
+}
+export function canDeleteTeamMediaItem() {
+    return false;
+}
 export function getTeamMediaItemUrl(item = {}) {
     return item.url || item.downloadUrl || '';
 }
@@ -282,6 +292,9 @@ export function isSafeTeamMediaPhoto() {
     return false;
 }
 export function isSafeTeamMediaUrl() {
+    return true;
+}
+export function isSupportedTeamMediaImage() {
     return true;
 }
 export function sortByMediaOrder(items = []) {
@@ -293,6 +306,12 @@ const MEDIA_UTILS_ADMIN_STUB = `
 export function canManageTeamMedia() {
     return true;
 }
+export function canContributeTeamMedia() {
+    return true;
+}
+export function canDeleteTeamMediaItem() {
+    return true;
+}
 export function getTeamMediaItemUrl(item = {}) {
     return item.url || item.downloadUrl || '';
 }
@@ -303,6 +322,9 @@ export function isSafeTeamMediaPhoto() {
     return false;
 }
 export function isSafeTeamMediaUrl() {
+    return true;
+}
+export function isSupportedTeamMediaImage() {
     return true;
 }
 export function sortByMediaOrder(items = []) {
@@ -633,7 +655,7 @@ test('team media shows an empty library when media reads are denied', async ({ p
     const pageErrors = await collectPageErrors(page);
     await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
-    await page.route('**/js/team-media-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_STUB }));
+    await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_STUB }));
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
@@ -647,7 +669,7 @@ test('team media shows a staff permission error when rules block management read
     const pageErrors = await collectPageErrors(page);
     await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_STUB }));
-    await page.route('**/js/team-media-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+    await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
@@ -662,7 +684,7 @@ test('team media renders visible save actions for staff', async ({ page, baseURL
     const pageErrors = await collectPageErrors(page);
     await page.route('**/js/auth.js?v=13', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_WITH_FOLDER_STUB }));
-    await page.route('**/js/team-media-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+    await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
 
     await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
