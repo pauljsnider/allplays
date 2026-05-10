@@ -113,6 +113,24 @@ export function buildBulkDeleteUpdates(ids = []) {
     return normalizeSelectedMediaIds(ids).map((id) => ({ id, deleted: true }));
 }
 
+export function getTeamMediaItemUrl(item = {}) {
+    return String(item.downloadUrl || item.url || item.src || '').trim();
+}
+
+export function isSafeTeamMediaPhoto(item = {}) {
+    const url = getTeamMediaItemUrl(item);
+    if (!isSafeTeamMediaUrl(url)) return false;
+    const type = String(item.type || '').toLowerCase();
+    const contentType = String(item.contentType || item.mimeType || '').toLowerCase();
+    return ['photo', 'image', 'team-photo'].includes(type)
+        || contentType.startsWith('image/')
+        || /\.(avif|gif|jpe?g|png|webp)(\?|#|$)/i.test(url);
+}
+
+export function getTeamMediaUploaderName(item = {}) {
+    return String(item.uploadedByName || item.uploaderName || item.createdByName || item.authorName || '').trim();
+}
+
 export function isSafeTeamMediaUrl(value) {
     return Boolean(getHttpUrl(value));
 }
