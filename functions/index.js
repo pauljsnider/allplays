@@ -9,6 +9,18 @@ const {
   shouldUnlockTeamPassFromEvent,
   buildTeamPassEntitlement
 } = require('./team-pass-core.cjs');
+const {
+  normalizeTeamFeeCheckoutInput,
+  getTeamFeeBalanceCents,
+  isTeamFeeCheckoutEligible,
+  isEligibleTeamFeePayer,
+  buildTeamFeeCheckoutUrls,
+  buildTeamFeeCheckoutMetadata,
+  canReuseTeamFeeCheckoutSession,
+  shouldMarkTeamFeePaidFromEvent,
+  shouldRecordTeamFeeCheckoutNotPaidFromEvent,
+  buildTeamFeePaidUpdate
+} = require('./team-fees-core.cjs');
 const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
 
 if (admin.apps.length === 0) {
@@ -47,6 +59,10 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
     successUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=success`,
     cancelUrl: `${baseUrl}/team.html?teamId=${encodedTeamId}&teamPass=cancelled`
   };
+}
+
+function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
+  return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
 }
 
 async function getUserForEligibility(uid) {
@@ -97,6 +113,92 @@ exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, conte
   return { checkoutUrl: session.url, sessionId: session.id };
 });
 
+exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before paying a team fee.');
+  }
+
+  let input;
+  try {
+    input = normalizeTeamFeeCheckoutInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid team fee checkout request.');
+  }
+
+  const teamSnap = await firestore.doc(`teams/${input.teamId}`).get();
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const recipientRef = buildTeamFeeRecipientRef(input);
+  const recipientSnap = await recipientRef.get();
+  if (!recipientSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+  }
+
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const recipient = { id: input.recipientId, ...(recipientSnap.data() || {}) };
+  if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+  }
+
+  if (!isTeamFeeCheckoutEligible(recipient)) {
+    throw new functions.https.HttpsError('failed-precondition', 'This team fee is not eligible for online checkout.');
+  }
+
+  const user = await getUserForEligibility(context.auth.uid);
+  const email = context.auth.token?.email || user.email || '';
+  if (!isEligibleTeamFeePayer({ team, user, uid: context.auth.uid, email, recipient })) {
+    throw new functions.https.HttpsError('permission-denied', 'You do not have access to pay this team fee.');
+  }
+
+  const amountCents = getTeamFeeBalanceCents(recipient);
+  if (canReuseTeamFeeCheckoutSession(recipient, amountCents)) {
+    return { checkoutUrl: recipient.checkoutUrl, sessionId: recipient.stripeCheckoutSessionId };
+  }
+
+  const stripe = createStripeClient();
+  const { appUrl } = getStripeConfig();
+  const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
+  const title = recipient.feeTitle || recipient.title || 'Team fee';
+  const playerName = recipient.playerName || recipient.childName || '';
+  const description = playerName ? `${title} for ${playerName}` : title;
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [{
+      price_data: {
+        currency: 'usd',
+        unit_amount: amountCents,
+        product_data: {
+          name: description
+        }
+      },
+      quantity: 1
+    }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: email || recipient.parentEmail || recipient.email || undefined,
+    client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
+    metadata: buildTeamFeeCheckoutMetadata({ ...input, payerUid: context.auth.uid })
+  });
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await recipientRef.set({
+    checkoutUrl: session.url,
+    paymentLink: session.url,
+    checkoutStatus: 'open',
+    paymentProvider: 'stripe',
+    stripeCheckoutSessionId: session.id,
+    stripePaymentStatus: session.payment_status || 'unpaid',
+    checkoutAmountCents: amountCents,
+    balanceDueCents: amountCents,
+    checkoutCreatedAt: now,
+    updatedAt: now
+  }, { merge: true });
+
+  return { checkoutUrl: session.url, sessionId: session.id };
+});
+
 exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
@@ -124,6 +226,58 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     console.warn('Rejected Stripe webhook with invalid signature:', error?.message || error);
     res.status(400).send('Invalid Stripe signature');
     return;
+  }
+
+  if (shouldMarkTeamFeePaidFromEvent(event) || shouldRecordTeamFeeCheckoutNotPaidFromEvent(event)) {
+    try {
+      const session = event.data.object;
+      const { teamId, batchId, recipientId } = session.metadata || {};
+      const receivedAt = admin.firestore.FieldValue.serverTimestamp();
+      const eventRef = firestore.doc(`stripeEvents/${event.id}`);
+      const recipientRef = buildTeamFeeRecipientRef({ teamId, batchId, recipientId });
+
+      await firestore.runTransaction(async (transaction) => {
+        const eventSnap = await transaction.get(eventRef);
+        if (eventSnap.exists) return;
+
+        const recipientSnap = await transaction.get(recipientRef);
+        if (!recipientSnap.exists) {
+          throw new Error('Team fee recipient not found for Stripe webhook.');
+        }
+
+        if (shouldMarkTeamFeePaidFromEvent(event)) {
+          transaction.set(recipientRef, buildTeamFeePaidUpdate({
+            recipient: recipientSnap.data() || {},
+            session,
+            eventId: event.id,
+            receivedAt
+          }), { merge: true });
+        } else {
+          transaction.set(recipientRef, {
+            checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
+            stripeCheckoutSessionId: session.id || null,
+            stripeEventId: event.id,
+            updatedAt: receivedAt
+          }, { merge: true });
+        }
+
+        transaction.set(eventRef, {
+          provider: 'stripe',
+          product: 'team_fee',
+          type: event.type,
+          checkoutSessionId: session.id || null,
+          recipientPath: recipientRef.path,
+          receivedAt
+        });
+      });
+
+      res.status(200).json({ received: true, teamFeeUpdated: shouldMarkTeamFeePaidFromEvent(event) });
+      return;
+    } catch (error) {
+      console.error('Failed to process Stripe team fee webhook:', error);
+      res.status(500).send('Webhook processing failed');
+      return;
+    }
   }
 
   if (!shouldUnlockTeamPassFromEvent(event)) {
