@@ -6,7 +6,7 @@ describe('admin invite signup cache busting', () => {
     it('pins fresh module versions for the admin invite signup path', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
 
-        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=2';");
+        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=3';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';");
         expect(authSource).toContain("from './db.js?v=29';");
     });
@@ -36,7 +36,7 @@ describe('admin invite signup cache busting', () => {
 
         for (const relativePath of authConsumers) {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            expect(source).toContain('auth.js?v=13');
+            expect(source).toContain('auth.js?v=14');
         }
     });
 });
