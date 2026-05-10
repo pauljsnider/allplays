@@ -353,15 +353,9 @@ function calendarTokenHasTeamAccess({ team, user, tokenData }) {
   const email = String(user?.email || tokenData.email || tokenData.userEmail || '').trim().toLowerCase();
   const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').toLowerCase()) : [];
   const parentTeamIds = Array.isArray(user?.parentTeamIds) ? user.parentTeamIds : [];
-  const tokenRoles = Array.isArray(tokenData.roles) ? tokenData.roles : [];
-  const tokenTeamIds = Array.isArray(tokenData.teamIds) ? tokenData.teamIds : [];
   return team.ownerId === uid ||
     (email && adminEmails.includes(email)) ||
-    parentTeamIds.includes(tokenData.teamId) ||
-    tokenTeamIds.includes(tokenData.teamId) ||
-    tokenRoles.includes('member') ||
-    tokenRoles.includes('admin') ||
-    tokenData.member === true;
+    parentTeamIds.includes(tokenData.teamId);
 }
 
 exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
