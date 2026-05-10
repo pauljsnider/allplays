@@ -5164,7 +5164,27 @@ export async function respondToOfficiatingAssignment(teamId, gameId, slotId, sta
     await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
+function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {}) {
+    const uid = String(user?.uid || '').trim();
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!uid) return false;
+    if (team.ownerId === uid) return true;
+    if (email && Array.isArray(team.adminEmails) && team.adminEmails.map((adminEmail) => String(adminEmail || '').trim().toLowerCase()).includes(email)) return true;
+    if (userProfile?.isAdmin === true) return true;
+    if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team.id)) return true;
+    if (Array.isArray(userProfile?.playerTeamIds) && userProfile.playerTeamIds.includes(team.id)) return true;
+    return false;
+}
+
 export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser) {
+    const [team, userProfile] = await Promise.all([
+        getTeam(teamId, { includeInactive: true }),
+        official?.uid ? getUserProfile(official.uid) : Promise.resolve(null)
+    ]);
+    if (!isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile || {}, official || {})) {
+        throw new Error('Only team owners, admins, parents, or roster members can claim open officiating slots.');
+    }
+
     const docRef = getGameDocRef(teamId, gameId);
     let notificationRecord = null;
     await runTransaction(db, async (transaction) => {

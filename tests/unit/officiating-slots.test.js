@@ -79,19 +79,26 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain("['pending', 'needs_review'].includes(slot.status)");
     });
 
-    it('allows signed-in officials to claim open self-assignment slots through Firestore rules', () => {
+    it('limits open self-assignment slot claims to eligible team participants', () => {
+        const officialsSource = readOfficialsPage();
         const dbSource = readDbSource();
         const rules = readFirestoreRules();
 
-        expect(dbSource).toContain('export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser)');
+        expect(officialsSource).toContain('canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);');
+        expect(officialsSource).toContain('Open self-assignment slots are only available to team owners, admins, parents, or roster members.');
+        expect(officialsSource).toContain("'./js/db.js?v=32'");
+        expect(dbSource).toContain('function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {})');
+        expect(dbSource).toContain("throw new Error('Only team owners, admins, parents, or roster members can claim open officiating slots.');");
         expect(dbSource).toContain('officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds)');
         expect(dbSource).toContain('officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)');
-        expect(rules).toContain('function isOpenOfficiatingSelfAssignmentUpdate()');
-        expect(rules).toContain("resource.data.get('officiatingSelfAssignmentEnabled', false) == true");
+        expect(rules).toContain('function canClaimOpenOfficiatingSlot(teamId)');
+        expect(rules).toContain('isParentForTeam(teamId)');
+        expect(rules).toContain("teamId in get(userPath).data.get('playerTeamIds', [])");
+        expect(rules).toContain('function isOpenOfficiatingSelfAssignmentUpdate(teamId)');
+        expect(rules).toContain('return canClaimOpenOfficiatingSlot(teamId) &&');
         expect(rules).toContain('function isOnlyAddingCurrentOfficialAuthorization()');
         expect(rules).toContain("nextUserIds.hasOnly(previousUserIds + [request.auth.uid])");
         expect(rules).toContain("nextEmails.hasOnly(previousEmails + [callerEmail])");
-        expect(rules).toContain("'officiatingAuthorizedUserIds'");
-        expect(rules).toContain('allow update: if isOpenOfficiatingSelfAssignmentUpdate();');
+        expect(rules).toContain('allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);');
     });
 });

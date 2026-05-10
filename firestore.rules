@@ -441,8 +441,17 @@ service cloud.firestore {
              );
     }
 
-    function isOpenOfficiatingSelfAssignmentUpdate() {
-      return isSignedIn() &&
+    function canClaimOpenOfficiatingSlot(teamId) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isTeamOwnerOrAdmin(teamId) ||
+             isParentForTeam(teamId) ||
+             (isSignedIn() &&
+              exists(userPath) &&
+              teamId in get(userPath).data.get('playerTeamIds', []));
+    }
+
+    function isOpenOfficiatingSelfAssignmentUpdate(teamId) {
+      return canClaimOpenOfficiatingSlot(teamId) &&
              resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -1018,7 +1027,7 @@ service cloud.firestore {
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
-        allow update: if isOpenOfficiatingSelfAssignmentUpdate();
+        allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);
 
         // Events subcollection
         match /events/{eventId} {
