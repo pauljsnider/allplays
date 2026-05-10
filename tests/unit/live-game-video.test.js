@@ -426,6 +426,32 @@ describe('native camera capture authorization', () => {
         })).toBe(true);
     });
 
+    it('allows selected videographers without granting full staff access', () => {
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'video-1', email: 'video@example.com' },
+            team: {
+                ownerId: 'owner-1',
+                adminEmails: [],
+                teamPermissions: {
+                    videography: { mode: 'selected', memberIds: ['video-1'] }
+                }
+            },
+            game: scheduledGame
+        })).toBe(true);
+
+        expect(canAccessNativeCameraCapture({
+            user: { uid: 'video-2', email: 'video2@example.com' },
+            team: {
+                ownerId: 'owner-1',
+                adminEmails: [],
+                teamPermissions: {
+                    videography: { mode: 'selected', memberIds: ['video-1'] }
+                }
+            },
+            game: scheduledGame
+        })).toBe(false);
+    });
+
     it('blocks regular viewers and ended games', () => {
         expect(canAccessNativeCameraCapture({
             user: { uid: 'viewer-1', email: 'viewer@example.com' },

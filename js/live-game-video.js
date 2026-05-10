@@ -122,6 +122,12 @@ function normalizeUidSet(values) {
         .filter(Boolean));
 }
 
+function hasSelectedVideographerGrant(user, team) {
+    const videography = team?.teamPermissions?.videography || {};
+    if (videography.mode && videography.mode !== 'selected') return false;
+    return Boolean(user?.uid && normalizeUidSet(videography.memberIds).has(user.uid));
+}
+
 function isGameCameraEligible(game) {
     if (!game || typeof game !== 'object') return false;
     const status = String(game.status || game.liveStatus || '').toLowerCase();
@@ -137,6 +143,7 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     const adminEmails = normalizeStringSet(team.adminEmails);
     if (userEmail && adminEmails.has(userEmail)) return true;
+    if (hasSelectedVideographerGrant(user, team)) return true;
 
     const approvedUidFields = [
         team.mediaContributorUids,
