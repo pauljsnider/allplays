@@ -260,6 +260,19 @@
                     </div>
                 </div>
 
+                <div class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            <input id="teamPassRecordedReplayPaywallEnabled" type="checkbox"
+                                class="focus:ring-amber-500 h-4 w-4 text-amber-600 border-gray-300 rounded">
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="teamPassRecordedReplayPaywallEnabled" class="font-medium text-amber-900">Require Team Pass for Archived Replays</label>
+                            <p class="text-amber-700">When enabled, completed game replay videos are locked unless this team has an active Team Pass for the season.</p>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-start">
                     <div class="flex items-center h-5">
                         <input id="isPublic" type="checkbox"
@@ -513,6 +526,7 @@
         let rolloverSourceTeams = [];
         let rolloverAccessPreview = null;
         let currentRegistrationSource = null;
+        let currentTeamPassConfig = {};
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
         let selectedRegistrationTeam = null;
@@ -571,6 +585,16 @@
             const legacyKey = key === 'primary' ? 'primaryColor' : 'secondaryColor';
             const alternateKey = key === 'primary' ? 'colorPrimary' : 'colorSecondary';
             return normalizeHexColor(colors[key] || team[legacyKey] || team[alternateKey], fallback);
+        }
+
+        function getRecordedReplayPaywallConfigValue(team = {}) {
+            return [
+                team.teamPassConfig?.recordedReplayPaywallEnabled,
+                team.teamPass?.recordedReplayPaywallEnabled,
+                team.premiumFeatures?.recordedReplayPaywallEnabled,
+                team.recordedReplayPaywallEnabled,
+                team.recordedReplayTeamPassRequired
+            ].find((value) => typeof value === 'boolean') === true;
         }
 
         async function copyTextToClipboard(value) {
@@ -1084,6 +1108,10 @@
                 document.getElementById('standingsMultiTeamTiebreakers').value = multiTeamTiebreakers.join(', ');
                 document.getElementById('zip').value = team.zip || '';
                 document.getElementById('isPublic').checked = team.isPublic !== false; // Default to true
+                currentTeamPassConfig = team.teamPassConfig && typeof team.teamPassConfig === 'object'
+                    ? { ...team.teamPassConfig }
+                    : {};
+                document.getElementById('teamPassRecordedReplayPaywallEnabled').checked = getRecordedReplayPaywallConfigValue(team);
                 // Populate Live Stream field from twitchChannel, streamEmbedUrl, or legacy youtubeEmbedUrl
                 const streamInput = document.getElementById('streamUrl');
                 if (team.twitchChannel) {
@@ -1539,6 +1567,10 @@
                     },
                     photoUrl: currentPhotoUrl,
                     isPublic: document.getElementById('isPublic').checked,
+                    teamPassConfig: {
+                        ...currentTeamPassConfig,
+                        recordedReplayPaywallEnabled: document.getElementById('teamPassRecordedReplayPaywallEnabled').checked
+                    },
                     adminEmails: rolloverStaffUpdate ? rolloverStaffUpdate.adminEmails : normalizedAdminEmails,
                     registrationSource: registrationSourcePayload,
                     ...(createMode === 'registration' && selectedRegistrationTeam && registrationSourcePayload ? {

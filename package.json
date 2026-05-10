@@ -7,6 +7,8 @@
     "test:unit": "vitest run tests/unit",
     "test:unit:ci": "vitest run tests/unit --reporter=dot",
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
+    "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
+    "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
     "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays"
   },
   "devDependencies": {

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
     canManageTeamMedia,
     canViewTeamMediaFolder,
+    canContributeTeamMedia,
+    canDeleteTeamMediaItem,
     buildBulkDeleteUpdates,
     buildMoveUpdates,
     buildReorderUpdates,
@@ -10,6 +12,7 @@ import {
     isSafeTeamMediaPhoto,
     isSafeTeamMediaUrl,
     isSupportedTeamMediaVideoUrl,
+    isSupportedTeamMediaImage,
     normalizeSelectedMediaIds,
     normalizeTeamMediaFolderDraft,
     normalizeTeamMediaVideoDraft,
@@ -25,6 +28,24 @@ describe('team media management permissions', () => {
         expect(canManageTeamMedia({ uid: 'global-1', email: 'other@example.com', isAdmin: true }, team)).toBe(true);
         expect(canManageTeamMedia({ uid: 'parent-1', email: 'parent@example.com' }, team)).toBe(false);
         expect(canManageTeamMedia(null, team)).toBe(false);
+    });
+
+    it('allows team parents and admins to contribute photos', () => {
+        const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: ['admin@example.com'] };
+
+        expect(canContributeTeamMedia({ uid: 'coach-1', email: 'coach@example.com' }, team)).toBe(true);
+        expect(canContributeTeamMedia({ uid: 'parent-1', parentTeamIds: ['team-1'] }, team)).toBe(true);
+        expect(canContributeTeamMedia({ uid: 'parent-2', parentOf: [{ teamId: 'team-1' }] }, team)).toBe(true);
+        expect(canContributeTeamMedia({ uid: 'other-1', parentTeamIds: ['other-team'] }, team)).toBe(false);
+    });
+
+    it('allows owners or admins to moderate all photos and uploaders to delete their own photos', () => {
+        const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: [] };
+        const item = { id: 'photo-1', type: 'photo', uploadedBy: 'parent-1' };
+
+        expect(canDeleteTeamMediaItem({ uid: 'parent-1' }, team, item)).toBe(true);
+        expect(canDeleteTeamMediaItem({ uid: 'parent-2' }, team, item)).toBe(false);
+        expect(canDeleteTeamMediaItem({ uid: 'coach-1' }, team, item)).toBe(true);
     });
 });
 
@@ -115,6 +136,13 @@ describe('team media bulk actions', () => {
         expect(isSafeTeamMediaPhoto({ url: 'https://cdn.example.com/photo.jpg?token=1' })).toBe(true);
         expect(isSafeTeamMediaPhoto({ url: 'javascript:alert(1)', type: 'photo' })).toBe(false);
         expect(getTeamMediaUploaderName(item)).toBe('Coach Pat');
+    });
+
+    it('accepts only image files for team album uploads', () => {
+        expect(isSupportedTeamMediaImage({ type: 'image/jpeg' })).toBe(true);
+        expect(isSupportedTeamMediaImage({ type: 'image/png' })).toBe(true);
+        expect(isSupportedTeamMediaImage({ type: 'video/mp4' })).toBe(false);
+        expect(isSupportedTeamMediaImage(null)).toBe(false);
     });
 
     it('sorts by saved order with stable name fallback', () => {

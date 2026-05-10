@@ -256,12 +256,12 @@ function buildModuleSource() {
             'const { MAX_HIGHLIGHT_CLIP_MS, buildHighlightShareUrl, canAccessNativeCameraCapture, createHighlightClipDraft, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replace(
-            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
-            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
+            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
+            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
-            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
-            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
+            /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
+            'const { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } = deps.teamEntitlements;'
         )
         .replace(
             "import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';",
@@ -466,6 +466,7 @@ async function bootReplayPage({ replayEvents }) {
             TEAM_PASS_FEATURES: {},
             canAccessPremiumFanFeature: () => false,
             getTeamEntitlementStatus: () => ({ isActive: false }),
+            isRecordedReplayTeamPassGateEnabled: () => false,
             resolveTeamEntitlementSeasonId: () => null
         },
         firebaseAi: {
