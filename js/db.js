@@ -3963,6 +3963,18 @@ export function trackViewerPresence(teamId, gameId, onCountChange) {
 /**
  * Get upcoming live games across all public teams
  */
+function isExcludedHomepageUpcomingStatus(status) {
+    if (typeof status !== 'string') {
+        return false;
+    }
+
+    const normalizedStatus = status.trim().toLowerCase();
+    return normalizedStatus === 'completed'
+        || normalizedStatus === 'cancelled'
+        || normalizedStatus === 'canceled'
+        || normalizedStatus === 'deleted';
+}
+
 export async function getUpcomingLiveGames(limitCount = 10) {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -3998,7 +4010,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
             for (const docSnap of snapshot.docs) {
                 const gameData = { id: docSnap.id, ...docSnap.data() };
-                if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+                if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                     continue;
                 }
                 if (!gameData.type) {
@@ -4035,7 +4047,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         snapshot = await getDocs(fallbackQuery);
         for (const docSnap of snapshot.docs) {
             const gameData = { id: docSnap.id, ...docSnap.data() };
-            if (gameData.type === 'practice' || gameData.status === 'completed' || gameData.status === 'cancelled' || gameData.liveStatus === 'completed') {
+            if (gameData.type === 'practice' || isExcludedHomepageUpcomingStatus(gameData.status) || gameData.liveStatus === 'completed') {
                 continue;
             }
             if (!gameData.type) {
@@ -4071,8 +4083,7 @@ export async function getUpcomingLiveGames(limitCount = 10) {
         ], shouldIncludeTeamInLiveOrUpcoming);
         games.push(...sharedGames.filter((game) => {
             return game.type !== 'practice'
-                && game.status !== 'completed'
-                && game.status !== 'cancelled'
+                && !isExcludedHomepageUpcomingStatus(game.status)
                 && game.liveStatus !== 'completed';
         }));
     } catch (error) {
