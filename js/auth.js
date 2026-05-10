@@ -43,6 +43,27 @@ async function cleanupFailedNewUser(user, context) {
     }
 }
 
+function normalizeSignupEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function assertInviteEmailMatchesGoogleSignup(validation, signupEmail) {
+    if (validation?.type !== 'parent_invite' && validation?.type !== 'admin_invite') {
+        return;
+    }
+
+    const invitedEmail = normalizeSignupEmail(validation?.data?.email);
+    if (!invitedEmail) {
+        return;
+    }
+
+    if (normalizeSignupEmail(signupEmail) === invitedEmail) {
+        return;
+    }
+
+    throw new Error(`This invite was sent to ${invitedEmail}. Sign up with that email to accept it.`);
+}
+
 async function linkParentInviteOrRollback(user, parentInviteCode) {
     try {
         await redeemParentInvite(user.uid, parentInviteCode);
@@ -167,6 +188,14 @@ async function processGoogleAuthResult(result, activationCode = null) {
             clearPendingActivationCode();
             await cleanupFailedNewUser(result.user, 'invalid activation code');
             throw new Error(validation.message || 'Invalid activation code');
+        }
+
+        try {
+            assertInviteEmailMatchesGoogleSignup(validation, result.user.email);
+        } catch (emailMismatchError) {
+            clearPendingActivationCode();
+            await cleanupFailedNewUser(result.user, 'invite email mismatch');
+            throw emailMismatchError;
         }
 
         const userId = result.user.uid;
