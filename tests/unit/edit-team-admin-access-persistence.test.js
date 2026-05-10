@@ -213,6 +213,7 @@ function createEnvironment(initialState, overrides = {}) {
         'scorekeeping-member-list',
         'streamingAccessMode',
         'streaming-member-list',
+        'videography-member-list',
         'streamAccessMode',
         'stream-volunteer-panel',
         'stream-volunteer-list',
@@ -345,7 +346,7 @@ function extractEditTeamModule() {
             'const { normalizeYouTubeEmbedUrl } = deps.liveStreamUtils;'
         )
         .replace(
-            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=2';",
+            "import { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } from './js/team-access.js?v=3';",
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
