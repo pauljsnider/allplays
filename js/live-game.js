@@ -456,10 +456,20 @@ function refreshVideoPanel({ force = false } = {}) {
   const nextPlayback = resolveVideoPlayback();
   if (!force && !shouldReloadVideoPlayback(state.videoPlayback, nextPlayback)) {
     state.videoPlayback = nextPlayback;
-    state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || state.videoPlayback?.replayState || hasMediaHubContent(state.videoPlayback?.mediaHub));
+    const recordedReplayGateEnabled = isRecordedReplayTeamPassGateEnabled({ game: state.game, team: state.team });
+    const videoUnlocked = canAccessPremiumFanFeature(TEAM_PASS_FEATURES.RECORDED_REPLAY, state.teamEntitlement);
+    const isGatedRecordedReplay = state.videoPlayback?.mode === 'recorded' && recordedReplayGateEnabled && !videoUnlocked;
+    const shouldShowVideoPanel = Boolean(
+      isGatedRecordedReplay ||
+      userCanUseNativeCamera() ||
+      hasMediaHubContent(state.videoPlayback?.mediaHub) ||
+      state.videoPlayback?.gameClips?.length ||
+      state.videoPlayback?.replayState
+    );
+    state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || shouldShowVideoPanel);
     renderRecordedReplayTools();
     renderGameMediaHub();
-    renderReplayAvailabilityState();
+    renderReplayAvailabilityState({ shouldShowVideoPanel });
     updateTabs();
     return false;
   }
