@@ -11,7 +11,8 @@ import {
     normalizeTeamFeeDraft,
     parseTeamFeeAmountToCents,
     summarizeFeeRecipients,
-    toFeeCents
+    toFeeCents,
+    toSignedFeeCents
 } from '../../js/team-fees-admin.js';
 
 describe('team fees admin helpers', () => {
@@ -121,7 +122,7 @@ describe('team fees admin helpers', () => {
         const summary = summarizeFeeRecipients([
             { status: 'paid', amountCents: 5000, amountDueCents: 5000, amountPaidCents: 5000 },
             { status: 'unpaid', amountCents: 7500, amountDueCents: 7500 },
-            { status: 'adjusted', amountCents: 4000, amountDueCents: 2500, amountPaidCents: 500 },
+            { status: 'partial', amountCents: 4000, amountDueCents: 2500, amountPaidCents: 500 },
             { status: 'canceled', amountCents: 3000, amountDueCents: 3000 }
         ]);
 
@@ -133,8 +134,9 @@ describe('team fees admin helpers', () => {
             totalOutstandingCents: 9500,
             counts: {
                 paid: 1,
+                partial: 1,
                 unpaid: 1,
-                adjusted: 1,
+                adjusted: 0,
                 canceled: 1
             }
         });
@@ -147,7 +149,7 @@ describe('team fees admin helpers', () => {
             date: '2026-05-05',
             currentBalanceCents: 5000
         })).toMatchObject({
-            status: 'unpaid',
+            status: 'partial',
             amountPaidCents: 2500
         });
 
@@ -157,7 +159,7 @@ describe('team fees admin helpers', () => {
             currentBalanceCents: 5000,
             currentPaidCents: 2500
         })).toMatchObject({
-            status: 'unpaid',
+            status: 'partial',
             amountPaidCents: 4500
         });
 
@@ -175,12 +177,13 @@ describe('team fees admin helpers', () => {
         });
 
         expect(buildManualPaymentUpdate({
-            amount: '50.00',
+            amount: '75.00',
             date: '2026-05-05',
             currentBalanceCents: 5000
         })).toMatchObject({
             status: 'paid',
-            amountPaidCents: 5000
+            amountPaidCents: 7500,
+            remainingBalanceCents: 0
         });
     });
 
@@ -193,6 +196,7 @@ describe('team fees admin helpers', () => {
         })).toMatchObject({
             status: 'paid',
             amountPaidCents: 4250,
+            remainingBalanceCents: 0,
             paidAt: '2026-05-05',
             manualPayment: {
                 amountPaidCents: 4250,
@@ -202,14 +206,22 @@ describe('team fees admin helpers', () => {
             }
         });
 
-        expect(buildBalanceAdjustmentUpdate({ amount: '10', note: 'Sibling discount', actorId: 'coach-1' })).toMatchObject({
-            status: 'adjusted',
-            amountDueCents: 1000,
+        expect(buildBalanceAdjustmentUpdate({ amount: '-10', note: 'Sibling discount', actorId: 'coach-1', currentBalanceCents: 5000, currentPaidCents: 1000 })).toMatchObject({
+            status: 'partial',
+            amountDueCents: 4000,
+            remainingBalanceCents: 3000,
             adjustment: {
-                amountDueCents: 1000,
+                amountCents: -1000,
+                previousAmountDueCents: 5000,
+                amountDueCents: 4000,
                 note: 'Sibling discount',
                 adjustedBy: 'coach-1'
-            }
+            },
+            ledgerEntries: [{
+                type: 'balance_adjustment',
+                amountCents: -1000,
+                reason: 'Sibling discount'
+            }]
         });
 
         expect(buildCancelRecipientUpdate({ note: 'No longer on roster', actorId: 'coach-1' })).toMatchObject({
@@ -225,8 +237,10 @@ describe('team fees admin helpers', () => {
     it('normalizes currency inputs and recipient balances safely', () => {
         expect(toFeeCents('12.345')).toBe(1235);
         expect(toFeeCents('-1')).toBeNull();
+        expect(toSignedFeeCents('-1.50')).toBe(-150);
         expect(getRecipientBalanceCents({ status: 'canceled', amountDueCents: 5000 })).toBe(0);
         expect(getRecipientPaidCents({ status: 'paid', amountDueCents: 2500 })).toBe(2500);
         expect(() => buildManualPaymentUpdate({ amount: '0', date: '2026-05-05' })).toThrow('greater than $0');
+        expect(() => buildBalanceAdjustmentUpdate({ amount: '-5', note: '' })).toThrow('adjustment reason');
     });
 });
