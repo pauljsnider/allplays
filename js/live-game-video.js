@@ -450,14 +450,17 @@ export function normalizeSavedHighlightClips(game, options = {}) {
                 endMs: clip?.endMs,
                 durationMs,
                 title: clip?.title || clip?.playDescription || clip?.description || `Highlight ${index + 1}`,
-                taggedPlayerIds: clip?.taggedPlayerIds
+                taggedPlayerIds: clip?.taggedPlayerIds || clip?.selectedPlayerIds || clip?.playerIds
             }, options);
             if (!normalized) return null;
             return {
                 ...normalized,
+                durationMs: normalized.endMs - normalized.startMs,
                 description: firstSafeString([clip?.playDescription, clip?.description, clip?.text, clip?.message]) || normalized.title,
                 period: firstSafeString([clip?.period, clip?.inning, clip?.quarter, clip?.half]),
                 gameTime: firstSafeString([clip?.gameTime, clip?.clock, clip?.time]),
+                scoreContext: clip?.scoreContext || null,
+                playEventId: clip?.playEventId || clip?.eventId || null,
                 players: normalizeAssociatedPlayers(clip?.players || clip?.associatedPlayers || clip?.playerIds || clip?.playerId),
                 videoUrl: getClipVideoUrl(clip),
                 order: toFiniteNumber(clip?.order ?? clip?.sortOrder ?? clip?.sequence ?? clip?.rank) ?? index

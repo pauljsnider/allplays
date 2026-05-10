@@ -700,7 +700,7 @@ function hasMediaHubContent(mediaHub) {
 
 function buildMediaHubHighlightUrl(clip) {
   if (clip?.videoUrl) return clip.videoUrl;
-  if (!Number.isFinite(clip?.startMs) || !Number.isFinite(clip?.endMs)) return null;
+  if (!canPlayMediaHubHighlight(clip)) return null;
   return buildHighlightShareUrl({
     origin: window.location.origin,
     teamId: state.teamId,
@@ -713,6 +713,71 @@ function buildMediaHubHighlightUrl(clip) {
 function buildSafeMediaHubHighlightUrl(clip) {
   const clipUrl = buildMediaHubHighlightUrl(clip);
   return clipUrl && isSafeUrl(clipUrl) ? clipUrl : null;
+}
+
+function areEquivalentVideoUrls(left, right) {
+  if (!left || !right) return false;
+  try {
+    return new URL(left, window.location.href).href === new URL(right, window.location.href).href;
+  } catch (error) {
+    return String(left).trim() === String(right).trim();
+  }
+}
+
+function isActiveMediaHubReplaySource() {
+  return areEquivalentVideoUrls(
+    state.videoPlayback?.sourceUrl,
+    state.videoPlayback?.mediaHub?.replay?.sourceUrl
+  );
+}
+
+function canPlayMediaHubHighlight(clip) {
+  return Boolean(
+    state.videoPlayback?.mode === 'recorded' &&
+    state.videoPlayback?.sourceUrl &&
+    state.videoPlayback?.mediaHub?.replay &&
+    isActiveMediaHubReplaySource() &&
+    Number.isFinite(clip?.startMs) &&
+    Number.isFinite(clip?.endMs)
+  );
+}
+
+function getHighlightPlayerLabels(clip) {
+  const labels = [];
+  if (Array.isArray(clip?.taggedPlayerIds)) {
+    labels.push(...clip.taggedPlayerIds.map(getPlayerNameById).filter(Boolean));
+  }
+  if (Array.isArray(clip?.players)) {
+    labels.push(...clip.players.map(player => {
+      if (typeof player === 'string') return player;
+      const number = player?.number || player?.jerseyNumber || '';
+      return [number ? `#${number}` : '', player?.name || player?.displayName || player?.id || ''].filter(Boolean).join(' ');
+    }).filter(Boolean));
+  }
+  return [...new Set(labels)];
+}
+
+function formatHighlightDuration(clip) {
+  if (!Number.isFinite(clip?.startMs) || !Number.isFinite(clip?.endMs) || clip.endMs <= clip.startMs) return '';
+  return `${Math.round((clip.endMs - clip.startMs) / 1000)}s`;
+}
+
+function renderHighlightContextMeta(clip) {
+  const pieces = [
+    Number.isFinite(clip?.startMs) ? formatVideoTimestamp(clip.startMs) : null,
+    formatHighlightDuration(clip),
+    clip?.period,
+    clip?.gameTime,
+    clip?.description && clip.description !== clip.title ? clip.description : null
+  ].filter(Boolean);
+  const players = getHighlightPlayerLabels(clip);
+  const meta = pieces.length
+    ? `<span class="block text-xs text-sand/55">${escapeHtml(pieces.join(' · '))}</span>`
+    : '';
+  const tags = players.length
+    ? `<span class="mt-2 flex flex-wrap gap-1">${players.map(name => `<span class="rounded-full border border-teal/25 px-2 py-0.5 text-[11px] text-teal">${escapeHtml(name)}</span>`).join('')}</span>`
+    : '';
+  return `${meta}${tags}`;
 }
 
 function renderGameMediaHub() {
@@ -751,15 +816,19 @@ function renderGameMediaHub() {
   if (mediaHub.highlights?.length) {
     const highlights = mediaHub.highlights.map((clip, index) => {
       const clipUrl = buildSafeMediaHubHighlightUrl(clip);
+      const canSeekReplay = canPlayMediaHubHighlight(clip);
+      const playbackControl = canSeekReplay
+        ? `<button type="button" data-media-highlight-play-index="${index}" class="text-xs text-teal hover:text-teal/80">Play</button>`
+        : '<span class="text-xs text-sand/45">Replay unavailable</span>';
       return `
         <div class="rounded-lg border border-teal/15 bg-ink/45 px-3 py-2">
           <div class="flex items-start justify-between gap-3">
             <div>
               <div class="text-sm font-medium text-sand">${escapeHtml(clip.title || `Highlight ${index + 1}`)}</div>
-              <div class="text-xs text-sand/55">${formatVideoTimestamp(clip.startMs)} - ${formatVideoTimestamp(clip.endMs)}</div>
+              ${renderHighlightContextMeta(clip)}
             </div>
             <div class="flex shrink-0 gap-2">
-              ${clipUrl ? `<a href="${escapeHtml(clipUrl)}" target="_blank" rel="noopener noreferrer" class="text-xs text-teal hover:text-teal/80">Play</a><button type="button" data-media-highlight-index="${index}" class="text-xs text-teal hover:text-teal/80">Copy</button>` : '<span class="text-xs text-sand/45">No link</span>'}
+              ${clipUrl ? `${playbackControl}<button type="button" data-media-highlight-index="${index}" class="text-xs text-teal hover:text-teal/80">Copy</button>` : playbackControl}
             </div>
           </div>
         </div>
@@ -1256,6 +1325,20 @@ function initRecordedReplayControls() {
   if (els.gameMediaHubContent && !els.gameMediaHubContent.dataset.bound) {
     els.gameMediaHubContent.dataset.bound = 'true';
     els.gameMediaHubContent.addEventListener('click', async (event) => {
+      const playButton = event.target.closest('[data-media-highlight-play-index]');
+      if (playButton) {
+        const clip = state.videoPlayback?.mediaHub?.highlights?.[Number(playButton.dataset.mediaHighlightPlayIndex)];
+        if (!canPlayMediaHubHighlight(clip)) return;
+        if (els.highlightTitleInput) {
+          els.highlightTitleInput.value = clip.title || '';
+        }
+        setSelectedTaggedPlayerIds(clip.taggedPlayerIds);
+        applyHighlightSelection(clip, { autoplay: false });
+        state.activeTab = 'video';
+        updateTabs();
+        return;
+      }
+
       const button = event.target.closest('[data-media-highlight-index]');
       if (!button) return;
       const clip = state.videoPlayback?.mediaHub?.highlights?.[Number(button.dataset.mediaHighlightIndex)];
