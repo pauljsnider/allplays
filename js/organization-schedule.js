@@ -18,6 +18,13 @@ const ORGANIZATION_SCHEDULE_CSV_HEADER_ALIASES = {
     notes: ['notes', 'comments', 'details']
 };
 
+function normalizeDelimitedSubVenueList(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(/[\n,]/);
+    return Array.from(new Set(values
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)));
+}
+
 function normalizeTeamList(teams) {
     return (Array.isArray(teams) ? teams : [])
         .filter((team) => team && team.id)
@@ -99,6 +106,39 @@ function matchOrganizationTeam(teamName, label, organizationIndex, accessibleInd
 function readMappedValue(row, headerName) {
     if (!headerName) return '';
     return String(row?.[headerName] || '').trim();
+}
+
+export function normalizeOrganizationVenueDraft(draft = {}) {
+    return {
+        name: String(draft.name || '').trim(),
+        address: String(draft.address || '').trim() || null,
+        subVenues: normalizeDelimitedSubVenueList(draft.subVenues)
+    };
+}
+
+export function validateOrganizationVenueDraft(draft = {}) {
+    const normalized = normalizeOrganizationVenueDraft(draft);
+    if (!normalized.name) {
+        return { ok: false, error: 'Venue name is required.', venue: normalized };
+    }
+    if (normalized.subVenues.length === 0) {
+        return { ok: false, error: 'Add at least one sub-venue, such as Field 1, Court A, or Rink 2.', venue: normalized };
+    }
+    return { ok: true, error: null, venue: normalized };
+}
+
+export function sortOrganizationVenues(venues = []) {
+    return [...(Array.isArray(venues) ? venues : [])].sort((a, b) => {
+        return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { sensitivity: 'base' });
+    });
+}
+
+export function formatOrganizationVenueLocation(venue, subVenueName = '') {
+    const venueName = String(venue?.name || '').trim();
+    const normalizedSubVenueName = String(subVenueName || '').trim();
+    if (!venueName) return normalizedSubVenueName;
+    if (!normalizedSubVenueName) return venueName;
+    return `${venueName} - ${normalizedSubVenueName}`;
 }
 
 export function getOrganizationTeams({ accessibleTeams = [], organizationOwnerId = null } = {}) {

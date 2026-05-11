@@ -76,8 +76,19 @@
 
                         <div>
                             <label for="location" class="block text-sm font-medium text-gray-700">Location</label>
+                            <div class="mt-1 grid gap-2 md:grid-cols-2">
+                                <select id="savedVenueId"
+                                    class="block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    <option value="">Use a saved venue or type below</option>
+                                </select>
+                                <select id="savedSubVenue"
+                                    class="block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" disabled>
+                                    <option value="">Choose sub-venue</option>
+                                </select>
+                            </div>
                             <input type="text" id="location" required placeholder="Main Field"
                                 class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <p class="mt-1 text-xs text-gray-500">Saved venues fill this field, but you can still type any fallback location.</p>
                         </div>
 
                         <div>
@@ -134,6 +145,42 @@
                     </div>
                 </aside>
             </div>
+
+            <section class="rounded-2xl bg-white p-6 shadow-md">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold text-gray-900">Organization Venues</h2>
+                        <p class="mt-2 text-sm text-gray-600">Define reusable venue inventory and sub-venues before creating shared matchups.</p>
+                    </div>
+                    <p class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">Admin only</p>
+                </div>
+                <form id="organization-venue-form" class="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr_auto]">
+                    <input type="hidden" id="organizationVenueId">
+                    <div>
+                        <label for="organizationVenueName" class="block text-sm font-medium text-gray-700">Venue Name</label>
+                        <input type="text" id="organizationVenueName" required placeholder="Sports Complex"
+                            class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label for="organizationSubVenues" class="block text-sm font-medium text-gray-700">Sub-Venues</label>
+                        <input type="text" id="organizationSubVenues" required placeholder="Field 1, Field 2, Court A"
+                            class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        <p class="mt-1 text-xs text-gray-500">Separate sub-venues with commas.</p>
+                    </div>
+                    <div class="flex items-end gap-2">
+                        <button id="save-organization-venue-btn" type="submit"
+                            class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                            Save Venue
+                        </button>
+                        <button id="cancel-organization-venue-edit" type="button"
+                            class="hidden rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+                <div id="organization-venue-error" class="hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"></div>
+                <div id="organization-venues-list" class="mt-5 space-y-3"></div>
+            </section>
         </div>
     </main>
 
@@ -145,15 +192,18 @@
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=14';
         import { getTeamAccessInfo } from './js/team-access.js';
-        import { Timestamp } from './js/firebase.js?v=11';
+        import { addDoc, collection, db, deleteDoc, doc, getDocs, Timestamp, updateDoc } from './js/firebase.js?v=11';
         import {
             buildOrganizationScheduleCsvTemplate,
             buildOrganizationScheduleImportPreview,
             buildOrganizationSharedGamePayload,
+            formatOrganizationVenueLocation,
             getOrganizationTeams,
             inferOrganizationScheduleCsvMapping,
+            sortOrganizationVenues,
+            validateOrganizationVenueDraft,
             validateOrganizationMatchup
-        } from './js/organization-schedule.js?v=2';
+        } from './js/organization-schedule.js?v=3';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -171,10 +221,21 @@
         const importCsvButton = document.getElementById('import-organization-csv-btn');
         const homeTeamSelect = document.getElementById('homeTeamId');
         const awayTeamSelect = document.getElementById('awayTeamId');
+        const savedVenueSelect = document.getElementById('savedVenueId');
+        const savedSubVenueSelect = document.getElementById('savedSubVenue');
+        const locationInput = document.getElementById('location');
         const publishButton = document.getElementById('publish-shared-matchup-btn');
         const backLink = document.getElementById('back-to-team-schedule');
         const organizationNameEl = document.getElementById('organization-context-name');
         const organizationDetailEl = document.getElementById('organization-context-detail');
+        const venueForm = document.getElementById('organization-venue-form');
+        const venueIdInput = document.getElementById('organizationVenueId');
+        const venueNameInput = document.getElementById('organizationVenueName');
+        const subVenuesInput = document.getElementById('organizationSubVenues');
+        const saveVenueButton = document.getElementById('save-organization-venue-btn');
+        const cancelVenueEditButton = document.getElementById('cancel-organization-venue-edit');
+        const venueError = document.getElementById('organization-venue-error');
+        const venuesList = document.getElementById('organization-venues-list');
         const ORGANIZATION_CSV_IMPORT_ROW_LIMIT = 500;
 
         let currentUser = null;
@@ -182,6 +243,7 @@
         let organizationTeams = [];
         let accessibleTeams = [];
         let organizationCsvState = { fileName: '', preview: null };
+        let organizationVenues = [];
 
 
         function showScheduleMode(mode) {
@@ -203,6 +265,111 @@
             bulkPanel.classList.add('hidden');
             singleTab.disabled = true;
             bulkTab.disabled = true;
+        }
+
+        function getOrganizationVenuesCollectionRef() {
+            return collection(db, 'teams', anchorTeam.id, 'organizationVenues');
+        }
+
+        function setVenueError(message = '') {
+            venueError.className = message
+                ? 'mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800'
+                : 'hidden mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800';
+            venueError.textContent = message;
+        }
+
+        function resetVenueForm() {
+            venueForm.reset();
+            venueIdInput.value = '';
+            saveVenueButton.textContent = 'Save Venue';
+            cancelVenueEditButton.classList.add('hidden');
+            setVenueError('');
+        }
+
+        function applySelectedVenueLocation() {
+            const venue = organizationVenues.find((item) => item.id === savedVenueSelect.value);
+            if (!venue) {
+                savedSubVenueSelect.replaceChildren(new Option('Choose sub-venue', ''));
+                savedSubVenueSelect.disabled = true;
+                return;
+            }
+
+            const subVenueOptions = [new Option('Choose sub-venue', '')].concat(
+                (venue.subVenues || []).map((subVenue) => new Option(subVenue, subVenue))
+            );
+            savedSubVenueSelect.replaceChildren(...subVenueOptions);
+            savedSubVenueSelect.disabled = false;
+            locationInput.value = formatOrganizationVenueLocation(venue, savedSubVenueSelect.value);
+        }
+
+        function renderOrganizationVenues() {
+            const savedVenueOptions = [new Option('Use a saved venue or type below', '')].concat(
+                organizationVenues.map((venue) => new Option(venue.name, venue.id))
+            );
+            savedVenueSelect.replaceChildren(...savedVenueOptions);
+            savedSubVenueSelect.replaceChildren(new Option('Choose sub-venue', ''));
+            savedSubVenueSelect.disabled = true;
+
+            if (organizationVenues.length === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600';
+                empty.textContent = 'No saved venues yet. Add a venue with at least one field, court, or rink.';
+                venuesList.replaceChildren(empty);
+                return;
+            }
+
+            venuesList.replaceChildren(...organizationVenues.map((venue) => {
+                const card = document.createElement('div');
+                card.className = 'rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm';
+
+                const header = document.createElement('div');
+                header.className = 'flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between';
+                const summary = document.createElement('div');
+                const title = document.createElement('div');
+                title.className = 'font-semibold text-gray-900';
+                title.textContent = venue.name;
+                const subVenues = document.createElement('div');
+                subVenues.className = 'mt-1 text-gray-600';
+                subVenues.textContent = (venue.subVenues || []).join(', ');
+                summary.append(title, subVenues);
+
+                const actions = document.createElement('div');
+                actions.className = 'flex gap-2';
+                const editButton = document.createElement('button');
+                editButton.type = 'button';
+                editButton.className = 'rounded-md border border-gray-300 bg-white px-3 py-1.5 font-medium text-gray-700 hover:bg-gray-100';
+                editButton.textContent = 'Edit';
+                editButton.addEventListener('click', () => {
+                    venueIdInput.value = venue.id;
+                    venueNameInput.value = venue.name;
+                    subVenuesInput.value = (venue.subVenues || []).join(', ');
+                    saveVenueButton.textContent = 'Update Venue';
+                    cancelVenueEditButton.classList.remove('hidden');
+                    venueNameInput.focus();
+                });
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'rounded-md border border-red-200 bg-white px-3 py-1.5 font-medium text-red-700 hover:bg-red-50';
+                deleteButton.textContent = 'Delete';
+                deleteButton.addEventListener('click', async () => {
+                    if (!window.confirm(`Delete ${venue.name}? Existing games keep their saved location text.`)) return;
+                    await deleteDoc(doc(db, 'teams', anchorTeam.id, 'organizationVenues', venue.id));
+                    await loadOrganizationVenues();
+                });
+                actions.append(editButton, deleteButton);
+                header.append(summary, actions);
+                card.appendChild(header);
+                return card;
+            }));
+        }
+
+        async function loadOrganizationVenues() {
+            const snapshot = await getDocs(getOrganizationVenuesCollectionRef());
+            organizationVenues = sortOrganizationVenues(snapshot.docs.map((venueDoc) => ({
+                id: venueDoc.id,
+                ...venueDoc.data()
+            })));
+            renderOrganizationVenues();
         }
 
         function downloadCsvFile(filename, text) {
@@ -389,6 +556,7 @@
 
             organizationNameEl.textContent = anchorTeam.name;
             organizationDetailEl.textContent = `${organizationTeams.length} team${organizationTeams.length === 1 ? '' : 's'} available in this organization grouping.`;
+            await loadOrganizationVenues();
 
             if (organizationTeams.length < 2) {
                 setAlert('You need at least two teams in the same organization to create a shared matchup.', 'warning');
@@ -405,6 +573,53 @@
 
         singleTab.addEventListener('click', () => showScheduleMode('single'));
         bulkTab.addEventListener('click', () => showScheduleMode('bulk'));
+        savedVenueSelect.addEventListener('change', applySelectedVenueLocation);
+        savedSubVenueSelect.addEventListener('change', () => {
+            const venue = organizationVenues.find((item) => item.id === savedVenueSelect.value);
+            locationInput.value = formatOrganizationVenueLocation(venue, savedSubVenueSelect.value);
+        });
+        cancelVenueEditButton.addEventListener('click', resetVenueForm);
+
+        venueForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setVenueError('');
+            const validation = validateOrganizationVenueDraft({
+                name: venueNameInput.value,
+                subVenues: subVenuesInput.value
+            });
+            if (!validation.ok) {
+                setVenueError(validation.error);
+                return;
+            }
+
+            try {
+                saveVenueButton.disabled = true;
+                const payload = {
+                    ...validation.venue,
+                    organizationOwnerId: anchorTeam.ownerId || null,
+                    updatedAt: Timestamp.now(),
+                    updatedBy: currentUser?.uid || null,
+                    updatedByEmail: currentUser?.email || null
+                };
+                if (venueIdInput.value) {
+                    await updateDoc(doc(db, 'teams', anchorTeam.id, 'organizationVenues', venueIdInput.value), payload);
+                } else {
+                    await addDoc(getOrganizationVenuesCollectionRef(), {
+                        ...payload,
+                        createdAt: Timestamp.now(),
+                        createdBy: currentUser?.uid || null,
+                        createdByEmail: currentUser?.email || null
+                    });
+                }
+                resetVenueForm();
+                await loadOrganizationVenues();
+            } catch (error) {
+                console.error('Organization venue save failed:', error);
+                setVenueError(`Error saving venue: ${error.message}`);
+            } finally {
+                saveVenueButton.disabled = false;
+            }
+        });
 
         document.getElementById('download-organization-schedule-template').addEventListener('click', () => {
             downloadCsvFile('allplays-organization-schedule-template.csv', buildOrganizationScheduleCsvTemplate());
