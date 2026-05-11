@@ -16,6 +16,35 @@ describe('edit config access decision', () => {
         });
     });
 
+    it('allows rules-compatible team admins to manage stats configs', () => {
+        expect(getEditConfigAccessDecision({ uid: 'coach-1', email: 'Coach@Example.com' }, TEAM, TEAM.id)).toEqual({
+            allowed: true,
+            exitUrl: 'dashboard.html',
+            team: TEAM
+        });
+    });
+
+    it('denies legacy-normalized admin emails that Firestore would reject for config writes', () => {
+        const legacyTeam = {
+            ...TEAM,
+            adminEmails: [' Coach@Example.com ']
+        };
+
+        expect(getEditConfigAccessDecision({ uid: 'coach-1', email: 'coach@example.com' }, legacyTeam, TEAM.id)).toEqual({
+            allowed: false,
+            exitUrl: 'dashboard.html',
+            team: legacyTeam
+        });
+    });
+
+    it('denies profile-email-only admin access that Firestore would reject for config writes', () => {
+        expect(getEditConfigAccessDecision({ uid: 'coach-1', profileEmail: 'coach@example.com' }, TEAM, TEAM.id)).toEqual({
+            allowed: false,
+            exitUrl: 'dashboard.html',
+            team: TEAM
+        });
+    });
+
     it('denies parent-only access for stats config page', () => {
         expect(
             getEditConfigAccessDecision(
