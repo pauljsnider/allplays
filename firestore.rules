@@ -181,10 +181,11 @@ service cloud.firestore {
     }
 
     function isFamilyMembershipRemoval(data, userId) {
-      return data.keys().hasAll(['email', 'status', 'organizerUserId']) &&
+      return data.keys().hasAll(['email', 'status', 'organizerUserId', 'accessStatus']) &&
              data.organizerUserId == userId &&
              data.email is string &&
-             data.status == 'removed';
+             data.status == 'removed' &&
+             data.accessStatus == 'revoked';
     }
 
     function isTeamFeeRecipientForCurrentParent(data, teamId) {

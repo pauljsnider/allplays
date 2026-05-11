@@ -186,24 +186,6 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
 }
 
 
-function uniqueStrings(values = []) {
-    return [...new Set(values.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
-}
-
-function removeRevokedLinksFromUserProfile(profile = {}, accessLinks = []) {
-    const revokedKeys = new Set(accessLinks.map((link) => `${link.teamId}::${link.playerId}`));
-    const parentOf = Array.isArray(profile.parentOf) ? profile.parentOf : [];
-    const filteredParentOf = parentOf.filter((link) => !revokedKeys.has(`${link?.teamId || ''}::${link?.playerId || ''}`));
-    const parentTeamIds = uniqueStrings(filteredParentOf.map((link) => link?.teamId));
-    const parentPlayerKeys = uniqueStrings(filteredParentOf.map((link) => link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''));
-    const roles = filteredParentOf.length === 0 && Array.isArray(profile.roles)
-        ? profile.roles.filter((role) => role !== 'parent')
-        : profile.roles;
-    return roles
-        ? { parentOf: filteredParentOf, parentTeamIds, parentPlayerKeys, roles }
-        : { parentOf: filteredParentOf, parentTeamIds, parentPlayerKeys };
-}
-
 async function revokeAccessCode(firebase, member, timestamp) {
     const { db, doc, updateDoc, collection, query, where, getDocs } = firebase;
     const payload = {
@@ -222,37 +204,6 @@ async function revokeAccessCode(firebase, member, timestamp) {
     }
 }
 
-async function revokeHouseholdAccess(firebase, member, timestamp) {
-    const { db, doc, getDoc, updateDoc } = firebase;
-    const accessLinks = normalizeAccessLinks(member.playerAccess);
-    if (!accessLinks.length) return;
-
-    if (member.userId && doc && getDoc && updateDoc) {
-        const memberUserRef = doc(db, 'users', member.userId);
-        const memberUserSnap = await getDoc(memberUserRef);
-        if (memberUserSnap.exists()) {
-            await updateDoc(memberUserRef, {
-                ...removeRevokedLinksFromUserProfile(dataFromSnapshot(memberUserSnap), accessLinks),
-                updatedAt: timestamp
-            });
-        }
-    }
-
-    await Promise.all(accessLinks.map(async (link) => {
-        const playerRef = doc(db, `teams/${link.teamId}/players`, link.playerId);
-        const playerSnap = await getDoc(playerRef);
-        if (!playerSnap.exists()) return;
-        const playerData = dataFromSnapshot(playerSnap);
-        const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
-        const filteredParents = parents.filter((parent) => {
-            if (member.userId && parent?.userId === member.userId) return false;
-            if (member.email && normalizeString(parent?.email).toLowerCase() === member.email.toLowerCase()) return false;
-            return true;
-        });
-        await updateDoc(playerRef, { parents: filteredParents, updatedAt: timestamp });
-    }));
-}
-
 export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
     if (!userId || !memberId) throw new Error('Missing family member to remove.');
     const firebase = await loadFirebase(deps);
@@ -262,14 +213,13 @@ export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
     const memberSnap = getDoc ? await getDoc(memberRef) : null;
     const member = normalizeFamilyMembers([{ id: memberId, ...dataFromSnapshot(memberSnap) }])[0] || { id: memberId };
 
+    await revokeAccessCode(firebase, member, timestamp);
     await updateDoc(memberRef, {
         status: 'removed',
         accessStatus: 'revoked',
         updatedAt: timestamp,
         removedAt: timestamp,
     });
-    await revokeHouseholdAccess(firebase, member, timestamp);
-    await revokeAccessCode(firebase, member, timestamp);
 }
 
 export async function loadFamilyPlanState(user, { deps = {}, entitlementReader = readAccountPremiumEntitlement } = {}) {
