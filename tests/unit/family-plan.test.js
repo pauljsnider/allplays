@@ -89,7 +89,57 @@ describe('family plan helpers', () => {
         expect(firebase.doc).toHaveBeenCalledWith({}, 'users', 'user-1', 'familyMemberships', 'member-1');
         expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1/familyMemberships/member-1' }, expect.objectContaining({
             status: 'removed',
+            accessStatus: 'revoked',
             removedAt: 'server-now'
+        }));
+    });
+
+    it('revokes household player access and invite tokens when removing a member', async () => {
+        const updateDoc = vi.fn().mockResolvedValue();
+        const docs = new Map([
+            ['users/organizer/familyMemberships/member-1', {
+                email: 'household@example.com',
+                userId: 'contact-1',
+                accessCodeId: 'code-1',
+                status: 'active',
+                organizerUserId: 'organizer',
+                playerAccess: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Team', playerName: 'Player' }]
+            }],
+            ['users/contact-1', {
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }, { teamId: 'team-2', playerId: 'player-2' }],
+                parentTeamIds: ['team-1', 'team-2'],
+                parentPlayerKeys: ['team-1::player-1', 'team-2::player-2'],
+                roles: ['parent']
+            }],
+            ['teams/team-1/players/player-1', {
+                parents: [{ userId: 'contact-1', email: 'household@example.com' }, { userId: 'other', email: 'other@example.com' }]
+            }]
+        ]);
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async (ref) => ({
+                exists: () => docs.has(ref.path),
+                data: () => docs.get(ref.path) || {}
+            })),
+            updateDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await removeFamilyMember('organizer', 'member-1', { deps: { firebase } });
+
+        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/contact-1' }, expect.objectContaining({
+            parentOf: [{ teamId: 'team-2', playerId: 'player-2' }],
+            parentTeamIds: ['team-2'],
+            parentPlayerKeys: ['team-2::player-2']
+        }));
+        expect(updateDoc).toHaveBeenCalledWith({ path: 'teams/team-1/players/player-1' }, expect.objectContaining({
+            parents: [{ userId: 'other', email: 'other@example.com' }]
+        }));
+        expect(updateDoc).toHaveBeenCalledWith({ path: 'accessCodes/code-1' }, expect.objectContaining({
+            revoked: true,
+            used: true,
+            revokedAt: 'server-now'
         }));
     });
 
@@ -117,7 +167,7 @@ describe('family plan helpers', () => {
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
         expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
         expect(rules).toContain('allow update: if isOwner(userId) &&');
-        expect(rules).toContain("affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt'])");
+        expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])");
         expect(rules).toContain('allow delete: if false;');
     });
 });

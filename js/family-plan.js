@@ -16,6 +16,21 @@ function loadFirebase(deps = {}) {
     return import('./firebase.js?v=11');
 }
 
+function normalizeAccessLinks(links = []) {
+    const normalized = Array.isArray(links) ? links : [links];
+    return normalized
+        .filter((link) => link && typeof link === 'object')
+        .map((link) => ({
+            teamId: normalizeString(link.teamId),
+            playerId: normalizeString(link.playerId),
+            teamName: normalizeString(link.teamName),
+            playerName: normalizeString(link.playerName),
+            playerNumber: normalizeString(link.playerNumber),
+            relation: normalizeString(link.relation)
+        }))
+        .filter((link) => link.teamId && link.playerId);
+}
+
 function dataFromSnapshot(docSnap) {
     return typeof docSnap?.data === 'function' ? docSnap.data() : {};
 }
@@ -31,6 +46,14 @@ export function normalizeFamilyMembers(records = []) {
             status: normalizeStatus(record.status),
             invitedAt: record.invitedAt || record.createdAt || null,
             updatedAt: record.updatedAt || null,
+            removedAt: record.removedAt || null,
+            relation: normalizeString(record.relation),
+            organizerUserId: normalizeString(record.organizerUserId || record.invitedByUserId),
+            organizerName: normalizeString(record.organizerName || record.invitedByName),
+            organizerEmail: normalizeString(record.organizerEmail || record.invitedByEmail),
+            accessCodeId: normalizeString(record.accessCodeId || record.inviteCodeId),
+            inviteCode: normalizeString(record.inviteCode || record.code),
+            playerAccess: normalizeAccessLinks(record.playerAccess || record.playerLinks || record.accessLinks || record.players || (record.player ? [record.player] : [])),
         }))
         .sort((a, b) => {
             const statusOrder = { active: 0, pending: 1, removed: 2 };
@@ -76,14 +99,18 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
         ? normalized.map((member) => {
             const label = member.displayName || member.email || 'Family member';
             const subline = member.displayName && member.email ? `<div class="text-xs text-gray-500 mt-0.5">${escapeHtml(member.email)}</div>` : '';
+            const accessLine = member.playerAccess.length
+                ? `<div class="text-xs text-gray-500 mt-1">Access: ${escapeHtml(member.playerAccess.map((link) => `${link.playerName || link.playerId}${link.teamName ? ` (${link.teamName})` : ''}`).join(', '))}</div>`
+                : '';
             const removeButton = member.status === 'removed'
                 ? ''
-                : `<button type="button" data-family-plan-remove="${escapeHtml(member.id)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>`;
+                : `<button type="button" data-family-plan-remove="${escapeHtml(member.id)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Revoke access</button>`;
             return `
                 <div class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3">
                     <div>
                         <div class="font-semibold text-gray-900">${escapeHtml(label)}</div>
                         ${subline}
+                        ${accessLine}
                     </div>
                     <div class="flex flex-col items-end gap-2">
                         <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(member.status)}">${escapeHtml(member.status)}</span>
@@ -159,15 +186,90 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
 }
 
 
+function uniqueStrings(values = []) {
+    return [...new Set(values.filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim()))];
+}
+
+function removeRevokedLinksFromUserProfile(profile = {}, accessLinks = []) {
+    const revokedKeys = new Set(accessLinks.map((link) => `${link.teamId}::${link.playerId}`));
+    const parentOf = Array.isArray(profile.parentOf) ? profile.parentOf : [];
+    const filteredParentOf = parentOf.filter((link) => !revokedKeys.has(`${link?.teamId || ''}::${link?.playerId || ''}`));
+    const parentTeamIds = uniqueStrings(filteredParentOf.map((link) => link?.teamId));
+    const parentPlayerKeys = uniqueStrings(filteredParentOf.map((link) => link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''));
+    const roles = filteredParentOf.length === 0 && Array.isArray(profile.roles)
+        ? profile.roles.filter((role) => role !== 'parent')
+        : profile.roles;
+    return roles
+        ? { parentOf: filteredParentOf, parentTeamIds, parentPlayerKeys, roles }
+        : { parentOf: filteredParentOf, parentTeamIds, parentPlayerKeys };
+}
+
+async function revokeAccessCode(firebase, member, timestamp) {
+    const { db, doc, updateDoc, collection, query, where, getDocs } = firebase;
+    const payload = {
+        revoked: true,
+        revokedAt: timestamp,
+        used: true,
+        updatedAt: timestamp
+    };
+    if (member.accessCodeId && doc && updateDoc) {
+        await updateDoc(doc(db, 'accessCodes', member.accessCodeId), payload);
+        return;
+    }
+    if (member.inviteCode && collection && query && where && getDocs && updateDoc) {
+        const snapshot = await getDocs(query(collection(db, 'accessCodes'), where('code', '==', member.inviteCode.toUpperCase())));
+        await Promise.all(snapshot.docs.map((codeDoc) => updateDoc(codeDoc.ref, payload)));
+    }
+}
+
+async function revokeHouseholdAccess(firebase, member, timestamp) {
+    const { db, doc, getDoc, updateDoc } = firebase;
+    const accessLinks = normalizeAccessLinks(member.playerAccess);
+    if (!accessLinks.length) return;
+
+    if (member.userId && doc && getDoc && updateDoc) {
+        const memberUserRef = doc(db, 'users', member.userId);
+        const memberUserSnap = await getDoc(memberUserRef);
+        if (memberUserSnap.exists()) {
+            await updateDoc(memberUserRef, {
+                ...removeRevokedLinksFromUserProfile(dataFromSnapshot(memberUserSnap), accessLinks),
+                updatedAt: timestamp
+            });
+        }
+    }
+
+    await Promise.all(accessLinks.map(async (link) => {
+        const playerRef = doc(db, `teams/${link.teamId}/players`, link.playerId);
+        const playerSnap = await getDoc(playerRef);
+        if (!playerSnap.exists()) return;
+        const playerData = dataFromSnapshot(playerSnap);
+        const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
+        const filteredParents = parents.filter((parent) => {
+            if (member.userId && parent?.userId === member.userId) return false;
+            if (member.email && normalizeString(parent?.email).toLowerCase() === member.email.toLowerCase()) return false;
+            return true;
+        });
+        await updateDoc(playerRef, { parents: filteredParents, updatedAt: timestamp });
+    }));
+}
+
 export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
     if (!userId || !memberId) throw new Error('Missing family member to remove.');
-    const { db, doc, updateDoc, serverTimestamp } = await loadFirebase(deps);
+    const firebase = await loadFirebase(deps);
+    const { db, doc, getDoc, updateDoc, serverTimestamp } = firebase;
     const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
-    await updateDoc(doc(db, 'users', userId, 'familyMemberships', memberId), {
+    const memberRef = doc(db, 'users', userId, 'familyMemberships', memberId);
+    const memberSnap = getDoc ? await getDoc(memberRef) : null;
+    const member = normalizeFamilyMembers([{ id: memberId, ...dataFromSnapshot(memberSnap) }])[0] || { id: memberId };
+
+    await updateDoc(memberRef, {
         status: 'removed',
+        accessStatus: 'revoked',
         updatedAt: timestamp,
         removedAt: timestamp,
     });
+    await revokeHouseholdAccess(firebase, member, timestamp);
+    await revokeAccessCode(firebase, member, timestamp);
 }
 
 export async function loadFamilyPlanState(user, { deps = {}, entitlementReader = readAccountPremiumEntitlement } = {}) {

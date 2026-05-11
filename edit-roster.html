@@ -509,7 +509,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=31';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=32';
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
@@ -1193,6 +1193,14 @@
 
             tbody.innerHTML = players.map(p => {
                 const profileParents = parentsByPlayerId.get(p.id) || [];
+                const delegatedHouseholdContacts = (Array.isArray(p.parents) ? p.parents : []).filter((parent) => (
+                    parent?.source === 'household' ||
+                    parent?.accessSource === 'household' ||
+                    parent?.organizerUserId ||
+                    parent?.invitedByUserId ||
+                    parent?.inviterUserId ||
+                    parent?.status === 'removed'
+                ));
                 const pendingRequests = pendingRequestsByPlayerId.get(p.id) || [];
                 const importSourceType = getPlayerImportSourceType(p);
                 const playerName = escapeHtml(p.name || 'Unnamed player');
@@ -1213,6 +1221,21 @@
                                             </button>
                                         </span>
                                     `).join('')}
+                                </div>
+                            ` : '';
+                const householdContactBlock = delegatedHouseholdContacts.length > 0 ? `
+                                <div class="mt-2 rounded-lg border border-blue-200 bg-blue-50 p-2">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-blue-800">Household Contacts</div>
+                                    <div class="mt-2 space-y-1">
+                                        ${delegatedHouseholdContacts.map((contact) => `
+                                            <div class="rounded border border-blue-100 bg-white px-2 py-1.5 text-xs text-gray-700">
+                                                <div class="font-semibold text-gray-900">${escapeHtml(contact.name || contact.displayName || contact.email || 'Household contact')}</div>
+                                                <div class="text-[11px] text-gray-500">
+                                                    ${escapeHtml(contact.relation || 'Household')} · invited by ${escapeHtml(contact.inviterName || contact.invitedByName || contact.organizerName || contact.inviterEmail || contact.invitedByEmail || contact.organizerEmail || 'organizing parent')} · ${escapeHtml(contact.status || 'active')}
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
                                 </div>
                             ` : '';
                 const pendingRequestBlock = pendingRequests.length > 0 ? `
@@ -1262,6 +1285,7 @@
                                 ${importSourceType ? `<span class="inline-flex text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Imported: ${escapeHtml(importSourceType)}</span>` : '<span class="inline-flex text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Local-only</span>'}
                             </div>
                             ${parentChips}
+                            ${householdContactBlock}
                             ${pendingRequestBlock}
                         </td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">

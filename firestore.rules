@@ -687,7 +687,7 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
         allow update: if isOwner(userId) &&
                       isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt']);
         allow delete: if false;
       }
     }
@@ -703,7 +703,9 @@ service cloud.firestore {
                        (resource.data.generatedBy == request.auth.uid ||
                         // Allow marking as used only if setting these specific fields
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
-                         request.resource.data.usedBy == request.auth.uid));
+                         request.resource.data.usedBy == request.auth.uid) ||
+                        (resource.data.generatedBy == request.auth.uid &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
 	    }
 
