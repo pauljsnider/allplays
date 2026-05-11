@@ -131,7 +131,17 @@ export function createBootIssueCollector(page, options = {}) {
 }
 
 export async function assertPageBootsWithoutFatalErrors(page, options) {
-    const { baseURL, path, titlePatterns, readySelectors = [], forbiddenTexts = [] } = options;
+    const {
+        baseURL,
+        path,
+        titlePatterns,
+        readySelectors = [],
+        requiredSelectors = [],
+        forbiddenTexts = [],
+        expectedAttributes = [],
+        tabChecks = [],
+        hiddenSelectors = []
+    } = options;
     const issues = createBootIssueCollector(page, options);
 
     await page.goto(buildUrl(baseURL, path), { waitUntil: 'domcontentloaded' });
@@ -149,6 +159,23 @@ export async function assertPageBootsWithoutFatalErrors(page, options) {
                 page.locator(selector).first().waitFor({ state: 'attached', timeout: 10000 })
             )
         );
+    }
+
+    for (const selector of requiredSelectors) {
+        await page.locator(selector).first().waitFor({ state: 'attached', timeout: 10000 });
+    }
+
+    for (const { selector, attribute, value } of expectedAttributes) {
+        await expect(page.locator(selector).first()).toHaveAttribute(attribute, value);
+    }
+
+    for (const { tab, content } of tabChecks) {
+        await page.locator(tab).click();
+        await expect(page.locator(content).first()).toBeVisible();
+    }
+
+    for (const selector of hiddenSelectors) {
+        await expect(page.locator(selector).first()).toBeHidden();
     }
 
     const bodyText = await page.locator('body').innerText();
