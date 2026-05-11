@@ -88,10 +88,29 @@ describe('shared schedule sync helpers', () => {
     expect(payload.assignments).toEqual([{ role: 'Clock', value: 'Alex' }]);
     expect(payload.date).toBe('2026-03-12T18:00:00Z');
     expect(payload.arrivalTime).toBe('2026-03-12T17:15:00Z');
+    expect(payload).not.toHaveProperty('statTrackerConfigId');
     expect(payload.tournament).toEqual(tournament);
     expect(payload.tournament).not.toBe(tournament);
     expect(payload.tournament.slotAssignments).not.toBe(tournament.slotAssignments);
     expect(payload.tournament.resolved).not.toBe(tournament.resolved);
+  });
+
+
+  it('does not mirror team-scoped stat tracker config ids across shared schedules', () => {
+    const payload = buildMirroredGamePayload({
+      sourceTeamId: 'team-alpha',
+      sourceTeam: { name: 'Alpha FC' },
+      sourceGameId: 'game-123',
+      sourceGame: {
+        type: 'game',
+        date: '2026-03-12T18:00:00Z',
+        opponentTeamId: 'team-bravo',
+        statTrackerConfigId: 'alpha-config'
+      },
+      sharedScheduleId: 'shared_team-alpha_game-123'
+    });
+
+    expect(payload).not.toHaveProperty('statTrackerConfigId');
   });
 
   it('records source metadata needed to keep the counterpart game in sync', () => {
