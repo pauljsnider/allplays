@@ -18,6 +18,7 @@ let showInactiveTeams = false;
 let telemetryState = {
     loaded: false,
     loading: false,
+    error: null,
     days: 7,
     events: [],
     daily: [],
@@ -134,8 +135,17 @@ async function loadTelemetryData({ silent = false } = {}) {
         }
     } catch (error) {
         console.error('Error loading telemetry:', error);
-        telemetryState.loading = false;
-        telemetryState.loaded = false;
+        telemetryState = {
+            ...telemetryState,
+            loading: false,
+            loaded: false,
+            error: error.message || 'Telemetry could not be loaded',
+            events: [],
+            daily: [],
+            pages: [],
+            eventDaily: [],
+            sessions: []
+        };
         if (status) {
             status.textContent = `Telemetry could not be loaded: ${error.message}`;
         }
@@ -411,12 +421,29 @@ function renderTelemetryEventsTable() {
 
 function updateTelemetryDashboard() {
     if (!telemetryState.loaded) {
+        const errorMessage = telemetryState.error
+            ? `Telemetry could not be loaded: ${telemetryState.error}`
+            : 'No telemetry has been loaded yet.';
+
         renderMetric('telemetry-total-events', 0);
         renderMetric('telemetry-page-views', 0);
         renderMetric('telemetry-interactions', 0);
         renderMetric('telemetry-sessions', 0);
         renderMetric('telemetry-known-users', 0);
         renderMetric('telemetry-errors', 0);
+        renderEmptyTelemetry('telemetry-daily-trend', errorMessage);
+        renderEmptyTelemetry('telemetry-top-pages', errorMessage);
+        renderEmptyTelemetry('telemetry-top-events', errorMessage);
+        renderEmptyTelemetry('telemetry-recent-sessions', errorMessage);
+
+        const tbody = document.getElementById('telemetry-events-table');
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-sm text-gray-400">${escapeHtml(errorMessage)}</td>
+                </tr>
+            `;
+        }
         return;
     }
 
