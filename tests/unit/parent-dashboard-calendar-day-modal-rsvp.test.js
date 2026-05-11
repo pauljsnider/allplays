@@ -121,7 +121,7 @@ const Blob = deps.Blob;
         .replace("import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';", 'const { applyRsvpHydration } = deps.rsvpHydration;')
         .replace(/import\s*\{\s*renderParentTeamFees\s*\}\s*from '\.\/js\/parent-dashboard-fees\.js\?v=\d+';/, 'const { renderParentTeamFees } = deps.parentDashboardFees;')
         .replace("import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';", 'const { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;')
-        .replace("import { renderFamilyPlanSection } from './js/family-plan.js?v=1';", 'const { renderFamilyPlanSection } = deps.familyPlan;')
+        .replace(/import\s*\{\s*renderFamilyPlanSection\s*\}\s*from '\.\/js\/family-plan\.js\?v=\d+';/, 'const { renderFamilyPlanSection } = deps.familyPlan;')
         .replace(/\binit\(\);\s*$/, `
 window.__parentDashboardTestHooks = {
     setAllScheduleEvents(value) {
