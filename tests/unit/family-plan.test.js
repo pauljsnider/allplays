@@ -1,11 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+    addPendingHouseholdInvite,
     addPendingFamilyMember,
+    buildFamilyPlanSectionMarkup,
     buildFamilyPlanMarkup,
+    buildHouseholdInviteMarkup,
     canAddFamilyMember,
     getFamilySlotCounts,
     loadFamilyPlanState,
+    normalizeHouseholdInvites,
     removeFamilyMember
 } from '../../js/family-plan.js';
 
@@ -75,6 +79,101 @@ describe('family plan helpers', () => {
         }));
     });
 
+    it('renders household invite form and pending invites scoped to linked players', () => {
+        const markup = buildHouseholdInviteMarkup({
+            linkedPlayers: [{ teamId: 'team-1', teamName: 'Tigers', playerId: 'player-1', playerName: 'Sam' }],
+            invites: [{
+                id: 'invite-1',
+                contactName: 'Alex Contact',
+                email: 'alex@example.com',
+                relation: 'Grandparent',
+                status: 'pending',
+                playerId: 'player-1',
+                playerName: 'Sam',
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamAccessIntent: true
+            }]
+        });
+
+        expect(markup).toContain('Household player access');
+        expect(markup).toContain('Sam');
+        expect(markup).toContain('Tigers');
+        expect(markup).toContain('Alex Contact');
+        expect(markup).toContain('alex@example.com');
+        expect(markup).toContain('Grandparent');
+        expect(markup).toContain('pending');
+    });
+
+    it('normalizes household invite records without granting access fields', () => {
+        expect(normalizeHouseholdInvites([{ id: 'invite-1', email: ' NEW@EXAMPLE.COM ', status: 'pending', teamAccessIntent: true }])).toEqual([
+            expect.objectContaining({
+                id: 'invite-1',
+                email: 'new@example.com',
+                status: 'pending',
+                teamAccessIntent: true
+            })
+        ]);
+    });
+
+    it('rejects household invites for players outside the linked parent list', async () => {
+        await expect(addPendingHouseholdInvite('user-1', {
+            playerKey: 'team-2::player-2',
+            contactName: 'Alex Contact',
+            email: 'alex@example.com',
+            relation: 'Grandparent'
+        }, {
+            linkedPlayers: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam' }]
+        })).rejects.toThrow('already linked');
+    });
+
+    it('writes a pending household invite for a linked player only', async () => {
+        const addDoc = vi.fn().mockResolvedValue({ id: 'invite-1' });
+        const firebase = {
+            db: {},
+            collection: vi.fn((_db, path) => ({ path })),
+            addDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await addPendingHouseholdInvite('user-1', {
+            playerKey: 'team-1::player-1',
+            contactName: ' Alex Contact ',
+            email: ' ALEX@EXAMPLE.COM ',
+            relation: ' Grandparent ',
+            teamAccessIntent: true
+        }, {
+            deps: { firebase },
+            linkedPlayers: [{ teamId: 'team-1', teamName: 'Tigers', playerId: 'player-1', playerName: 'Sam' }]
+        });
+
+        expect(firebase.collection).toHaveBeenCalledWith({}, 'users/user-1/householdInvites');
+        expect(addDoc).toHaveBeenCalledWith({ path: 'users/user-1/householdInvites' }, expect.objectContaining({
+            contactName: 'Alex Contact',
+            email: 'alex@example.com',
+            relation: 'Grandparent',
+            teamAccessIntent: true,
+            status: 'pending',
+            organizerUserId: 'user-1',
+            playerId: 'player-1',
+            playerName: 'Sam',
+            teamId: 'team-1',
+            teamName: 'Tigers',
+            playerKey: 'team-1::player-1'
+        }));
+    });
+
+    it('combines Family Plan slots and household player-access invites in one section', () => {
+        const markup = buildFamilyPlanSectionMarkup({
+            members: [member('pending', 'pending@example.com')],
+            linkedPlayers: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Sam' }],
+            invites: []
+        });
+
+        expect(markup).toContain('Family Plan');
+        expect(markup).toContain('Household player access');
+    });
+
     it('marks a family member as removed instead of deleting the record', async () => {
         const updateDoc = vi.fn().mockResolvedValue();
         const firebase = {
@@ -119,5 +218,16 @@ describe('family plan helpers', () => {
         expect(rules).toContain('allow update: if isOwner(userId) &&');
         expect(rules).toContain("affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt'])");
         expect(rules).toContain('allow delete: if false;');
+    });
+
+    it('grants parents create/read access to pending household invites only for linked players', () => {
+        const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+        expect(rules).toContain('match /householdInvites/{inviteId}');
+        expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
+        expect(rules).toContain('allow create: if isOwner(userId) && isHouseholdInvitePayloadValid');
+        expect(rules).toContain('data.status == \'pending\'');
+        expect(rules).toContain('data.playerKey == data.teamId + "::" + data.playerId');
+        expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
+        expect(rules).toContain('allow update, delete: if false;');
     });
 });
