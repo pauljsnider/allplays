@@ -187,6 +187,25 @@ service cloud.firestore {
              data.status == 'removed';
     }
 
+    function isHouseholdInvitePayloadValid(data, userId) {
+      return data.keys().hasOnly([
+               'contactName', 'email', 'relation', 'teamAccessIntent', 'status',
+               'organizerUserId', 'playerId', 'playerName', 'teamId', 'teamName',
+               'playerKey', 'invitedAt', 'updatedAt'
+             ]) &&
+             data.keys().hasAll(['contactName', 'email', 'relation', 'teamAccessIntent', 'status', 'organizerUserId', 'playerId', 'teamId', 'playerKey']) &&
+             data.organizerUserId == userId &&
+             data.contactName is string &&
+             data.email is string &&
+             data.relation is string &&
+             data.teamAccessIntent is bool &&
+             data.status == 'pending' &&
+             data.playerId is string &&
+             data.teamId is string &&
+             data.playerKey == data.teamId + "::" + data.playerId &&
+             isParentForPlayer(data.teamId, data.playerId);
+    }
+
     function isTeamFeeRecipientForCurrentParent(data, teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       let playerId = data.get('playerId', '');
@@ -689,6 +708,12 @@ service cloud.firestore {
                       isFamilyMembershipRemoval(request.resource.data, userId) &&
                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
         allow delete: if false;
+      }
+
+      match /householdInvites/{inviteId} {
+        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow create: if isOwner(userId) && isHouseholdInvitePayloadValid(request.resource.data, userId);
+        allow update, delete: if false;
       }
     }
 
