@@ -180,6 +180,19 @@ function normalizeTelemetryKey(value, maxLength = 80) {
     .slice(0, maxLength);
 }
 
+function normalizeTelemetryIdentifier(value, maxLength = 120) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w:-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength);
+}
+
 function normalizeTelemetryObject(value, depth = 0) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || depth > 2) {
     return {};
@@ -235,8 +248,8 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
   }
 
   const name = normalizeTelemetryKey(rawEvent.name, 80);
-  const sessionId = normalizeTelemetryKey(rawEvent.sessionId, 120);
-  const visitorId = normalizeTelemetryKey(rawEvent.visitorId, 120);
+  const sessionId = normalizeTelemetryIdentifier(rawEvent.sessionId, 120);
+  const visitorId = normalizeTelemetryIdentifier(rawEvent.visitorId, 120);
 
   if (!name || !sessionId || !visitorId) {
     return null;
@@ -247,12 +260,12 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
     : new Date(rawEvent.clientTimestamp).toISOString();
 
   return {
-    id: normalizeTelemetryKey(rawEvent.id, 120) || `${sessionId}_${receivedAt.getTime()}`,
+    id: normalizeTelemetryIdentifier(rawEvent.id, 120) || `${sessionId}_${receivedAt.getTime()}`,
     name,
     version: normalizeTelemetryString(rawEvent.version, 24),
     sessionId,
     visitorId,
-    userId: rawEvent.userId ? normalizeTelemetryKey(rawEvent.userId, 128) : null,
+    userId: rawEvent.userId ? normalizeTelemetryIdentifier(rawEvent.userId, 128) : null,
     signedIn: rawEvent.signedIn === true,
     clientTimestamp,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
