@@ -275,6 +275,7 @@
         const venueControlsList = document.getElementById('venue-controls-list');
         const saveAvailabilityButton = document.getElementById('save-venue-availability-btn');
         const saveBlackoutButton = document.getElementById('save-blackout-date-btn');
+        const refreshVenueControlsButton = document.getElementById('refresh-venue-controls-btn');
 
         function setButtonBusy(button, busyText, busy) {
             if (!button) return;
@@ -363,6 +364,19 @@
             bulkPanel.classList.add('hidden');
             singleTab.disabled = true;
             bulkTab.disabled = true;
+            refreshVenueControlsButton.disabled = true;
+            availabilityForm.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = true;
+            });
+            blackoutForm.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = true;
+            });
+        }
+
+        function canManageVenueControls() {
+            if (!currentUser || !anchorTeam?.id || organizationTeams.length < 2) return false;
+            const accessInfo = getTeamAccessInfo(currentUser, anchorTeam);
+            return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
         }
 
         function downloadCsvFile(filename, text) {
@@ -570,11 +584,15 @@
 
 
 
-        document.getElementById('refresh-venue-controls-btn').addEventListener('click', refreshVenueControls);
+        refreshVenueControlsButton.addEventListener('click', refreshVenueControls);
 
         availabilityForm.addEventListener('submit', async (event) => {
             event.preventDefault();
             setAlert('');
+            if (!canManageVenueControls()) {
+                setAlert('Venue scheduling controls are not available for this team.');
+                return;
+            }
             try {
                 setButtonBusy(saveAvailabilityButton, 'Saving…', true);
                 const payload = buildVenueAvailabilityPayload({
@@ -598,6 +616,10 @@
         blackoutForm.addEventListener('submit', async (event) => {
             event.preventDefault();
             setAlert('');
+            if (!canManageVenueControls()) {
+                setAlert('Venue scheduling controls are not available for this team.');
+                return;
+            }
             try {
                 setButtonBusy(saveBlackoutButton, 'Saving…', true);
                 const payload = buildBlackoutDatePayload({

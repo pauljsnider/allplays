@@ -893,20 +893,33 @@ export async function listOrganizationScheduleControls(teamId) {
     };
 }
 
-export async function createVenueAvailability(teamId, availabilityData) {
+export async function createVenueAvailability(teamId, availabilityData = {}) {
     if (!teamId) throw new Error('Missing team for venue availability');
+    const allowedFields = {
+        venueName: availabilityData.venueName,
+        subVenueName: availabilityData.subVenueName,
+        dayOfWeek: availabilityData.dayOfWeek,
+        startTime: availabilityData.startTime,
+        endTime: availabilityData.endTime,
+        notes: availabilityData.notes
+    };
     const docRef = await addDoc(collection(db, `teams/${teamId}/venueAvailability`), {
-        ...availabilityData,
+        ...allowedFields,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
     });
     return docRef.id;
 }
 
-export async function createOrganizationBlackout(teamId, blackoutData) {
+export async function createOrganizationBlackout(teamId, blackoutData = {}) {
     if (!teamId) throw new Error('Missing team for organization blackout');
+    const allowedFields = {
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
     const docRef = await addDoc(collection(db, `teams/${teamId}/organizationBlackouts`), {
-        ...blackoutData,
+        ...allowedFields,
         scope: 'organization',
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
@@ -914,10 +927,17 @@ export async function createOrganizationBlackout(teamId, blackoutData) {
     return docRef.id;
 }
 
-export async function createVenueBlackout(teamId, blackoutData) {
+export async function createVenueBlackout(teamId, blackoutData = {}) {
     if (!teamId) throw new Error('Missing team for venue blackout');
+    const allowedFields = {
+        venueName: blackoutData.venueName,
+        subVenueName: blackoutData.subVenueName,
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
     const docRef = await addDoc(collection(db, `teams/${teamId}/venueBlackouts`), {
-        ...blackoutData,
+        ...allowedFields,
         scope: 'venue',
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
