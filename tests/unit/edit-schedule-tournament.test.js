@@ -26,6 +26,30 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('if (!canManageTournamentStandings() || pools.length === 0)');
   });
 
+  it('progressively discloses slot-specific tournament source fields', () => {
+    const source = readEditSchedule();
+
+    ['Home', 'Away'].forEach((slot) => {
+      expect(source).toContain(`id="tournament${slot}TeamFields" data-tournament-slot-fields="team"`);
+      expect(source).toContain(`id="tournament${slot}PoolSeedFields" data-tournament-slot-fields="pool_seed" class="grid grid-cols-2 gap-2 hidden"`);
+      expect(source).toContain(`id="tournament${slot}GameResultFields" data-tournament-slot-fields="game_result" class="grid grid-cols-2 gap-2 hidden"`);
+    });
+  });
+
+  it('wires source type changes and slot population to visibility updates', () => {
+    const source = readEditSchedule();
+    const populateIndex = source.indexOf('function populateTournamentSlot(prefix, slot = {}) {');
+    const populateEndIndex = source.indexOf('\n        }\n\n        function resetTournamentForm', populateIndex);
+    expect(populateIndex).toBeGreaterThanOrEqual(0);
+    expect(populateEndIndex).toBeGreaterThan(populateIndex);
+
+    const populateBlock = source.slice(populateIndex, populateEndIndex);
+    expect(source).toContain('function updateTournamentSlotVisibility(prefix)');
+    expect(source).toContain("document.getElementById('tournamentHomeSourceType').addEventListener('change', () => updateTournamentSlotVisibility('Home')); ".trim());
+    expect(source).toContain("document.getElementById('tournamentAwaySourceType').addEventListener('change', () => updateTournamentSlotVisibility('Away')); ".trim());
+    expect(populateBlock).toContain('updateTournamentSlotVisibility(prefix);');
+  });
+
   it('persists tournament metadata into saved game data', () => {
     const source = readEditSchedule();
     const submitIndex = source.indexOf("document.getElementById('add-game-form').addEventListener('submit', async (e) => {");
