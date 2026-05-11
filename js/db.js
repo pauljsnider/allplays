@@ -3148,6 +3148,13 @@ export async function getTeamFeeBatch(teamId, batchId) {
     return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
 }
 
+export async function listTeamFeeBatches(teamId) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'feeBatches');
+    const snapshot = await getDocs(query(batchesRef, orderBy('createdAt', 'desc'), limit(25)));
+    return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
+}
+
 export async function listTeamFeeRecipients(teamId, batchId) {
     if (!teamId || !batchId) return [];
     const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
