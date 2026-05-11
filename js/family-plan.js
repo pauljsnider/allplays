@@ -90,6 +90,92 @@ function statusClasses(status) {
     return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
+export function normalizeHouseholdInvites(records = []) {
+    return records
+        .filter((record) => record && typeof record === 'object')
+        .map((record, index) => ({
+            id: normalizeString(record.id) || `household-invite-${index}`,
+            contactName: normalizeString(record.contactName || record.displayName || record.name),
+            email: normalizeString(record.email).toLowerCase(),
+            relation: normalizeString(record.relation),
+            status: normalizeStatus(record.status),
+            organizerUserId: normalizeString(record.organizerUserId),
+            playerId: normalizeString(record.playerId),
+            playerName: normalizeString(record.playerName),
+            teamId: normalizeString(record.teamId),
+            teamName: normalizeString(record.teamName),
+            playerKey: normalizeString(record.playerKey),
+            teamAccessIntent: record.teamAccessIntent === true,
+            invitedAt: record.invitedAt || record.createdAt || null,
+            updatedAt: record.updatedAt || null,
+        }))
+        .sort((a, b) => (a.playerName || '').localeCompare(b.playerName || '') || (a.contactName || a.email).localeCompare(b.contactName || b.email));
+}
+
+function normalizeLinkedPlayers(players = []) {
+    return players
+        .filter((player) => player?.teamId && player?.playerId)
+        .map((player) => ({
+            teamId: normalizeString(player.teamId),
+            teamName: normalizeString(player.teamName),
+            playerId: normalizeString(player.playerId),
+            playerName: normalizeString(player.playerName || player.name) || 'Player',
+        }));
+}
+
+export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], validationMessage = '' } = {}) {
+    const normalizedInvites = normalizeHouseholdInvites(invites).filter((invite) => invite.status === 'pending');
+    const normalizedPlayers = normalizeLinkedPlayers(linkedPlayers);
+    const playerOptions = normalizedPlayers.length
+        ? normalizedPlayers.map((player) => `<option value="${escapeHtml(player.teamId)}::${escapeHtml(player.playerId)}">${escapeHtml(player.playerName)}${player.teamName ? ` — ${escapeHtml(player.teamName)}` : ''}</option>`).join('')
+        : '<option value="">No linked players available</option>';
+    const pendingRows = normalizedInvites.length
+        ? normalizedInvites.map((invite) => `
+            <div class="rounded-xl border border-gray-200 bg-white p-3">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <div class="font-semibold text-gray-900">${escapeHtml(invite.contactName || invite.email || 'Household contact')}</div>
+                        <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(invite.email)}</div>
+                        <div class="text-xs text-gray-600 mt-1">${escapeHtml(invite.relation || 'Relation not specified')} for ${escapeHtml(invite.playerName || 'selected player')}${invite.teamName ? ` · ${escapeHtml(invite.teamName)}` : ''}</div>
+                    </div>
+                    <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(invite.status)}">${escapeHtml(invite.status)}</span>
+                </div>
+                ${invite.teamAccessIntent ? '<div class="text-xs text-primary-700 mt-2">Team access requested when invite acceptance is supported.</div>' : ''}
+            </div>
+        `).join('')
+        : '<div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600">No pending household player-access invites yet.</div>';
+
+    return `
+        <div class="p-6 border-t border-gray-100 space-y-4">
+            <div>
+                <h3 class="text-lg font-bold text-gray-900">Household player access</h3>
+                <p class="text-xs text-gray-500 mt-1">Create pending invites for contacts who should share access to a specific linked player. Access is not granted until invite acceptance is built.</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+                <select id="household-invite-player" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                    <option value="">Select linked player</option>
+                    ${playerOptions}
+                </select>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input id="household-invite-name" type="text" placeholder="Contact name" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                    <input id="household-invite-email" type="email" placeholder="Contact email" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                </div>
+                <input id="household-invite-relation" type="text" placeholder="Relation, e.g. grandparent, step-parent" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${normalizedPlayers.length ? '' : 'disabled'}>
+                <label class="flex items-start gap-2 text-xs text-gray-600">
+                    <input id="household-invite-team-access" type="checkbox" class="mt-0.5 rounded border-gray-300 text-primary-600" ${normalizedPlayers.length ? '' : 'disabled'}>
+                    <span>Intend to share team access when household invite acceptance is supported</span>
+                </label>
+                <button id="household-invite-add-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${normalizedPlayers.length ? '' : 'disabled'}>Create pending household invite</button>
+                <div id="household-invite-validation" class="${validationMessage ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200">${escapeHtml(validationMessage)}</div>
+            </div>
+            <div class="space-y-2">
+                <div class="text-sm font-semibold text-gray-900">Pending household invites</div>
+                ${pendingRows}
+            </div>
+        </div>
+    `;
+}
+
 export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked', validationMessage = '' } = {}) {
     const normalized = normalizeFamilyMembers(members);
     const counts = getFamilySlotCounts(normalized);
@@ -150,11 +236,55 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
     `;
 }
 
+export function buildFamilyPlanSectionMarkup(state = {}) {
+    return `${buildFamilyPlanMarkup(state)}${buildHouseholdInviteMarkup(state)}`;
+}
+
 export async function readFamilyMembers(userId, { deps = {} } = {}) {
     if (!userId) return [];
     const { db, collection, getDocs } = await loadFirebase(deps);
     const snapshot = await getDocs(collection(db, `users/${userId}/familyMemberships`));
     return normalizeFamilyMembers(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...dataFromSnapshot(docSnap) })));
+}
+
+export async function readHouseholdInvites(userId, { deps = {} } = {}) {
+    if (!userId) return [];
+    const { db, collection, getDocs } = await loadFirebase(deps);
+    const snapshot = await getDocs(collection(db, `users/${userId}/householdInvites`));
+    return normalizeHouseholdInvites(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...dataFromSnapshot(docSnap) })));
+}
+
+export async function addPendingHouseholdInvite(userId, invite, { deps = {}, linkedPlayers = [] } = {}) {
+    if (!userId) throw new Error('Missing signed-in user.');
+    const normalizedPlayers = normalizeLinkedPlayers(linkedPlayers);
+    const selectedKey = normalizeString(invite?.playerKey || `${normalizeString(invite?.teamId)}::${normalizeString(invite?.playerId)}`);
+    const selectedPlayer = normalizedPlayers.find((player) => `${player.teamId}::${player.playerId}` === selectedKey);
+    if (!selectedPlayer) throw new Error('Select a player already linked to your parent account.');
+
+    const contactName = normalizeString(invite?.contactName || invite?.displayName || invite?.name);
+    const email = normalizeString(invite?.email).toLowerCase();
+    const relation = normalizeString(invite?.relation);
+    if (!contactName) throw new Error('Enter the household contact name.');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email for the household contact.');
+    if (!relation) throw new Error('Enter the household contact relation.');
+
+    const { db, collection, addDoc, serverTimestamp } = await loadFirebase(deps);
+    const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
+    await addDoc(collection(db, `users/${userId}/householdInvites`), {
+        contactName,
+        email,
+        relation,
+        teamAccessIntent: invite?.teamAccessIntent === true,
+        status: 'pending',
+        organizerUserId: userId,
+        playerId: selectedPlayer.playerId,
+        playerName: selectedPlayer.playerName,
+        teamId: selectedPlayer.teamId,
+        teamName: selectedPlayer.teamName,
+        playerKey: `${selectedPlayer.teamId}::${selectedPlayer.playerId}`,
+        invitedAt: timestamp,
+        updatedAt: timestamp,
+    });
 }
 
 export async function addPendingFamilyMember(userId, member, { deps = {}, existingMembers = [] } = {}) {
@@ -223,12 +353,14 @@ export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
 }
 
 export async function loadFamilyPlanState(user, { deps = {}, entitlementReader = readAccountPremiumEntitlement } = {}) {
-    const [members, entitlement] = await Promise.all([
+    const [members, invites, entitlement] = await Promise.all([
         readFamilyMembers(user?.uid, { deps }),
+        readHouseholdInvites(user?.uid, { deps }),
         entitlementReader({ user, deps }),
     ]);
     return {
         members,
+        invites,
         entitlementState: entitlement?.state || 'locked',
     };
 }
@@ -238,8 +370,11 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
     const { deps = {}, entitlementReader = readAccountPremiumEntitlement } = options;
 
     try {
-        const state = await loadFamilyPlanState(user, { deps, entitlementReader });
-        container.innerHTML = buildFamilyPlanMarkup(state);
+        const state = {
+            ...(await loadFamilyPlanState(user, { deps, entitlementReader })),
+            linkedPlayers: options.linkedPlayers || []
+        };
+        container.innerHTML = buildFamilyPlanSectionMarkup(state);
 
         const addButton = container.querySelector('#family-plan-add-member-btn');
         const validationEl = container.querySelector('#family-plan-validation');
@@ -281,6 +416,31 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
                 }
                 addButton.disabled = false;
                 addButton.textContent = originalText;
+            }
+        });
+
+        const householdButton = container.querySelector('#household-invite-add-btn');
+        const householdValidationEl = container.querySelector('#household-invite-validation');
+        householdButton?.addEventListener('click', async () => {
+            const originalText = householdButton.textContent;
+            householdButton.disabled = true;
+            householdButton.textContent = 'Saving...';
+            try {
+                await addPendingHouseholdInvite(user.uid, {
+                    playerKey: container.querySelector('#household-invite-player')?.value,
+                    contactName: container.querySelector('#household-invite-name')?.value,
+                    email: container.querySelector('#household-invite-email')?.value,
+                    relation: container.querySelector('#household-invite-relation')?.value,
+                    teamAccessIntent: container.querySelector('#household-invite-team-access')?.checked === true,
+                }, { deps, linkedPlayers: state.linkedPlayers });
+                await renderFamilyPlanSection(container, user, options);
+            } catch (error) {
+                if (householdValidationEl) {
+                    householdValidationEl.textContent = error.message || 'Unable to create household invite.';
+                    householdValidationEl.className = 'text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200';
+                }
+                householdButton.disabled = false;
+                householdButton.textContent = originalText;
             }
         });
     } catch (error) {
