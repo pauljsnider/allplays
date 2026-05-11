@@ -473,25 +473,6 @@
         const allLinks = [...links];
         let mobileWrapper = null;
 
-        if (mobileToc && window.innerWidth < 1024) {
-          const wrapper = document.createElement('details');
-          wrapper.className = 'wf-panel-section wf-panel';
-          wrapper.style.marginBottom = '0.95rem';
-          wrapper.style.padding = '0.8rem 1rem';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Jump to section';
-          summary.style.cursor = 'pointer';
-          summary.style.fontWeight = '700';
-          summary.style.color = '#0f172a';
-          const list = toc.cloneNode(true);
-          list.style.marginTop = '0.6rem';
-          allLinks.push(...Array.from(list.querySelectorAll('a')));
-          wrapper.appendChild(summary);
-          wrapper.appendChild(list);
-          mobileToc.appendChild(wrapper);
-          mobileWrapper = wrapper;
-        }
-
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const setActive = (activeId) => {
           let active = sectionById.get(activeId) || headings[0];
@@ -503,17 +484,46 @@
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        allLinks.forEach((a) => {
-          a.addEventListener('click', () => {
-            setActive(a.getAttribute('href').slice(1));
-            if (mobileWrapper && mobileWrapper.contains(a)) {
-              mobileWrapper.open = false;
-            }
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
           });
-        });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>
