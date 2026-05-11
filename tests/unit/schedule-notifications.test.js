@@ -8,7 +8,8 @@ import {
     buildAvailabilityReminderRecipients,
     buildRsvpReminderMessage,
     buildNextReminderAt,
-    buildScheduleNotificationMetadata
+    buildScheduleNotificationMetadata,
+    sendPublicRsvpReminderEmails
 } from '../../js/schedule-notifications.js';
 
 describe('schedule notification helpers', () => {
@@ -260,6 +261,46 @@ describe('schedule notification helpers', () => {
         expect(recipients.playerIds).toEqual(['p1', 'p2']);
         expect(recipients.parentIds).toEqual(['u2']);
         expect(recipients.recipientCount).toBe(2);
+    });
+
+    it('posts public RSVP email reminder requests with auth and event context', async () => {
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ ok: true, sentCount: 2, linkCount: 6 })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        vi.stubGlobal('window', { __ALLPLAYS_CONFIG__: { functionsBaseUrl: 'https://functions.example.test/' } });
+
+        const auth = {
+            currentUser: { getIdToken: vi.fn().mockResolvedValue('id-token') },
+            app: { options: { projectId: 'demo-project' } }
+        };
+
+        await expect(sendPublicRsvpReminderEmails({
+            auth,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            eventType: 'game',
+            eventTitle: 'vs. Wildcats',
+            eventDate: new Date('2026-05-11T18:30:00.000Z')
+        })).resolves.toEqual({ ok: true, sentCount: 2, linkCount: 6 });
+
+        expect(fetchMock).toHaveBeenCalledWith('https://functions.example.test/sendPublicRsvpEmails', expect.objectContaining({
+            method: 'POST',
+            headers: {
+                Authorization: 'Bearer id-token',
+                'Content-Type': 'application/json'
+            }
+        }));
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            eventType: 'game',
+            eventTitle: 'vs. Wildcats',
+            eventDate: '2026-05-11T18:30:00.000Z'
+        });
+
+        vi.unstubAllGlobals();
     });
 
     it('builds RSVP reminder messages for the no-response group', () => {

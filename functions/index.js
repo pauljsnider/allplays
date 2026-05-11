@@ -3,6 +3,7 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const dns = require('node:dns').promises;
 const net = require('node:net');
+const crypto = require('node:crypto');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -991,7 +992,8 @@ async function markReminderSent(eventRef, claimId, sendResult) {
     'scheduleNotifications.lastAction': 'pre_event_reminder',
     'scheduleNotifications.claimId': claimId,
     'scheduleNotifications.pushSuccessCount': Number(sendResult?.successCount || 0),
-    'scheduleNotifications.pushFailureCount': Number(sendResult?.failureCount || 0)
+    'scheduleNotifications.pushFailureCount': Number(sendResult?.failureCount || 0),
+    'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0)
   });
 }
 
@@ -1034,8 +1036,16 @@ async function dispatchDuePreEventReminders(now = new Date()) {
         body: payload.body,
         linkOverride: payload.link
       });
-      await markReminderSent(eventRef, claimId, sendResult);
-      results.push({ teamId, gameId, sent: Number(sendResult?.successCount || 0) });
+      const emailResult = await createPublicRsvpEmailDeliveries({
+        teamId,
+        gameId,
+        actorUid: 'scheduled-reminder'
+      });
+      await markReminderSent(eventRef, claimId, {
+        ...sendResult,
+        rsvpEmailCount: emailResult.sentCount
+      });
+      results.push({ teamId, gameId, sent: Number(sendResult?.successCount || 0), rsvpEmailCount: emailResult.sentCount });
     } catch (error) {
       await markReminderPendingAfterFailure(eventRef, claimId, error);
       console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
@@ -1104,3 +1114,411 @@ exports.notifyGameUpdated = functions.firestore
       actorUid
     });
   });
+
+const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
+const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
+
+function writePublicRsvpCors(req, res) {
+  const allowedOrigins = new Set([
+    'https://allplays.ai',
+    'https://pauljsnider.github.io',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://localhost:8004',
+    'http://127.0.0.1:8004'
+  ]);
+  const origin = req.headers.origin;
+  if (allowedOrigins.has(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Vary', 'Origin');
+  }
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+}
+
+function publicRsvpJsonError(res, status, error) {
+  res.status(status).json({ ok: false, error });
+}
+
+function normalizePublicRsvpResponse(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return PUBLIC_RSVP_RESPONSES.has(normalized) ? normalized : '';
+}
+
+function normalizePublicRsvpEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizePublicRsvpText(value) {
+  return String(value || '').trim();
+}
+
+function publicRsvpHashToken(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function createPublicRsvpToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function coercePublicRsvpDate(value) {
+  if (!value) return null;
+  if (typeof value.toDate === 'function') return value.toDate();
+  if (typeof value.seconds === 'number') return new Date(value.seconds * 1000);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatPublicRsvpDate(value) {
+  const date = coercePublicRsvpDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short'
+  }).format(date);
+}
+
+function buildPublicRsvpBaseUrl() {
+  const { appUrl } = getStripeConfig();
+  return String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
+}
+
+async function requirePublicRsvpAdmin(req) {
+  const authHeader = String(req.headers.authorization || '');
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before sending RSVP email reminders.');
+  }
+  return admin.auth().verifyIdToken(match[1]);
+}
+
+function publicRsvpUserCanManageTeam({ team, uid, email }) {
+  const normalizedEmail = normalizePublicRsvpEmail(email);
+  const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map(normalizePublicRsvpEmail) : [];
+  return team?.ownerId === uid || (normalizedEmail && adminEmails.includes(normalizedEmail));
+}
+
+function getPublicRsvpParentContacts(player) {
+  const parents = Array.isArray(player?.parents) ? player.parents : [];
+  const contacts = parents.map((parent) => ({
+    name: normalizePublicRsvpText(parent?.name || parent?.displayName || parent?.relation),
+    email: normalizePublicRsvpEmail(parent?.email),
+    userId: normalizePublicRsvpText(parent?.userId || parent?.uid)
+  })).filter((contact) => contact.email);
+
+  const directEmail = normalizePublicRsvpEmail(player?.parentEmail || player?.guardianEmail);
+  if (directEmail && !contacts.some((contact) => contact.email === directEmail)) {
+    contacts.push({
+      name: normalizePublicRsvpText(player?.parentName || player?.guardianName),
+      email: directEmail,
+      userId: normalizePublicRsvpText(player?.parentUserId || player?.guardianUserId)
+    });
+  }
+  return contacts;
+}
+
+function getPublicRsvpPlayerIds(rsvp) {
+  const ids = Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : [rsvp?.playerId, rsvp?.childId];
+  return ids.map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function publicRsvpIsResponded(response) {
+  return PUBLIC_RSVP_RESPONSES.has(String(response || '').trim());
+}
+
+async function loadPublicRsvpEvent(teamId, gameId) {
+  const gameSnap = await firestore.doc(`teams/${teamId}/games/${gameId}`).get();
+  if (gameSnap.exists) return { id: gameSnap.id, path: `teams/${teamId}/games/${gameId}`, data: gameSnap.data() || {} };
+
+  const [masterId] = String(gameId || '').split('__');
+  if (masterId && masterId !== gameId) {
+    const masterSnap = await firestore.doc(`teams/${teamId}/games/${masterId}`).get();
+    if (masterSnap.exists) return { id: gameId, path: `teams/${teamId}/games/${masterId}`, data: masterSnap.data() || {} };
+  }
+  return null;
+}
+
+async function buildPublicRsvpSummary(teamId, gameId) {
+  const [playersSnap, rsvpsSnap] = await Promise.all([
+    firestore.collection(`teams/${teamId}/players`).get(),
+    firestore.collection(`teams/${teamId}/games/${gameId}/rsvps`).get()
+  ]);
+  const activePlayerIds = new Set();
+  playersSnap.forEach((docSnap) => {
+    const player = docSnap.data() || {};
+    if (player.active !== false) activePlayerIds.add(docSnap.id);
+  });
+
+  const responded = new Set();
+  const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0 };
+  rsvpsSnap.forEach((docSnap) => {
+    const rsvp = docSnap.data() || {};
+    const response = normalizePublicRsvpResponse(rsvp.response);
+    if (!response) return;
+    const playerIds = getPublicRsvpPlayerIds(rsvp).filter((playerId) => activePlayerIds.has(playerId));
+    playerIds.forEach((playerId) => responded.add(playerId));
+    const increment = playerIds.length || 1;
+    if (response === 'going') summary.going += increment;
+    if (response === 'maybe') summary.maybe += increment;
+    if (response === 'not_going') summary.notGoing += increment;
+  });
+  summary.notResponded = Math.max(activePlayerIds.size - responded.size, 0);
+  return summary;
+}
+
+async function getPublicRsvpTokenData(token) {
+  const tokenHash = publicRsvpHashToken(token);
+  const tokenRef = firestore.doc(`publicRsvpTokens/${tokenHash}`);
+  const tokenSnap = await tokenRef.get();
+  if (!tokenSnap.exists) return { tokenHash, tokenRef, tokenData: null };
+  return { tokenHash, tokenRef, tokenData: tokenSnap.data() || {} };
+}
+
+async function assertUsablePublicRsvpToken(tokenData) {
+  if (!tokenData || tokenData.revoked === true || tokenData.disabled === true) {
+    throw new Error('Invalid RSVP link.');
+  }
+  const expiresAt = coercePublicRsvpDate(tokenData.expiresAt);
+  if (expiresAt && expiresAt <= new Date()) {
+    throw new Error('This RSVP link has expired.');
+  }
+  const [teamSnap, eventRecord, playerSnap] = await Promise.all([
+    firestore.doc(`teams/${tokenData.teamId}`).get(),
+    loadPublicRsvpEvent(tokenData.teamId, tokenData.gameId),
+    firestore.doc(`teams/${tokenData.teamId}/players/${tokenData.playerId}`).get()
+  ]);
+  if (!teamSnap.exists || !eventRecord || !playerSnap.exists) {
+    throw new Error('Invalid RSVP link.');
+  }
+  const player = playerSnap.data() || {};
+  if (player.active === false) {
+    throw new Error('Invalid RSVP link.');
+  }
+  return { team: teamSnap.data() || {}, event: eventRecord.data, player };
+}
+
+function buildPublicRsvpContext({ team, event, player }) {
+  return {
+    teamName: normalizePublicRsvpText(team.name || 'Team'),
+    eventTitle: normalizePublicRsvpText(event.title || event.opponent || 'Team event'),
+    eventType: normalizePublicRsvpText(event.type || 'game'),
+    eventDateLabel: formatPublicRsvpDate(event.date),
+    location: normalizePublicRsvpText(event.location),
+    childName: normalizePublicRsvpText(player.name || player.displayName || 'Player'),
+    childNumber: normalizePublicRsvpText(player.number || player.jerseyNumber || '')
+  };
+}
+
+function buildPublicRsvpEmailText({ context, links }) {
+  const lines = [
+    `RSVP needed: ${context.eventTitle}`,
+    '',
+    `${context.childName}${context.childNumber ? ` #${context.childNumber}` : ''}`,
+    context.eventDateLabel ? `When: ${context.eventDateLabel}` : '',
+    context.location ? `Where: ${context.location}` : '',
+    '',
+    `Going: ${links.going}`,
+    `Maybe: ${links.maybe}`,
+    `Can't Go: ${links.not_going}`
+  ].filter((line) => line !== '');
+  return lines.join('\n');
+}
+
+function buildPublicRsvpEmailHtml({ context, links }) {
+  const esc = (value) => String(value || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  const link = (label, url) => `<a href="${esc(url)}" style="display:inline-block;margin:6px 8px 6px 0;padding:10px 14px;border-radius:8px;background:#4f46e5;color:#fff;text-decoration:none;font-weight:700;">${esc(label)}</a>`;
+  return `<p>RSVP needed for <strong>${esc(context.eventTitle)}</strong>.</p>
+<p>${esc(context.childName)}${context.childNumber ? ` #${esc(context.childNumber)}` : ''}</p>
+${context.eventDateLabel ? `<p><strong>When:</strong> ${esc(context.eventDateLabel)}</p>` : ''}
+${context.location ? `<p><strong>Where:</strong> ${esc(context.location)}</p>` : ''}
+<p>${link('Going', links.going)}${link('Maybe', links.maybe)}${link("Can't Go", links.not_going)}</p>`;
+}
+
+
+async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null } = {}) {
+  const [teamSnap, eventRecord, playersSnap, rsvpsSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    loadPublicRsvpEvent(teamId, gameId),
+    firestore.collection(`teams/${teamId}/players`).get(),
+    firestore.collection(`teams/${teamId}/games/${gameId}/rsvps`).get()
+  ]);
+  if (!teamSnap.exists || !eventRecord) {
+    throw new Error('Event not found.');
+  }
+
+  const respondedPlayerIds = new Set();
+  rsvpsSnap.forEach((docSnap) => {
+    const rsvp = docSnap.data() || {};
+    if (!publicRsvpIsResponded(rsvp.response)) return;
+    getPublicRsvpPlayerIds(rsvp).forEach((playerId) => respondedPlayerIds.add(playerId));
+  });
+
+  const team = teamSnap.data() || {};
+  const baseUrl = buildPublicRsvpBaseUrl();
+  const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + PUBLIC_RSVP_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000));
+  const batch = firestore.batch();
+  let sentCount = 0;
+  let linkCount = 0;
+
+  playersSnap.forEach((docSnap) => {
+    const player = { id: docSnap.id, ...(docSnap.data() || {}) };
+    if (player.active === false || respondedPlayerIds.has(player.id)) return;
+    getPublicRsvpParentContacts(player).forEach((contact) => {
+      const rawToken = createPublicRsvpToken();
+      const tokenHash = publicRsvpHashToken(rawToken);
+      const context = buildPublicRsvpContext({ team, event: eventRecord.data, player });
+      const links = {
+        going: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=going`,
+        maybe: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=maybe`,
+        not_going: `${baseUrl}/public-rsvp.html?token=${encodeURIComponent(rawToken)}&response=not_going`
+      };
+      batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {
+        teamId,
+        gameId,
+        playerId: player.id,
+        parentEmail: contact.email,
+        parentUserId: contact.userId || null,
+        parentName: contact.name || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt,
+        createdBy: actorUid,
+        revoked: false
+      });
+      batch.set(firestore.collection('mail').doc(), {
+        to: [contact.email],
+        message: {
+          subject: `RSVP: ${context.eventTitle}`,
+          text: buildPublicRsvpEmailText({ context, links }),
+          html: buildPublicRsvpEmailHtml({ context, links })
+        },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        metadata: { teamId, gameId, playerId: player.id, type: 'public_rsvp' }
+      });
+      sentCount += 1;
+      linkCount += 3;
+    });
+  });
+
+  if (sentCount > 0) {
+    await batch.commit();
+  }
+  return { sentCount, linkCount };
+}
+
+exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
+  writePublicRsvpCors(req, res);
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  if (req.method !== 'POST') {
+    publicRsvpJsonError(res, 405, 'Method not allowed');
+    return;
+  }
+
+  try {
+    const tokenData = await requirePublicRsvpAdmin(req);
+    const teamId = normalizePublicRsvpText(req.body?.teamId);
+    const gameId = normalizePublicRsvpText(req.body?.gameId);
+    if (!teamId || !gameId) {
+      publicRsvpJsonError(res, 400, 'Missing team or event.');
+      return;
+    }
+
+    const [teamSnap, eventRecord] = await Promise.all([
+      firestore.doc(`teams/${teamId}`).get(),
+      loadPublicRsvpEvent(teamId, gameId)
+    ]);
+    if (!teamSnap.exists || !eventRecord) {
+      publicRsvpJsonError(res, 404, 'Event not found.');
+      return;
+    }
+    const team = teamSnap.data() || {};
+    if (!publicRsvpUserCanManageTeam({ team, uid: tokenData.uid, email: tokenData.email })) {
+      publicRsvpJsonError(res, 403, 'You do not have permission to send RSVP emails for this team.');
+      return;
+    }
+
+    const result = await createPublicRsvpEmailDeliveries({
+      teamId,
+      gameId,
+      actorUid: tokenData.uid
+    });
+    res.status(200).json({ ok: true, ...result });
+  } catch (error) {
+    console.error('Failed to send public RSVP emails:', error);
+    publicRsvpJsonError(res, error?.code === 'auth/argument-error' ? 401 : 500, error?.message || 'RSVP email delivery failed.');
+  }
+});
+
+exports.getPublicRsvp = functions.https.onRequest(async (req, res) => {
+  writePublicRsvpCors(req, res);
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  if (req.method !== 'GET') {
+    publicRsvpJsonError(res, 405, 'Method not allowed');
+    return;
+  }
+
+  try {
+    const token = normalizePublicRsvpText(req.query?.token);
+    if (!token) {
+      publicRsvpJsonError(res, 400, 'Missing RSVP link token.');
+      return;
+    }
+    const { tokenData } = await getPublicRsvpTokenData(token);
+    const records = await assertUsablePublicRsvpToken(tokenData);
+    res.status(200).json({ ok: true, context: buildPublicRsvpContext(records) });
+  } catch (error) {
+    publicRsvpJsonError(res, 403, error?.message || 'Invalid RSVP link.');
+  }
+});
+
+exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
+  writePublicRsvpCors(req, res);
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  if (req.method !== 'POST') {
+    publicRsvpJsonError(res, 405, 'Method not allowed');
+    return;
+  }
+
+  try {
+    const token = normalizePublicRsvpText(req.body?.token);
+    const response = normalizePublicRsvpResponse(req.body?.response);
+    if (!token || !response) {
+      publicRsvpJsonError(res, 400, 'Choose Going, Maybe, or Can\'t Go.');
+      return;
+    }
+    const { tokenHash, tokenData } = await getPublicRsvpTokenData(token);
+    const records = await assertUsablePublicRsvpToken(tokenData);
+    const docId = `public_${tokenHash.slice(0, 24)}`;
+    await firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`).set({
+      userId: docId,
+      displayName: tokenData.parentName || tokenData.parentEmail || 'Parent RSVP',
+      playerIds: [tokenData.playerId],
+      response,
+      note: null,
+      publicRsvp: true,
+      parentEmail: tokenData.parentEmail || null,
+      respondedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    const summary = await buildPublicRsvpSummary(tokenData.teamId, tokenData.gameId);
+    await firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}`).set({ rsvpSummary: summary }, { merge: true });
+    await firestore.doc(`publicRsvpTokens/${tokenHash}`).set({
+      lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastResponse: response
+    }, { merge: true });
+    res.status(200).json({ ok: true, context: buildPublicRsvpContext(records), summary });
+  } catch (error) {
+    publicRsvpJsonError(res, 403, error?.message || 'Unable to submit RSVP.');
+  }
+});
