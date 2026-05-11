@@ -442,12 +442,8 @@ service cloud.firestore {
     }
 
     function canClaimOpenOfficiatingSlot(teamId) {
-      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       return isTeamOwnerOrAdmin(teamId) ||
-             isParentForTeam(teamId) ||
-             (isSignedIn() &&
-              exists(userPath) &&
-              teamId in get(userPath).data.get('playerTeamIds', []));
+             isParentForTeam(teamId);
     }
 
     function isOpenOfficiatingSelfAssignmentUpdate(teamId) {

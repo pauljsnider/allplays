@@ -85,15 +85,15 @@ describe('officiating slots', () => {
         const rules = readFirestoreRules();
 
         expect(officialsSource).toContain('canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);');
-        expect(officialsSource).toContain('Open self-assignment slots are only available to team owners, admins, parents, or roster members.');
+        expect(officialsSource).toContain('Open self-assignment slots are only available to team owners, admins, or parents.');
         expect(officialsSource).toContain("'./js/db.js?v=32'");
         expect(dbSource).toContain('function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {})');
-        expect(dbSource).toContain("throw new Error('Only team owners, admins, parents, or roster members can claim open officiating slots.');");
+        expect(dbSource).toContain("throw new Error('Only team owners, admins, or parents can claim open officiating slots.');");
         expect(dbSource).toContain('officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds)');
         expect(dbSource).toContain('officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)');
         expect(rules).toContain('function canClaimOpenOfficiatingSlot(teamId)');
         expect(rules).toContain('isParentForTeam(teamId)');
-        expect(rules).toContain("teamId in get(userPath).data.get('playerTeamIds', [])");
+        expect(rules).not.toContain('playerTeamIds');
         expect(rules).toContain('function isOpenOfficiatingSelfAssignmentUpdate(teamId)');
         expect(rules).toContain('return canClaimOpenOfficiatingSlot(teamId) &&');
         expect(rules).toContain('function isOnlyAddingCurrentOfficialAuthorization()');

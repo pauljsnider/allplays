@@ -110,14 +110,13 @@
             if (normalizeEmail(user.email) && Array.isArray(team.adminEmails) && team.adminEmails.map(normalizeEmail).includes(normalizeEmail(user.email))) return true;
             if (userProfile?.isAdmin === true) return true;
             if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team.id)) return true;
-            if (Array.isArray(userProfile?.playerTeamIds) && userProfile.playerTeamIds.includes(team.id)) return true;
             return false;
         }
 
         function renderOpenSlots() {
             const container = document.getElementById('open-slots');
             if (!canClaimOpenSlots) {
-                container.innerHTML = '<div class="p-4 text-sm text-gray-500">Open self-assignment slots are only available to team owners, admins, parents, or roster members.</div>';
+                container.innerHTML = '<div class="p-4 text-sm text-gray-500">Open self-assignment slots are only available to team owners, admins, or parents.</div>';
                 return;
             }
 

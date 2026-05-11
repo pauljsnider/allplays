@@ -5172,7 +5172,6 @@ function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, u
     if (email && Array.isArray(team.adminEmails) && team.adminEmails.map((adminEmail) => String(adminEmail || '').trim().toLowerCase()).includes(email)) return true;
     if (userProfile?.isAdmin === true) return true;
     if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team.id)) return true;
-    if (Array.isArray(userProfile?.playerTeamIds) && userProfile.playerTeamIds.includes(team.id)) return true;
     return false;
 }
 
@@ -5182,7 +5181,7 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
         official?.uid ? getUserProfile(official.uid) : Promise.resolve(null)
     ]);
     if (!isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile || {}, official || {})) {
-        throw new Error('Only team owners, admins, parents, or roster members can claim open officiating slots.');
+        throw new Error('Only team owners, admins, or parents can claim open officiating slots.');
     }
 
     const docRef = getGameDocRef(teamId, gameId);
