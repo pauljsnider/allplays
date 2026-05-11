@@ -182,6 +182,11 @@ function uniqueNonEmptyStrings(values) {
         .filter(Boolean)));
 }
 
+function uniqueEligibleEmails(values) {
+    return uniqueNonEmptyStrings(values)
+        .filter((email) => email.includes('@'));
+}
+
 function normalizeRsvpResponse(response) {
     return ['going', 'maybe', 'not_going'].includes(response) ? response : 'not_responded';
 }
@@ -200,7 +205,7 @@ function getPlayerParentUserIds(player) {
     ]);
 }
 
-export function buildAvailabilityReminderRecipients(players, rsvps) {
+function getNonRespondingAvailabilityPlayers(players, rsvps) {
     const activePlayers = (Array.isArray(players) ? players : [])
         .filter((player) => player?.active !== false && String(player?.id || '').trim());
     const playerIdsByParentUserId = new Map();
@@ -220,7 +225,11 @@ export function buildAvailabilityReminderRecipients(players, rsvps) {
         [...rsvpPlayerIds, ...fallbackPlayerIds].forEach((playerId) => respondedPlayerIds.add(playerId));
     });
 
-    const nonRespondingPlayers = activePlayers.filter((player) => !respondedPlayerIds.has(String(player.id)));
+    return activePlayers.filter((player) => !respondedPlayerIds.has(String(player.id)));
+}
+
+export function buildAvailabilityReminderRecipients(players, rsvps) {
+    const nonRespondingPlayers = getNonRespondingAvailabilityPlayers(players, rsvps);
     const playerIds = uniqueNonEmptyStrings(nonRespondingPlayers.map((player) => player.id));
     const parentIds = uniqueNonEmptyStrings(nonRespondingPlayers.flatMap((player) => (
         getPlayerParentUserIds(player)
@@ -239,6 +248,32 @@ export function buildAvailabilityReminderRecipients(players, rsvps) {
         parentEmails,
         playerCount: playerIds.length,
         recipientCount: parentIds.length + rosterDirectRecipientCount
+    };
+}
+
+export function buildAvailabilityReminderEmailPreview(players, rsvps) {
+    const nonRespondingPlayers = getNonRespondingAvailabilityPlayers(players, rsvps);
+    const playerPreviews = nonRespondingPlayers.map((player) => {
+        const parentEmails = uniqueEligibleEmails(
+            Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.email) : []
+        );
+        return {
+            playerId: String(player.id),
+            playerName: player.name || `#${player.number || ''}`.trim() || 'Unknown Player',
+            playerNumber: player.number || '',
+            parentEmails,
+            hasEligibleParentEmail: parentEmails.length > 0
+        };
+    });
+    const eligibleEmails = uniqueEligibleEmails(playerPreviews.flatMap((player) => player.parentEmails));
+
+    return {
+        players: playerPreviews,
+        eligibleEmails,
+        eligibleEmailCount: eligibleEmails.length,
+        missingEmailPlayerIds: playerPreviews
+            .filter((player) => !player.hasEligibleParentEmail)
+            .map((player) => player.playerId)
     };
 }
 
