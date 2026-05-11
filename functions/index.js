@@ -151,6 +151,10 @@ function isAllowedOrigin(origin) {
   return allowedOriginSet.has(origin);
 }
 
+function isAllowedTelemetryOrigin(origin) {
+  return !!origin && allowedOriginSet.has(origin);
+}
+
 function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
   if (origin && allowedOriginSet.has(origin)) {
@@ -158,7 +162,7 @@ function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
     res.set('Vary', 'Origin');
   }
   res.set('Access-Control-Allow-Methods', methods);
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.set('Cache-Control', 'no-store');
 }
 
@@ -238,18 +242,40 @@ function parseTelemetryBody(req) {
     return req.body;
   }
 
-  if (typeof req.body === 'string') {
-    return JSON.parse(req.body);
-  }
+  try {
+    if (typeof req.body === 'string') {
+      return JSON.parse(req.body);
+    }
 
-  if (Buffer.isBuffer(req.body)) {
-    return JSON.parse(req.body.toString('utf8'));
+    if (Buffer.isBuffer(req.body)) {
+      return JSON.parse(req.body.toString('utf8'));
+    }
+  } catch (error) {
+    throw new Error('Invalid JSON body');
   }
 
   throw new Error('Invalid JSON body');
 }
 
-function normalizeTelemetryEvent(rawEvent, receivedAt) {
+function getTelemetryBearerToken(req, payload) {
+  const authHeader = req.headers.authorization || '';
+  const match = typeof authHeader === 'string' ? authHeader.match(/^Bearer\s+(.+)$/i) : null;
+  if (match?.[1]) return match[1].trim();
+  return typeof payload?.authToken === 'string' ? payload.authToken.trim() : '';
+}
+
+async function verifyTelemetryAuth(req, payload) {
+  const token = getTelemetryBearerToken(req, payload);
+  if (!token) return null;
+
+  try {
+    return await admin.auth().verifyIdToken(token);
+  } catch (error) {
+    throw new Error('Invalid telemetry auth token');
+  }
+}
+
+function normalizeTelemetryEvent(rawEvent, receivedAt, authUid = null) {
   if (!rawEvent || typeof rawEvent !== 'object') {
     return null;
   }
@@ -272,8 +298,8 @@ function normalizeTelemetryEvent(rawEvent, receivedAt) {
     version: normalizeTelemetryString(rawEvent.version, 24),
     sessionId,
     visitorId,
-    userId: rawEvent.userId ? normalizeTelemetryIdentifier(rawEvent.userId, 128) : null,
-    signedIn: rawEvent.signedIn === true,
+    userId: authUid || null,
+    signedIn: !!authUid && rawEvent.signedIn === true,
     clientTimestamp,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     receivedAt: receivedAt.toISOString(),
@@ -358,6 +384,39 @@ function applyTelemetryAggregateWrites(batch, event, dateKey) {
   batch.set(db.collection('telemetrySessions').doc(event.sessionId), sessionUpdate, { merge: true });
 }
 
+const MAX_TELEMETRY_EVENTS_PER_REQUEST = 25;
+const TELEMETRY_WRITES_PER_EVENT = 5;
+const FIRESTORE_WRITE_SAFETY_LIMIT = 450;
+
+async function commitTelemetryEvent(db, event, dateKey) {
+  const eventRef = db.collection('telemetryEvents').doc(event.id);
+  return db.runTransaction(async (transaction) => {
+    const existing = await transaction.get(eventRef);
+    if (existing.exists) {
+      return false;
+    }
+
+    transaction.create(eventRef, event);
+    applyTelemetryAggregateWrites(transaction, event, dateKey);
+    return true;
+  });
+}
+
+async function commitTelemetryEvents(db, events, dateKey) {
+  const maxEventsPerChunk = Math.max(1, Math.floor(FIRESTORE_WRITE_SAFETY_LIMIT / TELEMETRY_WRITES_PER_EVENT));
+  let stored = 0;
+  let duplicates = 0;
+
+  for (let i = 0; i < events.length; i += maxEventsPerChunk) {
+    const chunk = events.slice(i, i + maxEventsPerChunk);
+    const results = await Promise.all(chunk.map((event) => commitTelemetryEvent(db, event, dateKey)));
+    stored += results.filter(Boolean).length;
+    duplicates += results.filter((result) => !result).length;
+  }
+
+  return { stored, duplicates };
+}
+
 const calendarServiceAccount =
   functions.config()?.calendar?.service_account ||
   process.env.CALENDAR_FETCH_SERVICE_ACCOUNT ||
@@ -430,7 +489,7 @@ exports.collectTelemetry = functions
   .onRequest(async (req, res) => {
     writeCorsHeaders(req, res, 'POST,OPTIONS');
 
-    if (!isAllowedOrigin(req.headers.origin)) {
+    if (!isAllowedTelemetryOrigin(req.headers.origin)) {
       res.status(403).json({ ok: false, error: 'Origin not allowed' });
       return;
     }
@@ -453,7 +512,10 @@ exports.collectTelemetry = functions
 
     try {
       const payload = parseTelemetryBody(req);
-      const rawEvents = Array.isArray(payload?.events) ? payload.events.slice(0, 25) : [];
+      const verifiedAuth = await verifyTelemetryAuth(req, payload);
+      const rawEvents = Array.isArray(payload?.events)
+        ? payload.events.slice(0, MAX_TELEMETRY_EVENTS_PER_REQUEST)
+        : [];
       if (!rawEvents.length) {
         res.status(400).json({ ok: false, error: 'No telemetry events provided' });
         return;
@@ -462,7 +524,7 @@ exports.collectTelemetry = functions
       const receivedAt = new Date();
       const dateKey = getDateKey(receivedAt);
       const events = rawEvents
-        .map((event) => normalizeTelemetryEvent(event, receivedAt))
+        .map((event) => normalizeTelemetryEvent(event, receivedAt, verifiedAuth?.uid || null))
         .filter(Boolean);
 
       if (!events.length) {
@@ -471,14 +533,7 @@ exports.collectTelemetry = functions
       }
 
       const db = admin.firestore();
-      const batch = db.batch();
-      events.forEach((event) => {
-        const eventRef = db.collection('telemetryEvents').doc(event.id);
-        batch.set(eventRef, event, { merge: false });
-        applyTelemetryAggregateWrites(batch, event, dateKey);
-      });
-
-      await batch.commit();
+      await commitTelemetryEvents(db, events, dateKey);
       res.status(204).send('');
     } catch (error) {
       console.error('Telemetry collection failed:', error);

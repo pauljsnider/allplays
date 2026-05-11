@@ -201,20 +201,21 @@ function shouldIgnoreElement(element) {
 
 function getElementText(element) {
     const explicitLabel = element.getAttribute('data-telemetry-label');
-    if (explicitLabel) return explicitLabel;
+    if (explicitLabel) return sanitizeTelemetryText(explicitLabel, 80);
 
     const ariaLabel = element.getAttribute('aria-label');
-    if (ariaLabel) return ariaLabel;
+    if (ariaLabel) return sanitizeTelemetryText(ariaLabel, 80);
 
+    let text = '';
     if (element instanceof HTMLInputElement) {
-        return element.labels?.[0]?.textContent || element.placeholder || element.name || element.id || element.type;
+        text = element.labels?.[0]?.textContent || element.placeholder || element.name || element.id || element.type;
+    } else if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
+        text = element.labels?.[0]?.textContent || element.placeholder || element.name || element.id || element.tagName.toLowerCase();
+    } else {
+        text = element.textContent || element.getAttribute('title') || element.getAttribute('alt') || '';
     }
 
-    if (element instanceof HTMLSelectElement || element instanceof HTMLTextAreaElement) {
-        return element.labels?.[0]?.textContent || element.placeholder || element.name || element.id || element.tagName.toLowerCase();
-    }
-
-    return element.textContent || element.getAttribute('title') || element.getAttribute('alt') || '';
+    return sanitizeTelemetryText(text, 80);
 }
 
 function getHrefPath(element) {
@@ -318,8 +319,10 @@ export function captureTelemetryEvent(name, properties = {}, options = {}) {
 }
 
 async function sendEvents(events, keepalive = false) {
+    const authToken = await getAuthToken();
     const payload = JSON.stringify({
         sentAt: new Date().toISOString(),
+        authToken,
         events
     });
 
@@ -328,12 +331,28 @@ async function sendEvents(events, keepalive = false) {
         if (navigator.sendBeacon(endpoint, blob)) return;
     }
 
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+    }
+
     await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: payload,
         keepalive
     });
+}
+
+async function getAuthToken() {
+    const user = auth.currentUser;
+    if (!user?.getIdToken) return null;
+
+    try {
+        return await user.getIdToken();
+    } catch (error) {
+        return null;
+    }
 }
 
 function flush(keepalive = false) {
@@ -387,23 +406,27 @@ function handleClick(event) {
         targetYPercent: rect.height ? Math.round(((event.clientY - rect.top) / rect.height) * 100) : null
     });
 
-    trackRageClick(event);
+    trackRageClick(event, element);
 }
 
-function trackRageClick(event) {
+function trackRageClick(event, element) {
     const now = Date.now();
     recentClicks = recentClicks
         .filter((click) => now - click.time < 1200)
-        .concat([{ time: now, x: event.clientX, y: event.clientY }])
-        .slice(-5);
+        .slice(-4);
+    recentClicks.push({ time: now, x: event.clientX, y: event.clientY });
 
-    const clustered = recentClicks.filter((click) =>
-        Math.abs(click.x - event.clientX) < 30 && Math.abs(click.y - event.clientY) < 30
-    );
+    let clusteredClickCount = 0;
+    recentClicks.forEach((click) => {
+        if (Math.abs(click.x - event.clientX) < 30 && Math.abs(click.y - event.clientY) < 30) {
+            clusteredClickCount += 1;
+        }
+    });
 
-    if (clustered.length >= 3) {
+    if (clusteredClickCount >= 3) {
         captureTelemetryEvent('interaction_rage_click', {
-            clickCount: clustered.length,
+            ...describeElement(element),
+            clickCount: clusteredClickCount,
             x: event.clientX,
             y: event.clientY
         });
