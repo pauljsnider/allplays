@@ -104,7 +104,7 @@ async function mockInviteLoginModules(page, options = {}) {
     });
 }
 
-test('email/password login from an invite link redirects existing parents to accept-invite', async ({ page, baseURL }) => {
+test('email/password login from a type-less invite link redirects existing users to accept-invite', async ({ page, baseURL }) => {
     await mockInviteLoginModules(page, {
         profile: {
             parentOf: [{ teamId: 'team-1' }]
@@ -112,7 +112,7 @@ test('email/password login from an invite link redirects existing parents to acc
         defaultRedirect: 'parent-dashboard.html'
     });
 
-    await page.goto(buildUrl(baseURL, '/login.html?code=ab12cd34&type=parent'), {
+    await page.goto(buildUrl(baseURL, '/login.html?code=ab12cd34'), {
         waitUntil: 'domcontentloaded'
     });
 
@@ -124,7 +124,7 @@ test('email/password login from an invite link redirects existing parents to acc
     await page.locator('#password').fill('secret123');
     await page.locator('#login-form').dispatchEvent('submit');
 
-    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34&type=parent$/);
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
 });
 
 test('google redirect login mode keeps existing admin invites on accept-invite', async ({ page, baseURL }) => {
