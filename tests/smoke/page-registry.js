@@ -41,6 +41,24 @@ function buildOptionalCorePages({ teamId, gameId, playerId }) {
         );
     }
 
+    if (playerId) {
+        pages.push({
+            name: 'player details without game context',
+            path: `/player.html#teamId=${teamId}&playerId=${playerId}`,
+            titlePatterns: [/Player Details - ALL PLAYS/i],
+            requiredSelectors: ['#player-header', '#season-overview', '#game-stats'],
+            forbiddenTexts: [/Player not found/i, /Error loading player details/i],
+            expectedAttributes: [
+                { selector: '#back-link', attribute: 'href', value: `team.html#teamId=${teamId}` }
+            ],
+            tabChecks: [
+                { tab: '#tab-season', content: '#content-season' },
+                { tab: '#tab-games', content: '#content-games' }
+            ],
+            hiddenSelectors: ['#player-game-insights-section']
+        });
+    }
+
     if (gameId && playerId) {
         pages.push({
             name: 'player details',
