@@ -175,8 +175,15 @@ function normalizeTelemetryString(value, maxLength = 160) {
 }
 
 function normalizeTelemetryKey(value, maxLength = 80) {
-  return normalizeTelemetryString(value, maxLength)
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\s+/g, '_')
     .replace(/[^\w:-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
     .slice(0, maxLength);
 }
 

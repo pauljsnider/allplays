@@ -14,7 +14,15 @@ export function sanitizeTelemetryText(value, maxLength = DEFAULT_TEXT_LIMIT) {
 }
 
 export function sanitizeTelemetryKey(value, maxLength = 60) {
-    return sanitizeTelemetryText(value, maxLength).replace(/[^\w:-]/g, '_').slice(0, maxLength);
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+        .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+        .replace(/\s+/g, '_')
+        .replace(/[^\w:-]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, maxLength);
 }
 
 export function sanitizeTelemetryProperties(properties = {}, depth = 0) {

@@ -11,6 +11,7 @@ const MAX_QUEUE_SIZE = 40;
 const MAX_BATCH_SIZE = 15;
 const FLUSH_INTERVAL_MS = 5000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 const SCROLL_MILESTONES = [25, 50, 75, 90, 100];
 const GLOBAL_KEY = '__allplaysTelemetry';
 const SESSION_KEY = 'allplays.telemetry.session';
@@ -32,6 +33,9 @@ let historyTrackingInitialized = false;
 let globalListenersInitialized = false;
 let localStorageAvailable = null;
 let sessionStorageAvailable = null;
+let visitorIdCache = null;
+let sessionCache = null;
+let lastSessionStorageWrite = 0;
 
 function canUseStorage(storage, kind) {
     if (kind === 'local' && localStorageAvailable !== null) return localStorageAvailable;
@@ -80,22 +84,37 @@ function setSessionStorageValue(key, value) {
 }
 
 function getVisitorId() {
+    if (visitorIdCache) return visitorIdCache;
+
     const existing = getLocalStorageValue(VISITOR_KEY);
-    if (existing) return existing;
-    const visitorId = randomId('visitor');
-    setLocalStorageValue(VISITOR_KEY, visitorId);
-    return visitorId;
+    visitorIdCache = existing || randomId('visitor');
+    if (!existing) {
+        setLocalStorageValue(VISITOR_KEY, visitorIdCache);
+    }
+    return visitorIdCache;
 }
 
 function getSessionId() {
-    const existing = getSessionStorageValue(SESSION_KEY);
     const now = Date.now();
+
+    if (sessionCache?.id && now - sessionCache.lastSeen < SESSION_TIMEOUT_MS) {
+        sessionCache.lastSeen = now;
+        if (now - lastSessionStorageWrite >= SESSION_TOUCH_INTERVAL_MS) {
+            setSessionStorageValue(SESSION_KEY, JSON.stringify(sessionCache));
+            lastSessionStorageWrite = now;
+        }
+        return sessionCache.id;
+    }
+
+    const existing = getSessionStorageValue(SESSION_KEY);
     if (existing) {
         try {
             const parsed = JSON.parse(existing);
             if (parsed?.id && parsed?.lastSeen && now - parsed.lastSeen < SESSION_TIMEOUT_MS) {
                 parsed.lastSeen = now;
-                setSessionStorageValue(SESSION_KEY, JSON.stringify(parsed));
+                sessionCache = parsed;
+                setSessionStorageValue(SESSION_KEY, JSON.stringify(sessionCache));
+                lastSessionStorageWrite = now;
                 return parsed.id;
             }
         } catch (error) {
@@ -103,9 +122,10 @@ function getSessionId() {
         }
     }
 
-    const session = { id: randomId('session'), startedAt: now, lastSeen: now };
-    setSessionStorageValue(SESSION_KEY, JSON.stringify(session));
-    return session.id;
+    sessionCache = { id: randomId('session'), startedAt: now, lastSeen: now };
+    setSessionStorageValue(SESSION_KEY, JSON.stringify(sessionCache));
+    lastSessionStorageWrite = now;
+    return sessionCache.id;
 }
 
 function resolveEndpoint() {
@@ -274,10 +294,18 @@ function enqueue(event) {
         queue = queue.slice(queue.length - MAX_QUEUE_SIZE);
     }
     if (queue.length >= MAX_BATCH_SIZE) {
-        flush();
-    } else if (!flushTimer) {
-        flushTimer = window.setTimeout(flush, FLUSH_INTERVAL_MS);
+        scheduleFlush(0);
+    } else {
+        scheduleFlush(FLUSH_INTERVAL_MS);
     }
+}
+
+function scheduleFlush(delayMs) {
+    if (flushTimer) {
+        if (delayMs !== 0) return;
+        window.clearTimeout(flushTimer);
+    }
+    flushTimer = window.setTimeout(flush, delayMs);
 }
 
 export function captureTelemetryEvent(name, properties = {}, options = {}) {
@@ -319,6 +347,10 @@ function flush(keepalive = false) {
     sendEvents(events, keepalive).catch(() => {
         queue = events.concat(queue).slice(0, MAX_QUEUE_SIZE);
     });
+
+    if (!keepalive && queue.length > 0) {
+        scheduleFlush(queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS);
+    }
 }
 
 function capturePageView() {

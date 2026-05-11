@@ -31,5 +31,8 @@ describe('telemetry privacy utilities', () => {
     it('keeps telemetry keys bounded and machine-friendly', () => {
         expect(sanitizeTelemetryKey('bad key.with spaces and dots')).toBe('bad_key_with_spaces_and_dots');
         expect(sanitizeTelemetryKey('many words '.repeat(20))).toHaveLength(60);
+        expect(sanitizeTelemetryKey('domContentLoadedMs')).toBe('domContentLoadedMs');
+        expect(sanitizeTelemetryKey('local_smoke_test_123456789')).toBe('local_smoke_test_123456789');
+        expect(sanitizeTelemetryKey('coach@example.com')).toBe('');
     });
 });
