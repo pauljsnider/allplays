@@ -971,6 +971,18 @@ service cloud.firestore {
         allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /venueAvailability/{availabilityId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /organizationBlackouts/{blackoutId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /venueBlackouts/{blackoutId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /entitlements/{entitlementId} {
         // Public fan pages may read safe team-pass state, but raw billing/provider
         // metadata stays limited to team admins.

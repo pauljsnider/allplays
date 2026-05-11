@@ -1,15 +1,96 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+    buildBlackoutDatePayload,
     buildOrganizationScheduleCsvTemplate,
     buildOrganizationScheduleImportPreview,
     buildOrganizationSharedGamePayload,
+    buildVenueAvailabilityPayload,
+    formatBlackoutDateRecord,
+    formatVenueAvailabilityRecord,
     getOrganizationTeams,
     inferOrganizationScheduleCsvMapping,
     validateOrganizationMatchup
 } from '../../js/organization-schedule.js';
 
 describe('organization schedule helpers', () => {
+
+    it('validates venue availability time windows before saving', () => {
+        expect(buildVenueAvailabilityPayload({
+            venueName: 'Main Field',
+            subVenueName: 'North',
+            dayOfWeek: 'monday',
+            startTime: '18:00',
+            endTime: '20:00',
+            notes: 'Lights available'
+        })).toEqual({
+            venueName: 'Main Field',
+            subVenueName: 'North',
+            dayOfWeek: 'monday',
+            startTime: '18:00',
+            endTime: '20:00',
+            notes: 'Lights available'
+        });
+
+        expect(() => buildVenueAvailabilityPayload({
+            venueName: 'Main Field',
+            dayOfWeek: 'monday',
+            startTime: '',
+            endTime: '20:00'
+        })).toThrow('Enter a start and end time for the availability window.');
+
+        expect(() => buildVenueAvailabilityPayload({
+            venueName: 'Main Field',
+            dayOfWeek: 'monday',
+            startTime: '20:00',
+            endTime: '18:00'
+        })).toThrow('Availability end time must be after the start time.');
+    });
+
+    it('validates blackout date ranges before saving', () => {
+        expect(buildBlackoutDatePayload({
+            scope: 'organization',
+            startDate: '2026-07-04',
+            endDate: '2026-07-05',
+            reason: 'Holiday'
+        })).toEqual({
+            scope: 'organization',
+            venueName: null,
+            subVenueName: null,
+            startDate: '2026-07-04',
+            endDate: '2026-07-05',
+            reason: 'Holiday'
+        });
+
+        expect(() => buildBlackoutDatePayload({
+            scope: 'venue',
+            startDate: '2026-07-05',
+            endDate: '2026-07-04'
+        })).toThrow('Venue or sub-venue name is required for venue-specific blackouts.');
+
+        expect(() => buildBlackoutDatePayload({
+            scope: 'organization',
+            startDate: '2026-07-05',
+            endDate: '2026-07-04'
+        })).toThrow('Blackout end date cannot be before the start date.');
+    });
+
+    it('formats venue controls for the review list', () => {
+        expect(formatVenueAvailabilityRecord({
+            venueName: 'Main Field',
+            subVenueName: 'North',
+            dayOfWeek: 'monday',
+            startTime: '18:00',
+            endTime: '20:00'
+        })).toBe('Main Field / North · Monday · 18:00–20:00');
+
+        expect(formatBlackoutDateRecord({
+            scope: 'venue',
+            venueName: 'Main Field',
+            startDate: '2026-07-04',
+            endDate: '2026-07-05'
+        })).toBe('Main Field · 2026-07-04 through 2026-07-05');
+    });
     const accessibleTeams = [
         { id: 'team-1', name: 'Alpha', ownerId: 'org-1', photoUrl: 'alpha.png' },
         { id: 'team-2', name: 'Bravo', ownerId: 'org-1', photoUrl: 'bravo.png' },
@@ -159,7 +240,7 @@ describe('organization schedule helpers', () => {
     it('loads all active teams for platform admins before organization filtering', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
-        expect(source).toContain('import { addGame, getTeam, getTeams, getUserTeamsWithAccess }');
+        expect(source).toContain('getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls');
         expect(source).toContain('accessibleTeams = currentUser.isAdmin === true');
         expect(source).toContain('? await getTeams()');
         expect(source).toContain(': await getUserTeamsWithAccess(currentUser.uid, currentUser.email);');
@@ -180,4 +261,23 @@ describe('organization schedule helpers', () => {
         expect(source).toContain("const homeLink = document.createElement('a');");
         expect(source).not.toContain('successAlert.innerHTML =');
     });
+    it('wires venue availability and blackout controls on the organization schedule page', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="venue-availability-form"');
+        expect(source).toContain('id="blackout-date-form"');
+        expect(source).toContain('id="venue-controls-list"');
+        expect(source).toContain('buildVenueAvailabilityPayload');
+        expect(source).toContain('buildBlackoutDatePayload');
+        expect(source).toContain('listOrganizationScheduleControls');
+    });
+
+    it('allows team admins to manage venue schedule control collections', () => {
+        const source = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+
+        expect(source).toContain('match /venueAvailability/{availabilityId}');
+        expect(source).toContain('match /organizationBlackouts/{blackoutId}');
+        expect(source).toContain('match /venueBlackouts/{blackoutId}');
+    });
+
 });
