@@ -894,7 +894,7 @@
                 await ensureParentTeamAccess(user.uid, teamIds);
                 const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
                 renderTeamChats(data.children, unreadCounts);
-                await renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { linkedPlayers: data.children || [] });
+                await renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { playerLinks: data.children || [] });
                 await loadParentTeamFees(user.uid, data.children);
                 queueParentDashboardHydration(data.children, user.uid);
 

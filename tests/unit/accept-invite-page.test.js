@@ -107,8 +107,8 @@ const setTimeout = deps.setTimeout;
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
-            "import { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=30';",
-            'const { validateAccessCode, redeemParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
+            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=31';",
+            'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
             "import { createInviteProcessor } from './js/accept-invite-flow.js?v=5';",
@@ -200,6 +200,7 @@ async function bootAcceptInvite({
             }
         }),
         redeemParentInvite: vi.fn().mockResolvedValue(undefined),
+        redeemHouseholdInvite: vi.fn().mockResolvedValue(undefined),
         redeemAdminInviteAtomically: vi.fn(),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
         updateTeam: vi.fn().mockResolvedValue(undefined),

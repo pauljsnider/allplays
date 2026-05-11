@@ -33,7 +33,8 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         updateTeam,
         updateUserProfile,
         markAccessCodeAsUsed,
-        redeemAdminInviteAtomically
+        redeemAdminInviteAtomically,
+        redeemHouseholdInvite
     } = deps;
 
     const validation = await validateAccessCode(code);
@@ -49,6 +50,21 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         return {
             success: true,
             message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : 'a player'} on ${team?.name || 'the team'}!`,
+            redirectUrl: 'parent-dashboard.html'
+        };
+    }
+
+    if (validation.type === 'household_invite') {
+        if (typeof redeemHouseholdInvite !== 'function') {
+            throw new Error('Missing household invite redemption handler');
+        }
+
+        const redeemResult = await redeemHouseholdInvite(userId, code);
+        const teamId = redeemResult?.teamId || validation.data.teamId;
+        const team = await getTeam(teamId);
+        return {
+            success: true,
+            message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : validation.data.playerName || 'a player'} on ${team?.name || validation.data.teamName || 'the team'}!`,
             redirectUrl: 'parent-dashboard.html'
         };
     }

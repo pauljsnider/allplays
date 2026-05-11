@@ -206,6 +206,25 @@ service cloud.firestore {
              isParentForPlayer(data.teamId, data.playerId);
     }
 
+    function isFamilyMembershipAcceptance(data) {
+      return isSignedIn() &&
+             resource.data.status == 'pending' &&
+             resource.data.email is string &&
+             request.auth.token.email is string &&
+             resource.data.email == request.auth.token.email.lower() &&
+             data.status == 'active' &&
+             data.userId == request.auth.uid &&
+             data.diff(resource.data).affectedKeys().hasOnly(['status', 'userId', 'acceptedAt', 'updatedAt']);
+    }
+
+    function isFamilyMembershipInviteMetadataUpdate(data, userId) {
+      return isOwner(userId) &&
+             resource.data.status == 'pending' &&
+             data.organizerUserId == userId &&
+             data.status == 'pending' &&
+             data.diff(resource.data).affectedKeys().hasOnly(['accessCodeId', 'accessCode', 'inviteUrl', 'updatedAt']);
+    }
+
     function isTeamFeeRecipientForCurrentParent(data, teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       let playerId = data.get('playerId', '');
@@ -702,11 +721,14 @@ service cloud.firestore {
       }
 
       match /familyMemberships/{memberId} {
-        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow read: if isOwner(userId) || isGlobalAdmin() ||
+                       (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
-        allow update: if isOwner(userId) &&
-                      isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+        allow update: if (isOwner(userId) &&
+                         isFamilyMembershipRemoval(request.resource.data, userId) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt'])) ||
+                      isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
+                      isFamilyMembershipAcceptance(request.resource.data);
         allow delete: if false;
       }
 
@@ -867,6 +889,8 @@ service cloud.firestore {
 	        // - Public player doc: photo only
 	        allow update: if isParentForPlayer(teamId, playerId) &&
 	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
+	        allow update: if isParentForPlayer(teamId, playerId) &&
+	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents']);
 
         // Private player profile (sensitive fields)
         match /private/profile {
