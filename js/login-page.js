@@ -66,7 +66,7 @@ export function createLoginRedirectCoordinator({
         ? urlParams.get('type').trim().toLowerCase()
         : '';
     const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) &&
-        (urlInviteType === 'parent' || urlInviteType === 'admin');
+        (!urlInviteType || urlInviteType === 'parent' || urlInviteType === 'admin');
     let inviteRedemptionOverride = null;
 
     function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {

@@ -69,6 +69,17 @@ describe('login page redirect coordination', () => {
             .toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 
+    it('redeems type-less 8-character invite links after login', () => {
+        const { coordinator } = createCoordinator({
+            search: '?code=ab12cd34',
+            defaultRedirect: 'dashboard.html'
+        });
+
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
+            .toBe('accept-invite.html?code=AB12CD34');
+    });
+
     it('does not redeem invite redirects when the invite code is missing', () => {
         const { coordinator } = createCoordinator({
             search: '?type=parent',
