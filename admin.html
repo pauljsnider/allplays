@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gray-100 text-gray-900">
@@ -59,6 +60,8 @@
                 class="px-4 py-2 font-medium text-gray-500 hover:text-gray-700 focus:outline-none">Teams</button>
             <button id="tab-users"
                 class="px-4 py-2 font-medium text-gray-500 hover:text-gray-700 focus:outline-none">Users</button>
+            <button id="tab-telemetry"
+                class="px-4 py-2 font-medium text-gray-500 hover:text-gray-700 focus:outline-none">Telemetry</button>
         </div>
 
         <!-- Dashboard View -->
@@ -342,6 +345,129 @@
                         <p id="registration-form-message" class="text-sm text-gray-600"></p>
                         <button type="submit" class="w-full rounded bg-primary-600 px-4 py-2 font-semibold text-white hover:bg-primary-700">Save registration form</button>
                     </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Telemetry View -->
+        <div id="view-telemetry" class="hidden space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-900">Site Usage Telemetry</h2>
+                        <p class="text-sm text-gray-500">First-party autocapture across pages, clicks, forms, scroll depth, sessions, and errors.</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <select id="telemetry-range" class="px-3 py-2 border border-gray-300 rounded-md text-sm">
+                            <option value="1">Last 24 hours</option>
+                            <option value="7" selected>Last 7 days</option>
+                            <option value="30">Last 30 days</option>
+                        </select>
+                        <select id="telemetry-event-filter" class="px-3 py-2 border border-gray-300 rounded-md text-sm">
+                            <option value="">All events</option>
+                            <option value="page_view">Page views</option>
+                            <option value="interaction_click">Clicks</option>
+                            <option value="interaction_change">Form changes</option>
+                            <option value="interaction_submit">Form submits</option>
+                            <option value="scroll_depth">Scroll depth</option>
+                            <option value="js_error">JS errors</option>
+                        </select>
+                        <button id="telemetry-refresh" class="px-4 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700">Refresh</button>
+                    </div>
+                </div>
+                <p id="telemetry-status" class="text-xs text-gray-500 mt-3">Loading telemetry...</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase">Events</p>
+                    <p id="telemetry-total-events" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase">Page Views</p>
+                    <p id="telemetry-page-views" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase">Interactions</p>
+                    <p id="telemetry-interactions" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase">Sessions</p>
+                    <p id="telemetry-sessions" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase">Known Users</p>
+                    <p id="telemetry-known-users" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <p class="text-xs font-semibold text-gray-500 uppercase">Errors</p>
+                    <p id="telemetry-errors" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200 xl:col-span-2">
+                    <div class="p-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Daily Trend</h3>
+                    </div>
+                    <div id="telemetry-daily-trend" class="p-4 space-y-3">
+                        <p class="text-gray-400 text-sm">Loading...</p>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+                    <div class="p-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Top Events</h3>
+                    </div>
+                    <div id="telemetry-top-events" class="p-4 space-y-3 max-h-80 overflow-y-auto">
+                        <p class="text-gray-400 text-sm">Loading...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+                    <div class="p-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Top Pages</h3>
+                    </div>
+                    <div id="telemetry-top-pages" class="p-4 space-y-3 max-h-96 overflow-y-auto">
+                        <p class="text-gray-400 text-sm">Loading...</p>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+                    <div class="p-4 border-b border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-900">Recent Sessions</h3>
+                    </div>
+                    <div id="telemetry-recent-sessions" class="p-4 space-y-3 max-h-96 overflow-y-auto">
+                        <p class="text-gray-400 text-sm">Loading...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="p-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <h3 class="text-lg font-semibold text-gray-900">Recent Events</h3>
+                    <input id="telemetry-page-filter" type="text" placeholder="Filter by page..."
+                        class="px-3 py-2 border border-gray-300 rounded-md text-sm">
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Event</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Page</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Target</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                            </tr>
+                        </thead>
+                        <tbody id="telemetry-events-table" class="bg-white divide-y divide-gray-200">
+                            <tr>
+                                <td colspan="5" class="px-6 py-4 text-sm text-gray-400">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
