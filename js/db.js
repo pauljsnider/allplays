@@ -69,6 +69,73 @@ const CHAT_REACTIONS = [
 ];
 const CHAT_REACTION_KEYS = new Set(CHAT_REACTIONS.map(r => r.key));
 
+function daysAgoDate(days) {
+    const safeDays = Number.isFinite(days) ? Math.max(1, days) : 7;
+    return new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+}
+
+function toDateKey(date) {
+    return date.toISOString().slice(0, 10);
+}
+
+function mapSnapshot(snapshot) {
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function getTelemetryEvents({ days = 7, maxEvents = 1500 } = {}) {
+    const startDate = Timestamp.fromDate(daysAgoDate(days));
+    const safeLimit = Math.min(Math.max(Number(maxEvents) || 1500, 100), 5000);
+    const q = query(
+        collection(db, 'telemetryEvents'),
+        where('createdAt', '>=', startDate),
+        orderBy('createdAt', 'desc'),
+        limitQuery(safeLimit)
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetryDaily({ days = 30 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(days + 2, 7), 60))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetryPageDaily({ days = 30, maxPages = 500 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryPagesDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxPages) || 500, 50), 1000))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetryEventDaily({ days = 30, maxEvents = 500 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryEventsDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxEvents) || 500, 50), 1000))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
+    const q = query(
+        collection(db, 'telemetrySessions'),
+        orderBy('updatedAt', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxSessions) || 200, 50), 500))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
 export async function uploadTeamPhoto(file) {
     console.log('Starting photo upload...', {
         fileName: file.name,
