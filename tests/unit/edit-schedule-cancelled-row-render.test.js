@@ -36,7 +36,7 @@ ${body}
     return { deps, renderDbGame: createRenderer(deps) };
 }
 
-describe('edit schedule cancelled game row rendering', () => {
+describe('edit schedule game row rendering', () => {
     it('shows the cancelled state and removes cancellation actions after refresh', () => {
         const { deps, renderDbGame } = buildRenderDbGame();
 
@@ -57,5 +57,48 @@ describe('edit schedule cancelled game row rendering', () => {
         expect(html).toContain('>Cancelled</span>');
         expect(html).not.toContain('Command Center');
         expect(html).not.toContain('cancel-game-btn');
+    });
+
+    it('uses liveStatus to label active broadcasts as Live Now', () => {
+        const { renderDbGame } = buildRenderDbGame();
+
+        const html = renderDbGame({
+            id: 'game-live',
+            opponent: 'Tigers',
+            location: 'Main Gym',
+            date: '2026-03-10T18:00:00.000Z',
+            status: 'scheduled',
+            liveStatus: 'live'
+        });
+
+        expect(html).toContain('Live Now');
+        expect(html).not.toContain('>View Live</a>');
+    });
+
+    it('uses liveStatus to show replay links for completed broadcasts', () => {
+        const { renderDbGame } = buildRenderDbGame();
+
+        const html = renderDbGame({
+            id: 'game-replay',
+            opponent: 'Tigers',
+            location: 'Main Gym',
+            date: '2026-03-10T18:00:00.000Z',
+            status: 'completed',
+            liveStatus: 'completed',
+            homeScore: 3,
+            awayScore: 2
+        });
+
+        expect(html).toContain('Report</a>');
+        expect(html).toContain('live-game.html?teamId=team-1&gameId=game-replay&replay=true');
+        expect(html).toContain('Watch Replay');
+    });
+
+    it('preserves DB liveStatus when building schedule event records', () => {
+        const source = readEditSchedule();
+        const eventRecordMatch = source.match(/const eventRecord = \{([\s\S]*?)\n                    \};\n                    allEvents\.push\(eventRecord\);/);
+
+        expect(eventRecordMatch, 'eventRecord mapping should exist').toBeTruthy();
+        expect(eventRecordMatch[1]).toContain('liveStatus: event.liveStatus || null');
     });
 });
