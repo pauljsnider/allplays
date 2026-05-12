@@ -732,6 +732,7 @@
                 editor.classList.remove('hidden');
                 editBtn.classList.add('hidden');
                 summaryDiv.classList.add('hidden');
+                saveBtn.disabled = false;
                 if (auto && !game.summary) {
                     textarea.value = '';
                 }
@@ -741,6 +742,7 @@
                 editor.classList.add('hidden');
                 editBtn.classList.remove('hidden');
                 summaryDiv.classList.remove('hidden');
+                saveBtn.disabled = false;
                 textarea.value = game.summary || '';
                 status.textContent = '';
             };
