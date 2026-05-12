@@ -390,6 +390,7 @@
         let pendingImageFiles = [];
         let pendingMediaPreviewUrls = [];
         let galleryMediaEntries = [];
+        let isLoadingMediaGalleryHistory = false;
         const chatMediaShareFileCache = new Map();
         const chatMediaShareFilePending = new Map();
         let activeReactionPickerMessageId = null;
@@ -492,14 +493,14 @@
         async function loadMessages(loadMore = false) {
             try {
                 if (!loadMore) {
-                    return;
+                    return false;
                 }
 
                 const cursor = olderMessages.length > 0 ? olderMessages[0]._doc : liveOldestDoc;
                 if (!cursor) {
                     hasMoreMessages = false;
                     updateLoadMoreButton();
-                    return;
+                    return false;
                 }
 
                 const newMessages = await getChatMessages(teamId, { limit: 50, startAfterDoc: cursor, conversationId: selectedConversationId });
@@ -518,6 +519,7 @@
 
                 renderMessages();
                 updateLoadMoreButton();
+                return olderBatch.length > 0;
 
             } catch (error) {
                 console.error('Error loading messages:', error);
@@ -529,6 +531,7 @@
                         </button>
                     </div>
                 `;
+                return false;
             }
         }
 
@@ -611,18 +614,8 @@
         function renderMessages() {
             const container = document.getElementById('messages-container');
             const mediaEntries = collectThreadMedia(messages);
-            const mediaCount = document.getElementById('media-gallery-count');
-            const mediaSummary = document.getElementById('media-gallery-summary');
 
-            if (mediaEntries.length > 0) {
-                mediaCount.textContent = String(mediaEntries.length);
-                mediaCount.classList.remove('hidden');
-                mediaSummary.textContent = `${mediaEntries.length} shared item${mediaEntries.length === 1 ? '' : 's'} in this conversation.`;
-            } else {
-                mediaCount.textContent = '';
-                mediaCount.classList.add('hidden');
-                mediaSummary.textContent = 'Browse shared media from this team chat.';
-            }
+            updateMediaGallerySummary(mediaEntries);
 
             if (messages.length === 0) {
                 container.innerHTML = `
@@ -1346,6 +1339,21 @@
             `;
         }
 
+        function updateMediaGallerySummary(mediaEntries) {
+            const mediaCount = document.getElementById('media-gallery-count');
+            const mediaSummary = document.getElementById('media-gallery-summary');
+
+            if (mediaEntries.length > 0) {
+                mediaCount.textContent = String(mediaEntries.length);
+                mediaCount.classList.remove('hidden');
+                mediaSummary.textContent = `${mediaEntries.length} shared item${mediaEntries.length === 1 ? '' : 's'} in this conversation.`;
+            } else {
+                mediaCount.textContent = '';
+                mediaCount.classList.add('hidden');
+                mediaSummary.textContent = 'Browse shared media from this team chat.';
+            }
+        }
+
         function renderMediaGallery(mediaEntries) {
             const grid = document.getElementById('media-gallery-grid');
             galleryMediaEntries = mediaEntries.slice();
@@ -1575,8 +1583,32 @@
             }
         }
 
-        function openMediaGallery() {
+        async function loadMediaGalleryHistory() {
+            if (isLoadingMediaGalleryHistory || !hasMoreMessages) {
+                return;
+            }
+
+            isLoadingMediaGalleryHistory = true;
+            const mediaSummary = document.getElementById('media-gallery-summary');
+            mediaSummary.textContent = 'Loading older shared media…';
+            try {
+                while (hasMoreMessages) {
+                    const loadedMessages = await loadMessages(true);
+                    if (!loadedMessages) {
+                        break;
+                    }
+                }
+            } finally {
+                isLoadingMediaGalleryHistory = false;
+                const mediaEntries = collectThreadMedia(messages);
+                renderMediaGallery(mediaEntries);
+                updateMediaGallerySummary(mediaEntries);
+            }
+        }
+
+        async function openMediaGallery() {
             document.getElementById('media-gallery-modal').classList.remove('hidden');
+            await loadMediaGalleryHistory();
         }
 
         function closeMediaGallery() {
