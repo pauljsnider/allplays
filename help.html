@@ -288,6 +288,19 @@
 
         function escapeHtml(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
+        function applyRoleFromUrl() {
+            const requestedRole = new URLSearchParams(window.location.search).get('role');
+            if (!requestedRole) {
+                return;
+            }
+
+            const requestedRoleKey = requestedRole.trim().toLowerCase();
+            const matchingOption = Array.from(roleSelect.options).find((option) => option.value.toLowerCase() === requestedRoleKey);
+            if (matchingOption) {
+                roleSelect.value = matchingOption.value;
+            }
+        }
+
         function render() {
             const q = (searchInput.value || '').toLowerCase().trim();
             const role = roleSelect.value;
@@ -318,6 +331,7 @@
             summary.textContent = filtered.length + ' of ' + manifest.length + ' workflows';
         }
 
+        applyRoleFromUrl();
         searchInput.addEventListener('input', render);
         roleSelect.addEventListener('change', render);
         render();
