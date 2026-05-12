@@ -145,6 +145,22 @@ export function parseAdvancedStatDefinitions(text = '') {
     });
 }
 
+export function validateStatDefinitionsForPublicLeaderboards(statDefinitions = []) {
+  const invalidTopStats = (Array.isArray(statDefinitions) ? statDefinitions : [])
+    .filter((definition) => definition?.topStat && (definition.scope !== 'player' || definition.visibility !== 'public'));
+
+  if (!invalidTopStats.length) {
+    return { valid: true, errors: [] };
+  }
+
+  return {
+    valid: false,
+    errors: invalidTopStats.map((definition) => (
+      `${definition.label || definition.id || 'Stat'} cannot be a Top Stat unless visibility is public and scope is player.`
+    ))
+  };
+}
+
 export function normalizeStatTrackerConfig(config = {}) {
   const columns = (Array.isArray(config.columns) ? config.columns : [])
     .map((column) => normalizeLabel(column))

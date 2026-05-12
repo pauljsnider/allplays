@@ -1,4 +1,13 @@
-import { getTeams, getAllUsers, deleteTeam } from './db.js?v=29';
+import {
+    getTeams,
+    getAllUsers,
+    deleteTeam,
+    getTelemetryEvents,
+    getTelemetryDaily,
+    getTelemetryPageDaily,
+    getTelemetryEventDaily,
+    getTelemetrySessions
+} from './db.js?v=30';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=10';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=14';
@@ -21,6 +30,17 @@ let activeRegistrationOptions = [];
 function inlineJsString(value) {
     return escapeHtml(JSON.stringify(String(value || '')));
 }
+let telemetryState = {
+    loaded: false,
+    loading: false,
+    error: null,
+    days: 7,
+    events: [],
+    daily: [],
+    pages: [],
+    eventDaily: [],
+    sessions: []
+};
 
 function isTeamActive(team) {
     return team?.active !== false;
@@ -56,12 +76,16 @@ async function loadData() {
         allTeams = teams;
         allUsers = users;
 
-        // Load game stats for all teams
-        await loadGameStats();
+        // Load game stats for all teams and telemetry in parallel after core data is available.
+        await Promise.all([
+            loadGameStats(),
+            loadTelemetryData({ silent: true })
+        ]);
 
         updateDashboard();
         renderTeams(getVisibleTeams());
         renderUsers(allUsers);
+        updateTelemetryDashboard();
     } catch (error) {
         console.error('Error loading admin data:', error);
         alert('Failed to load data');
@@ -74,7 +98,7 @@ async function loadGameStats() {
     // Load games from all teams
     const gamesPromises = allTeams.map(async (team) => {
         try {
-            const { getGames } = await import('./db.js?v=29');
+            const { getGames } = await import('./db.js?v=30');
             const games = await getGames(team.id);
             return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
         } catch (e) {
@@ -83,6 +107,64 @@ async function loadGameStats() {
     });
     const gamesArrays = await Promise.all(gamesPromises);
     allGames = gamesArrays.flat();
+}
+
+function getTelemetryRangeDays() {
+    const select = document.getElementById('telemetry-range');
+    return Number(select?.value || telemetryState.days || 7);
+}
+
+async function loadTelemetryData({ silent = false } = {}) {
+    if (telemetryState.loading) return;
+
+    telemetryState.loading = true;
+    telemetryState.days = getTelemetryRangeDays();
+    const status = document.getElementById('telemetry-status');
+    if (status && !silent) {
+        status.textContent = 'Loading telemetry...';
+    }
+
+    try {
+        const days = telemetryState.days;
+        const maxEvents = days <= 1 ? 1000 : days <= 7 ? 2000 : 5000;
+        const [events, daily, pages, eventDaily, sessions] = await Promise.all([
+            getTelemetryEvents({ days, maxEvents }),
+            getTelemetryDaily({ days }),
+            getTelemetryPageDaily({ days }),
+            getTelemetryEventDaily({ days }),
+            getTelemetrySessions({ maxSessions: 300 })
+        ]);
+
+        telemetryState = {
+            loaded: true,
+            loading: false,
+            days,
+            events,
+            daily,
+            pages,
+            eventDaily,
+            sessions
+        };
+        if (status) {
+            status.textContent = `Loaded ${events.length.toLocaleString()} recent raw events plus aggregate summaries.`;
+        }
+    } catch (error) {
+        console.error('Error loading telemetry:', error);
+        telemetryState = {
+            ...telemetryState,
+            loading: false,
+            loaded: false,
+            error: error.message || 'Telemetry could not be loaded',
+            events: [],
+            daily: [],
+            pages: [],
+            eventDaily: [],
+            sessions: []
+        };
+        if (status) {
+            status.textContent = `Telemetry could not be loaded: ${error.message}`;
+        }
+    }
 }
 
 function updateDashboard() {
@@ -194,6 +276,208 @@ function updateDashboard() {
             ${user.isAdmin ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-semibold">Admin</span>' : ''}
         </div>
     `).join('');
+}
+
+function telemetryDate(value) {
+    if (!value) return null;
+    if (value.toDate) return value.toDate();
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function telemetryNumber(value) {
+    return Number(value || 0).toLocaleString();
+}
+
+function sumBy(items, key) {
+    return items.reduce((sum, item) => sum + Number(item[key] || 0), 0);
+}
+
+function groupTelemetry(items, key, countKey = 'count') {
+    const grouped = new Map();
+    items.forEach((item) => {
+        const groupKey = item[key] || 'Unknown';
+        const current = grouped.get(groupKey) || { key: groupKey, count: 0, item };
+        current.count += Number(item[countKey] || 0);
+        grouped.set(groupKey, current);
+    });
+    return Array.from(grouped.values()).sort((a, b) => b.count - a.count);
+}
+
+function getFilteredTelemetryEvents() {
+    const eventFilter = document.getElementById('telemetry-event-filter')?.value || '';
+    const pageFilter = (document.getElementById('telemetry-page-filter')?.value || '').toLowerCase();
+    return telemetryState.events.filter((event) => {
+        const eventMatches = !eventFilter || event.name === eventFilter;
+        const pageMatches = !pageFilter || (event.pagePath || '').toLowerCase().includes(pageFilter);
+        return eventMatches && pageMatches;
+    });
+}
+
+function getTelemetryTarget(event) {
+    const props = event.properties || {};
+    return props.telemetryName || props.label || props.elementId || props.formId || props.tagName || '-';
+}
+
+function renderMetric(id, value) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = telemetryNumber(value);
+}
+
+function renderEmptyTelemetry(id, message = 'No telemetry yet.') {
+    const element = document.getElementById(id);
+    if (element) {
+        element.innerHTML = `<p class="text-gray-400 text-sm">${escapeHtml(message)}</p>`;
+    }
+}
+
+function renderTelemetryList(id, rows, renderer, emptyMessage) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    if (!rows.length) {
+        renderEmptyTelemetry(id, emptyMessage);
+        return;
+    }
+    element.innerHTML = rows.map(renderer).join('');
+}
+
+function renderTelemetryTrend() {
+    const rows = [...telemetryState.daily].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const maxEvents = Math.max(...rows.map((row) => Number(row.totalEvents || 0)), 1);
+    renderTelemetryList('telemetry-daily-trend', rows, (row) => {
+        const total = Number(row.totalEvents || 0);
+        const width = Math.max(4, Math.round((total / maxEvents) * 100));
+        return `
+            <div>
+                <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                    <span>${escapeHtml(row.date || '-')}</span>
+                    <span>${telemetryNumber(total)} events · ${telemetryNumber(row.pageViews)} views</span>
+                </div>
+                <div class="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div class="h-full bg-primary-600 rounded-full" style="width: ${width}%"></div>
+                </div>
+            </div>
+        `;
+    }, 'No daily telemetry has been recorded for this range.');
+}
+
+function renderTopTelemetryPages() {
+    const grouped = groupTelemetry(telemetryState.pages, 'pagePath', 'pageViews').slice(0, 20);
+    renderTelemetryList('telemetry-top-pages', grouped, ({ key, count, item }) => `
+        <div class="flex items-center justify-between gap-3 border-b border-gray-100 pb-2 last:border-0">
+            <div class="min-w-0">
+                <p class="font-medium text-gray-900 truncate">${escapeHtml(key)}</p>
+                <p class="text-xs text-gray-500">${telemetryNumber(item.interactions)} interactions · ${telemetryNumber(item.errors)} errors</p>
+            </div>
+            <span class="text-sm font-semibold text-gray-900">${telemetryNumber(count)}</span>
+        </div>
+    `, 'No page telemetry has been recorded for this range.');
+}
+
+function renderTopTelemetryEvents() {
+    const grouped = groupTelemetry(telemetryState.eventDaily, 'name', 'count').slice(0, 20);
+    renderTelemetryList('telemetry-top-events', grouped, ({ key, count }) => `
+        <div class="flex items-center justify-between gap-3 border-b border-gray-100 pb-2 last:border-0">
+            <span class="text-sm font-medium text-gray-800 truncate">${escapeHtml(key)}</span>
+            <span class="text-sm font-semibold text-gray-900">${telemetryNumber(count)}</span>
+        </div>
+    `, 'No event telemetry has been recorded for this range.');
+}
+
+function renderRecentTelemetrySessions() {
+    const cutoff = Date.now() - telemetryState.days * 24 * 60 * 60 * 1000;
+    const sessions = telemetryState.sessions
+        .filter((session) => {
+            const updatedAt = telemetryDate(session.updatedAt);
+            return !updatedAt || updatedAt.getTime() >= cutoff;
+        })
+        .slice(0, 25);
+
+    renderTelemetryList('telemetry-recent-sessions', sessions, (session) => {
+        const updatedAt = telemetryDate(session.updatedAt);
+        return `
+            <div class="border-b border-gray-100 pb-3 last:border-0">
+                <div class="flex items-center justify-between gap-3">
+                    <p class="font-medium text-gray-900 truncate">${escapeHtml(session.lastPage || session.entryPage || '-')}</p>
+                    <span class="text-xs text-gray-500 whitespace-nowrap">${updatedAt ? updatedAt.toLocaleString() : '-'}</span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">${telemetryNumber(session.eventCount)} events · ${telemetryNumber(session.pageViews)} views · ${telemetryNumber(session.interactions)} interactions</p>
+                <p class="text-xs text-gray-400 mt-1 truncate">${escapeHtml(session.userId ? `User ${session.userId}` : `Visitor ${session.visitorId || '-'}`)}</p>
+            </div>
+        `;
+    }, 'No recent sessions have been recorded for this range.');
+}
+
+function renderTelemetryEventsTable() {
+    const tbody = document.getElementById('telemetry-events-table');
+    if (!tbody) return;
+
+    const events = getFilteredTelemetryEvents().slice(0, 150);
+    if (!events.length) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="px-6 py-4 text-sm text-gray-400">No events match the current filters.</td>
+            </tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = events.map((event) => {
+        const createdAt = telemetryDate(event.createdAt) || telemetryDate(event.clientTimestamp);
+        return `
+            <tr>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${createdAt ? createdAt.toLocaleString() : '-'}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${escapeHtml(event.name || '-')}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(event.pagePath || '-')}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(getTelemetryTarget(event))}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${event.userId ? 'Signed in' : 'Anonymous'}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateTelemetryDashboard() {
+    if (!telemetryState.loaded) {
+        const errorMessage = telemetryState.error
+            ? `Telemetry could not be loaded: ${telemetryState.error}`
+            : 'No telemetry has been loaded yet.';
+
+        renderMetric('telemetry-total-events', 0);
+        renderMetric('telemetry-page-views', 0);
+        renderMetric('telemetry-interactions', 0);
+        renderMetric('telemetry-sessions', 0);
+        renderMetric('telemetry-known-users', 0);
+        renderMetric('telemetry-errors', 0);
+        renderEmptyTelemetry('telemetry-daily-trend', errorMessage);
+        renderEmptyTelemetry('telemetry-top-pages', errorMessage);
+        renderEmptyTelemetry('telemetry-top-events', errorMessage);
+        renderEmptyTelemetry('telemetry-recent-sessions', errorMessage);
+
+        const tbody = document.getElementById('telemetry-events-table');
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="px-6 py-4 text-sm text-gray-400">${escapeHtml(errorMessage)}</td>
+                </tr>
+            `;
+        }
+        return;
+    }
+
+    const knownUsers = new Set(telemetryState.events.map((event) => event.userId).filter(Boolean));
+
+    renderMetric('telemetry-total-events', sumBy(telemetryState.daily, 'totalEvents'));
+    renderMetric('telemetry-page-views', sumBy(telemetryState.daily, 'pageViews'));
+    renderMetric('telemetry-interactions', sumBy(telemetryState.daily, 'interactions'));
+    renderMetric('telemetry-sessions', telemetryState.sessions.length);
+    renderMetric('telemetry-known-users', knownUsers.size);
+    renderMetric('telemetry-errors', sumBy(telemetryState.daily, 'errors'));
+
+    renderTelemetryTrend();
+    renderTopTelemetryPages();
+    renderTopTelemetryEvents();
+    renderRecentTelemetrySessions();
+    renderTelemetryEventsTable();
 }
 
 function renderTeams(teams) {
@@ -514,7 +798,7 @@ async function saveRegistrationForm(event) {
 }
 
 function setupTabs() {
-    const tabs = ['dashboard', 'teams', 'users'];
+    const tabs = ['dashboard', 'teams', 'users', 'telemetry'];
     tabs.forEach(tab => {
         document.getElementById(`tab-${tab}`).addEventListener('click', () => {
             // Update tab styles
@@ -531,6 +815,10 @@ function setupTabs() {
                     view.classList.add('hidden');
                 }
             });
+
+            if (tab === 'telemetry' && !telemetryState.loaded && !telemetryState.loading) {
+                loadTelemetryData().then(updateTelemetryDashboard);
+            }
         });
     });
 }
@@ -564,6 +852,24 @@ function setupSearch() {
         );
         renderUsers(filtered);
     });
+
+    const telemetryRange = document.getElementById('telemetry-range');
+    const telemetryRefresh = document.getElementById('telemetry-refresh');
+    const telemetryEventFilter = document.getElementById('telemetry-event-filter');
+    const telemetryPageFilter = document.getElementById('telemetry-page-filter');
+
+    telemetryRange?.addEventListener('change', async () => {
+        await loadTelemetryData();
+        updateTelemetryDashboard();
+    });
+
+    telemetryRefresh?.addEventListener('click', async () => {
+        await loadTelemetryData();
+        updateTelemetryDashboard();
+    });
+
+    telemetryEventFilter?.addEventListener('change', renderTelemetryEventsTable);
+    telemetryPageFilter?.addEventListener('input', renderTelemetryEventsTable);
 }
 
 function getTeamOwnerEmail(team) {
