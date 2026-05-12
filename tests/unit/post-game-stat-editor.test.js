@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 
 import {
     buildCompletedGamePlayerStatsPayload,
+    buildCompletedGameTeamStatsPayload,
     getPostGameEditorNextIndex,
     resolvePostGameEditorDidNotPlay,
-    resolvePostGameStatFields
+    resolvePostGameStatFields,
+    resolvePostGameTeamStatFields
 } from '../../js/post-game-stat-editor.js';
 
 describe('post-game stat editor helpers', () => {
@@ -49,6 +51,35 @@ describe('post-game stat editor helpers', () => {
         });
     });
 
+    it('resolves and builds manager-only team stat payloads from team-scoped definitions', () => {
+        const statFields = resolvePostGameTeamStatFields({
+            resolvedConfig: {
+                statDefinitions: [
+                    { id: 'turnovers', label: 'Turnovers', scope: 'team', visibility: 'private', type: 'base' },
+                    { id: 'possessionwins', label: 'Possession Wins', scope: 'team', visibility: 'private', type: 'base' },
+                    { id: 'pts', label: 'PTS', scope: 'player', visibility: 'public', type: 'base' }
+                ]
+            },
+            teamStats: { deflections: 4 }
+        });
+
+        expect(statFields).toEqual([
+            { fieldName: 'turnovers', label: 'Turnovers' },
+            { fieldName: 'possessionwins', label: 'Possession Wins' },
+            { fieldName: 'deflections', label: 'DEFLECTIONS' }
+        ]);
+        expect(buildCompletedGameTeamStatsPayload({
+            statFields,
+            values: { turnovers: '8', possessionwins: ' 11 ', deflections: '-2' }
+        })).toEqual({
+            stats: {
+                turnovers: 8,
+                possessionwins: 11,
+                deflections: 0
+            }
+        });
+    });
+
     it('keeps an unsaved DNP checkbox change ahead of the persisted row value', () => {
         expect(resolvePostGameEditorDidNotPlay({
             playerId: 'p1',
@@ -77,5 +108,8 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain('id="stats-save-next-btn"');
         expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
+        expect(pageSource).toContain('id="team-stats-section"');
+        expect(pageSource).toContain('setCompletedGameTeamStats');
+        expect(pageSource).toContain('getTeamStatsForGame');
     });
 });

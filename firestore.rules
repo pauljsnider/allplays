@@ -1086,6 +1086,13 @@ service cloud.firestore {
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
 
+        // Manager-only team-scoped stats subcollection
+        match /teamStats/{statId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow delete: if isTeamOwnerOrAdmin(teamId);
+        }
+
         // Live Events subcollection - for real-time game broadcasting
         match /liveEvents/{eventId} {
           allow read: if true;  // Public read for viewers

@@ -1828,6 +1828,23 @@ export async function getAggregatedStatsForGames(teamId, gameIds) {
     return totalsByPlayer;
 }
 
+export async function getTeamStatsForGame(teamId, gameId) {
+    try {
+        const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/teamStats`, 'team');
+        const docSnap = await getDoc(docRef);
+        if (!docSnap.exists()) return {};
+        const data = docSnap.data() || {};
+        return data.stats || {};
+    } catch (error) {
+        console.error('[getTeamStatsForGame] failed to load team stats', {
+            teamId,
+            gameId,
+            error,
+        });
+        throw new Error(`Unable to load team stats: ${error.message}`);
+    }
+}
+
 export async function getAggregatedStatsForPlayer(teamId, gameId, playerId) {
     try {
         const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
@@ -2451,6 +2468,14 @@ export async function setCompletedGamePlayerStats(teamId, gameId, playerId, stat
         stats: statsPayload.stats || {},
         timeMs: Number.isFinite(Number(statsPayload.timeMs)) ? Number(statsPayload.timeMs) : 0,
         didNotPlay: statsPayload.didNotPlay === true
+    }, { merge: true });
+}
+
+export async function setCompletedGameTeamStats(teamId, gameId, statsPayload = {}) {
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/teamStats`, 'team');
+    await setDoc(docRef, {
+        stats: statsPayload.stats || {},
+        updatedAt: serverTimestamp()
     }, { merge: true });
 }
 
@@ -4373,6 +4398,17 @@ export async function getLiveEvents(teamId, gameId) {
  */
 export function subscribeAggregatedStats(teamId, gameId, callback, onError) {
     const ref = getGameSubcollectionRef(teamId, gameId, 'aggregatedStats');
+    return onSnapshot(ref, snap => {
+        const stats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        callback(stats);
+    }, onError);
+}
+
+/**
+ * Subscribe to manager-only team stats for a game.
+ */
+export function subscribeTeamStats(teamId, gameId, callback, onError) {
+    const ref = getGameSubcollectionRef(teamId, gameId, 'teamStats');
     return onSnapshot(ref, snap => {
         const stats = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         callback(stats);
