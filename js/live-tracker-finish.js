@@ -118,6 +118,9 @@ export function buildFinishCompletionPlan({
       data: {
         playerName: player.name,
         playerNumber: player.num,
+        participated: true,
+        participationStatus: 'appeared',
+        participationSource: 'live-tracker-finish',
         stats: statsObj,
         timeMs: safeStatsByPlayerId[player.id]?.time || 0
       }
