@@ -7,6 +7,7 @@ import {
     updateTeamMediaFolder,
     deleteTeamMediaFolder,
     createTeamMediaLink,
+    uploadTeamMediaFile,
     uploadTeamMediaPhoto,
     deleteTeamMediaItem,
     reorderTeamMediaFolders,
@@ -14,7 +15,7 @@ import {
     moveTeamMediaItems,
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover
-} from './db.js?v=15';
+} from './db.js?v=16';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -24,7 +25,9 @@ import {
     getTeamMediaUploaderName,
     isSafeTeamMediaPhoto,
     isSafeTeamMediaUrl,
+    isSupportedTeamMediaDocument,
     isSupportedTeamMediaImage,
+    isTeamMediaDocument,
     sortByMediaOrder
 } from './team-media-utils.js?v=2';
 
@@ -50,6 +53,10 @@ const els = {
     photoFolder: document.getElementById('photo-folder'),
     photoFiles: document.getElementById('photo-files'),
     uploadProgress: document.getElementById('upload-progress'),
+    fileUploadForm: document.getElementById('file-upload-form'),
+    fileFolder: document.getElementById('file-folder'),
+    mediaFiles: document.getElementById('media-files'),
+    fileUploadProgress: document.getElementById('file-upload-progress'),
     adminPanel: document.getElementById('team-media-admin-panel'),
     bulkActions: document.getElementById('bulk-actions'),
     selectedCount: document.getElementById('selected-count'),
@@ -120,8 +127,9 @@ function renderFolderOptions() {
     const placeholder = `<option value="">${hasFolders ? 'Choose album' : 'Create an album first'}</option>`;
     els.linkFolder.innerHTML = placeholder + options;
     els.photoFolder.innerHTML = placeholder + options;
+    els.fileFolder.innerHTML = placeholder + options;
     els.moveFolder.innerHTML = placeholder + options;
-    [els.linkFolder, els.linkTitle, els.linkUrl, els.linkSubmit].forEach((element) => {
+    [els.linkFolder, els.linkTitle, els.linkUrl, els.linkSubmit, els.photoFolder, els.photoFiles, els.fileFolder, els.mediaFiles].forEach((element) => {
         if (!element) return;
         element.disabled = !hasFolders;
         element.classList.toggle('opacity-50', !hasFolders);
@@ -132,6 +140,14 @@ function renderFolderOptions() {
             ? 'Choose an album, then save the video link.'
             : 'Save an album first. Video links need an album destination.';
     }
+}
+
+function formatFileSize(size) {
+    const bytes = Number(size || 0);
+    if (!Number.isFinite(bytes) || bytes <= 0) return '';
+    if (bytes < 1024) return `${bytes} bytes`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function renderBulkActions() {
@@ -197,21 +213,23 @@ function renderAlbumDetail() {
         : `<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">${items.map((item, itemIndex) => {
             const itemUrl = getTeamMediaItemUrl(item);
             const isPhoto = isSafeTeamMediaPhoto(item);
+            const isFile = isTeamMediaDocument(item);
             const canDeleteItem = canDeleteTeamMediaItem(state.user, state.team, item);
-            const title = item.title || item.fileName || (isPhoto ? 'Untitled photo' : 'Untitled video');
+            const title = item.title || item.fileName || (isPhoto ? 'Untitled photo' : isFile ? 'Untitled file' : 'Untitled video');
             const uploadedBy = getTeamMediaUploaderName(item);
             const uploadedAt = formatMediaDate(item.uploadedAt || item.createdAt);
-            const fileDetails = isPhoto ? `${item.mimeType || 'image'}${item.size ? ` · ${Number(item.size || 0).toLocaleString()} bytes` : ''}` : '';
+            const fileDetails = isPhoto || isFile ? [item.mimeType || (isPhoto ? 'image' : 'file'), formatFileSize(item.size)].filter(Boolean).join(' · ') : '';
             const metadata = [uploadedBy ? `Uploaded by ${uploadedBy}` : '', uploadedAt, fileDetails].filter(Boolean).join(' • ');
             return `
                 <div class="flex h-full flex-col gap-3 rounded-xl border border-gray-200 p-4" data-item-id="${escapeHtml(item.id)}">
                     ${isPhoto ? `<a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="block overflow-hidden rounded-lg bg-gray-100"><img src="${escapeHtml(itemUrl)}" alt="${escapeHtml(title)}" loading="lazy" class="h-48 w-full object-cover"></a>` : ''}
+                    ${isFile ? `<a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="flex h-48 items-center justify-center rounded-lg bg-indigo-50 text-center text-indigo-700"><div><div class="text-4xl">📄</div><div class="mt-2 px-4 text-sm font-semibold">${escapeHtml(title)}</div></div></a>` : ''}
                     <div class="flex items-start gap-3">
                         ${state.canManage ? `<input type="checkbox" data-select-item="${escapeHtml(item.id)}" ${state.selectedIds.has(item.id) ? 'checked' : ''} class="mt-1 h-4 w-4 rounded border-gray-300">` : ''}
                         <div class="min-w-0 flex-1">
                             <a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-indigo-700 hover:text-indigo-900">${escapeHtml(title)}</a>
                             <div class="text-xs text-gray-500">${escapeHtml(metadata || 'Media item')}</div>
-                            ${!isPhoto ? `<div class="break-all text-xs text-gray-500">${escapeHtml(itemUrl)}</div>` : ''}
+                            ${!isPhoto && !isFile ? `<div class="break-all text-xs text-gray-500">${escapeHtml(itemUrl)}</div>` : ''}
                         </div>
                     </div>
                     <div class="mt-auto flex flex-wrap gap-2">
@@ -241,10 +259,10 @@ function renderAlbumDetail() {
 function render() {
     els.title.textContent = state.team?.name ? `${state.team.name} Media` : 'Media Library';
     els.subtitle.textContent = state.canManage
-        ? 'Manage albums, visibility, ordering, photos, and video links.'
+        ? 'Manage albums, visibility, ordering, photos, files, and video links.'
         : state.canContribute
-            ? 'Upload team photos or browse shared video links and highlights.'
-            : 'Team-visible albums with organized photos, video links, and highlights.';
+            ? 'Upload team photos and files or browse shared video links and highlights.'
+            : 'Team-visible albums with organized photos, files, video links, and highlights.';
     els.uploadPanel.classList.toggle('hidden', !state.canContribute);
     els.adminPanel.classList.toggle('hidden', !state.canManage);
     els.backLink.href = state.teamId ? `team.html#teamId=${encodeURIComponent(state.teamId)}` : 'team.html';
@@ -318,6 +336,42 @@ function moveInArray(items, id, direction) {
     if (index < 0 || target < 0 || target >= next.length) return next;
     [next[index], next[target]] = [next[target], next[index]];
     return next;
+}
+
+async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, uploadFile, nounSingular, nounPlural, unsupportedMessage }) {
+    progressEl.innerHTML = files.map((file, index) => `
+        <div data-upload-row="${index}" class="rounded-lg border border-gray-200 p-3">
+            <div class="flex justify-between gap-3"><span>${escapeHtml(file.name)}</span><span data-upload-status="${index}">Waiting</span></div>
+            <div class="mt-2 h-2 rounded-full bg-gray-100"><div data-upload-bar="${index}" class="h-2 rounded-full bg-indigo-600" style="width:0%"></div></div>
+        </div>`).join('');
+
+    let uploadedCount = 0;
+    let failedCount = 0;
+    for (const [index, file] of files.entries()) {
+        const status = progressEl.querySelector(`[data-upload-status="${index}"]`);
+        const bar = progressEl.querySelector(`[data-upload-bar="${index}"]`);
+        try {
+            if (!validateFile(file)) throw new Error(unsupportedMessage);
+            status.textContent = 'Uploading';
+            await uploadFile(state.teamId, folderId, file, {
+                onProgress: ({ percent }) => {
+                    bar.style.width = `${percent}%`;
+                    status.textContent = `${percent}%`;
+                }
+            });
+            uploadedCount += 1;
+            bar.style.width = '100%';
+            status.textContent = 'Uploaded';
+        } catch (error) {
+            failedCount += 1;
+            status.textContent = error.message || 'Failed. Try again.';
+            status.classList.add('text-red-700');
+        }
+    }
+
+    await loadLibrary();
+    showAlert(`${uploadedCount} ${uploadedCount === 1 ? nounSingular : nounPlural} uploaded${failedCount ? `, ${failedCount} failed` : ''}.`, failedCount ? 'error' : 'success');
+    return { uploadedCount, failedCount };
 }
 
 els.foldersList.addEventListener('click', (event) => {
@@ -439,39 +493,44 @@ els.uploadForm.addEventListener('submit', async (event) => {
         return;
     }
 
-    els.uploadProgress.innerHTML = files.map((file, index) => `
-        <div data-upload-row="${index}" class="rounded-lg border border-gray-200 p-3">
-            <div class="flex justify-between gap-3"><span>${escapeHtml(file.name)}</span><span data-upload-status="${index}">Waiting</span></div>
-            <div class="mt-2 h-2 rounded-full bg-gray-100"><div data-upload-bar="${index}" class="h-2 rounded-full bg-indigo-600" style="width:0%"></div></div>
-        </div>`).join('');
+    const { uploadedCount } = await uploadSelectedFiles({
+        files,
+        folderId: els.photoFolder.value,
+        progressEl: els.uploadProgress,
+        validateFile: isSupportedTeamMediaImage,
+        uploadFile: uploadTeamMediaPhoto,
+        nounSingular: 'photo',
+        nounPlural: 'photos',
+        unsupportedMessage: 'Unsupported file type. Choose an image.'
+    });
+    if (uploadedCount > 0) els.photoFiles.value = '';
+});
 
-    let uploadedCount = 0;
-    let failedCount = 0;
-    for (const [index, file] of files.entries()) {
-        const status = els.uploadProgress.querySelector(`[data-upload-status="${index}"]`);
-        const bar = els.uploadProgress.querySelector(`[data-upload-bar="${index}"]`);
-        try {
-            if (!isSupportedTeamMediaImage(file)) throw new Error('Unsupported file type. Choose an image.');
-            status.textContent = 'Uploading';
-            await uploadTeamMediaPhoto(state.teamId, els.photoFolder.value, file, {
-                onProgress: ({ percent }) => {
-                    bar.style.width = `${percent}%`;
-                    status.textContent = `${percent}%`;
-                }
-            });
-            uploadedCount += 1;
-            bar.style.width = '100%';
-            status.textContent = 'Uploaded';
-        } catch (error) {
-            failedCount += 1;
-            status.textContent = error.message || 'Failed. Try again.';
-            status.classList.add('text-red-700');
-        }
+els.fileUploadForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearAlert();
+    const files = Array.from(els.mediaFiles.files || []);
+    if (!state.canContribute) return;
+    if (!els.fileFolder.value) {
+        showAlert('Choose an album before uploading files.', 'error');
+        return;
+    }
+    if (files.length === 0) {
+        showAlert('Choose at least one file to upload.', 'error');
+        return;
     }
 
-    await loadLibrary();
-    if (uploadedCount > 0) els.photoFiles.value = '';
-    showAlert(`${uploadedCount} photo${uploadedCount === 1 ? '' : 's'} uploaded${failedCount ? `, ${failedCount} failed` : ''}.`, failedCount ? 'error' : 'success');
+    const { uploadedCount } = await uploadSelectedFiles({
+        files,
+        folderId: els.fileFolder.value,
+        progressEl: els.fileUploadProgress,
+        validateFile: isSupportedTeamMediaDocument,
+        uploadFile: uploadTeamMediaFile,
+        nounSingular: 'file',
+        nounPlural: 'files',
+        unsupportedMessage: 'Unsupported file type. Choose a PDF, Office document, text file, or CSV.'
+    });
+    if (uploadedCount > 0) els.mediaFiles.value = '';
 });
 
 els.moveSelected.addEventListener('click', () => {

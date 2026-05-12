@@ -502,19 +502,34 @@ service cloud.firestore {
               get(folderPath).data.get('visibility', 'team') == 'team');
     }
 
-    function isTeamMediaPhotoCreate(teamId, data) {
+    function isAllowedTeamMediaUploadType(mimeType) {
+      return mimeType.matches('image/.*') ||
+             mimeType in [
+               'application/pdf',
+               'application/msword',
+               'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+               'application/vnd.ms-excel',
+               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+               'application/vnd.ms-powerpoint',
+               'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+               'text/plain',
+               'text/csv'
+             ];
+    }
+
+    function isTeamMediaUploadCreate(teamId, data) {
       return canAccessTeamChat(teamId) &&
              data.keys().hasAll([
                'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.keys().hasOnly([
-               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.folderId is string &&
              data.folderId.size() > 0 &&
-             data.type == 'photo' &&
+             data.type in ['photo', 'file'] &&
              data.url is string &&
              data.storagePath is string &&
              data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
@@ -523,15 +538,16 @@ service cloud.firestore {
              data.size > 0 &&
              data.size <= 10485760 &&
              data.mimeType is string &&
-             data.mimeType.matches('image/.*') &&
+             ((data.type == 'photo' && data.mimeType.matches('image/.*')) ||
+              (data.type == 'file' && isAllowedTeamMediaUploadType(data.mimeType) && !data.mimeType.matches('image/.*'))) &&
              data.deleted == false &&
              data.createdAt == request.time &&
              data.updatedAt == request.time;
     }
 
-    function isOwnTeamMediaPhotoSoftDelete(teamId) {
+    function isOwnTeamMediaUploadSoftDelete(teamId) {
       return canAccessTeamChat(teamId) &&
-             resource.data.type == 'photo' &&
+             resource.data.type in ['photo', 'file'] &&
              resource.data.uploadedBy == request.auth.uid &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'deleted', 'deletedAt', 'deletedBy', 'updatedAt'
@@ -924,8 +940,8 @@ service cloud.firestore {
 
       match /mediaItems/{itemId} {
         allow read: if canReadTeamMediaItem(teamId, resource.data);
-        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
-        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId);
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 

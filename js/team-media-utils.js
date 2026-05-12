@@ -6,6 +6,18 @@ const VIDEO_HOST_PATTERNS = [
     /(^|\.)vimeo\.com$/
 ];
 
+const TEAM_MEDIA_DOCUMENT_TYPES = new Set([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+    'text/csv'
+]);
+
 export const TEAM_MEDIA_VISIBILITIES = ['team', 'private'];
 
 function asTrimmedString(value) {
@@ -70,9 +82,17 @@ export function isSupportedTeamMediaImage(file) {
     return Boolean(file && String(file.type || '').startsWith('image/'));
 }
 
+export function isSupportedTeamMediaDocument(file) {
+    return Boolean(file && TEAM_MEDIA_DOCUMENT_TYPES.has(String(file.type || '').toLowerCase()));
+}
+
+export function isTeamMediaDocument(item = {}) {
+    return String(item.type || '').toLowerCase() === 'file';
+}
+
 export function canDeleteTeamMediaItem(user, team, item) {
     if (!user || !item) return false;
-    return canManageTeamMedia(user, team) || (item.type === 'photo' && item.uploadedBy === user.uid);
+    return canManageTeamMedia(user, team) || (['photo', 'file'].includes(item.type) && item.uploadedBy === user.uid);
 }
 
 export function normalizeTeamMediaFolderDraft(draft = {}) {
