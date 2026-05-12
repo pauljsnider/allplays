@@ -304,6 +304,10 @@ export function buildRsvpReminderMessage() {
     return '';
 }
 
+export async function sendPublicRsvpReminderEmails() {
+    return { sent: false, sentCount: 0, failedCount: 0, failures: [], errorMessage: '' };
+}
+
 export function describeScheduleReminderWindow() {
     return 'Team default reminder window: 24 hours before event start.';
 }

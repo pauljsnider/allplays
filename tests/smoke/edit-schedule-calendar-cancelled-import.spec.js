@@ -271,6 +271,10 @@ export function buildRsvpReminderMessage() {
     return '';
 }
 
+export async function sendPublicRsvpReminderEmails() {
+    return { sent: false, sentCount: 0, failedCount: 0, failures: [], errorMessage: '' };
+}
+
 export function describeScheduleReminderWindow() {
     return 'Team default reminder window: 24 hours before event start.';
 }
@@ -306,7 +310,7 @@ async function mockEditScheduleDependencies(page) {
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('**/js/tournament-brackets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STUB }));
-    await page.route('**/js/schedule-notifications.js?v=4', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_NOTIFICATIONS_STUB }));
+    await page.route('**/js/schedule-notifications.js?v=5', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_NOTIFICATIONS_STUB }));
     await page.route('**/js/tournament-standings.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STANDINGS_STUB }));
     await page.route('**/js/schedule-csv-import.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_CSV_IMPORT_STUB }));
 }
