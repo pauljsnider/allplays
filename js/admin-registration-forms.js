@@ -1,5 +1,9 @@
 const DEFAULT_PARTICIPANT_LABELS = ['Participant name', 'Birthdate'];
 const DEFAULT_GUARDIAN_LABELS = ['Guardian name', 'Guardian email', 'Guardian phone'];
+const DEFAULT_PAYMENT_SETTINGS = {
+    offlinePaymentEnabled: false,
+    onlineCheckoutEnabled: false
+};
 
 export function fieldLabelsToDefinitions(labels = [], prefix = 'field') {
     return labels
@@ -50,9 +54,17 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
             'guardian'
         ),
         registrationOptions: normalizeRegistrationOptions(input.registrationOptions),
+        paymentSettings: normalizePaymentSettings(input.paymentSettings),
         waiverText: String(input.waiverText || '').trim(),
         status,
         published: status === 'published'
+    };
+}
+
+export function normalizePaymentSettings(settings = {}) {
+    return {
+        offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
+        onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
     };
 }
 
@@ -112,5 +124,6 @@ function inferFieldType(label) {
 
 export const adminRegistrationDefaults = {
     participantLabels: DEFAULT_PARTICIPANT_LABELS,
-    guardianLabels: DEFAULT_GUARDIAN_LABELS
+    guardianLabels: DEFAULT_GUARDIAN_LABELS,
+    paymentSettings: DEFAULT_PAYMENT_SETTINGS
 };

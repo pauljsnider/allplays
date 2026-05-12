@@ -17,7 +17,7 @@ import {
     formatFieldLabels,
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
-} from './admin-registration-forms.js?v=2';
+} from './admin-registration-forms.js?v=3';
 
 let allTeams = [];
 let allUsers = [];
@@ -597,6 +597,8 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-fee').value = Number(form.feeAmountCents || 0) / 100;
     document.getElementById('registration-participant-fields').value = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
     document.getElementById('registration-guardian-fields').value = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
+    document.getElementById('registration-offline-payment').checked = form.paymentSettings?.offlinePaymentEnabled === true;
+    document.getElementById('registration-online-checkout').checked = form.paymentSettings?.onlineCheckoutEnabled === true;
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
     renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
@@ -757,6 +759,10 @@ async function saveRegistrationForm(event) {
         participantFieldsText: document.getElementById('registration-participant-fields').value,
         guardianFieldsText: document.getElementById('registration-guardian-fields').value,
         registrationOptions: collectRegistrationOptionsFromEditor(),
+        paymentSettings: {
+            offlinePaymentEnabled: document.getElementById('registration-offline-payment').checked,
+            onlineCheckoutEnabled: document.getElementById('registration-online-checkout').checked
+        },
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
     }, { teamId });
