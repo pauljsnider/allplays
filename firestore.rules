@@ -862,6 +862,33 @@ service cloud.firestore {
                               );
     }
 
+    // First-party product telemetry. Clients send events through the Cloud Function,
+    // and only global admins can inspect the resulting datasets.
+    match /telemetryEvents/{eventId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetryDaily/{dateId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetryPagesDaily/{pageId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetryEventsDaily/{eventId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetrySessions/{sessionId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
     // Teams - only owner or admins can modify
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing
