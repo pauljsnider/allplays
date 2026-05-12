@@ -144,6 +144,7 @@ function createEnvironment({ href, storage } = {}) {
         'footer-container',
         'loading-state',
         'email-required-state',
+        'invite-link-state',
         'manual-code-state',
         'success-state',
         'error-state',
@@ -158,6 +159,9 @@ function createEnvironment({ href, storage } = {}) {
         'success-message',
         'error-message',
         'try-manual-code-btn',
+        'enter-different-code-btn',
+        'continue-invite-link',
+        'invite-code-confirmation',
         'signup-link'
     ];
 
@@ -294,14 +298,17 @@ describe('accept-invite page parent flow', () => {
         expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
     });
 
-    it('preserves the invite context on the signed-out signup link', async () => {
+    it('shows the link-first continue state for signed-out parent invite links', async () => {
         const loggedOut = await bootAcceptInvite({
             href: 'http://example.com/accept-invite.html?code=ab12cd34&type=parent',
             authUser: null
         });
 
-        expect(loggedOut.elements.get('signup-link').href).toBe('login.html?code=AB12CD34&type=parent');
-        expect(loggedOut.elements.get('code-input').value).toBe('ab12cd34');
+        expect(loggedOut.elements.get('invite-link-state').classList.contains('hidden')).toBe(false);
+        expect(loggedOut.elements.get('manual-code-state').classList.contains('hidden')).toBe(true);
+        expect(loggedOut.elements.get('invite-code-confirmation').textContent).toBe('AB12CD34');
+        expect(loggedOut.elements.get('continue-invite-link').href).toBe('login.html?code=AB12CD34&type=parent');
+        expect(loggedOut.elements.get('code-input').value).toBe('');
     });
 
     it('uppercases the manual code for login redirect and redeems exactly once after the user returns authenticated', async () => {
@@ -369,7 +376,17 @@ describe('accept-invite page admin flow', () => {
         expect(window.location.href).toBe('http://example.com/dashboard.html');
     });
 
-    it('preserves the admin invite type when a signed-out user submits a manual code', async () => {
+    it('preserves the admin invite type on the signed-out continue link', async () => {
+        const loggedOut = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
+            authUser: null
+        });
+
+        expect(loggedOut.elements.get('invite-link-state').classList.contains('hidden')).toBe(false);
+        expect(loggedOut.elements.get('continue-invite-link').href).toBe('login.html?code=EXIST111&type=admin');
+    });
+
+    it('preserves the admin invite type when a signed-out user submits a different manual code', async () => {
         const loggedOut = await bootAcceptInvite({
             href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
             authUser: null,
@@ -385,9 +402,11 @@ describe('accept-invite page admin flow', () => {
             }
         });
 
+        await loggedOut.elements.get('enter-different-code-btn').dispatchEvent(new MockEvent('click'));
+        loggedOut.elements.get('code-input').value = 'new11122';
         await loggedOut.elements.get('code-form').dispatchEvent(new MockEvent('submit'));
 
-        expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=EXIST111&type=admin');
+        expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=NEW11122&type=admin');
     });
 
     it('completes cross-device email-link admin redemption after the user confirms their email', async () => {
