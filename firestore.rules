@@ -68,7 +68,8 @@ service cloud.firestore {
       return canScorekeepGame(teamId, gameId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'homeScore', 'awayScore', 'summary', 'status', 'liveStatus', 'opponentStats',
-               'completedAt', 'completedBy', 'completedByName', 'updatedAt'
+               'completedAt', 'completedBy', 'completedByName', 'updatedAt',
+               'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]) &&
              keepsScorekeeperGameLifecycleVisible();
     }
@@ -77,7 +78,8 @@ service cloud.firestore {
       return canVideographGame(teamId, gameId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
-               'replayVideo', 'recordedVideo', 'videoReplay', 'broadcastSession', 'updatedAt'
+               'replayVideo', 'recordedVideo', 'videoReplay', 'broadcastSession', 'updatedAt',
+               'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]);
     }
 

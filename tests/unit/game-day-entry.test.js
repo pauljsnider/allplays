@@ -68,4 +68,13 @@ describe('game day entry page wiring', () => {
         expect(source).toContain('normalizeGameDayUrl(teamId, resolvedGameId);');
         expect(source).toContain('const game = await getGame(teamId, resolvedGameId);');
     });
+
+    it('persists score timestamps and stream-session correlation when saving scores', () => {
+        const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+        expect(source).toContain('const scoreUpdatedAt = new Date().toISOString();');
+        expect(source).toContain('scoreUpdatedAt,');
+        expect(source).toContain('scoreUpdatedBy: state.user?.uid || null');
+        expect(source).toContain('scoreStreamSessionId: state.game?.broadcastSession?.id || null');
+    });
 });

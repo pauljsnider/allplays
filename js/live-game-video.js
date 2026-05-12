@@ -8,6 +8,13 @@ export const BROADCAST_SETUP_STATUSES = Object.freeze({
     FAILED: 'permission_failed'
 });
 
+export const BROADCAST_PROVIDER_TYPES = Object.freeze({
+    TWITCH: 'twitch',
+    YOUTUBE: 'youtube',
+    EXTERNAL: 'external_provider',
+    MANAGED_SETUP: 'managed_setup'
+});
+
 function toFiniteNumber(value) {
     const num = typeof value === 'string' ? Number(value) : value;
     return Number.isFinite(num) ? num : null;
@@ -36,6 +43,10 @@ function getClipVideoUrl(clip) {
 
 function toCleanString(value) {
     return typeof value === 'string' ? value.trim() : '';
+}
+
+function compactObject(value) {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ''));
 }
 
 function toArray(value) {
@@ -187,17 +198,57 @@ export function canSaveBroadcastSetupSession({ user, team, game }) {
     return hasSelectedVideographerGrant(user, team);
 }
 
-export function buildBroadcastSetupSession({ existingSession = {}, sessionName = '', user = {}, permissions = {}, status = BROADCAST_SETUP_STATUSES.CHECKING, errorMessage = '', now = new Date() } = {}) {
+export function resolveBroadcastProviderMetadata(team = {}) {
+    if (toCleanString(team.twitchChannel)) {
+        return {
+            type: BROADCAST_PROVIDER_TYPES.TWITCH,
+            name: 'Twitch',
+            channel: toCleanString(team.twitchChannel)
+        };
+    }
+
+    const youtubeUrl = firstSafeString([team.streamEmbedUrl, team.youtubeEmbedUrl]);
+    if (youtubeUrl || toCleanString(team.youtubeVideoId)) {
+        return compactObject({
+            type: BROADCAST_PROVIDER_TYPES.YOUTUBE,
+            name: 'YouTube',
+            embedUrl: youtubeUrl,
+            videoId: toCleanString(team.youtubeVideoId)
+        });
+    }
+
+    return {
+        type: BROADCAST_PROVIDER_TYPES.MANAGED_SETUP,
+        name: 'ALL PLAYS managed setup'
+    };
+}
+
+export function buildBroadcastSetupSession({ existingSession = {}, sessionName = '', user = {}, permissions = {}, status = BROADCAST_SETUP_STATUSES.CHECKING, errorMessage = '', provider = null, now = new Date() } = {}) {
     const timestamp = now instanceof Date ? now.toISOString() : String(now || new Date().toISOString());
     const safeName = toCleanString(sessionName) || toCleanString(existingSession.name) || 'Game broadcast setup';
     const safeStatus = Object.values(BROADCAST_SETUP_STATUSES).includes(status) ? status : BROADCAST_SETUP_STATUSES.CHECKING;
+    const providerMetadata = provider && typeof provider === 'object' ? provider : existingSession?.provider;
     const session = {
         ...(existingSession && typeof existingSession === 'object' ? existingSession : {}),
         id: toCleanString(existingSession?.id) || `broadcast-${Date.parse(timestamp) || Date.now()}`,
         name: safeName.slice(0, 80),
         status: safeStatus,
+        streamStatus: safeStatus,
         setupOnly: true,
         managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
+        provider: compactObject({
+            type: toCleanString(providerMetadata?.type) || BROADCAST_PROVIDER_TYPES.MANAGED_SETUP,
+            name: toCleanString(providerMetadata?.name) || 'ALL PLAYS managed setup',
+            channel: toCleanString(providerMetadata?.channel),
+            embedUrl: toCleanString(providerMetadata?.embedUrl),
+            videoId: toCleanString(providerMetadata?.videoId)
+        }),
+        setupMetadata: {
+            setupOnly: true,
+            managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
+            cameraVerified: permissions.camera === true,
+            microphoneVerified: permissions.microphone === true
+        },
         permissions: {
             camera: permissions.camera === true,
             microphone: permissions.microphone === true
@@ -208,6 +259,9 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
     };
 
     if (!session.createdAt) session.createdAt = timestamp;
+    if (safeStatus === BROADCAST_SETUP_STATUSES.CHECKING && !session.startedAt) session.startedAt = timestamp;
+    if (safeStatus === BROADCAST_SETUP_STATUSES.READY) session.readyAt = timestamp;
+    if (safeStatus === BROADCAST_SETUP_STATUSES.FAILED) session.failedAt = timestamp;
     if (errorMessage) {
         session.errorMessage = String(errorMessage).slice(0, 180);
     } else {
@@ -215,6 +269,21 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
     }
 
     return session;
+}
+
+export function buildStreamScoreContext(game = {}) {
+    const session = game?.broadcastSession && typeof game.broadcastSession === 'object' ? game.broadcastSession : null;
+    if (!session) return null;
+    const homeScore = Number.isFinite(game.homeScore) ? game.homeScore : Number(game.homeScore) || 0;
+    const awayScore = Number.isFinite(game.awayScore) ? game.awayScore : Number(game.awayScore) || 0;
+    return {
+        sessionId: session.id || null,
+        streamStatus: session.streamStatus || session.status || '',
+        providerName: session.provider?.name || '',
+        score: { home: homeScore, away: awayScore },
+        scoreUpdatedAt: game.scoreUpdatedAt || game.scoreLastUpdatedAt || null,
+        sessionUpdatedAt: session.updatedAt || null
+    };
 }
 
 function isSafeVideoUrl(value) {
