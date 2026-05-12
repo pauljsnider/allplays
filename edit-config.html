@@ -269,6 +269,11 @@
             const scope = document.getElementById('statDefinitionScope').value;
             const topStat = document.getElementById('statDefinitionTopStat').checked;
 
+            if (topStat && (visibility !== 'public' || scope !== 'player')) {
+                alert(`${label} cannot be a Top Stat unless visibility is public and scope is player.`);
+                return;
+            }
+
             if (formula) attributes.push(`formula=${formula}`);
             if (group) attributes.push(`group=${group}`);
             attributes.push(`visibility=${visibility}`);
