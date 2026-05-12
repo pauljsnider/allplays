@@ -28,6 +28,18 @@ describe('telemetry privacy utilities', () => {
         expect(properties.nested.email).toBe('[email]');
     });
 
+    it('masks sensitive numeric property values without string coercion by callers', () => {
+        const properties = sanitizeTelemetryProperties({
+            phone: 5551234567,
+            playerId: 123456789,
+            loadMs: 240
+        });
+
+        expect(properties.phone).toBe('[phone]');
+        expect(properties.playerId).toBe('[number]');
+        expect(properties.loadMs).toBe(240);
+    });
+
     it('keeps telemetry keys bounded and machine-friendly', () => {
         expect(sanitizeTelemetryKey('bad key.with spaces and dots')).toBe('bad_key_with_spaces_and_dots');
         expect(sanitizeTelemetryKey('many words '.repeat(20))).toHaveLength(60);

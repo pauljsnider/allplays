@@ -37,8 +37,11 @@ export function sanitizeTelemetryProperties(properties = {}, depth = 0) {
 
         if (value === null || value === undefined) {
             clean[cleanKey] = null;
-        } else if (typeof value === 'boolean' || typeof value === 'number') {
+        } else if (typeof value === 'boolean') {
             clean[cleanKey] = value;
+        } else if (typeof value === 'number') {
+            const sanitizedNumber = sanitizeTelemetryText(value, 160);
+            clean[cleanKey] = sanitizedNumber === String(value) ? value : sanitizedNumber;
         } else if (Array.isArray(value)) {
             clean[cleanKey] = value.slice(0, 10).map((item) => sanitizeTelemetryText(item, 60));
         } else if (typeof value === 'object') {
