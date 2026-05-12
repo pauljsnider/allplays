@@ -74,6 +74,25 @@
                 </form>
             </div>
 
+            <!-- Signed-out invite link state -->
+            <div id="invite-link-state" class="hidden text-center">
+                <h1 class="text-2xl font-bold mb-4">Join Your Team</h1>
+                <p class="text-gray-600 text-sm mb-4">
+                    We found your invite link. Sign in or create an account to finish joining this team.
+                </p>
+                <p class="text-xs text-gray-500 mb-4">
+                    Invite code: <span id="invite-code-confirmation" class="font-mono font-semibold tracking-widest"></span>
+                </p>
+                <a id="continue-invite-link" href="login.html"
+                    class="block w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">
+                    Sign in or create account to join team
+                </a>
+                <button type="button" id="enter-different-code-btn"
+                    class="mt-3 text-sm text-indigo-600 hover:underline">
+                    Enter a different code
+                </button>
+            </div>
+
             <!-- Manual Code Entry State (fallback) -->
             <div id="manual-code-state" class="hidden">
                 <h1 class="text-2xl font-bold mb-4 text-center">Enter Invite Code</h1>
@@ -147,24 +166,40 @@
         const urlParams = new URLSearchParams(window.location.search);
         const inviteCode = urlParams.get('code') || window.localStorage.getItem('inviteCode');
         const inviteType = urlParams.get('type') || window.localStorage.getItem('inviteType') || 'parent';
+        const normalizedInviteCode = String(inviteCode || '').trim().toUpperCase();
+        const normalizedInviteType = String(inviteType || 'parent').trim().toLowerCase();
+
+        function getLoginUrlForInvite(code = normalizedInviteCode, type = normalizedInviteType) {
+            const loginParams = new URLSearchParams();
+            loginParams.set('code', String(code).trim().toUpperCase());
+            loginParams.set('type', String(type || 'parent').trim().toLowerCase());
+            return `login.html?${loginParams.toString()}`;
+        }
 
         const signupLink = document.getElementById('signup-link');
-        if (signupLink && inviteCode) {
-            const signupParams = new URLSearchParams();
-            signupParams.set('code', String(inviteCode).trim().toUpperCase());
-            signupParams.set('type', String(inviteType).trim().toLowerCase());
-            signupLink.href = `login.html?${signupParams.toString()}`;
+        if (signupLink && normalizedInviteCode) {
+            signupLink.href = getLoginUrlForInvite();
+        }
+
+        const continueInviteLink = document.getElementById('continue-invite-link');
+        const inviteCodeConfirmation = document.getElementById('invite-code-confirmation');
+        if (continueInviteLink && normalizedInviteCode) {
+            continueInviteLink.href = getLoginUrlForInvite();
+        }
+        if (inviteCodeConfirmation && normalizedInviteCode) {
+            inviteCodeConfirmation.textContent = normalizedInviteCode;
         }
 
         // State elements
         const loadingState = document.getElementById('loading-state');
         const emailRequiredState = document.getElementById('email-required-state');
+        const inviteLinkState = document.getElementById('invite-link-state');
         const manualCodeState = document.getElementById('manual-code-state');
         const successState = document.getElementById('success-state');
         const errorState = document.getElementById('error-state');
 
         function showState(state) {
-            [loadingState, emailRequiredState, manualCodeState, successState, errorState].forEach(s => s.classList.add('hidden'));
+            [loadingState, emailRequiredState, inviteLinkState, manualCodeState, successState, errorState].forEach(s => s.classList.add('hidden'));
             state.classList.remove('hidden');
         }
 
@@ -286,9 +321,8 @@
                         // User is logged in but no invite code
                         showState(manualCodeState);
                     } else if (inviteCode) {
-                        // Has invite code but not logged in - show manual entry
-                        showState(manualCodeState);
-                        document.getElementById('code-input').value = inviteCode;
+                        // Has invite code but not logged in - continue account access first
+                        showState(inviteLinkState);
                     } else {
                         // No invite code, not logged in
                         showState(manualCodeState);
@@ -364,7 +398,7 @@
             checkAuth(async (user) => {
                 if (!user) {
                     // Not logged in - redirect to login with the code
-                    window.location.href = `login.html?code=${code}&type=${encodeURIComponent(inviteType)}`;
+                    window.location.href = getLoginUrlForInvite(code, inviteType);
                     return;
                 }
 
@@ -385,6 +419,12 @@
 
         // Handle "try manual code" button
         document.getElementById('try-manual-code-btn').addEventListener('click', () => {
+            showState(manualCodeState);
+        });
+
+        // Handle signed-out invite link fallback
+        document.getElementById('enter-different-code-btn').addEventListener('click', () => {
+            document.getElementById('code-input').value = '';
             showState(manualCodeState);
         });
 
