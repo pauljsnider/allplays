@@ -31,6 +31,7 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
     const guardianLabels = parseFieldLabels(input.guardianFieldsText);
     const feeAmount = Number(input.feeAmount || 0);
     const status = input.status === 'published' ? 'published' : 'draft';
+    const installmentPlan = normalizeInstallmentPlan(input.installmentPlan || input);
 
     return {
         teamId: context.teamId || input.teamId || '',
@@ -41,6 +42,7 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
         season: String(input.season || '').trim(),
         feeAmountCents: Math.max(0, Math.round(feeAmount * 100)),
         currency: 'USD',
+        installmentPlan,
         participantFields: fieldLabelsToDefinitions(
             participantLabels.length ? participantLabels : DEFAULT_PARTICIPANT_LABELS,
             'participant'
@@ -53,6 +55,25 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
         waiverText: String(input.waiverText || '').trim(),
         status,
         published: status === 'published'
+    };
+}
+
+export function normalizeInstallmentPlan(input = {}) {
+    const enabled = input.installmentPlanEnabled === true || input.enabled === true;
+    if (!enabled) return null;
+
+    const installmentCount = Math.max(2, Math.min(12, Math.floor(Number(input.installmentCount) || 0)));
+    const intervalDays = Math.max(1, Math.min(365, Math.floor(Number(input.intervalDays) || 30)));
+    const firstDueDate = String(input.firstDueDate || '').trim();
+
+    if (!firstDueDate) return null;
+
+    return {
+        enabled: true,
+        title: String(input.title || 'Installment plan').trim() || 'Installment plan',
+        installmentCount,
+        firstDueDate,
+        intervalDays
     };
 }
 

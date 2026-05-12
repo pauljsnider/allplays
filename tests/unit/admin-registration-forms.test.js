@@ -4,6 +4,7 @@ import {
     buildAdminRegistrationFormPayload,
     fieldLabelsToDefinitions,
     getAdminRegistrationShareUrl,
+    normalizeInstallmentPlan,
     normalizeRegistrationOptions,
     validateAdminRegistrationFormPayload
 } from '../../js/admin-registration-forms.js';
@@ -22,6 +23,7 @@ describe('admin registration form setup', () => {
                 { id: 'division-a', label: 'Division A', capacityLimit: '12', active: true, waitlistEnabled: true },
                 { label: 'Division B', capacityLimit: '', active: false, waitlistEnabled: false }
             ],
+            installmentPlan: { enabled: true, installmentCount: '3', firstDueDate: '2026-06-01', intervalDays: '30' },
             waiverText: 'I accept the risk.',
             status: 'published'
         }, { teamId: 'team-1' });
@@ -35,6 +37,7 @@ describe('admin registration form setup', () => {
             season: 'Spring 2026',
             feeAmountCents: 12550,
             currency: 'USD',
+            installmentPlan: { enabled: true, title: 'Installment plan', installmentCount: 3, firstDueDate: '2026-06-01', intervalDays: 30 },
             waiverText: 'I accept the risk.',
             status: 'published',
             published: true
@@ -49,6 +52,17 @@ describe('admin registration form setup', () => {
             { id: 'option_2', label: 'Division B', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
         ]);
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
+    it('normalizes simple installment plan settings safely', () => {
+        expect(normalizeInstallmentPlan()).toBeNull();
+        expect(normalizeInstallmentPlan({ enabled: true, installmentCount: '24', firstDueDate: '2026-06-01', intervalDays: '0' })).toEqual({
+            enabled: true,
+            title: 'Installment plan',
+            installmentCount: 12,
+            firstDueDate: '2026-06-01',
+            intervalDays: 30
+        });
     });
 
     it('normalizes empty and legacy registration option settings safely', () => {
@@ -107,6 +121,7 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('registration-participant-fields');
         expect(adminPage).toContain('registration-guardian-fields');
         expect(adminPage).toContain('registration-options-list');
+        expect(adminPage).toContain('registration-installments-enabled');
         expect(adminPage).toContain('registration-waiver');
         expect(adminPage).toContain('Publish and show link');
         expect(adminJs).toContain('window.openRegistrationFormsAdmin');
@@ -114,6 +129,7 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('window.moveRegistrationOptionAdmin');
         expect(adminJs).toContain('window.removeRegistrationOptionAdmin');
         expect(adminJs).toContain('collectRegistrationOptionsFromEditor()');
+        expect(adminJs).toContain("document.getElementById('registration-installment-count')");
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
         expect(adminJs).toContain('if (activeRegistrationTeam?.id !== teamId) return;');
         expect(adminJs).toContain('teams/${teamId}/registrationForms');

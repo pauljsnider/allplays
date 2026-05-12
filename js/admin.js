@@ -17,7 +17,7 @@ import {
     formatFieldLabels,
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
-} from './admin-registration-forms.js?v=2';
+} from './admin-registration-forms.js?v=3';
 
 let allTeams = [];
 let allUsers = [];
@@ -595,6 +595,11 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-program-type').value = form.programType || 'season';
     document.getElementById('registration-season').value = form.season || '';
     document.getElementById('registration-fee').value = Number(form.feeAmountCents || 0) / 100;
+    const installmentPlan = form.installmentPlan || {};
+    document.getElementById('registration-installments-enabled').checked = installmentPlan.enabled === true;
+    document.getElementById('registration-installment-count').value = installmentPlan.installmentCount || '';
+    document.getElementById('registration-installment-first-date').value = installmentPlan.firstDueDate || '';
+    document.getElementById('registration-installment-interval').value = installmentPlan.intervalDays || '';
     document.getElementById('registration-participant-fields').value = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
     document.getElementById('registration-guardian-fields').value = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
@@ -757,6 +762,12 @@ async function saveRegistrationForm(event) {
         participantFieldsText: document.getElementById('registration-participant-fields').value,
         guardianFieldsText: document.getElementById('registration-guardian-fields').value,
         registrationOptions: collectRegistrationOptionsFromEditor(),
+        installmentPlan: {
+            enabled: document.getElementById('registration-installments-enabled').checked,
+            installmentCount: document.getElementById('registration-installment-count').value,
+            firstDueDate: document.getElementById('registration-installment-first-date').value,
+            intervalDays: document.getElementById('registration-installment-interval').value
+        },
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
     }, { teamId });
