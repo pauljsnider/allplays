@@ -5,7 +5,8 @@ import {
   evaluateDerivedFormula,
   normalizeStatTrackerConfig,
   parseAdvancedStatDefinitions,
-  summarizePlayerTopStats
+  summarizePlayerTopStats,
+  validateStatDefinitionsForPublicLeaderboards
 } from '../../js/stat-leaderboards.js';
 
 describe('stat leaderboard helpers', () => {
@@ -77,6 +78,18 @@ Deflections=deflections|scope=team|visibility=private|group=Defense
         type: 'base'
       })
     ]);
+  });
+
+  it('prevents private or team-scoped stats from being public leaderboard top stats', () => {
+    const definitions = parseAdvancedStatDefinitions(`
+Hustle=hustle|visibility=private|scope=team|topStat=true
+PTS=pts|visibility=public|scope=player|topStat=true
+    `);
+
+    expect(validateStatDefinitionsForPublicLeaderboards(definitions)).toEqual({
+      valid: false,
+      errors: ['Hustle cannot be a Top Stat unless visibility is public and scope is player.']
+    });
   });
 
   it('builds grouped public leaderboards with derived metrics and ranking direction', () => {
