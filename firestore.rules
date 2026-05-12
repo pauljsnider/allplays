@@ -327,6 +327,56 @@ service cloud.firestore {
              option.waitlistEnabled is bool;
     }
 
+
+    function isRegistrationDiscountApplicationValid(discount) {
+      return discount is map &&
+             discount.keys().hasOnly(['id', 'type', 'label', 'amountType', 'amountValue', 'amountCents']) &&
+             discount.id is string &&
+             discount.type in ['early_bird', 'quantity'] &&
+             discount.label is string &&
+             discount.amountType in ['fixed', 'percent'] &&
+             (discount.amountValue is int || discount.amountValue is float) &&
+             discount.amountCents is int &&
+             discount.amountCents >= 0;
+    }
+
+    function areRegistrationDiscountApplicationsValid(discounts) {
+      return discounts is list &&
+             discounts.size() <= 10 &&
+             (discounts.size() < 1 || isRegistrationDiscountApplicationValid(discounts[0])) &&
+             (discounts.size() < 2 || isRegistrationDiscountApplicationValid(discounts[1])) &&
+             (discounts.size() < 3 || isRegistrationDiscountApplicationValid(discounts[2])) &&
+             (discounts.size() < 4 || isRegistrationDiscountApplicationValid(discounts[3])) &&
+             (discounts.size() < 5 || isRegistrationDiscountApplicationValid(discounts[4])) &&
+             (discounts.size() < 6 || isRegistrationDiscountApplicationValid(discounts[5])) &&
+             (discounts.size() < 7 || isRegistrationDiscountApplicationValid(discounts[6])) &&
+             (discounts.size() < 8 || isRegistrationDiscountApplicationValid(discounts[7])) &&
+             (discounts.size() < 9 || isRegistrationDiscountApplicationValid(discounts[8])) &&
+             (discounts.size() < 10 || isRegistrationDiscountApplicationValid(discounts[9]));
+    }
+
+    function isRegistrationFeeSnapshotValid(snapshot) {
+      return snapshot is map &&
+             snapshot.keys().hasOnly([
+               'currency',
+               'quantity',
+               'originalFeeAmountCents',
+               'subtotalAmountCents',
+               'appliedDiscounts',
+               'finalAmountDueCents'
+             ]) &&
+             snapshot.currency is string &&
+             snapshot.quantity is int &&
+             snapshot.quantity >= 1 &&
+             snapshot.originalFeeAmountCents is int &&
+             snapshot.subtotalAmountCents is int &&
+             snapshot.finalAmountDueCents is int &&
+             snapshot.originalFeeAmountCents >= 0 &&
+             snapshot.subtotalAmountCents >= 0 &&
+             snapshot.finalAmountDueCents >= 0 &&
+             areRegistrationDiscountApplicationsValid(snapshot.appliedDiscounts);
+    }
+
     function isPendingRegistrationPayloadValid(teamId, formId, data) {
       return data.keys().hasOnly([
                'teamId',
@@ -342,6 +392,7 @@ service cloud.firestore {
                'submittedAt',
                'waitlistedAt',
                'selectedOption',
+               'feeSnapshot',
                'source'
              ]) &&
              data.teamId == teamId &&
@@ -350,6 +401,8 @@ service cloud.firestore {
              data.waiverAccepted == true &&
              hasOnlyFlatStringValues(data.participant) &&
              hasOnlyFlatStringValues(data.guardian) &&
+             data.keys().hasAny(['feeSnapshot']) &&
+             isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
              (data.status == 'waitlisted' || !data.keys().hasAny(['waitlistedAt'])) &&
              (data.status != 'waitlisted' || data.keys().hasAny(['waitlistedAt'])) &&
