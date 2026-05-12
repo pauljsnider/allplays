@@ -954,6 +954,34 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     });
 }
 
+export async function grantStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        'teamPermissions.streaming.mode': 'selected',
+        'teamPermissions.streaming.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function revokeStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
 export async function addOfficial(teamId, officialData) {
     const payload = {
         ...normalizeOfficialDraft(officialData),
