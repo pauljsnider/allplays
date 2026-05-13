@@ -114,6 +114,29 @@
       }
     }
 
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[char]));
+    }
+
+    function getSafeImageUrl(value) {
+      if (!value) return '';
+      try {
+        const url = new URL(String(value), window.location.origin);
+        if (url.protocol === 'http:' || url.protocol === 'https:') {
+          return url.href;
+        }
+      } catch (err) {
+        return '';
+      }
+      return '';
+    }
+
     async function loadTeams() {
       try {
         const allTeams = await getTeams();
@@ -160,48 +183,60 @@
           return a.localeCompare(b);
         });
 
-        const card = (team) => `
-          <div class="team-card group bg-white rounded-xl shadow-md hover:shadow-xl transition duration-300 overflow-hidden cursor-pointer border border-gray-200 hover:border-primary-300" data-team-id="${team.id}">
+        const card = (team) => {
+          const teamName = String(team.name || 'Unnamed Team');
+          const escapedTeamName = escapeHtml(teamName);
+          const escapedTeamId = escapeHtml(team.id);
+          const safePhotoUrl = getSafeImageUrl(team.photoUrl);
+          const initial = escapeHtml(teamName.trim().charAt(0) || '?');
+          const sport = escapeHtml(team.sport || 'Sport not set');
+          const description = escapeHtml(team.description || 'No description available');
+          const location = team.zip && zipToLocation[team.zip] ? zipToLocation[team.zip] : '';
+          const escapedLocation = escapeHtml(location);
+
+          return `
+          <div class="team-card group bg-white rounded-xl shadow-md hover:shadow-xl transition duration-300 overflow-hidden cursor-pointer border border-gray-200 hover:border-primary-300" data-team-id="${escapedTeamId}">
             <div class="p-6">
               <div class="flex items-center space-x-4 mb-4">
-                ${team.photoUrl
-            ? `<img src="${team.photoUrl}" alt="${team.name}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
+                ${safePhotoUrl
+            ? `<img src="${escapeHtml(safePhotoUrl)}" alt="${escapedTeamName}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
             : `<div class="w-16 h-16 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition">
-                      <span class="text-2xl font-bold text-primary-600">${team.name ? team.name.charAt(0) : '?'}</span>
+                      <span class="text-2xl font-bold text-primary-600">${initial}</span>
                     </div>`
           }
                 <div class="flex-grow">
-                  <h3 class="text-xl font-bold text-gray-900 group-hover:text-primary-600 transition mb-1">${team.name}</h3>
+                  <h3 class="text-xl font-bold text-gray-900 group-hover:text-primary-600 transition mb-1">${escapedTeamName}</h3>
                   <div class="flex items-center gap-2">
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-                      ${team.sport || 'Sport not set'}
+                      ${sport}
                     </span>
                   </div>
                 </div>
               </div>
-              <p class="text-gray-600 text-sm line-clamp-2 mb-3">${team.description || 'No description available'}</p>
-              ${team.zip && zipToLocation[team.zip]
+              <p class="text-gray-600 text-sm line-clamp-2 mb-3">${description}</p>
+              ${location
             ? `<div class="flex items-center text-xs text-gray-500">
                     <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                     </svg>
-                    <a class="hover:text-primary-600 transition" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(zipToLocation[team.zip])}">${zipToLocation[team.zip]}</a>
+                    <a class="hover:text-primary-600 transition" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}">${escapedLocation}</a>
                   </div>`
             : ''
           }
             </div>
           </div>
         `;
+        };
 
         container.innerHTML = locationKeys.map(loc => {
-          const teamsForLoc = grouped[loc].sort((a, b) => a.name.localeCompare(b.name));
+          const teamsForLoc = grouped[loc].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
           return `
             <section class="space-y-4">
               <div class="flex items-center justify-between px-2">
                 <div class="flex items-center gap-3">
                   <div class="h-1 w-12 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
-                  <h2 class="text-2xl md:text-3xl font-bold text-gray-900">${loc === 'Other' ? 'Location Unavailable' : loc}</h2>
+                  <h2 class="text-2xl md:text-3xl font-bold text-gray-900">${loc === 'Other' ? 'Location Unavailable' : escapeHtml(loc)}</h2>
                 </div>
                 <span class="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full font-medium">
                   ${teamsForLoc.length} team${teamsForLoc.length === 1 ? '' : 's'}
