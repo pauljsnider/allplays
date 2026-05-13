@@ -727,12 +727,17 @@
             admin.classList.remove('hidden');
 
             let generatedSummary = '';
+            let isSavingSummary = false;
+
+            const syncSaveButtonState = () => {
+                saveBtn.disabled = isSavingSummary;
+            };
 
             const openEditor = (auto = false) => {
                 editor.classList.remove('hidden');
                 editBtn.classList.add('hidden');
                 summaryDiv.classList.add('hidden');
-                saveBtn.disabled = false;
+                syncSaveButtonState();
                 if (auto && !game.summary) {
                     textarea.value = '';
                 }
@@ -742,7 +747,7 @@
                 editor.classList.add('hidden');
                 editBtn.classList.remove('hidden');
                 summaryDiv.classList.remove('hidden');
-                saveBtn.disabled = false;
+                syncSaveButtonState();
                 textarea.value = game.summary || '';
                 status.textContent = '';
             };
@@ -817,13 +822,18 @@ Write the match report now:`;
             });
 
             saveBtn.addEventListener('click', async () => {
+                if (isSavingSummary) {
+                    return;
+                }
+
                 const summaryText = textarea.value.trim();
                 if (!summaryText && !generatedSummary) {
                     status.textContent = 'Add a summary or generate one first.';
                     return;
                 }
 
-                saveBtn.disabled = true;
+                isSavingSummary = true;
+                syncSaveButtonState();
                 status.textContent = 'Saving summary…';
                 try {
                     const finalSummary = summaryText || generatedSummary;
@@ -833,11 +843,13 @@ Write the match report now:`;
                     setTimeout(() => {
                         summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
                     }, 100);
+                    isSavingSummary = false;
                     closeEditor();
                 } catch (error) {
                     console.error('Error saving summary:', error);
                     status.textContent = `Error: ${error.message}`;
-                    saveBtn.disabled = false;
+                    isSavingSummary = false;
+                    syncSaveButtonState();
                 }
             });
 
