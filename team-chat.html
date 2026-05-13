@@ -923,6 +923,21 @@
             return container.scrollTop <= threshold;
         }
 
+        async function loadOlderMessagesPreservingScroll() {
+            const container = document.getElementById('messages-container');
+            const scrollHeightBefore = container?.scrollHeight || 0;
+            const scrollTopBefore = container?.scrollTop || 0;
+
+            const loadedMessages = await loadMessages(true);
+
+            if (container && loadedMessages) {
+                const scrollHeightAfter = container.scrollHeight;
+                container.scrollTop = scrollTopBefore + (scrollHeightAfter - scrollHeightBefore);
+            }
+
+            return loadedMessages;
+        }
+
         function showError(message) {
             const errorEl = document.getElementById('send-error');
             errorEl.textContent = message;
@@ -1593,7 +1608,7 @@
             mediaSummary.textContent = 'Loading older shared media…';
             try {
                 while (hasMoreMessages) {
-                    const loadedMessages = await loadMessages(true);
+                    const loadedMessages = await loadOlderMessagesPreservingScroll();
                     if (!loadedMessages) {
                         break;
                     }
@@ -2091,14 +2106,7 @@
                 btn.disabled = true;
                 btn.textContent = 'Loading...';
 
-                const container = document.getElementById('messages-container');
-                const scrollHeightBefore = container.scrollHeight;
-
-                await loadMessages(true);
-
-                // Maintain scroll position
-                const scrollHeightAfter = container.scrollHeight;
-                container.scrollTop = scrollHeightAfter - scrollHeightBefore;
+                await loadOlderMessagesPreservingScroll();
 
                 btn.disabled = false;
                 btn.textContent = 'Load older messages...';
