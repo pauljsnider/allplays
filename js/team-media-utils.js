@@ -18,6 +18,24 @@ const TEAM_MEDIA_DOCUMENT_TYPES = new Set([
     'text/csv'
 ]);
 
+const TEAM_MEDIA_DOCUMENT_EXTENSIONS = new Set([
+    'pdf',
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'ppt',
+    'pptx',
+    'txt',
+    'csv'
+]);
+
+const GENERIC_TEAM_MEDIA_DOCUMENT_TYPES = new Set([
+    '',
+    'application/octet-stream',
+    'binary/octet-stream'
+]);
+
 export const TEAM_MEDIA_VISIBILITIES = ['team', 'private'];
 
 function asTrimmedString(value) {
@@ -83,7 +101,14 @@ export function isSupportedTeamMediaImage(file) {
 }
 
 export function isSupportedTeamMediaDocument(file) {
-    return Boolean(file && TEAM_MEDIA_DOCUMENT_TYPES.has(String(file.type || '').toLowerCase()));
+    if (!file) return false;
+
+    const mimeType = String(file.type || '').toLowerCase();
+    if (TEAM_MEDIA_DOCUMENT_TYPES.has(mimeType)) return true;
+    if (!GENERIC_TEAM_MEDIA_DOCUMENT_TYPES.has(mimeType)) return false;
+
+    const extension = String(file.name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+    return TEAM_MEDIA_DOCUMENT_EXTENSIONS.has(extension);
 }
 
 export function isTeamMediaDocument(item = {}) {

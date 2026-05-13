@@ -415,13 +415,27 @@ els.foldersList.addEventListener('click', (event) => {
     }
 });
 
-els.albumDetail.addEventListener('click', (event) => {
+els.albumDetail.addEventListener('click', async (event) => {
     const deleteButton = event.target.closest('[data-item-delete]');
     if (deleteButton) {
         const item = state.items.find((candidate) => candidate.id === deleteButton.dataset.itemDelete);
         if (!canDeleteTeamMediaItem(state.user, state.team, item)) return;
         if (!window.confirm('Delete this media item? This cannot be undone.')) return;
-        persistAndReload(() => deleteTeamMediaItem(state.teamId, item), 'Media item deleted.');
+        if (state.actionInFlight) return;
+        state.actionInFlight = true;
+        clearAlert();
+        try {
+            await deleteTeamMediaItem(state.teamId, item);
+            state.items = state.items.filter((candidate) => candidate.id !== item.id);
+            state.selectedIds.delete(item.id);
+            render();
+            showAlert('Media item deleted.', 'success');
+        } catch (error) {
+            console.error('Team media action failed:', error);
+            showAlert(isPermissionDenied(error) ? getMediaPermissionMessage() : (error.message || 'Unable to save media changes. Refresh and try again.'), 'error');
+        } finally {
+            state.actionInFlight = false;
+        }
         return;
     }
 
