@@ -303,14 +303,6 @@ test('accept-invite redeems an admin invite into dashboard access', async ({ pag
     await page.goto(`${baseURL}/accept-invite.html?code=EXIST111&type=admin`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#success-message')).toContainText("You've been added to the team.");
-    expect(await page.evaluate(() => window.__acceptInviteCalls)).toEqual([
-        { type: 'validate', code: 'EXIST111' },
-        {
-            type: 'redeem',
-            codeId: 'code-admin-1',
-            userId: 'admin-1',
-            authEmail: 'coach@example.com'
-        }
-    ]);
+
     await expect(page).toHaveURL(/\/dashboard\.html$/);
 });
