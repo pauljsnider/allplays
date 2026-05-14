@@ -17,6 +17,16 @@ describe('team chat media gallery actions wiring', () => {
         expect(html).toContain('data-media-action="copy-link"');
     });
 
+    it('loads older chat history before finalizing the gallery contents', () => {
+        const html = readRepoFile('team-chat.html');
+
+        expect(html).toContain('async function loadMediaGalleryHistory()');
+        expect(html).toContain('while (hasMoreMessages)');
+        expect(html).toContain('await loadMessages(true)');
+        expect(html).toContain('async function openMediaGallery()');
+        expect(html).toContain('await loadMediaGalleryHistory()');
+    });
+
     it('wires gallery action handlers for share, save, and copy link fallbacks', () => {
         const html = readRepoFile('team-chat.html');
 

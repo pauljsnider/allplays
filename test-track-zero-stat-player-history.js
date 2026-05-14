@@ -1,3 +1,6 @@
+import { buildFinishCompletionPlan } from './js/live-tracker-finish.js';
+import { hasPlayerProfileParticipation } from './js/player-profile-stats.js';
+
 const results = [];
 
 function test(name, fn) {
@@ -90,6 +93,60 @@ test('zero-stat players get zeroed configured stats', () => {
         writes[0].data.stats,
         { pts: 0, reb: 0, ast: 0 },
         'Scoreless player should still get a zeroed stats object'
+    );
+});
+
+test('standard finish writes zero-stat appearances with player profile participation markers', () => {
+    const plan = buildFinishCompletionPlan({
+        requestedHome: 0,
+        requestedAway: 0,
+        liveHome: 0,
+        liveAway: 0,
+        scoreLogIsComplete: true,
+        log: [],
+        columns: ['PTS', 'REB', 'AST'],
+        roster: [{ id: 'player-b', name: 'Player B', num: '34' }],
+        statsByPlayerId: {
+            'player-b': { pts: 0, reb: 0, ast: 0, fouls: 0, time: 0 }
+        },
+        opponentEntries: []
+    });
+
+    assertDeepEquals(
+        plan.aggregatedStatsWrites[0].data,
+        {
+            playerName: 'Player B',
+            playerNumber: '34',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'live-tracker-finish',
+            stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+            timeMs: 0
+        },
+        'Standard finish zero-stat write should include explicit profile participation markers'
+    );
+    assertEquals(
+        hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data),
+        true,
+        'Standard finish zero-stat write should be accepted as a player profile appearance'
+    );
+});
+
+test('standard finish zero-stat aggregate readback stays visible in player history', () => {
+    const aggregateDoc = {
+        playerName: 'Player B',
+        playerNumber: '34',
+        participated: true,
+        participationStatus: 'appeared',
+        participationSource: 'live-tracker-finish',
+        stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+        timeMs: 0
+    };
+
+    assertEquals(
+        hasPlayerProfileParticipation(aggregateDoc),
+        true,
+        'Player profile history should include standard finish zero-stat appearances'
     );
 });
 
