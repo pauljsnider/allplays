@@ -211,9 +211,7 @@
         function showSuccess(message, redirectUrl) {
             document.getElementById('success-message').textContent = message;
             showState(successState);
-            setTimeout(() => {
-                window.location.href = redirectUrl;
-            }, 2000);
+            window.location.href = redirectUrl;
         }
 
         const processInvite = createInviteProcessor({
