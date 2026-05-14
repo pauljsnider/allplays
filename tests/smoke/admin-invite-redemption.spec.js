@@ -303,6 +303,7 @@ test('accept-invite redeems an admin invite into dashboard access', async ({ pag
     await page.goto(`${baseURL}/accept-invite.html?code=EXIST111&type=admin`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#success-message')).toContainText("You've been added to the team.");
+    await page.locator('text=Go to Dashboard').click();
 
     await page.waitForURL(/\/dashboard\.html$/);
     await expect(page).toHaveURL(/\/dashboard\.html$/);
