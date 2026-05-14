@@ -330,6 +330,7 @@
                                     type: 'practice',
                                     title: occ.title || 'Practice',
                                     date: occ.date instanceof Date ? occ.date : new Date(occ.date),
+                                    end: occ.end || null, // Add this line
                                     location: occ.location || 'TBD',
                                     status: game.status,
                                     isHome: null,
@@ -364,6 +365,7 @@
                                 type: game.type || 'game',
                                 title: game.type === 'practice' ? (game.title || 'Practice') : `vs. ${game.opponent || 'TBD'}`,
                                 date,
+                                end: game.endDate?.toDate ? game.endDate.toDate() : (game.endDate ? new Date(game.endDate) : null), // Add this line
                                 location: game.location || 'TBD',
                                 status: game.status,
                                 isHome: game.isHome,
