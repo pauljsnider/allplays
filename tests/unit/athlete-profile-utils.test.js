@@ -153,6 +153,7 @@ describe('athlete profile helpers', () => {
                 highlightClips: [
                     { id: 'clip-1', playerIds: ['player-1'], title: 'Fast break', homeScore: 12, awayScore: 10, startMs: '1000', endMs: '9000' },
                     { id: 'clip-2', playerIds: ['player-1'], title: 'Hidden bucket', hidden: true },
+                    { id: 'clip-5', playerIds: ['player-1'], title: 'Game Photo', mediaType: 'image', url: 'https://example.com/game-photo.png', homeScore: 12, awayScore: 10 },
                     { id: 'clip-3', playerIds: ['player-2'], title: 'Other player' }
                 ]
             },
@@ -181,6 +182,22 @@ describe('athlete profile helpers', () => {
                 scoreContext: 'Eagles 12, Tigers 10',
                 startMs: 1000,
                 endMs: 9000
+            },
+            {
+                id: 'clip-5',
+                source: 'game',
+                mediaType: 'image',
+                title: 'Game Photo',
+                url: 'https://example.com/game-photo.png',
+                teamId: 'team-1',
+                teamName: 'Eagles',
+                gameId: 'game-1',
+                game: 'Tigers',
+                date: '2026-04-26',
+                playDescription: 'Game Photo',
+                scoreContext: 'Eagles 12, Tigers 10',
+                startMs: null,
+                endMs: null
             },
             {
                 id: 'clip-4',
