@@ -50,7 +50,7 @@ class MockElement {
         this.attributes = new Map();
         this.listeners = new Map();
         this.classList = new MockClassList(id === 'chat-locked-notice' || id === 'replay-controls' || id === 'ended-overlay' ? ['hidden'] : []);
-        this.textContent = '';
+        this._textContent = '';
         this._innerHTML = '';
         this.value = '';
         this.disabled = false;
@@ -61,6 +61,14 @@ class MockElement {
         this.duration = Number.NaN;
         this.paused = true;
         this.scrollTop = 0;
+    }
+
+    set textContent(value) {
+        this._textContent = String(value);
+    }
+
+    get textContent() {
+        return this._textContent;
     }
 
     addEventListener(type, handler) {
@@ -162,7 +170,7 @@ class MockElement {
 
     set innerHTML(value) {
         this._innerHTML = String(value);
-        this.textContent = this._innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        this._textContent = this._innerHTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
         this.children = [];
         if (this._innerHTML.includes('data-placeholder="plays"')) {
             const placeholder = new MockElement('', 'div');
@@ -463,6 +471,7 @@ async function bootReplayPage({ replayEvents }) {
             MAX_HIGHLIGHT_CLIP_MS: 60000,
             buildBroadcastSetupSession: () => ({}),
             buildHighlightShareUrl: () => '',
+            buildStreamScoreContext: () => null,
             canAccessNativeCameraCapture: () => false,
             canSaveBroadcastSetupSession: () => false,
             createHighlightClipDraft: () => ({ startMs: 0, endMs: 0, title: '' }),
@@ -546,8 +555,8 @@ describe('live game replay initialization', () => {
     it('locks chat for replay pages with no saved events', async () => {
         const page = await bootReplayPage({ replayEvents: [] });
 
-        expect(page.homeScore.textContent).toBe(63);
-        expect(page.awayScore.textContent).toBe(58);
+        expect(page.homeScore.textContent).toBe('63');
+        expect(page.awayScore.textContent).toBe('58');
         expect(page.chatInput.disabled).toBe(true);
         expect(page.chatLockedNotice.classList.contains('hidden')).toBe(false);
         expect(page.replayControls.classList.contains('hidden')).toBe(false);
