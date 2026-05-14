@@ -64,6 +64,33 @@
     </div>
 
     <!-- Teams Grid -->
+    <!-- Search Bar -->
+    <div class="mb-8 md:mb-12 max-w-2xl mx-auto">
+      <form id="search-form" class="flex items-center space-x-2">
+        <input
+          type="text"
+          id="location-search-input"
+          placeholder="Search by city, state, or zip..."
+          class="flex-grow px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+        />
+        <button
+          type="submit"
+          id="search-button"
+          class="px-5 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition font-medium"
+        >
+          Search
+        </button>
+        <button
+          type="button"
+          id="clear-search-button"
+          class="px-3 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition font-medium"
+        >
+          Clear
+        </button>
+      </form>
+    </div>
+
+    <!-- Teams Grid -->
     <div id="teams-list" class="space-y-8">
       <div class="col-span-full text-center text-gray-500 py-12">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
@@ -76,7 +103,7 @@
 
   <script type="module">
     import { getTeams } from './js/db.js?v=29';
-    import { renderHeader, renderFooter } from './js/utils.js?v=8';
+    import { renderHeader, renderFooter, escapeHtml, resolveZip } from './js/utils.js?v=9'; // Updated import
     import { checkAuth } from './js/auth.js?v=14';
 
     checkAuth((user) => {
@@ -85,44 +112,6 @@
     });
 
     renderFooter(document.getElementById('footer-container'));
-
-    const zipCache = new Map();
-
-    async function resolveZip(zip) {
-      if (!zip) return null;
-      if (zipCache.has(zip)) return zipCache.get(zip);
-      try {
-        const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
-        if (!res.ok) {
-          zipCache.set(zip, null);
-          return null;
-        }
-        const data = await res.json();
-        const place = data?.places?.[0];
-        if (!place) {
-          zipCache.set(zip, null);
-          return null;
-        }
-        const city = place['place name'];
-        const state = place['state abbreviation'];
-        const label = `${city}, ${state}`;
-        zipCache.set(zip, label);
-        return label;
-      } catch (err) {
-        zipCache.set(zip, null);
-        return null;
-      }
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-      }[char]));
-    }
 
     function getSafeImageUrl(value) {
       if (!value) return '';
