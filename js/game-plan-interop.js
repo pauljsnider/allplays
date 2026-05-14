@@ -1,7 +1,7 @@
 export function buildRotationPlanFromGamePlan(gamePlan) {
   if (!gamePlan?.lineups || typeof gamePlan.lineups !== 'object') return {};
   const plan = {};
-  const legacyByPeriodTime = {};
+  const legacyByPeriod = {}; // { period: { posId: { timeNum, playerId } } }
   const numPeriods = Number.parseInt(gamePlan?.numPeriods, 10) || 2;
   const periodPrefix = numPeriods === 4 ? 'Q' : 'H';
 
@@ -23,16 +23,18 @@ export function buildRotationPlanFromGamePlan(gamePlan) {
     if (!Number.isFinite(periodNum)) return;
 
     const period = `${periodPrefix}${periodNum}`;
-    const periodTime = Number.isFinite(timeNum) ? `${period} ${timeNum}'` : period;
-    if (!legacyByPeriodTime[periodTime]) legacyByPeriodTime[periodTime] = {};
-    legacyByPeriodTime[periodTime][posId] = playerId;
+    if (!legacyByPeriod[period]) legacyByPeriod[period] = {};
+    const existing = legacyByPeriod[period][posId];
+    if (!existing || timeNum > existing.timeNum) {
+      legacyByPeriod[period][posId] = { timeNum, playerId };
+    }
   });
 
-  Object.entries(legacyByPeriodTime).forEach(([periodTime, assignments]) => {
-    if (!plan[periodTime]) plan[periodTime] = {};
-    Object.entries(assignments).forEach(([posId, playerId]) => {
-      if (!plan[periodTime][posId]) {
-        plan[periodTime][posId] = playerId;
+  Object.entries(legacyByPeriod).forEach(([period, posMap]) => {
+    if (!plan[period]) plan[period] = {};
+    Object.entries(posMap).forEach(([posId, { playerId }]) => {
+      if (!plan[period][posId]) {
+        plan[period][posId] = playerId;
       }
     });
   });
