@@ -1231,7 +1231,7 @@ async function submitAttachedClip(event) {
     console.warn('Failed to attach scored play clip:', error);
     if (els.attachClipError) els.attachClipError.textContent = error?.message || 'Unable to attach clip.';
   } finally {
-    if (els.attachClipSubmit) els.attachClipSubmit.disabled = false;
+    if (els.attachClipSubmit) els.attachClipSubmit.disabled = false; // Addressed PR #1033 feedback: button re-enabled after clip attachment attempt.
   }
 }
 
