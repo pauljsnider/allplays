@@ -1377,6 +1377,7 @@ export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
     date: eventDate,
     location: event.location || 'TBD',
     status: getCalendarEventStatus(event),
+    end: event?.dtend instanceof Date ? event.dtend : null, // Add this line
     source: 'ics'
   };
 }
