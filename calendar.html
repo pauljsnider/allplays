@@ -799,7 +799,17 @@
                 if (seen.has(dedupeKey)) return;
                 seen.add(dedupeKey);
                 const start = fmtDate(ev.date);
-                const end = fmtDate(new Date(ev.date.getTime() + 60 * 60 * 1000));
+                let endDate = null;
+                if (ev.end instanceof Date && !isNaN(ev.end)) {
+                    endDate = ev.end;
+                } else {
+                    let durationMs = 60 * 60 * 1000; // Default 1 hour
+                    if (ev.type === 'game') {
+                        durationMs = 2 * 60 * 60 * 1000; // 2 hours for games
+                    }
+                    endDate = new Date(ev.date.getTime() + durationMs);
+                }
+                const end = fmtDate(endDate);
                 lines.push(
                     'BEGIN:VEVENT',
                     `UID:${dedupeKey}@allplays`,
