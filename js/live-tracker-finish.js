@@ -113,16 +113,30 @@ export function buildFinishCompletionPlan({
     });
     statsObj.fouls = safeStatsByPlayerId[player.id]?.fouls || 0;
 
+    const playerTimeMs = safeStatsByPlayerId[player.id]?.time || 0;
+    let hasNonZeroStats = false;
+    safeColumns.forEach((col) => {
+      const key = col.toLowerCase();
+      if ((safeStatsByPlayerId[player.id]?.[key] || 0) > 0) {
+        hasNonZeroStats = true;
+      }
+    });
+    if ((safeStatsByPlayerId[player.id]?.fouls || 0) > 0) {
+      hasNonZeroStats = true;
+    }
+
+    const actuallyParticipated = playerTimeMs > 0 || hasNonZeroStats;
+
     return {
       playerId: player.id,
       data: {
         playerName: player.name,
         playerNumber: player.num,
-        participated: true,
-        participationStatus: 'appeared',
+        participated: actuallyParticipated,
+        participationStatus: actuallyParticipated ? 'appeared' : 'did-not-appear',
         participationSource: 'live-tracker-finish',
         stats: statsObj,
-        timeMs: safeStatsByPlayerId[player.id]?.time || 0
+        timeMs: playerTimeMs
       }
     };
   });
