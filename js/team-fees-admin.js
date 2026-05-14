@@ -397,7 +397,7 @@ function renderInvoiceRow(type) {
 }
 
 export function buildTeamFeeBatchManageUrl(teamId, batchId) {
-    return `team-fees.html#teamId=${encodeURIComponent(teamId)}&batchId=${encodeURIComponent(batchId)}`;
+    return `team-fees.html?teamId=${encodeURIComponent(teamId)}&batchId=${encodeURIComponent(batchId)}`;
 }
 
 export function renderCreatedTeamFeeBatchSuccess(teamId, batchId) {
