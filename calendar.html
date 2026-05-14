@@ -802,9 +802,23 @@
                 seen.add(dedupeKey);
                 const start = fmtDate(ev.date);
                 let endDate = null;
-                if (ev.end instanceof Date && !isNaN(ev.end)) {
-                    endDate = ev.end;
-                } else {
+                // Attempt to resolve ev.end into a valid Date object if it exists
+                if (ev.end) {
+                    let potentialDate = ev.end;
+                    if (!(potentialDate instanceof Date)) {
+                        if (typeof potentialDate === 'string') {
+                            potentialDate = new Date(potentialDate);
+                        } else if (typeof potentialDate === 'object' && potentialDate !== null && typeof potentialDate.toDate === 'function') {
+                            potentialDate = potentialDate.toDate(); // Assume Firebase Timestamp-like
+                        }
+                    }
+                    if (potentialDate instanceof Date && !isNaN(potentialDate)) {
+                        endDate = potentialDate;
+                    }
+                }
+
+                // If endDate is still not a valid Date, apply default duration
+                if (!(endDate instanceof Date) || isNaN(endDate)) {
                     let durationMs = 60 * 60 * 1000; // Default 1 hour
                     if (ev.type === 'game') {
                         durationMs = 2 * 60 * 60 * 1000; // 2 hours for games
