@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -577,11 +578,14 @@
                 .filter((record) => record.provider && record.sourceId && record.externalTeamId && record.externalTeamName);
         }
 
-        function buildTeamEditUrl(teamId, created = false) {
+        function buildTeamEditUrl(teamId, created = false, options = {}) {
             const params = new URLSearchParams();
             params.set('teamId', teamId);
             if (created) {
                 params.set('created', '1');
+            }
+            if (options.rosterRolloverFailed) {
+                params.set('rosterRolloverFailed', '1');
             }
             return `edit-team.html?${params.toString()}`;
         }
@@ -1761,7 +1765,7 @@
                         } catch (rolloverError) {
                             console.error('Roster rollover failed:', rolloverError);
                             alert(`Team created, but roster rollover failed. No selected players were copied. Open this team and try manually from the roster.\n\nError: ${rolloverError.message}`);
-                            window.location.href = buildTeamEditUrl(newTeamId, true);
+                            window.location.href = buildTeamEditUrl(newTeamId, true, { rosterRolloverFailed: true });
                             return;
                         }
                     }
