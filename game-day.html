@@ -1546,10 +1546,10 @@ Assistant:`;
                 const f = FORMATIONS[formationId];
                 const periods = getPeriods(formationId);
 
-                // Determine if auto-population is needed: only if no existing lineup for any period
-                // This handles Acceptance Criteria 1 and 4.
-                const hasAnyExistingAssignments = Object.values(state.rotationPlan || {}).some(
-                    periodAssignments => Object.keys(periodAssignments).length > 0
+                // Determine if auto-population is needed: only if none of the current formation's
+                // periods have assignments. This correctly handles formation switching (e.g. H1/H2 → Q1-Q4).
+                const hasAnyExistingAssignments = periods.some(
+                    p => state.rotationPlan[p] && Object.keys(state.rotationPlan[p]).length > 0
                 );
 
                 // Initialize state.rotationPlan and periods if they are completely empty.
@@ -1560,8 +1560,7 @@ Assistant:`;
 
                     if (periods.length > 0) {
                         const activePeriod = periods[0];
-                        const playerPool = getGoingPlayerPool(); // Get players marked as "going" and in the roster
-                        const numPositions = f.positions.length;
+                        const playerPool = getGoingPlayerPool();
 
                         // Assign players one-to-one to positions in the active period (first period)
                         // until positions are filled or players run out. This addresses Acceptance Criteria 1.
