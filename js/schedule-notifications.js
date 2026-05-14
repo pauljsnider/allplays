@@ -251,8 +251,12 @@ export function buildAvailabilityReminderRecipients(players, rsvps) {
     };
 }
 
-export function buildAvailabilityReminderEmailPreview(players, rsvps) {
-    const nonRespondingPlayers = getNonRespondingAvailabilityPlayers(players, rsvps);
+export function buildAvailabilityReminderEmailPreview(players, rsvps, notRespondedIds = null) {
+    const nonRespondingPlayers = notRespondedIds
+        ? (Array.isArray(players) ? players : []).filter(
+            (p) => p?.active !== false && notRespondedIds.has(String(p?.id || ''))
+          )
+        : getNonRespondingAvailabilityPlayers(players, rsvps);
     const playerPreviews = nonRespondingPlayers.map((player) => {
         const parentEmails = uniqueEligibleEmails(
             Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.email) : []

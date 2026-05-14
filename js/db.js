@@ -5850,7 +5850,8 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    const breakdown = buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    return { ...breakdown, players, rsvps };
 }
 
 export async function getPublicTrackingItems(teamId) {
