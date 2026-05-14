@@ -34,4 +34,19 @@ describe('game score sheet controls', () => {
         expect(body.indexOf("uploadBtn.classList.add('hidden');")).toBeLessThan(body.indexOf("status.textContent = 'Saved.';"));
         expect(body.indexOf("removeBtn?.classList.remove('hidden');")).toBeLessThan(body.indexOf("status.textContent = 'Saved.';"));
     });
+
+    it('re-enables the upload button after a successful score sheet removal', () => {
+        const body = getFunctionBody(readGameHtml(), 'setupStatSheetControls');
+
+        expect(body).toBeTruthy();
+        // Check that the upload button is explicitly re-enabled in the remove action's finally block
+        const removeFinallyBlockStart = body.indexOf("finally {", body.indexOf("removeBtn?.addEventListener('click'"));
+        expect(removeFinallyBlockStart).toBeGreaterThan(-1);
+
+        const removeFinallyBlockEnd = body.indexOf("});", removeFinallyBlockStart);
+        expect(removeFinallyBlockEnd).toBeGreaterThan(removeFinallyBlockStart);
+
+        const removeFinallyBody = body.substring(removeFinallyBlockStart, removeFinallyBlockEnd);
+        expect(removeFinallyBody).toContain("uploadBtn.disabled = false;");
+    });
 });
