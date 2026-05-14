@@ -2581,7 +2581,7 @@ Respond ONLY with valid JSON.`;
                 exitUrl: accessInfo.exitUrl
             });
             const gameTitle = state.game?.opponent ? `vs ${escapeHtml(state.game.opponent)}` : 'Scheduled event';
-            const streamStatus = state.game?.managedStreamReady
+            const streamStatus = state.game?.broadcastSession?.managedStreamReady
                 ? 'Broadcast setup is marked ready for this game.'
                 : 'Broadcast setup has not been marked ready yet.';
             const streamProviderAction = externalUrl
