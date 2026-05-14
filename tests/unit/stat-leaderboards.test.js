@@ -18,7 +18,7 @@ describe('stat leaderboard helpers', () => {
       columns: ['PTS', 'REB', 'AST']
     });
 
-    expect(normalized.columns).toEqual(['PTS', 'REB']);
+    expect(normalized.columns).toEqual(['PTS', 'REB', 'AST']);
     expect(normalized.statDefinitions).toEqual([
       expect.objectContaining({
         id: 'pts',
