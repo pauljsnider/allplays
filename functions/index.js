@@ -139,7 +139,6 @@ exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => 
     teamId: input.teamId,
     gameId: input.gameId,
     playerId: input.playerId,
-    guardianEmail: input.guardianEmail,
     guardianEmailHash: buildRsvpTokenAuditPayload({ guardianEmail: input.guardianEmail }).guardianEmailHash,
     response: input.response,
     rsvpDocId,
@@ -198,6 +197,11 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
     return;
   }
 
+  if (teamId.includes('/')) {
+    res.status(400).json({ ok: false, error: 'Invalid teamId' });
+    return;
+  }
+
   const tokenRef = firestore.doc(`teams/${teamId}/rsvpTokens/${tokenHash}`);
   const auditRef = firestore.collection(`teams/${teamId}/rsvpTokenAudit`).doc();
 
@@ -224,7 +228,6 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
             teamId,
             gameId: tokenData.gameId,
             playerId: tokenData.playerId,
-            guardianEmail: tokenData.guardianEmail,
             response: tokenData.response
           }),
           createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -259,7 +262,6 @@ exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
           teamId,
           gameId: tokenData.gameId,
           playerId: tokenData.playerId,
-          guardianEmail: tokenData.guardianEmail,
           response: tokenData.response
         }),
         rsvpDocId,
