@@ -49,7 +49,11 @@ function normalizeFirebaseConfig(rawConfig) {
 }
 
 async function fetchFirebaseConfigFromHosting() {
-    const response = await fetch(FIREBASE_INIT_JSON_URL, { cache: 'no-store' });
+    const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
+        ? window.location.origin
+        : 'http://localhost'; // Fallback for Node.js tests
+    const absoluteUrl = new URL(FIREBASE_INIT_JSON_URL, baseUrl).href;
+    const response = await fetch(absoluteUrl, { cache: 'no-store' });
     if (!response.ok) {
         throw new Error(`Firebase config request failed (${response.status})`);
     }
