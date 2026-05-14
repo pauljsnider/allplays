@@ -266,7 +266,7 @@ async function mockEditTeamDependencies(page) {
 async function mockAcceptInviteDependencies(page) {
     await mockExternalResources(page);
     await page.addInitScript(() => { window.__acceptInviteCalls = []; });
-    await page.route(/db\.js(?:\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
+    await page.route(/js\/db\.js(?:\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
     await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
 }
