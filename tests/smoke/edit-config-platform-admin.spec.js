@@ -193,12 +193,12 @@ async function mockDependencies(page) {
         contentType: 'application/javascript',
         body: ''
     }));
-    await page.route('**/js/db.js?v=29', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
+    await page.route('**/js/db.js?v=30', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/edit-config-access.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_CONFIG_ACCESS_STUB }));
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
-    await page.route('**/js/stat-leaderboards.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_LEADERBOARDS_STUB }));
+    await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_LEADERBOARDS_STUB }));
     await page.route('**/js/stat-config-presets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_CONFIG_PRESETS_STUB }));
 }
 

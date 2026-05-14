@@ -25,6 +25,23 @@ describe('post-game stat editor helpers', () => {
         ]);
     });
 
+    it('adds private player stat definitions to the manager editor fields', () => {
+        expect(resolvePostGameStatFields({
+            resolvedConfig: {
+                columns: ['PTS'],
+                statDefinitions: [
+                    { label: 'Coach Effort', acronym: 'EFFORT', id: 'effort', visibility: 'private', scope: 'player' },
+                    { label: 'Team Deflections', acronym: 'DEFL', id: 'deflections', visibility: 'private', scope: 'team' }
+                ]
+            },
+            statsMap: { p1: { pts: 10, effort: 4 } }
+        })).toEqual([
+            { fieldName: 'pts', label: 'PTS' },
+            { fieldName: 'effort', label: 'Coach Effort' },
+            { fieldName: 'fouls', label: 'FOULS' }
+        ]);
+    });
+
     it('builds an absolute stat payload and zeroes the row when a player did not play', () => {
         expect(buildCompletedGamePlayerStatsPayload({
             player: { name: 'Ava Cole', number: '3' },

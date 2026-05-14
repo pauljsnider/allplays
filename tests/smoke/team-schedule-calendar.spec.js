@@ -385,7 +385,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: NATIVE_STUB
     }));
-    await page.route('**/js/stat-leaderboards.js?v=1', (route) => route.fulfill({
+    await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: STAT_STUB

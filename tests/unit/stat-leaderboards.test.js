@@ -6,7 +6,8 @@ import {
   normalizeStatTrackerConfig,
   parseAdvancedStatDefinitions,
   summarizePlayerTopStats,
-  validateStatDefinitionsForPublicLeaderboards
+  validateStatDefinitionsForPublicLeaderboards,
+  splitPlayerStatsByVisibility
 } from '../../js/stat-leaderboards.js';
 
 describe('stat leaderboard helpers', () => {
@@ -17,7 +18,7 @@ describe('stat leaderboard helpers', () => {
       columns: ['PTS', 'REB', 'AST']
     });
 
-    expect(normalized.columns).toEqual(['PTS', 'REB', 'AST']);
+    expect(normalized.columns).toEqual(['PTS', 'REB']);
     expect(normalized.statDefinitions).toEqual([
       expect.objectContaining({
         id: 'pts',
@@ -89,6 +90,22 @@ PTS=pts|visibility=public|scope=player|topStat=true
     expect(validateStatDefinitionsForPublicLeaderboards(definitions)).toEqual({
       valid: false,
       errors: ['Hustle cannot be a Top Stat unless visibility is public and scope is player.']
+    });
+  });
+
+  it('splits private player stats away from public stat storage', () => {
+    const config = normalizeStatTrackerConfig({
+      columns: ['PTS', 'EFFORT'],
+      statDefinitions: [
+        { label: 'PTS', acronym: 'PTS' },
+        { label: 'Coach Effort', acronym: 'EFFORT', id: 'effort', visibility: 'private', scope: 'player' },
+        { label: 'Team Deflections', acronym: 'DEFL', id: 'deflections', visibility: 'private', scope: 'team' }
+      ]
+    });
+
+    expect(splitPlayerStatsByVisibility(config, { pts: 12, effort: 4, deflections: 9 })).toEqual({
+      publicStats: { pts: 12, deflections: 9 },
+      privateStats: { effort: 4 }
     });
   });
 
