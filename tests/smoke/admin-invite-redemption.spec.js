@@ -146,7 +146,6 @@ export function normalizeStreamVolunteerEmailList(streamVolunteerEmails) {
 `;
 
 const ACCEPT_INVITE_DB_STUB = `
-window.__acceptInviteCalls = [];
 
 export async function validateAccessCode(code) {
     window.__acceptInviteCalls.push({ type: 'validate', code });
