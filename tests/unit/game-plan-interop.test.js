@@ -17,22 +17,20 @@ describe('game plan interop helpers', () => {
     });
   });
 
-  it('maps each legacy game-plan period-time-position shape to a Game Day substitution point', () => {
+  it('consolidates legacy period-time-position keys by keeping the highest timeNum per position', () => {
     const plan = buildRotationPlanFromGamePlan({
       numPeriods: 2,
       lineups: {
         '1-7-keeper': 'p1',
-        '1-14-keeper': 'p2',
-        '1-21-keeper': 'p4',
+        '1-14-keeper': 'p2',  // higher timeNum — should win for keeper in H1
+        '1-21-keeper': 'p4',  // highest timeNum — wins for keeper in H1
         '2-7-striker': 'p3'
       }
     });
 
     expect(plan).toEqual({
-      "H1 7'": { keeper: 'p1' },
-      "H1 14'": { keeper: 'p2' },
-      "H1 21'": { keeper: 'p4' },
-      "H2 7'": { striker: 'p3' }
+      H1: { keeper: 'p4' },
+      H2: { striker: 'p3' }
     });
   });
 
@@ -60,8 +58,24 @@ describe('game plan interop helpers', () => {
     });
 
     expect(plan).toEqual({
-      "Q1 4'": { pg: 'p1' },
-      "Q2 4'": { pg: 'p2' }
+      Q1: { pg: 'p1' },
+      Q2: { pg: 'p2' }
+    });
+  });
+
+  it('prioritizes the latest player assignment (highest timeNum) for legacy data', () => {
+    const gamePlan = {
+      numPeriods: 2,
+      lineups: {
+        '1-10-F': 'playerA',
+        '1-20-F': 'playerB',  // higher timeNum — should win
+        '1-5-G': 'playerC',
+        '1-15-G': 'playerD',  // higher timeNum — should win
+      },
+    };
+
+    expect(buildRotationPlanFromGamePlan(gamePlan)).toEqual({
+      H1: { F: 'playerB', G: 'playerD' },
     });
   });
 });
