@@ -40,8 +40,12 @@ export function sanitizeTelemetryProperties(properties = {}, depth = 0) {
         } else if (typeof value === 'boolean') {
             clean[cleanKey] = value;
         } else if (typeof value === 'number') {
-            const sanitizedNumber = sanitizeTelemetryText(value, 160);
-            clean[cleanKey] = sanitizedNumber === String(value) ? value : sanitizedNumber;
+            // Only mask phone-pattern numbers; preserve all other numeric metrics as-is.
+            // Running the full sanitizeTelemetryText (\b\d{5,}\b) would corrupt legitimate
+            // large metrics like transferSize or engagementMs.
+            const asString = String(value);
+            const maskedPhone = asString.replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '[phone]');
+            clean[cleanKey] = maskedPhone !== asString ? maskedPhone : value;
         } else if (Array.isArray(value)) {
             clean[cleanKey] = value.slice(0, 10).map((item) => sanitizeTelemetryText(item, 60));
         } else if (typeof value === 'object') {
