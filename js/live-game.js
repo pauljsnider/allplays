@@ -620,6 +620,7 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
       }
       recordedVideo.poster = state.videoPlayback.posterUrl || '';
       recordedVideo.classList.remove('hidden');
+      recordedVideo.removeAttribute('hidden');
     }
     renderRecordedReplayTools();
     if (videoTab) videoTab.classList.remove('hidden');
