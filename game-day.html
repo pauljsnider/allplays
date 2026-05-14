@@ -1548,10 +1548,43 @@ Assistant:`;
             markAiChatContextDirty();
             if (formationId) {
                 const f = FORMATIONS[formationId];
-                // Init empty plan for each period
                 const periods = getPeriods(formationId);
-                state.rotationPlan = {};
-                periods.forEach(p => { state.rotationPlan[p] = {}; });
+
+                // Determine if auto-population is needed: only if none of the current formation's
+                // periods have assignments. This correctly handles formation switching (e.g. H1/H2 → Q1-Q4).
+                const hasAnyExistingAssignments = periods.some(
+                    p => state.rotationPlan[p] && Object.keys(state.rotationPlan[p]).length > 0
+                );
+
+                // Initialize state.rotationPlan and periods if they are completely empty.
+                // This block runs if it's a new game or a game with no saved lineup yet.
+                if (!state.rotationPlan || Object.keys(state.rotationPlan).length === 0 || !hasAnyExistingAssignments) {
+                    state.rotationPlan = {}; // Reset or ensure it's an empty object
+                    periods.forEach(p => { state.rotationPlan[p] = {}; }); // Initialize all periods as empty
+
+                    if (periods.length > 0) {
+                        const activePeriod = periods[0];
+                        const playerPool = getGoingPlayerPool();
+
+                        // Assign players one-to-one to positions in the active period (first period)
+                        // until positions are filled or players run out. This addresses Acceptance Criteria 1.
+                        f.positions.forEach((pos, index) => {
+                            if (playerPool[index]) { // Check if a player exists at this index
+                                state.rotationPlan[activePeriod][pos.id] = playerPool[index].id;
+                            }
+                        });
+                    }
+                } else {
+                    // If there's an existing rotation (i.e., hasAnyExistingAssignments is true),
+                    // ensure any newly added periods for the new formation are initialized as empty.
+                    // This prevents issues if a new formation has more periods than the old one.
+                    periods.forEach(p => {
+                        if (!state.rotationPlan[p]) {
+                            state.rotationPlan[p] = {};
+                        }
+                    });
+                }
+
                 renderPeriodTabs();
                 renderRotationCanvas();
                 renderBenchPool();
@@ -1560,6 +1593,8 @@ Assistant:`;
                 document.getElementById('rotation-canvas').innerHTML = '<div class="text-xs text-gray-400 text-center py-4">Select a formation to build your lineup</div>';
                 document.getElementById('bench-pool').innerHTML = '<div class="text-xs text-gray-400">Select a formation to see available players</div>';
                 document.getElementById('playing-time-bars').classList.add('hidden');
+                // Also clear the rotation plan if no formation is selected
+                state.rotationPlan = {};
             }
         };
 
