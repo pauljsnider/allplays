@@ -103,6 +103,7 @@
             background: #1d4ed8;
         }
     </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -393,6 +394,14 @@
                         };
                     });
                 }
+
+                // Synchronize opponentPlayers array with loaded gameState.opponentStats
+                // This ensures the UI reflects saved opponent names, and handles dynamically added players.
+                opponentPlayers = Object.entries(gameState.opponentStats).map(([id, stats]) => ({
+                    id: id,
+                    name: stats.name || '',
+                    notes: '' // Notes are not stored in gameState.opponentStats directly upon initialization/load, so keep empty.
+                }));
 
                 document.getElementById('game-title').textContent = `vs. ${escapeHtml(game.opponent)}`;
                 document.getElementById('game-meta').textContent = escapeHtml(team.name);

@@ -1431,6 +1431,7 @@ async function init() {
           const key = col.toLowerCase();
           if (data[key] !== undefined) stats[key] = data[key];
         });
+        if (data.fouls !== undefined) stats.fouls = data.fouls;
         return { id, name: data.name || '', number: data.number || '', stats };
       });
     } else {

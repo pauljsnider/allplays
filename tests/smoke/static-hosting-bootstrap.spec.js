@@ -25,10 +25,7 @@ test.describe('public smoke pages', () => {
         test(`${definition.name} renders`, async ({ page, baseURL }) => {
             await assertPageBootsWithoutFatalErrors(page, {
                 baseURL,
-                path: definition.path,
-                titlePatterns: definition.titlePatterns,
-                readySelectors: definition.readySelectors,
-                forbiddenTexts: definition.forbiddenTexts
+                ...definition
             });
         });
     }
@@ -39,10 +36,7 @@ test.describe('preview boot smoke pages', () => {
         test(`${definition.name} boots without fatal runtime errors`, async ({ page, baseURL }) => {
             await assertPageBootsWithoutFatalErrors(page, {
                 baseURL,
-                path: definition.path,
-                titlePatterns: definition.titlePatterns,
-                readySelectors: definition.readySelectors,
-                forbiddenTexts: definition.forbiddenTexts
+                ...definition
             });
         });
     }
@@ -59,10 +53,7 @@ test.describe('authenticated smoke pages', () => {
             await test.step(definition.name, async () => {
                 await assertPageBootsWithoutFatalErrors(page, {
                     baseURL,
-                    path: definition.path,
-                    titlePatterns: definition.titlePatterns,
-                    readySelectors: definition.readySelectors,
-                    forbiddenTexts: definition.forbiddenTexts
+                    ...definition
                 });
             });
         }

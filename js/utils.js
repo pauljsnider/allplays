@@ -192,6 +192,14 @@ export function renderHeader(container, user) {
   updateNav('desktop');
   updateNav('mobile');
 
+  // Keep telemetry available on new pages that use the shared header but miss
+  // the global module tag.
+  try {
+    import('./telemetry.js?v=1').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+  } catch (e) {
+    console.warn('[Telemetry] Failed to initialize:', e);
+  }
+
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
@@ -1369,6 +1377,7 @@ export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
     date: eventDate,
     location: event.location || 'TBD',
     status: getCalendarEventStatus(event),
+    end: event?.dtend instanceof Date ? event.dtend : null, // Add this line
     source: 'ics'
   };
 }

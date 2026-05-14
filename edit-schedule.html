@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -233,15 +234,17 @@
                                         <option value="pool_seed">Pool seed</option>
                                         <option value="game_result">Winner/loser of prior game</option>
                                     </select>
-                                    <input type="text" id="tournamentHomeTeamName" placeholder="Team name"
-                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentHomeTeamFields" data-tournament-slot-fields="team">
+                                        <input type="text" id="tournamentHomeTeamName" placeholder="Team name"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    </div>
+                                    <div id="tournamentHomePoolSeedFields" data-tournament-slot-fields="pool_seed" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentHomePoolName" placeholder="Pool name"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <input type="number" id="tournamentHomeSeed" min="1" placeholder="Seed"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                     </div>
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentHomeGameResultFields" data-tournament-slot-fields="game_result" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentHomeGameId" placeholder="Prior game ID"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <select id="tournamentHomeOutcome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
@@ -257,15 +260,17 @@
                                         <option value="pool_seed">Pool seed</option>
                                         <option value="game_result">Winner/loser of prior game</option>
                                     </select>
-                                    <input type="text" id="tournamentAwayTeamName" placeholder="Team name"
-                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentAwayTeamFields" data-tournament-slot-fields="team">
+                                        <input type="text" id="tournamentAwayTeamName" placeholder="Team name"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    </div>
+                                    <div id="tournamentAwayPoolSeedFields" data-tournament-slot-fields="pool_seed" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentAwayPoolName" placeholder="Pool name"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <input type="number" id="tournamentAwaySeed" min="1" placeholder="Seed"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                     </div>
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentAwayGameResultFields" data-tournament-slot-fields="game_result" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentAwayGameId" placeholder="Prior game ID"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <select id="tournamentAwayOutcome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
@@ -985,19 +990,29 @@
             document.getElementById('tournament-settings').classList.toggle('hidden', !isTournament);
         }
 
+        function updateTournamentSlotVisibility(prefix) {
+            const sourceType = document.getElementById(`tournament${prefix}SourceType`).value || 'team';
+            document.getElementById(`tournament${prefix}TeamFields`).classList.toggle('hidden', sourceType !== 'team');
+            document.getElementById(`tournament${prefix}PoolSeedFields`).classList.toggle('hidden', sourceType !== 'pool_seed');
+            document.getElementById(`tournament${prefix}GameResultFields`).classList.toggle('hidden', sourceType !== 'game_result');
+        }
+
         function readTournamentSlot(prefix) {
             const sourceType = document.getElementById(`tournament${prefix}SourceType`).value || 'team';
-            return {
-                sourceType,
-                teamName: document.getElementById(`tournament${prefix}TeamName`).value.trim() || null,
-                poolName: document.getElementById(`tournament${prefix}PoolName`).value.trim() || null,
-                seed: (() => {
-                    const seedValue = Number.parseInt(document.getElementById(`tournament${prefix}Seed`).value, 10);
-                    return Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null;
-                })(),
-                gameId: document.getElementById(`tournament${prefix}GameId`).value.trim() || null,
-                outcome: document.getElementById(`tournament${prefix}Outcome`).value || 'winner'
-            };
+            const slot = { sourceType };
+            if (sourceType === 'pool_seed') {
+                const seedValue = Number.parseInt(document.getElementById(`tournament${prefix}Seed`).value, 10);
+                slot.poolName = document.getElementById(`tournament${prefix}PoolName`).value.trim() || null;
+                slot.seed = Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null;
+                return slot;
+            }
+            if (sourceType === 'game_result') {
+                slot.gameId = document.getElementById(`tournament${prefix}GameId`).value.trim() || null;
+                slot.outcome = document.getElementById(`tournament${prefix}Outcome`).value || 'winner';
+                return slot;
+            }
+            slot.teamName = document.getElementById(`tournament${prefix}TeamName`).value.trim() || null;
+            return slot;
         }
 
         function populateTournamentSlot(prefix, slot = {}) {
@@ -1007,6 +1022,7 @@
             document.getElementById(`tournament${prefix}Seed`).value = slot.seed || '';
             document.getElementById(`tournament${prefix}GameId`).value = slot.gameId || '';
             document.getElementById(`tournament${prefix}Outcome`).value = slot.outcome || 'winner';
+            updateTournamentSlotVisibility(prefix);
         }
 
         function resetTournamentForm() {
@@ -2030,6 +2046,7 @@
                         officiatingCoverageStatus: event.officiatingCoverageStatus || null,
                         rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
+                        liveStatus: event.liveStatus || null,
                         sourceMetadata: event.sourceMetadata || null,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
@@ -3011,6 +3028,8 @@
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
         document.getElementById('competitionType').addEventListener('change', updateTournamentSettingsVisibility);
+        document.getElementById('tournamentHomeSourceType').addEventListener('change', () => updateTournamentSlotVisibility('Home'));
+        document.getElementById('tournamentAwaySourceType').addEventListener('change', () => updateTournamentSlotVisibility('Away'));
         document.getElementById('tournament-standings-modal-close').addEventListener('click', closeTournamentStandingsModal);
         document.getElementById('cancel-tournament-standings-btn').addEventListener('click', closeTournamentStandingsModal);
         document.getElementById('tournament-standings-modal-backdrop').addEventListener('click', closeTournamentStandingsModal);

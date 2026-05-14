@@ -25,6 +25,13 @@ describe('help navigation wiring', () => {
         expect(bannerJs).toContain("label: 'Help'");
     });
 
+    it('applies team help role query parameters before rendering workflows', () => {
+        const helpHtml = readRepoFile('help.html');
+        expect(helpHtml).toContain("new URLSearchParams(window.location.search).get('role')");
+        expect(helpHtml).toContain('option.value.toLowerCase() === requestedRoleKey');
+        expect(helpHtml).toMatch(/applyRoleFromUrl\(\);\s*searchInput\.addEventListener/);
+    });
+
     it('renders multi-page help portal links', () => {
         const helpHtml = readRepoFile('help.html');
         expect(helpHtml).toContain('href="workflow-getting-started.html"');
