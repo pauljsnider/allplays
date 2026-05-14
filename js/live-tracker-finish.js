@@ -125,7 +125,7 @@ export function buildFinishCompletionPlan({
       hasNonZeroStats = true;
     }
 
-    const actuallyParticipated = playerTimeMs > 0 || hasNonZeroStats;
+        const actuallyParticipated = !!safeStatsByPlayerId[player.id];
 
     return {
       playerId: player.id,
