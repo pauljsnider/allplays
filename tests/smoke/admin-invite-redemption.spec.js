@@ -304,5 +304,6 @@ test('accept-invite redeems an admin invite into dashboard access', async ({ pag
 
     await expect(page.locator('#success-message')).toContainText("You've been added to the team.");
 
+    await page.waitForURL(/\/dashboard\.html$/);
     await expect(page).toHaveURL(/\/dashboard\.html$/);
 });
