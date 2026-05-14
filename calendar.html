@@ -330,6 +330,7 @@
                                     type: 'practice',
                                     title: occ.title || 'Practice',
                                     date: occ.date instanceof Date ? occ.date : new Date(occ.date),
+                                    end: occ.end || null, // Add this line
                                     location: occ.location || 'TBD',
                                     status: game.status,
                                     isHome: null,
@@ -364,6 +365,7 @@
                                 type: game.type || 'game',
                                 title: game.type === 'practice' ? (game.title || 'Practice') : `vs. ${game.opponent || 'TBD'}`,
                                 date,
+                                end: game.endDate?.toDate ? game.endDate.toDate() : (game.endDate ? new Date(game.endDate) : null), // Add this line
                                 location: game.location || 'TBD',
                                 status: game.status,
                                 isHome: game.isHome,
@@ -799,7 +801,17 @@
                 if (seen.has(dedupeKey)) return;
                 seen.add(dedupeKey);
                 const start = fmtDate(ev.date);
-                const end = fmtDate(new Date(ev.date.getTime() + 60 * 60 * 1000));
+                let endDate = null;
+                if (ev.end instanceof Date && !isNaN(ev.end)) {
+                    endDate = ev.end;
+                } else {
+                    let durationMs = 60 * 60 * 1000; // Default 1 hour
+                    if (ev.type === 'game') {
+                        durationMs = 2 * 60 * 60 * 1000; // 2 hours for games
+                    }
+                    endDate = new Date(ev.date.getTime() + durationMs);
+                }
+                const end = fmtDate(endDate);
                 lines.push(
                     'BEGIN:VEVENT',
                     `UID:${dedupeKey}@allplays`,
