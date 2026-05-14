@@ -700,6 +700,7 @@
                     status.textContent = `Error: ${error.message}`;
                 } finally {
                     removeBtn.disabled = false;
+                    uploadBtn.disabled = false; // Re-enable upload button after removal
                 }
             });
         }
