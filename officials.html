@@ -140,6 +140,10 @@
         }
 
         async function refresh() {
+            if (!teamId) {
+                document.getElementById('officials-status').textContent = 'Missing teamId.';
+                return;
+            }
             games = await getGames(teamId);
             renderAssignedGames();
             renderOpenSlots();
