@@ -619,7 +619,9 @@ function setupVideoPanel(nextPlayback = resolveVideoPlayback()) {
         recordedVideo.src = state.videoPlayback.sourceUrl || '';
       }
       recordedVideo.poster = state.videoPlayback.posterUrl || '';
-      recordedVideo.classList.remove('hidden');
+      if (!isGatedRecordedReplay) {
+        recordedVideo.classList.remove('hidden');
+      }
       recordedVideo.removeAttribute('hidden');
     }
     renderRecordedReplayTools();
