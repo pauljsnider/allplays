@@ -738,8 +738,8 @@ test('live game archived replay Team Pass gate is off by default', async ({ page
 
     await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#video-paywall')).toBeVisible();
-    await expect(page.locator('#recorded-replay-video')).toBeHidden();
+    await expect(page.locator('#video-paywall')).toBeHidden();
+    await expect(page.locator('#recorded-replay-video')).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
@@ -756,8 +756,8 @@ test('live game archived replay Team Pass gate locks replay when config is enabl
 
     await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1&replay=true`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#video-paywall')).toBeHidden();
-    await expect(page.locator('#recorded-replay-video')).toBeVisible();
+    await expect(page.locator('#video-paywall')).toBeVisible();
+    await expect(page.locator('#recorded-replay-video')).toBeHidden();
     // The text assertion for video-paywall is now removed because it's hidden.
     // If needed, we could add a check for the absence of the 'Team Pass required' text elsewhere.
     // For minimal change, just remove the assertion if the element is hidden.
