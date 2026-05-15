@@ -900,7 +900,8 @@
                     };
                 }
                 const hasExplicitStatTrackerConfig = !!String(currentGame?.statTrackerConfigId || '').trim();
-                currentGoalSportProfile = hasExplicitStatTrackerConfig
+                const hasResolvedStatTrackerConfig = !!String(currentConfig?.id || '').trim();
+                currentGoalSportProfile = hasExplicitStatTrackerConfig || hasResolvedStatTrackerConfig
                     ? null
                     : getGoalSportProfile({ game: currentGame, team: currentTeam, config: currentConfig });
 
