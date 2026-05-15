@@ -36,7 +36,7 @@ describe('admin invite signup cache busting', () => {
 
         for (const relativePath of authConsumers) {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            expect(source).toContain('auth.js?v=14');
+            expect(source).toContain('auth.js?v=15');
         }
     });
 });
