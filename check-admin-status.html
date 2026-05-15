@@ -1,88 +1,118 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
     <title>Admin Status - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="module" src="/js/telemetry.js?v=1"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        background: radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          #f8fafc;
+        color: #0f172a;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+      }
+      .container {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 1rem;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        padding: 2rem;
+        text-align: center;
+        max-width: 90%;
+        width: 400px;
+      }
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        color: #1f2937;
+      }
+      #admin-status-display {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #4f46e5;
+        margin-top: 1.5rem;
+      }
+      .error-message {
+        color: #ef4444;
+        font-weight: 500;
+      }
+      .loading-message {
+        color: #6b7280;
+      }
+      .back-link {
+        display: inline-block;
+        margin-top: 1.5rem;
+        color: #4338ca;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .back-link:hover {
+        text-decoration: underline;
+      }
+    </style>
 </head>
-<body class="bg-slate-50 min-h-screen flex flex-col">
-    <div id="header-container"></div>
-
-    <main class="flex-grow max-w-3xl w-full mx-auto px-4 py-8">
-        <section class="bg-white border border-slate-200 rounded-lg shadow-sm p-6 space-y-6">
-            <div>
-                <p class="text-sm font-semibold uppercase tracking-wide text-blue-700">Admin entitlement check</p>
-                <h1 class="text-3xl font-bold text-slate-900 mt-2">Check Admin Status</h1>
-                <p class="text-slate-600 mt-2">Use this page before opening the platform admin dashboard to confirm whether your signed-in account has the Firestore <code class="bg-slate-100 px-1 rounded">isAdmin</code> entitlement.</p>
-            </div>
-
-            <div id="status-card" class="border border-slate-200 rounded-lg p-4 bg-slate-50" aria-live="polite">
-                <p id="admin-status" class="text-lg font-semibold text-slate-900">Checking admin status...</p>
-                <dl id="account-details" class="mt-4 grid gap-3 text-sm text-slate-700 hidden">
-                    <div>
-                        <dt class="font-semibold text-slate-900">Email</dt>
-                        <dd id="account-email">—</dd>
-                    </div>
-                    <div>
-                        <dt class="font-semibold text-slate-900">User ID</dt>
-                        <dd id="account-uid" class="break-all">—</dd>
-                    </div>
-                </dl>
-            </div>
-
-            <div id="next-steps" class="text-sm text-slate-700 space-y-2">
-                <p>If you are not logged in, sign in and reload this page. If admin status is not true, stop and request admin enablement before using <code class="bg-slate-100 px-1 rounded">admin.html</code>.</p>
-            </div>
-
-            <div class="flex flex-wrap gap-3">
-                <a href="login.html" class="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700">Sign in</a>
-                <a href="admin.html" class="inline-flex items-center justify-center rounded-md bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-600">Open admin dashboard</a>
-                <button id="reload-button" type="button" class="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">Reload check</button>
-            </div>
-        </section>
-    </main>
-
-    <div id="footer-container"></div>
+<body>
+    <div class="container">
+        <h1>Admin Entitlement Status</h1>
+        <p class="loading-message">Loading admin status...</p>
+        <div id="admin-status-display"></div>
+        <a href="workflow-admin-ops.html" class="back-link">← Back to Admin Workflow</a>
+    </div>
 
     <script type="module">
         import { checkAuth } from './js/auth.js?v=14';
-        import { renderHeader, renderFooter } from './js/utils.js?v=8';
+        import { renderHeader, renderFooter } from './js/utils.js?v=8'; // Assuming utils.js is needed for consistency or future header/footer
 
-        const statusEl = document.getElementById('admin-status');
-        const detailsEl = document.getElementById('account-details');
-        const emailEl = document.getElementById('account-email');
-        const uidEl = document.getElementById('account-uid');
-        const statusCardEl = document.getElementById('status-card');
-
-        function setStatus(message, classes) {
-            statusEl.textContent = message;
-            statusCardEl.className = `border rounded-lg p-4 ${classes}`;
-        }
-
-        renderFooter(document.getElementById('footer-container'));
-        document.getElementById('reload-button').addEventListener('click', () => window.location.reload());
+        const adminStatusDisplay = document.getElementById('admin-status-display');
 
         checkAuth((user) => {
-            if (!user) {
-                setStatus('Not logged in', 'border-amber-200 bg-amber-50');
-                detailsEl.classList.add('hidden');
-                return;
+            if (user) {
+                if (user.isAdmin) {
+                    adminStatusDisplay.innerHTML = '<span class="text-green-600">isAdmin: TRUE</span>';
+                    adminStatusDisplay.previousElementSibling.remove(); // Remove loading message
+                } else {
+                    adminStatusDisplay.innerHTML = '<span class="text-red-600">isAdmin: FALSE</span><p class="error-message">You do not have admin entitlement.</p>';
+                    adminStatusDisplay.previousElementSibling.remove(); // Remove loading message
+                }
+            } else {
+                adminStatusDisplay.innerHTML = '<span class="text-red-600">Not logged in</span><p class="error-message">Please log in to check your admin status.</p>';
+                adminStatusDisplay.previousElementSibling.remove(); // Remove loading message
+                // Optional: redirect to login page if not logged in
+                // window.location.href = 'login.html';
             }
-
-            renderHeader(document.getElementById('header-container'), user);
-            detailsEl.classList.remove('hidden');
-            emailEl.textContent = user.email || user.profileEmail || 'No email available';
-            uidEl.textContent = user.uid || 'No user ID available';
-
-            if (user.isAdmin === true) {
-                setStatus('isAdmin field is TRUE', 'border-green-200 bg-green-50');
-                return;
-            }
-
-            setStatus('isAdmin field is not true', 'border-red-200 bg-red-50');
         });
+
+        // Initialize header/footer if needed, though this page is simple.
+        // renderHeader(document.getElementById('header-container'), null);
+        // renderFooter(document.getElementById('footer-container'));
     </script>
 </body>
 </html>
