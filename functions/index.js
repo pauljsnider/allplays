@@ -529,8 +529,11 @@ function normalizeTelemetryObject(value, depth = 0) {
 
     if (rawValue === null || rawValue === undefined) {
       normalized[cleanKey] = null;
-    } else if (typeof rawValue === 'boolean' || typeof rawValue === 'number') {
+    } else if (typeof rawValue === 'boolean') {
       normalized[cleanKey] = rawValue;
+    } else if (typeof rawValue === 'number') {
+      const sanitizedNumber = normalizeTelemetryString(rawValue, 240);
+      normalized[cleanKey] = sanitizedNumber === String(rawValue) ? rawValue : sanitizedNumber;
     } else if (Array.isArray(rawValue)) {
       normalized[cleanKey] = rawValue
         .slice(0, 10)
