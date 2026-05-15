@@ -19,3 +19,11 @@ export function buildGameNoteLogText(noteText, type = 'text') {
   if (!note) return '';
   return type === 'voice' ? `Voice note: ${note}` : `Note: ${note}`;
 }
+
+export function buildGoalSportNoteText(teamLabel, noteText) {
+  const note = normalizeGameNoteText(noteText);
+  if (!note) return '';
+  const label = normalizeGameNoteText(teamLabel);
+  if (!label) return `Goal: ${note}`;
+  return `${label} goal: ${note}`;
+}

@@ -3,7 +3,8 @@ import {
   isVoiceRecognitionSupported,
   normalizeGameNoteText,
   appendGameSummaryLine,
-  buildGameNoteLogText
+  buildGameNoteLogText,
+  buildGoalSportNoteText
 } from '../../js/live-tracker-notes.js';
 
 describe('live tracker note helpers', () => {
@@ -37,5 +38,11 @@ describe('live tracker note helpers', () => {
 
   it('formats voice note log entries', () => {
     expect(buildGameNoteLogText('Great closeout by 12', 'voice')).toBe('Voice note: Great closeout by 12');
+  });
+
+  it('formats simple goal tracker notes with scoring context', () => {
+    expect(buildGoalSportNoteText('Jr KC Current', ' Header off corner ')).toBe('Jr KC Current goal: Header off corner');
+    expect(buildGoalSportNoteText('', 'Set piece')).toBe('Goal: Set piece');
+    expect(buildGoalSportNoteText('Jr KC Current', '   ')).toBe('');
   });
 });
