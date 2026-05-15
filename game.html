@@ -348,12 +348,12 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats } from './js/db.js?v=29';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats } from './js/db.js?v=30';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=14';
-        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=11";
-        import { db } from './js/firebase.js?v=12';
+        import { checkAuth } from './js/auth.js?v=15';
+        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=12";
+        import { db } from './js/firebase.js?v=13';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
         import { resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=1';
