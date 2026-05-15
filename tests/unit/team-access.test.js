@@ -139,6 +139,25 @@ describe('team access helpers', () => {
     });
   });
 
+  it('returns combined stream and score access for volunteers with both permissions', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        scorekeeping: { mode: 'selected', memberIds: ['dual-volunteer'] },
+        streaming: { mode: 'selected', memberIds: ['dual-volunteer'] }
+      }
+    };
+    const game = { id: 'game-1', status: 'scheduled' };
+
+    expect(hasScorekeepingTeamAccess({ uid: 'dual-volunteer' }, team, game)).toBe(true);
+    expect(hasStreamTeamAccess({ uid: 'dual-volunteer' }, team, game)).toBe(true);
+    expect(getTeamAccessInfo({ uid: 'dual-volunteer' }, team, { game })).toEqual({
+      hasAccess: true,
+      accessLevel: 'stream-score',
+      exitUrl: 'team.html#teamId=team-1'
+    });
+  });
+
   it('denies selected scorekeeper access to admin-only management when the game is cancelled', () => {
     const team = {
       ...TEAM,
