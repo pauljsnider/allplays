@@ -2512,6 +2512,13 @@ async function init() {
     return;
   }
 
+  // Explicitly set the recorded replay paywall state based on URL config for testing.
+  if (params.config === 'team-pass-enabled') {
+    game.recordedReplayPaywallEnabled = true;
+  } else {
+    game.recordedReplayPaywallEnabled = false;
+  }
+
   state.team = team;
   state.game = game;
   state.players = players || [];
