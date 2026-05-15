@@ -74,7 +74,7 @@ export function isValidPremiumEntitlementRecord(data, { scope, teamId = '', user
 
 async function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=10');
+    return import('./firebase.js?v=11');
 }
 
 function dataFromSnapshot(docSnap) {

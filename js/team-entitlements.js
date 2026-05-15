@@ -1,4 +1,4 @@
-import { db, doc, getDoc } from './firebase.js?v=10';
+import { db, doc, getDoc } from './firebase.js?v=11';
 import {
     TEAM_PASS_TIER,
     buildTeamEntitlementId,
