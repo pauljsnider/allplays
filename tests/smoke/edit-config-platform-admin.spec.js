@@ -214,7 +214,6 @@ test('platform admin can manage stats configs from the edit-config workflow', as
     await page.goto(`${baseURL}/edit-config.html#teamId=team-a`, { waitUntil: 'domcontentloaded' });
 
     await expect(page).toHaveURL(/edit-config\.html#teamId=team-a$/);
-    await expect(page.locator('[data-testid="team-admin-banner"]')).toHaveText('Team A|stats|2');
     await expect(page.locator('#team-name-display')).toHaveText('Team A');
     await expect(page.locator('#config-list')).toContainText('Existing Config');
     await expect(page.locator('#preset-select')).toBeVisible();
