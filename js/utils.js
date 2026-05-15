@@ -215,6 +215,19 @@ export function renderHeader(container, user) {
   }
 }
 
+export function getSafeImageUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(String(value), window.location.origin);
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.href;
+    }
+  } catch (err) {
+    return '';
+  }
+  return '';
+}
+
 export function renderFooter(container) {
   container.innerHTML = `
       <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">

@@ -103,7 +103,7 @@
 
   <script type="module">
     import { getTeams } from './js/db.js?v=30';
-    import { renderHeader, renderFooter, escapeHtml, resolveZip } from './js/utils.js?v=9'; // Updated import
+    import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=9'; // Updated import
     import { checkAuth } from './js/auth.js?v=14';
 
     checkAuth((user) => {
@@ -112,19 +112,6 @@
     });
 
     renderFooter(document.getElementById('footer-container'));
-
-    function getSafeImageUrl(value) {
-      if (!value) return '';
-      try {
-        const url = new URL(String(value), window.location.origin);
-        if (url.protocol === 'http:' || url.protocol === 'https:') {
-          return url.href;
-        }
-      } catch (err) {
-        return '';
-      }
-      return '';
-    }
 
     async function loadTeams() {
       try {
