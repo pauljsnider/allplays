@@ -6,7 +6,9 @@ describe('scorekeeping access wiring', () => {
     it('wires Game Day to limited scorekeeping access instead of full admin only', () => {
         const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-        expect(source).toContain("['full', 'scorekeep', 'stream'].includes(accessInfo.accessLevel)");
+        expect(source).toContain("['full', 'scorekeep', 'stream', 'stream-score'].includes(accessInfo.accessLevel)");
+        expect(source).toContain("accessInfo.accessLevel === 'stream-score'");
+        expect(source).toContain('renderLimitedStreamAndScoreAccess(accessInfo)');
         expect(source).toContain("accessInfo.accessLevel === 'scorekeep'");
         expect(source).toContain('renderLimitedScorekeepingAccess(accessInfo)');
         expect(source).toContain('Roster management, schedule editing, team settings, and other coach/admin controls remain restricted.');
