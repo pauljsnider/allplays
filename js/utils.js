@@ -217,12 +217,23 @@ export function renderHeader(container, user) {
 
 export function getSafeImageUrl(value) {
   if (!value) return '';
+  const strValue = String(value);
+
+  // Directly check for absolute http/https URLs
+  if (strValue.startsWith('https://') || strValue.startsWith('http://')) {
+    // Basic validation to prevent common scriptable protocols being snuck in
+    if (strValue.match(/^https?:\/\//i)) {
+      return strValue;
+    }
+  }
+
   try {
-    const url = new URL(String(value), window.location.origin);
+    const url = new URL(strValue, window.location.origin);
     if (url.protocol === 'http:' || url.protocol === 'https:') {
       return url.href;
     }
   } catch (err) {
+    // URL constructor failed, likely invalid format or unsupported protocol
     return '';
   }
   return '';
