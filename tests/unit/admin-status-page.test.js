@@ -27,6 +27,6 @@ describe('admin status page', () => {
         expect(statusPageHtml).toContain("import { checkAuth } from './js/auth.js?v=14'");
         expect(statusPageHtml).toContain('isAdmin: TRUE');
         expect(statusPageHtml).toContain('Not logged in');
-        expect(statusPageHtml).toContain('admin.html');
+        expect(statusPageHtml).toContain('workflow-admin-ops.html');
     });
 });
