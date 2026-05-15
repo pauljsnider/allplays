@@ -45,7 +45,19 @@ export function sanitizeTelemetryProperties(properties = {}, depth = 0) {
             // large metrics like transferSize or engagementMs.
             const asString = String(value);
             const maskedPhone = asString.replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '[phone]');
-            clean[cleanKey] = maskedPhone !== asString ? maskedPhone : value;
+            if (maskedPhone !== asString) {
+                clean[cleanKey] = maskedPhone;
+            } else {
+                // If not a phone, check for general sensitive numbers (5 or more digits)
+                // This will catch playerId: 123456789 but not loadMs: 240
+                const maskedNumber = asString.replace(/\b\d{5,}\b/g, '[number]');
+                if (maskedNumber !== asString) {
+                    clean[cleanKey] = maskedNumber;
+                } else {
+                    // Otherwise, preserve the original numeric value
+                    clean[cleanKey] = value;
+                }
+            }
         } else if (Array.isArray(value)) {
             clean[cleanKey] = value.slice(0, 10).map((item) => sanitizeTelemetryText(item, 60));
         } else if (typeof value === 'object') {
