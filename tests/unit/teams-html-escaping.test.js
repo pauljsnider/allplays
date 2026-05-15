@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, getSafeImageUrl } from '../js/utils.js';
+import { escapeHtml, getSafeImageUrl } from '../../js/utils.js';
 
 describe('teams page HTML escaping', () => {
     it('escapes team-supplied text before it is inserted with innerHTML', () => {

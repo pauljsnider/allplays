@@ -49,7 +49,14 @@ function normalizeFirebaseConfig(rawConfig) {
 }
 
 async function fetchFirebaseConfigFromHosting() {
-    const response = await fetch(FIREBASE_INIT_JSON_URL, { cache: 'no-store' });
+    let urlToFetch = FIREBASE_INIT_JSON_URL;
+    if (typeof window === 'undefined') {
+        // In Node.js environment (e.g., Vitest), fetch with a relative URL fails.
+        // Provide a dummy base to allow URL parsing, then the actual fetch will fail
+        // with a network error, which the try/catch can handle.
+        urlToFetch = new URL(FIREBASE_INIT_JSON_URL, 'http://localhost').toString();
+    }
+    const response = await fetch(urlToFetch, { cache: 'no-store' });
     if (!response.ok) {
         throw new Error(`Firebase config request failed (${response.status})`);
     }
