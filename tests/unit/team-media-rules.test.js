@@ -16,8 +16,10 @@ describe('team media Firestore rules', () => {
 
         expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(mediaRules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
-        expect(mediaRules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);');
-        expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);');
+        expect(mediaRules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
+        expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId);');
+        expect(rules).toContain("data.type in ['photo', 'file']");
+        expect(rules).toContain('isAllowedTeamMediaUploadType(data.mimeType)');
         expect(mediaRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
     });
 });

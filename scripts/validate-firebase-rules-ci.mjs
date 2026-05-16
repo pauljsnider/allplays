@@ -37,8 +37,8 @@ assertIncludes(firestoreRules, 'function canReadTeamMediaItem(teamId, itemData)'
 assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaFolder(teamId, resource.data);', 'Firestore media folder read rules');
 assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaItem(teamId, resource.data);', 'Firestore media item read rules');
 assertIncludes(firestoreRules, 'allow create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media folder write rules');
-assertIncludes(firestoreRules, 'allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);', 'Firestore media item create rules');
-assertIncludes(firestoreRules, 'allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);', 'Firestore media item update rules');
+assertIncludes(firestoreRules, 'allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
+assertIncludes(firestoreRules, 'allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId);', 'Firestore media item update rules');
 assertIncludes(firestoreRules, 'allow delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media item delete rules');
 
 assertIncludes(deployProd, 'firestore:rules', 'Production deploy');

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
+import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatConfig, resolvePreferredStatConfigId, resolveLiveStatColumns, resolveGoalSportTrackerProfile, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, isLiveEventVisibleForResetBoundary, collectVisibleLiveEventsSequentially } from '../../js/live-game-state.js';
 
 describe('live game state helpers', () => {
   it('prefers linked opponent team name when opponent is missing', () => {
@@ -72,6 +72,56 @@ describe('live game state helpers', () => {
       ],
       team: { sport: 'Soccer' }
     })).toBe('cfg-only');
+  });
+
+  it('uses the goal-sport simple tracker only when no stat config is resolved by default', () => {
+    expect(resolveGoalSportTrackerProfile({
+      game: { sport: 'Soccer' },
+      team: { sport: 'Soccer' },
+      config: { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
+    })).toBeNull();
+
+    expect(resolveGoalSportTrackerProfile({
+      game: { sport: 'Soccer', statTrackerConfigId: 'cfg-soccer' },
+      team: { sport: 'Soccer' },
+      config: { baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
+    })).toBeNull();
+
+    expect(resolveGoalSportTrackerProfile({
+      game: { sport: 'Soccer' },
+      team: { sport: 'Soccer' },
+      config: { name: 'Default', baseType: 'Soccer', columns: ['GOALS'] }
+    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+  });
+
+  it('lets trackerMode=simple force goal-sport scoring without affecting non-goal sports', () => {
+    expect(resolveGoalSportTrackerProfile({
+      trackerMode: 'simple',
+      game: { sport: 'Soccer' },
+      team: { sport: 'Soccer' },
+      config: { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
+    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+
+    expect(resolveGoalSportTrackerProfile({
+      trackerMode: ' SIMPLE ',
+      game: { sport: 'Hockey' },
+      team: { sport: 'Hockey' },
+      config: { id: 'cfg-hockey', baseType: 'Hockey', columns: ['GOALS', 'SAVES'] }
+    })).toMatchObject({ sport: 'hockey' });
+
+    expect(resolveGoalSportTrackerProfile({
+      trackerMode: 'simple',
+      game: { sport: 'Basketball' },
+      team: { sport: 'Basketball' },
+      config: { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS'] }
+    })).toBeNull();
+
+    expect(resolveGoalSportTrackerProfile({
+      trackerMode: 'simple',
+      game: {},
+      team: { sport: 'Soccer' },
+      config: { id: 'cfg-baseball', baseType: 'Baseball', columns: ['RUNS'] }
+    })).toBeNull();
   });
 
   it('renders persisted opponent identity and injects FLS when config omits fouls', () => {

@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=11';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
+} from './firebase.js?v=12';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=5';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
@@ -45,6 +45,7 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
+import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -97,7 +98,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=2';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -654,11 +655,58 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     return docRef.id;
 }
 
+export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanFolderId = String(folderId || '').trim();
+    const currentUser = auth.currentUser;
+    if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading files.');
+    if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
+    if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file.');
+
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
+
+    const snapshot = await new Promise((resolve, reject) => {
+        uploadTask.on('state_changed', (progressSnapshot) => {
+            if (typeof options.onProgress === 'function') {
+                const percent = progressSnapshot.totalBytes > 0
+                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                    : 0;
+                options.onProgress({
+                    bytesTransferred: progressSnapshot.bytesTransferred,
+                    totalBytes: progressSnapshot.totalBytes,
+                    percent
+                });
+            }
+        }, reject, () => resolve(uploadTask.snapshot));
+    });
+
+    const url = await getDownloadURL(snapshot.ref);
+    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+        folderId: cleanFolderId,
+        title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
+        fileName: String(file.name || '').trim(),
+        type: 'file',
+        url,
+        storagePath,
+        uploadedBy: currentUser.uid,
+        size: Number(file.size || 0),
+        mimeType: file.type,
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
 export async function deleteTeamMediaItem(teamId, item) {
     const cleanTeamId = String(teamId || '').trim();
     const itemId = String(item?.id || '').trim();
     if (!cleanTeamId || !itemId) throw new Error('Media item is required.');
-    if (item?.type === 'photo' && !item.storagePath) {
+    if (['photo', 'file'].includes(item?.type) && !item.storagePath) {
         console.error('Media object missing file reference:', itemId);
         throw new Error('Cannot delete media: missing file reference');
     }
@@ -676,7 +724,7 @@ export async function deleteTeamMediaItem(teamId, item) {
         updatedAt: serverTimestamp()
     });
 
-    if (item?.type === 'photo') {
+    if (['photo', 'file'].includes(item?.type)) {
         try {
             await deleteObject(ref(storage, item.storagePath));
         } catch (error) {
@@ -929,6 +977,88 @@ export async function saveTeamAvailabilityPreferences(teamId, preferences) {
     return normalized;
 }
 
+function mapSnapshotWithIds(snapshot) {
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+function sortByFields(records, fields) {
+    return [...records].sort((a, b) => {
+        for (const field of fields) {
+            const comparison = String(a?.[field] || '').localeCompare(String(b?.[field] || ''));
+            if (comparison !== 0) return comparison;
+        }
+        return 0;
+    });
+}
+
+export async function listOrganizationScheduleControls(teamId) {
+    if (!teamId) throw new Error('Missing team for organization schedule controls');
+
+    const [availabilitySnapshot, organizationBlackoutsSnapshot, venueBlackoutsSnapshot] = await Promise.all([
+        getDocs(collection(db, `teams/${teamId}/venueAvailability`)),
+        getDocs(collection(db, `teams/${teamId}/organizationBlackouts`)),
+        getDocs(collection(db, `teams/${teamId}/venueBlackouts`))
+    ]);
+
+    return {
+        availability: sortByFields(mapSnapshotWithIds(availabilitySnapshot), ['dayOfWeek', 'startTime', 'venueName']),
+        organizationBlackouts: sortByFields(mapSnapshotWithIds(organizationBlackoutsSnapshot), ['startDate', 'endDate']),
+        venueBlackouts: sortByFields(mapSnapshotWithIds(venueBlackoutsSnapshot), ['startDate', 'endDate', 'venueName'])
+    };
+}
+
+export async function createVenueAvailability(teamId, availabilityData = {}) {
+    if (!teamId) throw new Error('Missing team for venue availability');
+    const allowedFields = {
+        venueName: availabilityData.venueName,
+        subVenueName: availabilityData.subVenueName,
+        dayOfWeek: availabilityData.dayOfWeek,
+        startTime: availabilityData.startTime,
+        endTime: availabilityData.endTime,
+        notes: availabilityData.notes
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/venueAvailability`), {
+        ...allowedFields,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
+export async function createOrganizationBlackout(teamId, blackoutData = {}) {
+    if (!teamId) throw new Error('Missing team for organization blackout');
+    const allowedFields = {
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/organizationBlackouts`), {
+        ...allowedFields,
+        scope: 'organization',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
+export async function createVenueBlackout(teamId, blackoutData = {}) {
+    if (!teamId) throw new Error('Missing team for venue blackout');
+    const allowedFields = {
+        venueName: blackoutData.venueName,
+        subVenueName: blackoutData.subVenueName,
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/venueBlackouts`), {
+        ...allowedFields,
+        scope: 'venue',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
 export async function grantScorekeeperAccess(teamId, memberUserId) {
     const normalizedUserId = String(memberUserId || '').trim();
     if (!teamId) throw new Error('Missing team for scorekeeper access');
@@ -950,6 +1080,44 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
         'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function grantStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(docRef);
+    const teamData = teamSnap.exists() ? teamSnap.data() : {};
+    const currentStreamingMode = teamData?.teamPermissions?.streaming?.mode;
+
+    const updatePayload = {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    };
+
+    // Only force streaming mode to 'selected' if it's not currently 'all_confirmed'
+    if (currentStreamingMode !== 'all_confirmed') {
+        updatePayload['teamPermissions.streaming.mode'] = 'selected';
+    }
+
+    await updateDoc(docRef, updatePayload);
+}
+
+export async function revokeStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayRemove(normalizedUserId),
         updatedAt: Timestamp.now()
     });
 }
@@ -3212,6 +3380,13 @@ export async function getTeamFeeBatch(teamId, batchId) {
     const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
     const batchSnap = await getDoc(batchRef);
     return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeBatches(teamId) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'feeBatches');
+    const snapshot = await getDocs(query(batchesRef, orderBy('createdAt', 'desc'), limit(25)));
+    return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
 }
 
 export async function listTeamFeeRecipients(teamId, batchId) {
@@ -5489,16 +5664,7 @@ async function getEventDateForAvailabilityCutoff(teamId, gameId) {
     const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
     const snap = await getDoc(gameRef);
     if (!snap.exists()) return null;
-    const game = snap.data();
-    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
-        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
-        if (!Number.isNaN(occurrenceDate.getTime())) {
-            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
-            return occurrenceDate;
-        }
-    }
-    return baseDate;
+    return resolveAvailabilityCutoffEventDate(snap.data(), instanceDate);
 }
 
 async function assertAvailabilityOpen(teamId, gameId) {
@@ -5935,7 +6101,8 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    const breakdown = buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    return { ...breakdown, players, rsvps };
 }
 
 export async function getPublicTrackingItems(teamId) {
