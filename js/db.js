@@ -1084,6 +1084,44 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     });
 }
 
+export async function grantStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(docRef);
+    const teamData = teamSnap.exists() ? teamSnap.data() : {};
+    const currentStreamingMode = teamData?.teamPermissions?.streaming?.mode;
+
+    const updatePayload = {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    };
+
+    // Only force streaming mode to 'selected' if it's not currently 'all_confirmed'
+    if (currentStreamingMode !== 'all_confirmed') {
+        updatePayload['teamPermissions.streaming.mode'] = 'selected';
+    }
+
+    await updateDoc(docRef, updatePayload);
+}
+
+export async function revokeStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
 export async function addOfficial(teamId, officialData) {
     const payload = {
         ...normalizeOfficialDraft(officialData),
