@@ -64,6 +64,8 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('await postScheduleNotificationTargets({');
         expect(source).toContain('id="send-rsvp-reminder-btn"');
         expect(source).toContain('await sendRsvpReminder(');
+        expect(source).toContain('sendPublicRsvpReminderEmails');
+        expect(source).toContain("'scheduleNotifications.lastRsvpEmailCount': emailResult?.sentCount || 0");
         expect(source).toContain('await maybeNotifyScheduleChange(');
     });
 

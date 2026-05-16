@@ -300,6 +300,53 @@ export function buildRsvpReminderMessage({
     return lines.join('\n');
 }
 
+function getFunctionsBaseUrl(auth) {
+    const configured = globalThis.window?.__ALLPLAYS_CONFIG__?.functionsBaseUrl || globalThis.window?.__ALLPLAYS_CONFIG__?.functions?.baseUrl;
+    if (configured) return String(configured).replace(/\/$/, '');
+
+    const projectId = auth?.app?.options?.projectId;
+    if (!projectId) {
+        throw new Error('Firebase project ID is not configured.');
+    }
+    return `https://us-central1-${projectId}.cloudfunctions.net`;
+}
+
+export async function sendPublicRsvpReminderEmails({
+    auth,
+    teamId,
+    gameId,
+    eventType,
+    eventTitle,
+    eventDate
+} = {}) {
+    const user = auth?.currentUser;
+    if (!user) {
+        throw new Error('Sign in before sending RSVP email reminders.');
+    }
+
+    const token = await user.getIdToken();
+    const response = await fetch(`${getFunctionsBaseUrl(auth)}/sendPublicRsvpEmails`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            teamId,
+            gameId,
+            eventType,
+            eventTitle,
+            eventDate: eventDate instanceof Date ? eventDate.toISOString() : eventDate || null
+        })
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || 'Unable to send RSVP email reminders.');
+    }
+    return payload;
+}
+
 export function getSupportedReminderHours() {
     return [...SUPPORTED_REMINDER_HOURS];
 }

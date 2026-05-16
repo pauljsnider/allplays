@@ -187,6 +187,10 @@ export const Timestamp = {
         return { toDate: () => date };
     }
 };
+export const auth = {
+    currentUser: { getIdToken: async () => 'id-token' },
+    app: { options: { projectId: 'demo-project' } }
+};
 export function deleteField() {
     return Symbol('deleteField');
 }
@@ -271,6 +275,10 @@ export async function postScheduleNotificationTargets() {
 }
 export function buildRsvpReminderMessage() {
     return '';
+}
+
+export async function sendPublicRsvpReminderEmails() {
+    return { sent: false, sentCount: 0, failedCount: 0, failures: [], errorMessage: '' };
 }
 
 export function describeScheduleReminderWindow() {

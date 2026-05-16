@@ -230,6 +230,11 @@ export const Timestamp = {
     }
 };
 
+export const auth = {
+    currentUser: { getIdToken: async () => 'id-token' },
+    app: { options: { projectId: 'demo-project' } }
+};
+
 export function deleteField() {
     return '__delete_field__';
 }
@@ -304,6 +309,10 @@ export async function postScheduleNotificationTargets() {
 
 export function buildRsvpReminderMessage() {
     return '';
+}
+
+export async function sendPublicRsvpReminderEmails() {
+    return { sent: false, sentCount: 0, failedCount: 0, failures: [], errorMessage: '' };
 }
 
 export function describeScheduleReminderWindow() {
