@@ -67,7 +67,8 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page.locator('#help-grid')).not.toHaveClass(/hidden/);
     await expect(page.getByRole('link', { name: 'View file-by-file page reference' })).toBeVisible();
 
-    await page.locator('#help-role').selectOption('Coach');
+    await page.goto(buildUrl(baseURL, '/help.html?context=team&teamId=team-123&role=coach'), { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#help-role')).toHaveValue('Coach');
     const coachResults = filterManifest(manifest, { role: 'Coach' });
     await expect(page.locator('#help-grid article')).toHaveCount(coachResults.length);
     await expect(page.locator('#help-summary')).toHaveText(`${coachResults.length} of ${manifest.length} workflows`);

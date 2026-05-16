@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=11';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
+} from './firebase.js?v=12';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
@@ -45,6 +45,7 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
+import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -83,7 +84,7 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=1';
-import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
+import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
@@ -97,7 +98,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=2';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -118,7 +119,6 @@ const CHAT_REACTIONS = [
     { key: 'clap', emoji: '👏' }
 ];
 const CHAT_REACTION_KEYS = new Set(CHAT_REACTIONS.map(r => r.key));
-
 
 function normalizeDelimitedStrings(value) {
     const values = Array.isArray(value) ? value : String(value || '').split(',');
@@ -215,6 +215,73 @@ async function hasSharedGameUsingConfig(teamId, configId) {
 
     const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
     return snapshots.some((result) => result.status === 'fulfilled' && !result.value.empty);
+}
+
+function daysAgoDate(days) {
+    const safeDays = Number.isFinite(days) ? Math.max(1, days) : 7;
+    return new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+}
+
+function toDateKey(date) {
+    return date.toISOString().slice(0, 10);
+}
+
+function mapSnapshot(snapshot) {
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+export async function getTelemetryEvents({ days = 7, maxEvents = 1500 } = {}) {
+    const startDate = Timestamp.fromDate(daysAgoDate(days));
+    const safeLimit = Math.min(Math.max(Number(maxEvents) || 1500, 100), 5000);
+    const q = query(
+        collection(db, 'telemetryEvents'),
+        where('createdAt', '>=', startDate),
+        orderBy('createdAt', 'desc'),
+        limitQuery(safeLimit)
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetryDaily({ days = 30 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(days + 2, 7), 60))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetryPageDaily({ days = 30, maxPages = 500 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryPagesDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxPages) || 500, 50), 1000))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetryEventDaily({ days = 30, maxEvents = 500 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryEventsDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxEvents) || 500, 50), 1000))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
+export async function getTelemetrySessions({ maxSessions = 200 } = {}) {
+    const q = query(
+        collection(db, 'telemetrySessions'),
+        orderBy('updatedAt', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxSessions) || 200, 50), 500))
+    );
+    return mapSnapshot(await getDocs(q));
 }
 
 export async function uploadTeamPhoto(file) {
@@ -408,12 +475,45 @@ export async function uploadStatSheetPhoto(file) {
     }
 }
 
+import { resolveZip } from './utils.js?v=9'; // Import resolveZip
+
 // Teams
 export async function getTeams(options = {}) {
     const includeInactive = !!options.includeInactive;
+    const locationFilter = String(options.locationFilter || '').trim().toLowerCase();
+
     const q = query(collection(db, "teams"), orderBy("name"));
-    const snapshot = await getDocs(q);
-    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    let teams = (await getDocs(q)).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Apply location filter if provided
+    if (locationFilter) {
+        const filteredTeams = [];
+        const zipToLocationCache = new Map(); // Local cache for this function call
+
+        for (const team of teams) {
+            if (team.zip) {
+                let resolvedLocation = zipToLocationCache.get(team.zip);
+                if (resolvedLocation === undefined) {
+                    resolvedLocation = await resolveZip(team.zip);
+                    zipToLocationCache.set(team.zip, resolvedLocation);
+                }
+
+                const teamLocation = resolvedLocation ? String(resolvedLocation).toLowerCase() : '';
+
+                // Match zip code directly or resolved city/state
+                if (team.zip.toLowerCase().includes(locationFilter) || teamLocation.includes(locationFilter)) {
+                    filteredTeams.push(team);
+                }
+            } else if (team.city && team.state) {
+                const teamCityState = `${team.city.toLowerCase()}, ${team.state.toLowerCase()}`;
+                if (teamCityState.includes(locationFilter)) {
+                    filteredTeams.push(team);
+                }
+            }
+        }
+        teams = filteredTeams;
+    }
+
     return filterTeamsByActive(teams, includeInactive);
 }
 
@@ -588,11 +688,58 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     return docRef.id;
 }
 
+export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanFolderId = String(folderId || '').trim();
+    const currentUser = auth.currentUser;
+    if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading files.');
+    if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
+    if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file.');
+
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
+
+    const snapshot = await new Promise((resolve, reject) => {
+        uploadTask.on('state_changed', (progressSnapshot) => {
+            if (typeof options.onProgress === 'function') {
+                const percent = progressSnapshot.totalBytes > 0
+                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                    : 0;
+                options.onProgress({
+                    bytesTransferred: progressSnapshot.bytesTransferred,
+                    totalBytes: progressSnapshot.totalBytes,
+                    percent
+                });
+            }
+        }, reject, () => resolve(uploadTask.snapshot));
+    });
+
+    const url = await getDownloadURL(snapshot.ref);
+    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+        folderId: cleanFolderId,
+        title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
+        fileName: String(file.name || '').trim(),
+        type: 'file',
+        url,
+        storagePath,
+        uploadedBy: currentUser.uid,
+        size: Number(file.size || 0),
+        mimeType: file.type,
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
 export async function deleteTeamMediaItem(teamId, item) {
     const cleanTeamId = String(teamId || '').trim();
     const itemId = String(item?.id || '').trim();
     if (!cleanTeamId || !itemId) throw new Error('Media item is required.');
-    if (item?.type === 'photo' && !item.storagePath) {
+    if (['photo', 'file'].includes(item?.type) && !item.storagePath) {
         console.error('Media object missing file reference:', itemId);
         throw new Error('Cannot delete media: missing file reference');
     }
@@ -610,7 +757,7 @@ export async function deleteTeamMediaItem(teamId, item) {
         updatedAt: serverTimestamp()
     });
 
-    if (item?.type === 'photo') {
+    if (['photo', 'file'].includes(item?.type)) {
         try {
             await deleteObject(ref(storage, item.storagePath));
         } catch (error) {
@@ -863,6 +1010,88 @@ export async function saveTeamAvailabilityPreferences(teamId, preferences) {
     return normalized;
 }
 
+function mapSnapshotWithIds(snapshot) {
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+function sortByFields(records, fields) {
+    return [...records].sort((a, b) => {
+        for (const field of fields) {
+            const comparison = String(a?.[field] || '').localeCompare(String(b?.[field] || ''));
+            if (comparison !== 0) return comparison;
+        }
+        return 0;
+    });
+}
+
+export async function listOrganizationScheduleControls(teamId) {
+    if (!teamId) throw new Error('Missing team for organization schedule controls');
+
+    const [availabilitySnapshot, organizationBlackoutsSnapshot, venueBlackoutsSnapshot] = await Promise.all([
+        getDocs(collection(db, `teams/${teamId}/venueAvailability`)),
+        getDocs(collection(db, `teams/${teamId}/organizationBlackouts`)),
+        getDocs(collection(db, `teams/${teamId}/venueBlackouts`))
+    ]);
+
+    return {
+        availability: sortByFields(mapSnapshotWithIds(availabilitySnapshot), ['dayOfWeek', 'startTime', 'venueName']),
+        organizationBlackouts: sortByFields(mapSnapshotWithIds(organizationBlackoutsSnapshot), ['startDate', 'endDate']),
+        venueBlackouts: sortByFields(mapSnapshotWithIds(venueBlackoutsSnapshot), ['startDate', 'endDate', 'venueName'])
+    };
+}
+
+export async function createVenueAvailability(teamId, availabilityData = {}) {
+    if (!teamId) throw new Error('Missing team for venue availability');
+    const allowedFields = {
+        venueName: availabilityData.venueName,
+        subVenueName: availabilityData.subVenueName,
+        dayOfWeek: availabilityData.dayOfWeek,
+        startTime: availabilityData.startTime,
+        endTime: availabilityData.endTime,
+        notes: availabilityData.notes
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/venueAvailability`), {
+        ...allowedFields,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
+export async function createOrganizationBlackout(teamId, blackoutData = {}) {
+    if (!teamId) throw new Error('Missing team for organization blackout');
+    const allowedFields = {
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/organizationBlackouts`), {
+        ...allowedFields,
+        scope: 'organization',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
+export async function createVenueBlackout(teamId, blackoutData = {}) {
+    if (!teamId) throw new Error('Missing team for venue blackout');
+    const allowedFields = {
+        venueName: blackoutData.venueName,
+        subVenueName: blackoutData.subVenueName,
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/venueBlackouts`), {
+        ...allowedFields,
+        scope: 'venue',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
 export async function grantScorekeeperAccess(teamId, memberUserId) {
     const normalizedUserId = String(memberUserId || '').trim();
     if (!teamId) throw new Error('Missing team for scorekeeper access');
@@ -884,6 +1113,44 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
         'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function grantStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(docRef);
+    const teamData = teamSnap.exists() ? teamSnap.data() : {};
+    const currentStreamingMode = teamData?.teamPermissions?.streaming?.mode;
+
+    const updatePayload = {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    };
+
+    // Only force streaming mode to 'selected' if it's not currently 'all_confirmed'
+    if (currentStreamingMode !== 'all_confirmed') {
+        updatePayload['teamPermissions.streaming.mode'] = 'selected';
+    }
+
+    await updateDoc(docRef, updatePayload);
+}
+
+export async function revokeStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayRemove(normalizedUserId),
         updatedAt: Timestamp.now()
     });
 }
@@ -2366,26 +2633,46 @@ export async function logStatEvent(teamId, gameId, eventData) {
     await addDoc(getGameSubcollectionRef(teamId, gameId, 'events'), eventData);
 }
 
-export async function updatePlayerStats(teamId, gameId, playerId, statKey, change, playerName, playerNumber) {
-    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
+export async function updatePlayerStats(teamId, gameId, playerId, statKey, change, playerName, playerNumber, options = {}) {
+    const normalizedStatKey = String(statKey || '').trim().toLowerCase();
+    const split = splitPlayerStatsByVisibility(options.statTrackerConfig || {}, { [normalizedStatKey]: change });
+    const subcollectionName = Object.prototype.hasOwnProperty.call(split.privateStats, normalizedStatKey) ? 'privatePlayerStats' : 'aggregatedStats';
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/${subcollectionName}`, playerId);
     await setDoc(docRef, {
         playerName,
         playerNumber,
         stats: {
-            [statKey]: increment(change)
+            [normalizedStatKey]: increment(change)
         }
     }, { merge: true });
 }
 
 export async function setCompletedGamePlayerStats(teamId, gameId, playerId, statsPayload = {}) {
-    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
-    await setDoc(docRef, {
+    const { publicStats, privateStats } = splitPlayerStatsByVisibility(
+        statsPayload.statTrackerConfig || {},
+        statsPayload.stats || {}
+    );
+    const basePayload = {
         playerName: statsPayload.playerName || '',
         playerNumber: statsPayload.playerNumber || '',
-        stats: statsPayload.stats || {},
         timeMs: Number.isFinite(Number(statsPayload.timeMs)) ? Number(statsPayload.timeMs) : 0,
         didNotPlay: statsPayload.didNotPlay === true
+    };
+    const gameRef = getGameDocRef(teamId, gameId);
+    const publicDocRef = doc(db, `${gameRef.path}/aggregatedStats`, playerId);
+    const privateDocRef = doc(db, `${gameRef.path}/privatePlayerStats`, playerId);
+
+    await setDoc(publicDocRef, {
+        ...basePayload,
+        stats: publicStats
     }, { merge: true });
+
+    if (Object.keys(privateStats).length > 0) {
+        await setDoc(privateDocRef, {
+            ...basePayload,
+            stats: privateStats
+        }, { merge: true });
+    }
 }
 
 // Calendar Functions
@@ -2852,7 +3139,7 @@ export async function redeemParentInvite(userId, code) {
         if (latestCodeData.type !== 'parent_invite') {
             throw new Error("Not a parent invite code");
         }
-        if (latestCodeData.used) {
+        if (latestCodeData.used || latestCodeData.revoked === true || latestCodeData.status === 'removed') {
             throw new Error("Invalid or used code");
         }
         if (isAccessCodeExpired(latestCodeData.expiresAt)) {
@@ -2988,6 +3275,233 @@ export async function redeemParentInvite(userId, code) {
 
     console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
     return { success: true, teamId: codeData.teamId };
+}
+
+function normalizeHouseholdInviteEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function assertHouseholdInviteEmailMatches(codeData) {
+    const invitedEmail = normalizeHouseholdInviteEmail(codeData?.email);
+    if (!invitedEmail) {
+        return;
+    }
+
+    const signedInEmail = normalizeHouseholdInviteEmail(auth.currentUser?.email);
+    if (signedInEmail !== invitedEmail) {
+        throw new Error(`This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+    }
+}
+
+async function resetHouseholdInviteCodeClaim(codeRef, userId) {
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) return;
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
+            transaction.update(codeRef, {
+                used: false,
+                usedBy: null,
+                usedAt: null
+            });
+        }
+    });
+}
+
+async function rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rollbackState = {}) {
+    const teamId = codeData?.teamId || null;
+    const playerId = codeData?.playerId || null;
+    const { userWasUpdated = false, playerWasUpdated = false, priorMembershipSnapshot = null, membershipWasUpdated = false } = rollbackState;
+
+    if (userWasUpdated && teamId && playerId) {
+        try {
+            const userRef = doc(db, "users", userId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+                const userData = userSnap.data() || {};
+                const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+                const filteredParentOf = parentOf.filter(link =>
+                    !(link?.teamId === teamId && link?.playerId === playerId)
+                );
+                const filteredParentTeamIds = [...new Set(
+                    filteredParentOf.map(link => link?.teamId).filter(Boolean)
+                )];
+                const filteredParentPlayerKeys = [...new Set(
+                    filteredParentOf
+                        .map(link => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : null))
+                        .filter(Boolean)
+                )];
+                const existingRoles = Array.isArray(userData.roles) ? userData.roles : [];
+                const filteredRoles = filteredParentOf.length === 0
+                    ? existingRoles.filter(role => role !== 'parent')
+                    : existingRoles;
+
+                await setDoc(userRef, {
+                    parentOf: filteredParentOf,
+                    parentTeamIds: filteredParentTeamIds,
+                    parentPlayerKeys: filteredParentPlayerKeys,
+                    roles: filteredRoles
+                }, { merge: true });
+            }
+        } catch (rollbackErr) {
+            console.error('redeemHouseholdInvite: failed to rollback user profile updates', rollbackErr);
+        }
+    }
+
+    if (playerWasUpdated && teamId && playerId) {
+        try {
+            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
+            const playerSnap = await getDoc(playerRef);
+            if (playerSnap.exists()) {
+                const playerData = playerSnap.data() || {};
+                const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
+                const filteredParents = parents.filter(parent => parent?.userId !== userId);
+                await updateDoc(playerRef, { parents: filteredParents });
+            }
+        } catch (rollbackErr) {
+            console.error('redeemHouseholdInvite: failed to rollback player parent updates', rollbackErr);
+        }
+    }
+
+    if (membershipWasUpdated && codeData?.organizerUserId && codeData?.familyMembershipId) {
+        try {
+            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
+            if (priorMembershipSnapshot?.exists()) {
+                await setDoc(membershipRef, priorMembershipSnapshot.data() || {});
+            } else {
+                await deleteDoc(membershipRef);
+            }
+        } catch (rollbackErr) {
+            console.error('redeemHouseholdInvite: failed to rollback family membership updates', rollbackErr);
+        }
+    }
+
+    try {
+        await resetHouseholdInviteCodeClaim(codeRef, userId);
+    } catch (rollbackErr) {
+        console.error('redeemHouseholdInvite: failed to rollback code claim', rollbackErr);
+    }
+}
+
+export async function redeemHouseholdInvite(userId, code) {
+    console.log('[redeemHouseholdInvite] start', { userId, code });
+
+    const q = query(
+        collection(db, "accessCodes"),
+        where("code", "==", code.toUpperCase())
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) throw new Error("Invalid or used code");
+
+    const householdInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'household_invite');
+    if (householdInviteDocs.length === 0) throw new Error("Invalid or used code");
+
+    const codeDoc = householdInviteDocs.find((d) => {
+        const invite = d.data() || {};
+        return invite.used !== true && invite.revoked !== true && !isAccessCodeExpired(invite.expiresAt);
+    }) || householdInviteDocs[0];
+    const codeRef = codeDoc.ref;
+    let codeData;
+
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) {
+            throw new Error("Invalid or used code");
+        }
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.type !== 'household_invite') {
+            throw new Error("Not a household invite code");
+        }
+        if (latestCodeData.used) {
+            throw new Error("Invalid or used code");
+        }
+        if (latestCodeData.revoked) {
+            throw new Error("Invite has been revoked");
+        }
+        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+            throw new Error("Code has expired");
+        }
+
+        assertHouseholdInviteEmailMatches(latestCodeData);
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        codeData = latestCodeData;
+    });
+
+    const rollbackState = {
+        userWasUpdated: false,
+        playerWasUpdated: false,
+        priorMembershipSnapshot: null,
+        membershipWasUpdated: false
+    };
+
+    try {
+        assertHouseholdInviteEmailMatches(codeData);
+
+        const [team, player] = await Promise.all([
+            getTeam(codeData.teamId),
+            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
+        ]);
+
+        if (!team || !player) {
+            throw new Error("Team or Player not found");
+        }
+
+        const userRef = doc(db, "users", userId);
+        await setDoc(userRef, {
+            parentOf: arrayUnion({
+                teamId: codeData.teamId,
+                playerId: codeData.playerId,
+                teamName: team.name,
+                playerName: player.name,
+                playerNumber: player.number,
+                playerPhotoUrl: player.photoUrl || null,
+                relation: codeData.relation || 'Household contact'
+            }),
+            parentTeamIds: arrayUnion(codeData.teamId),
+            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
+            roles: arrayUnion('parent')
+        }, { merge: true });
+        rollbackState.userWasUpdated = true;
+
+        const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+        await updateDoc(playerRef, {
+            parents: arrayUnion({
+                userId,
+                email: codeData.email || 'pending',
+                relation: codeData.relation || 'Household contact',
+                status: 'accepted',
+                acceptedAt: Timestamp.now(),
+                addedAt: Timestamp.now()
+            })
+        });
+        rollbackState.playerWasUpdated = true;
+
+        if (codeData.organizerUserId && codeData.familyMembershipId) {
+            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
+            rollbackState.priorMembershipSnapshot = await getDoc(membershipRef);
+            await updateDoc(membershipRef, {
+                status: 'active',
+                userId,
+                acceptedAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            });
+            rollbackState.membershipWasUpdated = true;
+        }
+    } catch (err) {
+        await rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rollbackState);
+        throw err;
+    }
+
+    console.log('[redeemHouseholdInvite] completed', { codeId: codeDoc.id });
+    return { success: true, teamId: codeData.teamId, playerId: codeData.playerId };
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {
@@ -3146,6 +3660,13 @@ export async function getTeamFeeBatch(teamId, batchId) {
     const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
     const batchSnap = await getDoc(batchRef);
     return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeBatches(teamId) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'feeBatches');
+    const snapshot = await getDocs(query(batchesRef, orderBy('createdAt', 'desc'), limit(25)));
+    return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
 }
 
 export async function listTeamFeeRecipients(teamId, batchId) {
@@ -5164,7 +5685,26 @@ export async function respondToOfficiatingAssignment(teamId, gameId, slotId, sta
     await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
+function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {}) {
+    const uid = String(user?.uid || '').trim();
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!uid) return false;
+    if (team.ownerId === uid) return true;
+    if (email && Array.isArray(team.adminEmails) && team.adminEmails.map((adminEmail) => String(adminEmail || '').trim().toLowerCase()).includes(email)) return true;
+    if (userProfile?.isAdmin === true) return true;
+    if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team.id)) return true;
+    return false;
+}
+
 export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser) {
+    const [team, userProfile] = await Promise.all([
+        getTeam(teamId, { includeInactive: true }),
+        official?.uid ? getUserProfile(official.uid) : Promise.resolve(null)
+    ]);
+    if (!isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile || {}, official || {})) {
+        throw new Error('Only team owners, admins, or parents can claim open officiating slots.');
+    }
+
     const docRef = getGameDocRef(teamId, gameId);
     let notificationRecord = null;
     await runTransaction(db, async (transaction) => {
@@ -5404,16 +5944,7 @@ async function getEventDateForAvailabilityCutoff(teamId, gameId) {
     const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
     const snap = await getDoc(gameRef);
     if (!snap.exists()) return null;
-    const game = snap.data();
-    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
-        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
-        if (!Number.isNaN(occurrenceDate.getTime())) {
-            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
-            return occurrenceDate;
-        }
-    }
-    return baseDate;
+    return resolveAvailabilityCutoffEventDate(snap.data(), instanceDate);
 }
 
 async function assertAvailabilityOpen(teamId, gameId) {
@@ -5850,7 +6381,8 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    const breakdown = buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    return { ...breakdown, players, rsvps };
 }
 
 export async function getPublicTrackingItems(teamId) {

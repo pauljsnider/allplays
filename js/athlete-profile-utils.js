@@ -95,7 +95,7 @@ export function collectAthleteGameClipsForPlayer(games = [], { teamId = '', team
                 return {
                     id: toCleanString(clip.id || clip.clipId) || `${toCleanString(game?.id || game?.gameId)}-${index}`,
                     source: 'game',
-                    mediaType: toCleanString(clip.mediaType).toLowerCase() === 'video' ? 'video' : 'link',
+                    mediaType: (toCleanString(clip.mediaType).toLowerCase() === 'video' || toCleanString(clip.mediaType).toLowerCase() === 'image') ? toCleanString(clip.mediaType).toLowerCase() : 'link',
                     title: toCleanString(clip.title || clip.playDescription || clip.description) || 'Game clip',
                     url: toCleanString(clip.url || clip.publicUrl || clip.videoUrl),
                     teamId: toCleanString(teamId || game?.teamId),

@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -282,7 +283,7 @@
             listMyParentMembershipRequests,
             listParentTeamFeeRecipients,
             listCertificatesForPlayer
-        } from './js/db.js?v=32';
+        } from './js/db.js?v=50';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -894,7 +895,7 @@
                 await ensureParentTeamAccess(user.uid, teamIds);
                 const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
                 renderTeamChats(data.children, unreadCounts);
-                await renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { linkedPlayers: data.children || [] });
+                await renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { playerLinks: data.children || [] });
                 await loadParentTeamFees(user.uid, data.children);
                 queueParentDashboardHydration(data.children, user.uid);
 

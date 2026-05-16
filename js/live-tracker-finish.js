@@ -1,4 +1,5 @@
 import { canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js';
+import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 
 export function buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway) {
   return `Score reconciled from ${requestedHome}-${requestedAway} to ${finalHome}-${finalAway} based on scoring events`;
@@ -43,6 +44,7 @@ export function buildFinishCompletionPlan({
   opponentName = 'Unknown Opponent',
   recipientEmail = '',
   columns = [],
+  statTrackerConfig = {},
   roster = [],
   statsByPlayerId = {},
   opponentEntries = [],
@@ -73,7 +75,7 @@ export function buildFinishCompletionPlan({
   }
 
   const safeColumns = Array.isArray(columns) ? columns : [];
-  const safeRoster = Array.isArray(roster) ? roster : [];
+  const safeRoster = Array.isArray(roster) ? roster : {};
   const safeStatsByPlayerId = statsByPlayerId && typeof statsByPlayerId === 'object' ? statsByPlayerId : {};
   const effectiveLog = Array.isArray(log) ? [...log] : [];
   let reconciliationNote = '';
@@ -113,15 +115,34 @@ export function buildFinishCompletionPlan({
     });
     statsObj.fouls = safeStatsByPlayerId[player.id]?.fouls || 0;
 
-    return {
+    const playerTimeMs = safeStatsByPlayerId[player.id]?.time || 0;
+    const actuallyParticipated = !!safeStatsByPlayerId[player.id];
+
+    const baseData = {
+      playerName: player.name,
+      playerNumber: player.num,
+      timeMs: playerTimeMs,
+      participated: actuallyParticipated,
+      participationStatus: actuallyParticipated ? 'appeared' : 'did-not-appear',
+      participationSource: 'live-tracker-finish',
+    };
+
+    const { publicStats, privateStats } = splitPlayerStatsByVisibility(statTrackerConfig, statsObj);
+
+    const write = {
       playerId: player.id,
       data: {
-        playerName: player.name,
-        playerNumber: player.num,
-        stats: statsObj,
-        timeMs: safeStatsByPlayerId[player.id]?.time || 0
+        ...baseData,
+        stats: publicStats
       }
     };
+    if (Object.keys(privateStats).length > 0) {
+      write.privateData = {
+        ...baseData,
+        stats: privateStats
+      };
+    }
+    return write;
   });
 
   const gameUpdate = {

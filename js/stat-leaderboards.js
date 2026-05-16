@@ -145,6 +145,22 @@ export function parseAdvancedStatDefinitions(text = '') {
     });
 }
 
+export function validateStatDefinitionsForPublicLeaderboards(statDefinitions = []) {
+  const invalidTopStats = (Array.isArray(statDefinitions) ? statDefinitions : [])
+    .filter((definition) => definition?.topStat && (definition.scope !== 'player' || definition.visibility !== 'public'));
+
+  if (!invalidTopStats.length) {
+    return { valid: true, errors: [] };
+  }
+
+  return {
+    valid: false,
+    errors: invalidTopStats.map((definition) => (
+      `${definition.label || definition.id || 'Stat'} cannot be a Top Stat unless visibility is public and scope is player.`
+    ))
+  };
+}
+
 export function normalizeStatTrackerConfig(config = {}) {
   const columns = (Array.isArray(config.columns) ? config.columns : [])
     .map((column) => normalizeLabel(column))
@@ -158,6 +174,30 @@ export function normalizeStatTrackerConfig(config = {}) {
     columns,
     statDefinitions
   };
+}
+
+export function getPrivatePlayerStatIds(config = {}) {
+  const normalizedConfig = normalizeStatTrackerConfig(config);
+  return new Set(normalizedConfig.statDefinitions
+    .filter((definition) => definition.scope === 'player' && definition.visibility === 'private')
+    .map((definition) => definition.id));
+}
+
+export function splitPlayerStatsByVisibility(config = {}, stats = {}) {
+  const privateStatIds = getPrivatePlayerStatIds(config);
+  const publicStats = {};
+  const privateStats = {};
+
+  Object.entries(stats || {}).forEach(([key, value]) => {
+    const normalizedKey = slugifyStatId(key);
+    if (privateStatIds.has(normalizedKey)) {
+      privateStats[normalizedKey] = value;
+    } else {
+      publicStats[normalizedKey || key] = value;
+    }
+  });
+
+  return { publicStats, privateStats };
 }
 
 export function selectAnalyticsConfig(configs = [], preferredSport = '') {

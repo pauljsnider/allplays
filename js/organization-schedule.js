@@ -18,6 +18,133 @@ const ORGANIZATION_SCHEDULE_CSV_HEADER_ALIASES = {
     notes: ['notes', 'comments', 'details']
 };
 
+function normalizeDelimitedSubVenueList(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(/[\n,]/);
+    return Array.from(new Set(values
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)));
+}
+
+export const ORGANIZATION_SCHEDULE_WEEKDAYS = [
+    { value: 'monday', label: 'Monday' },
+    { value: 'tuesday', label: 'Tuesday' },
+    { value: 'wednesday', label: 'Wednesday' },
+    { value: 'thursday', label: 'Thursday' },
+    { value: 'friday', label: 'Friday' },
+    { value: 'saturday', label: 'Saturday' },
+    { value: 'sunday', label: 'Sunday' }
+];
+
+const ORGANIZATION_SCHEDULE_WEEKDAY_VALUES = new Set(ORGANIZATION_SCHEDULE_WEEKDAYS.map((day) => day.value));
+const TIME_VALUE_PATTERN = /^\d{2}:\d{2}$/;
+const DATE_VALUE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_ONLY_PATTERN = DATE_VALUE_PATTERN;
+
+function normalizeTextValue(value) {
+    return String(value || '').trim();
+}
+
+function normalizeDateValue(value) {
+    return normalizeTextValue(value);
+}
+
+function isValidTimeValue(value) {
+    return TIME_VALUE_PATTERN.test(String(value || ''));
+}
+
+function isValidDateValue(value) {
+    return DATE_VALUE_PATTERN.test(String(value || ''));
+}
+
+function compareTimeValues(startTime, endTime) {
+    return String(startTime || '').localeCompare(String(endTime || ''));
+}
+
+export function getOrganizationScheduleWeekdayLabel(value) {
+    return ORGANIZATION_SCHEDULE_WEEKDAYS.find((day) => day.value === value)?.label || String(value || '');
+}
+
+export function buildVenueAvailabilityPayload({
+    venueName = '',
+    subVenueName = '',
+    dayOfWeek = '',
+    startTime = '',
+    endTime = '',
+    notes = ''
+} = {}) {
+    const payload = {
+        venueName: normalizeTextValue(venueName),
+        subVenueName: normalizeTextValue(subVenueName) || null,
+        dayOfWeek: normalizeTextValue(dayOfWeek).toLowerCase(),
+        startTime: normalizeTextValue(startTime),
+        endTime: normalizeTextValue(endTime),
+        notes: normalizeTextValue(notes) || null
+    };
+
+    if (!payload.venueName) {
+        throw new Error('Venue or sub-venue name is required.');
+    }
+    if (!ORGANIZATION_SCHEDULE_WEEKDAY_VALUES.has(payload.dayOfWeek)) {
+        throw new Error('Choose an available day.');
+    }
+    if (!isValidTimeValue(payload.startTime) || !isValidTimeValue(payload.endTime)) {
+        throw new Error('Enter a start and end time for the availability window.');
+    }
+    if (compareTimeValues(payload.startTime, payload.endTime) >= 0) {
+        throw new Error('Availability end time must be after the start time.');
+    }
+
+    return payload;
+}
+
+export function buildBlackoutDatePayload({
+    scope = 'organization',
+    venueName = '',
+    subVenueName = '',
+    startDate = '',
+    endDate = '',
+    reason = ''
+} = {}) {
+    const normalizedScope = normalizeTextValue(scope) === 'venue' ? 'venue' : 'organization';
+    const payload = {
+        scope: normalizedScope,
+        venueName: normalizeTextValue(venueName) || null,
+        subVenueName: normalizeTextValue(subVenueName) || null,
+        startDate: normalizeDateValue(startDate),
+        endDate: normalizeDateValue(endDate),
+        reason: normalizeTextValue(reason) || null
+    };
+
+    if (payload.scope === 'venue' && !payload.venueName) {
+        throw new Error('Venue or sub-venue name is required for venue-specific blackouts.');
+    }
+    if (!isValidDateValue(payload.startDate) || !isValidDateValue(payload.endDate)) {
+        throw new Error('Enter a start and end date for the blackout.');
+    }
+    if (payload.endDate < payload.startDate) {
+        throw new Error('Blackout end date cannot be before the start date.');
+    }
+
+    return payload;
+}
+
+export function formatVenueAvailabilityRecord(record = {}) {
+    const venue = [record.venueName, record.subVenueName].filter(Boolean).join(' / ');
+    const day = getOrganizationScheduleWeekdayLabel(record.dayOfWeek);
+    const window = [record.startTime, record.endTime].filter(Boolean).join('–');
+    return [venue || 'Venue', day, window].filter(Boolean).join(' · ');
+}
+
+export function formatBlackoutDateRecord(record = {}) {
+    const scope = record.scope === 'venue'
+        ? [record.venueName, record.subVenueName].filter(Boolean).join(' / ') || 'Venue blackout'
+        : 'Organization-wide blackout';
+    const range = record.startDate === record.endDate
+        ? record.startDate
+        : `${record.startDate || 'Start'} through ${record.endDate || 'End'}`;
+    return `${scope} · ${range}`;
+}
+
 function normalizeTeamList(teams) {
     return (Array.isArray(teams) ? teams : [])
         .filter((team) => team && team.id)
@@ -99,6 +226,185 @@ function matchOrganizationTeam(teamName, label, organizationIndex, accessibleInd
 function readMappedValue(row, headerName) {
     if (!headerName) return '';
     return String(row?.[headerName] || '').trim();
+}
+
+export function normalizeOrganizationVenueDraft(draft = {}) {
+    return {
+        name: String(draft.name || '').trim(),
+        address: String(draft.address || '').trim() || null,
+        subVenues: normalizeDelimitedSubVenueList(draft.subVenues)
+    };
+}
+
+export function validateOrganizationVenueDraft(draft = {}) {
+    const normalized = normalizeOrganizationVenueDraft(draft);
+    if (!normalized.name) {
+        return { ok: false, error: 'Venue name is required.', venue: normalized };
+    }
+    if (normalized.subVenues.length === 0) {
+        return { ok: false, error: 'Add at least one sub-venue, such as Field 1, Court A, or Rink 2.', venue: normalized };
+    }
+    return { ok: true, error: null, venue: normalized };
+}
+
+export function sortOrganizationVenues(venues = []) {
+    return [...(Array.isArray(venues) ? venues : [])].sort((a, b) => {
+        return String(a?.name || '').localeCompare(String(b?.name || ''), undefined, { sensitivity: 'base' });
+    });
+}
+
+export function formatOrganizationVenueLocation(venue, subVenueName = '') {
+    const venueName = String(venue?.name || '').trim();
+    const normalizedSubVenueName = String(subVenueName || '').trim();
+    if (!venueName) return normalizedSubVenueName;
+    if (!normalizedSubVenueName) return venueName;
+    return `${venueName} - ${normalizedSubVenueName}`;
+}
+
+function normalizeDateKey(value) {
+    if (!value) return '';
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString().slice(0, 10);
+    }
+    const text = String(value).trim();
+    if (DATE_ONLY_PATTERN.test(text)) return text;
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+}
+
+function parseLocalDateTime(dateKey, timeText) {
+    if (!DATE_ONLY_PATTERN.test(dateKey) || !/^\d{2}:\d{2}$/.test(String(timeText || '').trim())) {
+        return null;
+    }
+    const parsed = new Date(`${dateKey}T${String(timeText).trim()}:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function addMinutes(date, minutes) {
+    return new Date(date.getTime() + (Number(minutes) || 0) * 60000);
+}
+
+function buildTeamPairs(teams = []) {
+    const normalizedTeams = normalizeTeamList(teams);
+    const pairs = [];
+    normalizedTeams.forEach((homeTeam, homeIndex) => {
+        normalizedTeams.slice(homeIndex + 1).forEach((awayTeam) => {
+            pairs.push({ homeTeam, awayTeam });
+        });
+    });
+    return pairs;
+}
+
+function hasDateOverlap(dateKey, blackoutDates = []) {
+    return new Set((Array.isArray(blackoutDates) ? blackoutDates : [])
+        .map(normalizeDateKey)
+        .filter(Boolean))
+        .has(dateKey);
+}
+
+function normalizeAvailabilityWindows(venues = [], seasonStart = '', seasonEnd = '', durationMinutes = 60) {
+    const startKey = normalizeDateKey(seasonStart);
+    const endKey = normalizeDateKey(seasonEnd);
+
+    return (Array.isArray(venues) ? venues : []).flatMap((venue) => {
+        const venueName = String(venue?.name || venue?.venueName || '').trim();
+        const windows = Array.isArray(venue?.availability) ? venue.availability : [];
+
+        return windows.map((window) => {
+            const dateKey = normalizeDateKey(window?.date);
+            const startsAt = parseLocalDateTime(dateKey, window?.startTime);
+            const endsAt = parseLocalDateTime(dateKey, window?.endTime);
+            return {
+                venueName,
+                dateKey,
+                startsAt,
+                endsAt,
+                blackout: hasDateOverlap(dateKey, venue?.blackoutDates),
+                valid: !!venueName && !!startsAt && !!endsAt && addMinutes(startsAt, durationMinutes) <= endsAt
+            };
+        }).filter((window) => {
+            if (!window.dateKey || !window.valid) return false;
+            if (startKey && window.dateKey < startKey) return false;
+            if (endKey && window.dateKey > endKey) return false;
+            return true;
+        });
+    }).sort((left, right) => left.startsAt - right.startsAt || left.venueName.localeCompare(right.venueName));
+}
+
+export function buildOrganizationScheduleDraftSlots({
+    selectedTeams = [],
+    seasonStart = '',
+    seasonEnd = '',
+    venues = [],
+    organizationBlackoutDates = [],
+    durationMinutes = 60
+} = {}) {
+    const teams = normalizeTeamList(selectedTeams);
+    const duration = Math.max(1, Number(durationMinutes) || 60);
+    const pairs = buildTeamPairs(teams);
+    const remainingPairs = [...pairs];
+    const conflicts = [];
+    const teamSlotCounts = new Map(teams.map((team) => [team.id, 0]));
+
+    const windows = normalizeAvailabilityWindows(venues, seasonStart, seasonEnd, duration);
+    const usableWindows = windows.filter((window) => {
+        if (hasDateOverlap(window.dateKey, organizationBlackoutDates)) {
+            conflicts.push({ type: 'organization-blackout', date: window.dateKey, venueName: window.venueName });
+            return false;
+        }
+        if (window.blackout) {
+            conflicts.push({ type: 'venue-blackout', date: window.dateKey, venueName: window.venueName });
+            return false;
+        }
+        return true;
+    });
+
+    const draftSlots = [];
+    usableWindows.forEach((window) => {
+        let cursor = new Date(window.startsAt);
+        while (remainingPairs.length > 0 && addMinutes(cursor, duration) <= window.endsAt) {
+            const pair = remainingPairs.shift();
+            const endsAt = addMinutes(cursor, duration);
+            draftSlots.push({
+                id: `draft-${draftSlots.length + 1}`,
+                homeTeamId: pair.homeTeam.id,
+                homeTeamName: pair.homeTeam.name,
+                awayTeamId: pair.awayTeam.id,
+                awayTeamName: pair.awayTeam.name,
+                venueName: window.venueName,
+                startsAt: cursor.toISOString(),
+                endsAt: endsAt.toISOString(),
+                durationMinutes: duration,
+                notes: ''
+            });
+            teamSlotCounts.set(pair.homeTeam.id, (teamSlotCounts.get(pair.homeTeam.id) || 0) + 1);
+            teamSlotCounts.set(pair.awayTeam.id, (teamSlotCounts.get(pair.awayTeam.id) || 0) + 1);
+            cursor = endsAt;
+        }
+    });
+
+    remainingPairs.forEach((pair) => {
+        conflicts.push({
+            type: 'unscheduled-matchup',
+            homeTeamId: pair.homeTeam.id,
+            awayTeamId: pair.awayTeam.id,
+            message: `${pair.homeTeam.name} vs ${pair.awayTeam.name} could not be placed in saved availability.`
+        });
+    });
+
+    return {
+        draftSlots,
+        conflicts,
+        unassignedTeams: teams.filter((team) => (teamSlotCounts.get(team.id) || 0) === 0),
+        generatedSlotCounts: {
+            total: draftSlots.length,
+            byVenue: draftSlots.reduce((counts, slot) => {
+                counts[slot.venueName] = (counts[slot.venueName] || 0) + 1;
+                return counts;
+            }, {}),
+            byTeam: Object.fromEntries(teamSlotCounts)
+        }
+    };
 }
 
 export function getOrganizationTeams({ accessibleTeams = [], organizationOwnerId = null } = {}) {

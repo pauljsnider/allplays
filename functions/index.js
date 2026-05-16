@@ -672,15 +672,277 @@ function isAllowedOrigin(origin) {
   return allowedOriginSet.has(origin);
 }
 
-function writeCorsHeaders(req, res) {
+function isAllowedTelemetryOrigin(origin) {
+  return !!origin && allowedOriginSet.has(origin);
+}
+
+function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
   if (origin && allowedOriginSet.has(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
-  res.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Allow-Methods', methods);
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.set('Cache-Control', 'no-store');
+}
+
+function normalizeTelemetryString(value, maxLength = 160) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/\s+/g, ' ')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '[phone]')
+    .replace(/\b\d{5,}\b/g, '[number]')
+    .replace(/\b[A-Za-z0-9_-]{18,}\b/g, '[token]')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeTelemetryKey(value, maxLength = 80) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w:-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength);
+}
+
+function normalizeTelemetryIdentifier(value, maxLength = 120) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w:-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength);
+}
+
+function normalizeTelemetryObject(value, depth = 0) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || depth > 2) {
+    return {};
+  }
+
+  const normalized = {};
+  for (const [key, rawValue] of Object.entries(value).slice(0, 40)) {
+    const cleanKey = normalizeTelemetryKey(key, 60);
+    if (!cleanKey) continue;
+
+    if (rawValue === null || rawValue === undefined) {
+      normalized[cleanKey] = null;
+    } else if (typeof rawValue === 'boolean') {
+      normalized[cleanKey] = rawValue;
+    } else if (typeof rawValue === 'number') {
+      const sanitizedNumber = normalizeTelemetryString(rawValue, 240);
+      normalized[cleanKey] = sanitizedNumber === String(rawValue) ? rawValue : sanitizedNumber;
+    } else if (Array.isArray(rawValue)) {
+      normalized[cleanKey] = rawValue
+        .slice(0, 10)
+        .map((item) => normalizeTelemetryString(item, 80));
+    } else if (typeof rawValue === 'object') {
+      normalized[cleanKey] = normalizeTelemetryObject(rawValue, depth + 1);
+    } else {
+      normalized[cleanKey] = normalizeTelemetryString(rawValue, 240);
+    }
+  }
+  return normalized;
+}
+
+function normalizeTelemetryPath(value) {
+  const path = normalizeTelemetryString(value || '/', 220);
+  if (!path || path[0] !== '/') return '/';
+  return path.split('?')[0].split('#')[0] || '/';
+}
+
+function parseTelemetryBody(req) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  try {
+    if (typeof req.body === 'string') {
+      return JSON.parse(req.body);
+    }
+
+    if (Buffer.isBuffer(req.body)) {
+      return JSON.parse(req.body.toString('utf8'));
+    }
+  } catch (error) {
+    throw new Error('Invalid JSON body');
+  }
+
+  throw new Error('Invalid JSON body');
+}
+
+function getTelemetryBearerToken(req, payload) {
+  const authHeader = req.headers.authorization || '';
+  const match = typeof authHeader === 'string' ? authHeader.match(/^Bearer\s+(.+)$/i) : null;
+  if (match?.[1]) return match[1].trim();
+  return typeof payload?.authToken === 'string' ? payload.authToken.trim() : '';
+}
+
+async function verifyTelemetryAuth(req, payload) {
+  const token = getTelemetryBearerToken(req, payload);
+  if (!token) return null;
+
+  try {
+    return await admin.auth().verifyIdToken(token);
+  } catch (error) {
+    throw new Error('Invalid telemetry auth token');
+  }
+}
+
+function normalizeTelemetryEvent(rawEvent, receivedAt, authUid = null) {
+  if (!rawEvent || typeof rawEvent !== 'object') {
+    return null;
+  }
+
+  const name = normalizeTelemetryKey(rawEvent.name, 80);
+  const sessionId = normalizeTelemetryIdentifier(rawEvent.sessionId, 120);
+  const visitorId = normalizeTelemetryIdentifier(rawEvent.visitorId, 120);
+
+  if (!name || !sessionId || !visitorId) {
+    return null;
+  }
+
+  const clientTimestamp = Number.isNaN(Date.parse(rawEvent.clientTimestamp))
+    ? receivedAt.toISOString()
+    : new Date(rawEvent.clientTimestamp).toISOString();
+
+  return {
+    id: normalizeTelemetryIdentifier(rawEvent.id, 120) || `${sessionId}_${receivedAt.getTime()}`,
+    name,
+    version: normalizeTelemetryString(rawEvent.version, 24),
+    sessionId,
+    visitorId,
+    userId: authUid || null,
+    signedIn: !!authUid && rawEvent.signedIn === true,
+    clientTimestamp,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    receivedAt: receivedAt.toISOString(),
+    pagePath: normalizeTelemetryPath(rawEvent.pagePath),
+    pageTitle: normalizeTelemetryString(rawEvent.pageTitle, 140),
+    queryKeys: Array.isArray(rawEvent.queryKeys)
+      ? rawEvent.queryKeys.slice(0, 20).map((key) => normalizeTelemetryKey(key, 60)).filter(Boolean)
+      : [],
+    referrer: normalizeTelemetryString(rawEvent.referrer, 160),
+    viewport: normalizeTelemetryObject(rawEvent.viewport),
+    screen: normalizeTelemetryObject(rawEvent.screen),
+    timezone: normalizeTelemetryString(rawEvent.timezone, 80),
+    language: normalizeTelemetryString(rawEvent.language, 32),
+    userAgent: normalizeTelemetryString(rawEvent.userAgent, 260),
+    properties: normalizeTelemetryObject(rawEvent.properties)
+  };
+}
+
+function telemetryDocId(value) {
+  return normalizeTelemetryKey(value, 140) || 'unknown';
+}
+
+function getDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
+  const db = admin.firestore();
+  const increment = admin.firestore.FieldValue.increment;
+  const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
+  const isPageView = event.name === 'page_view';
+  const isInteraction = event.name.startsWith('interaction_');
+  const isError = event.name.startsWith('js_');
+
+  batch.set(db.collection('telemetryDaily').doc(dateKey), {
+    date: dateKey,
+    totalEvents: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    signedInEvents: increment(event.signedIn ? 1 : 0),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  const pageDocId = `${dateKey}_${telemetryDocId(event.pagePath)}`;
+  batch.set(db.collection('telemetryPagesDaily').doc(pageDocId), {
+    date: dateKey,
+    pagePath: event.pagePath,
+    totalEvents: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  const eventDocId = `${dateKey}_${telemetryDocId(event.name)}`;
+  batch.set(db.collection('telemetryEventsDaily').doc(eventDocId), {
+    date: dateKey,
+    name: event.name,
+    count: increment(1),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  const sessionUpdate = {
+    sessionId: event.sessionId,
+    visitorId: event.visitorId,
+    userId: event.userId || null,
+    signedIn: event.signedIn,
+    lastPage: event.pagePath,
+    lastEventName: event.name,
+    eventCount: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    updatedAt: serverTimestamp()
+  };
+
+  if (isPageView && !options.sessionExists) {
+    sessionUpdate.entryPage = event.pagePath;
+  }
+
+  batch.set(db.collection('telemetrySessions').doc(event.sessionId), sessionUpdate, { merge: true });
+}
+
+const MAX_TELEMETRY_EVENTS_PER_REQUEST = 25;
+const TELEMETRY_WRITES_PER_EVENT = 5;
+const FIRESTORE_WRITE_SAFETY_LIMIT = 450;
+
+async function commitTelemetryEvent(db, event, dateKey) {
+  const eventRef = db.collection('telemetryEvents').doc(event.id);
+  const sessionRef = db.collection('telemetrySessions').doc(event.sessionId);
+  return db.runTransaction(async (transaction) => {
+    const [existing, sessionSnap] = await Promise.all([
+      transaction.get(eventRef),
+      transaction.get(sessionRef)
+    ]);
+    if (existing.exists) {
+      return false;
+    }
+
+    transaction.create(eventRef, event);
+    applyTelemetryAggregateWrites(transaction, event, dateKey, { sessionExists: sessionSnap.exists });
+    return true;
+  });
+}
+
+async function commitTelemetryEvents(db, events, dateKey) {
+  const maxEventsPerChunk = Math.max(1, Math.floor(FIRESTORE_WRITE_SAFETY_LIMIT / TELEMETRY_WRITES_PER_EVENT));
+  let stored = 0;
+  let duplicates = 0;
+
+  for (let i = 0; i < events.length; i += maxEventsPerChunk) {
+    const chunk = events.slice(i, i + maxEventsPerChunk);
+    const results = await Promise.all(chunk.map((event) => commitTelemetryEvent(db, event, dateKey)));
+    stored += results.filter(Boolean).length;
+    duplicates += results.filter((result) => !result).length;
+  }
+
+  return { stored, duplicates };
 }
 
 const calendarServiceAccount =
@@ -1311,4 +1573,65 @@ exports.notifyGameUpdated = functions.firestore
       body: 'A team event was updated. Tap to review the latest details.',
       actorUid
     });
+  });
+
+exports.collectTelemetry = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    writeCorsHeaders(req, res, 'POST,OPTIONS');
+
+    if (!isAllowedTelemetryOrigin(req.headers.origin)) {
+      res.status(403).json({ ok: false, error: 'Origin not allowed' });
+      return;
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).send('');
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const rawSize = Number(req.headers['content-length'] || 0);
+    if (rawSize > 64 * 1024) {
+      res.status(413).json({ ok: false, error: 'Telemetry payload too large' });
+      return;
+    }
+
+    try {
+      const payload = parseTelemetryBody(req);
+      const verifiedAuth = await verifyTelemetryAuth(req, payload);
+      const rawEvents = Array.isArray(payload?.events)
+        ? payload.events.slice(0, MAX_TELEMETRY_EVENTS_PER_REQUEST)
+        : [];
+      if (!rawEvents.length) {
+        res.status(400).json({ ok: false, error: 'No telemetry events provided' });
+        return;
+      }
+
+      const receivedAt = new Date();
+      const dateKey = getDateKey(receivedAt);
+      const events = rawEvents
+        .map((event) => normalizeTelemetryEvent(event, receivedAt, verifiedAuth?.uid || null))
+        .filter(Boolean);
+
+      if (!events.length) {
+        res.status(400).json({ ok: false, error: 'No valid telemetry events provided' });
+        return;
+      }
+
+      const db = admin.firestore();
+      await commitTelemetryEvents(db, events, dateKey);
+      res.status(204).send('');
+    } catch (error) {
+      console.error('Telemetry collection failed:', error);
+      res.status(400).json({
+        ok: false,
+        error: error?.message || 'Telemetry collection failed'
+      });
+    }
   });

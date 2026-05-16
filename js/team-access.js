@@ -98,7 +98,7 @@ export function hasScorekeepingTeamAccess(user, team, game = null, rsvp = null) 
 
 /**
  * Determine user's access level for a team.
- * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'parent'|null, exitUrl: string }}
+ * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'parent'|null, exitUrl: string }}
  */
 export function getTeamAccessInfo(user, team, options = {}) {
   if (!user || !team) {
@@ -109,13 +109,19 @@ export function getTeamAccessInfo(user, team, options = {}) {
     return { hasAccess: true, accessLevel: 'full', exitUrl: 'dashboard.html' };
   }
 
-  if (hasScorekeepingTeamAccess(user, team, options.game, options.rsvp)) {
-    const teamExitUrl = team.id ? `team.html#teamId=${team.id}` : 'team.html';
+  const teamExitUrl = team.id ? `team.html#teamId=${team.id}` : 'team.html';
+  const canScorekeep = hasScorekeepingTeamAccess(user, team, options.game, options.rsvp);
+  const canStream = hasStreamTeamAccess(user, team, options.game, options.rsvp);
+
+  if (canScorekeep && canStream) {
+    return { hasAccess: true, accessLevel: 'stream-score', exitUrl: teamExitUrl };
+  }
+
+  if (canScorekeep) {
     return { hasAccess: true, accessLevel: 'scorekeep', exitUrl: teamExitUrl };
   }
 
-  if (hasStreamTeamAccess(user, team, options.game, options.rsvp)) {
-    const teamExitUrl = team.id ? `team.html#teamId=${team.id}` : 'team.html';
+  if (canStream) {
     return { hasAccess: true, accessLevel: 'stream', exitUrl: teamExitUrl };
   }
 

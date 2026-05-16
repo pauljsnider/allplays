@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gray-50 flex flex-col min-h-screen">
@@ -80,7 +81,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { auth } from './js/firebase.js?v=11';
+        import { auth } from './js/firebase.js?v=12';
         import { checkAuth, logout, resendVerificationEmail } from './js/auth.js?v=14';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
 
