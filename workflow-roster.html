@@ -308,6 +308,9 @@
 <li>How to choose the right roster action.</li>
 <li>Step-by-step roster and parent invite actions.</li>
 <li>How to recover from common invite or roster issues.</li>
+<li>Track player completion status with roster tracking items.</li>
+<li>Send household invites and revoke household contact access.</li>
+<li>Preview roster import conflicts before applying changes.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -330,6 +333,10 @@
 <li>Bring a player back: Use <strong>Reactivate</strong>.</li>
 <li>Link a parent: Use <strong>Invite Parent</strong> on an active player.</li>
 <li>Invite Parent is disabled: Reactivate the player first, then send the invite.</li>
+<li>Track player items (forms, certifications, equipment checks): Use <strong>Roster Tracking</strong>.</li>
+<li>Invite another caregiver to access a player: Use <strong>Household Invite</strong> from Parent Dashboard.</li>
+<li>Revoke a household contact's access: Use <strong>Revoke Access</strong> in Parent Dashboard.</li>
+<li>Import roster from an external source: Use <strong>Roster Import</strong> with conflict preview.</li>
 </ul>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-1">
@@ -376,6 +383,30 @@
 <li>Parent opens the invite link or enters the 8-character code.</li>
 <li>If they open it on another device, they confirm the invited email and complete join.</li>
 </ul>
+<h2 id="roster-tracking-items">Roster Tracking Items</h2>
+<p>Admins can create player-scoped tracking items (forms, equipment checks, certifications) and toggle complete/incomplete status per player.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Roster Tracking</strong> from team management.</li>
+<li>Create tracking items with a label. Set items as active, private (admin-only), or public (visible to linked parents).</li>
+<li>Mark each player's status as complete or incomplete. Completion counts are shown in the roster matrix.</li>
+<li>Parents with linked players see their player's public tracking items in read-only view on the team page.</li>
+</ol>
+<h2 id="household-invites-and-revocation">Household Invites and Revocation</h2>
+<p>Parents can share player access with other caregivers and revoke that access when needed.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Parent Dashboard</strong> and navigate to the player's entry.</li>
+<li>Select <strong>Invite Household Member</strong>. The invite is scoped to your linked players and stored as a pending record — no access is granted until the invitee redeems it.</li>
+<li>To revoke: select <strong>Revoke Access</strong> next to a household contact. This marks their membership revoked, removes delegated parent/player links, and invalidates related invite tokens. Revoked invite codes are blocked at redemption.</li>
+<li>Roster view shows delegated household contacts with relation, inviter name, and current status.</li>
+</ol>
+<h2 id="roster-import-with-conflict-preview">Roster Import with Conflict Preview</h2>
+<p>When importing a roster from an external source, a preview shows each row's status before you commit.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Roster Import</strong> and upload or paste the roster data.</li>
+<li>Review the preview: rows are labeled <strong>Add</strong>, <strong>Update</strong>, <strong>Unchanged</strong>, or <strong>Conflict</strong>.</li>
+<li>Uncheck safe add/update rows you want to skip. Conflict rows are automatically excluded — they are not applied.</li>
+<li>Select <strong>Apply</strong>. Source metadata and import audit fields are stored on applied records.</li>
+</ol>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Should I delete or deactivate a player?</li>
@@ -393,6 +424,14 @@
 <li>Where do I confirm changes?</li>
 <li>Check the team roster list, then open the player page.</li>
 </ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can parents see tracking items?</strong></li>
+</ul>
+<p>Only tracking items marked as <strong>public</strong> are visible to linked parents. Private items are admin-only.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What happens to a revoked household contact's data?</strong></li>
+</ul>
+<p>Their membership access is marked revoked, delegated parent/player links are removed, and any pending invite tokens are invalidated. Their account is not deleted.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Invite button is disabled.</li>
@@ -417,6 +456,10 @@
 <ul class="ml-6 list-disc space-y-1">
 <li>Duplicate player was added.</li>
 <li>Keep the correct profile active and deactivate the duplicate.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Household invite not showing for parent</strong>: Confirm the invitee used the correct email address and the invite has not already been revoked.</li>
+<li><strong>Roster import showing conflicts</strong>: Conflict rows are skipped automatically. Review the preview and apply only add/update rows that are safe.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">

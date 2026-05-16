@@ -302,6 +302,10 @@
 <li>Manage live substitutions, logs, score, and stats.</li>
 <li>Complete wrap-up and hand off to reporting and practice planning.</li>
 <li>Recover from common game-day issues.</li>
+<li>Set up broadcast session and stream controls.</li>
+<li>Access the live play announcer for audio narration of events.</li>
+<li>Generate an embeddable scoreboard widget for external websites.</li>
+<li>Use wrap-up scores for AI game summary generation.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -351,13 +355,17 @@
 </ol>
 <p>Select a formation. When the lineup is empty, positions are auto-filled with available players from the Going pool — review and adjust before saving. To place players manually, use the lineup canvas, or use <strong>Balance</strong> or <strong>AI Optimize</strong>. Select <strong>Save Lineup</strong> before kickoff.</p>
 <ol class="ml-6 list-decimal space-y-1">
+<li>Set up broadcast session (optional).</li>
+</ol>
+<p>If your game will be streamed, open <strong>Broadcast Setup</strong> from the Game Day panel. Enter a session name. The panel guides you through checking, ready, and permission-failed states. Videographers and Stream &amp; Score volunteers see stream setup and status controls in their scoped game-day workspace.</p>
+<ol class="ml-6 list-decimal space-y-1">
 <li>Switch to live operations.</li>
 </ol>
 <p>Move to <strong>Game Day</strong> mode when play starts. Select the active period (for example, <code>H1</code> or <code>H2</code>). Use <strong>Coach</strong> view for subs and notes, and <strong>Stats</strong> view for stat taps.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Run live controls.</li>
 </ol>
-<p>For substitutions, select <strong>OUT</strong> and <strong>IN</strong>, then select <strong>Apply Sub</strong>. Log events with <strong>Timeout</strong>, <strong>Formation Change</strong>, <strong>Injury</strong>, or free-text <strong>Log</strong>. Update score and select <strong>Save Score</strong> after key changes.</p>
+<p>For substitutions, select <strong>OUT</strong> and <strong>IN</strong>, then select <strong>Apply Sub</strong>. Log events with <strong>Timeout</strong>, <strong>Formation Change</strong>, <strong>Injury</strong>, or free-text <strong>Log</strong>. Update score and select <strong>Save Score</strong> after key changes. Enable the <strong>Play Announcer</strong> in the live play-by-play panel to have events narrated aloud via the browser's speech engine — mute or pause at any time.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Keep live stats accurate.</li>
 </ol>
@@ -378,6 +386,14 @@
 <li><strong>Do lineup and score changes auto-save?</strong> No. Use <strong>Save Lineup</strong> for lineup changes and <strong>Save Score</strong> for score changes.</li>
 <li><strong>Where does the summary go?</strong> <strong>Generate Game Summary</strong> saves to the game record and appears in the match report.</li>
 </ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can I share a scoreboard widget with fans?</strong></li>
+</ul>
+<p>Yes. Coaches and admins can copy an iframe embed snippet or direct widget link from the team page to embed a compact, read-only scoreboard on external websites.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Which score is used for AI summary generation?</strong></li>
+</ul>
+<p>The AI "Analyze Game" and "Generate Game Summary" actions use the score entered in the <strong>Wrap-Up</strong> fields — not the in-game running score. Enter and confirm the final score in Wrap-Up before generating.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>Missing <code>teamId</code> or bad URL:</strong> Reopen from <code>edit-schedule.html</code> using <strong>Command Center</strong> so IDs pass correctly.</li>
@@ -388,6 +404,8 @@
 <li><strong>Score changed on screen but not in report:</strong> Re-enter the score and select <strong>Save Score</strong> before wrap-up completion.</li>
 <li><strong>AI actions fail in chat or wrap-up:</strong> Continue manually. Save notes, confirm final score, and finish the game. Re-run analysis later.</li>
 <li><strong>Wrap-up closed by mistake:</strong> Switch back to <strong>Wrap-Up</strong> mode from the top mode switcher.</li>
+<li><strong>Play Announcer not speaking</strong>: The browser's Web Speech API may not be supported. Check browser support and reload.</li>
+<li><strong>Broadcast setup stuck on checking</strong>: Confirm camera/microphone permission is granted in the browser, then retry.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">

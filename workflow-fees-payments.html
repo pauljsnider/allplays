@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Manage Team Fees and Payments - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+      .wf-shell { width: min(1160px, 100%); margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+      .wf-back-link { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 700; color: #4338ca; }
+      .wf-hero { margin-top: 0.75rem; background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%); border-radius: 1.1rem; padding: 1.25rem 1.25rem 1.15rem; color: #ecfeff; box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22); }
+      .wf-kicker { font-size: 0.73rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.84; }
+      .wf-title { margin-top: 0.4rem; font-size: clamp(1.75rem, 2.8vw, 2.35rem); line-height: 1.15; font-weight: 800; }
+      .wf-summary { margin-top: 0.75rem; max-width: 60ch; color: rgba(236, 254, 255, 0.95); line-height: 1.58; }
+      .wf-meta-row { margin-top: 0.95rem; display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
+      .wf-meta-pill { display: inline-flex; align-items: center; font-size: 0.78rem; font-weight: 700; border-radius: 999px; border: 1px solid rgba(236, 254, 255, 0.36); background: rgba(236, 254, 255, 0.12); color: #ecfeff; padding: 0.24rem 0.62rem; }
+      .wf-layout { margin-top: 1rem; display: grid; gap: 1rem; }
+      .wf-panel { background: var(--wf-panel); border: 1px solid var(--wf-border); border-radius: 1rem; box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08); }
+      .wf-panel-section { padding: 1rem; border-bottom: 1px solid var(--wf-border); }
+      .wf-panel-section:last-child { border-bottom: 0; }
+      .wf-panel-title { font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #334155; margin-bottom: 0.6rem; }
+      .wf-role-chip { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; padding: 0.22rem 0.66rem; font-size: 0.74rem; font-weight: 700; }
+      .wf-roles { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      .wf-toc { display: grid; gap: 0.33rem; }
+      .wf-toc a { display: block; padding: 0.43rem 0.52rem; border-radius: 0.55rem; color: #334155; font-size: 0.82rem; line-height: 1.35; transition: background 120ms ease, color 120ms ease; }
+      .wf-toc a:hover { background: #eef2ff; color: #3730a3; }
+      .wf-toc a.is-active { background: #e0e7ff; color: #312e81; font-weight: 700; }
+      .wf-content { padding: 1.2rem 1.15rem; }
+      .help-workflow-body { display: grid; gap: 0.45rem; }
+      .help-workflow-body h2 { font-size: 1.4rem; font-weight: 800; color: #1f2937; margin-top: 1.25rem; padding-top: 1.05rem; border-top: 1px solid #dbe7f0; scroll-margin-top: 6rem; }
+      .help-workflow-body h2:first-of-type { margin-top: 0.15rem; padding-top: 0; border-top: 0; }
+      .help-workflow-body h3 { font-size: 1.08rem; font-weight: 700; color: #1e293b; margin-top: 0.88rem; scroll-margin-top: 6rem; }
+      .help-workflow-body p, .help-workflow-body li { color: var(--wf-muted); line-height: 1.67; }
+      .help-workflow-body ol, .help-workflow-body ul { margin-left: 1.2rem; }
+      .help-workflow-body code { background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; padding: 0.1rem 0.35rem; border-radius: 0.3rem; font-size: 0.86em; }
+      .wf-mobile-toc { margin-top: 0.95rem; }
+      @media (min-width: 1024px) {
+        .wf-layout { grid-template-columns: 270px minmax(0, 1fr); align-items: start; }
+        .wf-sidebar { position: sticky; top: 1rem; }
+      }
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) { display: none; }
+      }
+    </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Manage Team Fees and Payments</h1>
+          <p class="wf-summary">Set up fee records, track payments, and let parents pay online via Stripe or record offline payments.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles">
+                <span class="wf-role-chip">Parent</span>
+                <span class="wf-role-chip">Coach</span>
+                <span class="wf-role-chip">Admin</span>
+              </div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body">
+
+              <h2 id="overview">Overview</h2>
+              <p>Team fees can be created by admins, paid by parents via Stripe Checkout, or tracked as offline payments. Admins can record balance adjustments, configure installment schedules, and cancel fees at any time. Parents see a full invoice view for each fee — including total amount, amount paid, remaining balance, individual line items, and the installment schedule if one is set up. Payment metadata from Stripe (session ID, payment intent, paid amount, and receipt) is stored directly on the fee record so admins always have a complete audit trail. Failed or expired Stripe sessions never mark a fee as paid.</p>
+
+              <h2 id="in-this-article">In This Article</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li>Creating a fee record with recipients, amounts, and installment schedule</li>
+                <li>Generating a Stripe Checkout link for online payment</li>
+                <li>Parent invoice view and online payment flow</li>
+                <li>Recording offline payments via ledger adjustment</li>
+                <li>Applying manual balance adjustments and cancellations</li>
+                <li>Viewing per-recipient payment status and remaining balances</li>
+              </ul>
+
+              <h2 id="who-is-this-for">Who Is This For</h2>
+              <p><strong>Admin:</strong> Create and configure fee records, set recipient lists, define installment schedules, generate Stripe Checkout links, record offline payments, apply manual adjustments, cancel fees, and monitor per-recipient payment status across the team.</p>
+              <p><strong>Coach:</strong> Coaches with admin access can create and manage fees. Coaches without admin access can view fee status for their team.</p>
+              <p><strong>Parent:</strong> View the invoice for each fee assigned to your player, see the full breakdown of amounts and due dates, and pay online when a Stripe Checkout link is available.</p>
+
+              <h2 id="prerequisites">Prerequisites</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li>Signed in to ALL PLAYS with your account</li>
+                <li>For online payment, a Stripe Checkout link must be generated by the admin first — parents cannot initiate online payment without it</li>
+                <li>For parent invoice view, the parent account must be linked to the team (listed in <code>parentTeamIds</code>)</li>
+                <li>Admin role required to create fees, record adjustments, or cancel fee records</li>
+              </ul>
+
+              <h2 id="choose-your-path">Choose Your Path</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li><strong>Set up a new fee</strong> — admin creates a fee record with the recipient list, total amount, and optional installment schedule</li>
+                <li><strong>Record an offline payment</strong> — admin uses a ledger adjustment to note cash, check, or other non-Stripe payments</li>
+                <li><strong>Parent wants to pay online</strong> — parent opens the fee detail from the parent dashboard, then selects <strong>Pay</strong> to go to Stripe Checkout</li>
+                <li><strong>Adjust or cancel a fee</strong> — admin uses manual adjustment controls to change the balance or cancel the fee entirely</li>
+              </ul>
+
+              <h2 id="step-by-step">Step-by-Step Workflow</h2>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li><strong>Admin: Create the fee record.</strong> Go to team management and open the <strong>Fees</strong> section. Click <strong>New Fee</strong>, enter the fee name, select recipients from the roster, set the total amount, and optionally configure an installment schedule with due dates and per-installment amounts.</li>
+                <li><strong>Admin: Generate a Stripe Checkout link.</strong> From the fee record, click <strong>Generate Payment Link</strong>. This creates a Stripe Checkout session and stores the URL on the fee. Copy the link or leave it for parents to access through their dashboard.</li>
+                <li><strong>Parent: Open the fee in the Parent Dashboard.</strong> Navigate to <strong>Parent Dashboard → Fees</strong> and expand the fee to see the full invoice — total amount, amount paid, remaining balance, individual line items, and installment schedule with due dates.</li>
+                <li><strong>Parent: Pay online.</strong> The <strong>Pay</strong> button appears only when a Stripe Checkout URL exists and the fee is unpaid or partially paid. Clicking <strong>Pay</strong> redirects to Stripe Checkout to complete the payment securely.</li>
+                <li><strong>Stripe processes the payment.</strong> On success, payment metadata is written to the fee record: Stripe session ID, payment intent, amount paid, and a receipt URL. The fee status updates to paid or partial based on the amount received. Failed or expired Stripe sessions never change the fee status — the fee remains unpaid until a successful payment is confirmed.</li>
+                <li><strong>Admin: Record an offline payment.</strong> Open the fee record, click <strong>Add Adjustment</strong>, set the type to <strong>Offline Payment</strong>, enter the amount, and add a reason (e.g., "Cash received at practice 2026-04-10"). The reason field is required for all adjustments.</li>
+                <li><strong>Admin: Apply a manual balance adjustment or cancel.</strong> Use <strong>Add Adjustment</strong> for positive or negative balance changes — for example, applying a scholarship discount (negative) or adding a late fee (positive). To cancel the fee entirely, use the <strong>Cancel Fee</strong> option; canceled fees are removed from the parent invoice view.</li>
+                <li><strong>Admin: Review per-recipient payment status.</strong> The fee record shows each recipient's current status: <strong>Paid</strong>, <strong>Unpaid</strong>, <strong>Partial</strong>, or <strong>Canceled</strong>, along with the remaining balance for each. Use this view to follow up with families who have outstanding balances.</li>
+              </ol>
+
+              <h2 id="common-questions">Common Questions</h2>
+              <h3>Can a parent pay in installments?</h3>
+              <p>Yes, if the admin configured an installment schedule when creating the fee. Parents see each installment with its amount and due date in the invoice view. Each installment can be paid separately when the admin generates a corresponding Stripe link for it.</p>
+              <h3>What if the Stripe session expires before the parent pays?</h3>
+              <p>Stripe Checkout sessions expire after a set time. If the session expires, the fee status stays unpaid. The admin needs to generate a new Stripe Checkout link so the parent can try again.</p>
+              <h3>Can an admin mark a fee as paid without going through Stripe?</h3>
+              <p>Yes. Use the <strong>Add Adjustment</strong> option with type <strong>Offline Payment</strong> and enter the full amount received. This records the payment in the ledger and updates the fee status without involving Stripe.</p>
+              <h3>Who can see fee records?</h3>
+              <p>Admins see all fee records and recipient details. Parents see only their own player's fee invoice — they cannot see other families' fee information or payment history.</p>
+
+              <h2 id="recovery-troubleshooting">Recovery and Troubleshooting</h2>
+              <p><strong>Pay button is not showing for a parent:</strong> Confirm that a Stripe Checkout URL has been generated by the admin for this fee. Also confirm the fee is not already in a paid or canceled state — the Pay button is hidden for completed or canceled fees.</p>
+              <p><strong>Stripe session failed or expired:</strong> The fee status remains unpaid. No partial credit is applied for failed sessions. The admin should generate a new Checkout link and share it with the parent.</p>
+              <p><strong>Adjustment is not saving:</strong> The reason field is required for all ledger adjustments. Make sure the reason field is filled in before submitting. The form will not save with an empty reason.</p>
+              <p><strong>Parent cannot see their fee:</strong> The parent account must be linked to the team. Check that the parent's account appears in the team's parent list. If not, add them via team settings and ask them to refresh the parent dashboard.</p>
+
+              <h2 id="related-workflows">Related Workflows</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li><a href="workflow-team-setup.html">Team Setup</a> — configure team details and admin access before creating fees</li>
+                <li><a href="workflow-roster.html">Manage Your Roster</a> — ensure players are on the roster before assigning them as fee recipients</li>
+              </ul>
+
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=14';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+        const allLinks = [...links];
+        let mobileWrapper = null;
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = (activeId) => {
+          let active = sectionById.get(activeId) || headings[0];
+          if (!sectionById.has(activeId)) {
+            for (const h of headings) {
+              if (h.getBoundingClientRect().top <= 140) active = h;
+            }
+          }
+          allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) { mobileWrapper.open = false; }
+            });
+          });
+        };
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+        addLinkHandlers(links);
+        ensureMobileToc();
+        window.addEventListener('scroll', () => setActive(null), { passive: true });
+        window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
+        setActive(window.location.hash.slice(1) || null);
+      })();
+    </script>
+</body>
+</html>

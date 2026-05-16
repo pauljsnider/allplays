@@ -310,6 +310,9 @@
 <li>Launch planning, tracking, command center, and live tools.</li>
 <li>Share live links and find replay/report links.</li>
 <li>Verify availability visibility and export <code>.ics</code> files.</li>
+<li>Subscribe to live calendar feeds (private team feed and public games feed).</li>
+<li>Use the draft slot generator for organization-level scheduling.</li>
+<li>Preview registration schedule imports before applying.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -330,6 +333,9 @@
 <li>Prepare game execution: use Step 8 and Step 9.</li>
 <li>Share live or replay access with families: use Step 10.</li>
 <li>Validate final visibility, personal calendar sync, and export views: use Step 11.</li>
+<li>Subscribe to a live calendar feed: use <strong>Sync Calendar</strong> from the schedule page or export the private HTTPS feed URL.</li>
+<li>Share a public games feed with fans: use the <strong>Fan Feed</strong> option (only for public/shareable games).</li>
+<li>Generate organization draft slots: open organization scheduling and use the <strong>Draft Generator</strong> tab.</li>
 </ol>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-4">
@@ -397,6 +403,31 @@
 <p>In <code>calendar.html</code>, use filters (view, range, type, team), verify availability status, and export <code>.ics</code> when needed.</p>
 </li>
 </ol>
+<h2 id="calendar-feeds">Calendar Feeds and Sync</h2>
+<p>ALL PLAYS provides multiple calendar feed types for different audiences.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Private team feed</strong>: Token-authorized HTTPS ICS feed. Includes games and practices with location, notes, arrival time, and cancellation status. Subscribe via Apple Calendar, Google Calendar, or copy the link from the <strong>Sync Calendar</strong> dialog.</li>
+<li><strong>Public games feed (Fan Feed)</strong>: Read-only, games-only ICS feed for public teams or explicitly shareable games. Excludes practices, private events, RSVP data, and assignments. The <strong>Fan Feed</strong> option appears in the schedule UI only when visibility allows it.</li>
+<li><strong>One-time ICS export</strong>: Still available for a point-in-time snapshot.</li>
+</ul>
+<p>ICS exports now use actual event end times. Falls back to type-specific defaults (1 hour for practices, 2 hours for games) when no end time is set.</p>
+<h2 id="organization-draft-slots">Organization Draft Slot Generator</h2>
+<p>For league/organization admins managing multiple teams, the draft slot generator builds a full season slot grid before publishing to individual team schedules.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open organization scheduling and select the <strong>Draft Generator</strong> tab.</li>
+<li>Select teams, season start/end dates, venue availability windows, blackout dates (organization and venue), and game duration.</li>
+<li>Review the generated draft: conflicts, unassigned teams, and slot counts are shown before saving.</li>
+<li>Edit or remove individual draft slots manually as needed.</li>
+<li>Save draft locally — slots are not published to team schedules until explicitly published.</li>
+</ol>
+<h2 id="registration-schedule-import">Registration Schedule Import</h2>
+<p>Import games from a registration provider (such as Sports Connect) with a conflict-safe preview.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Registration Schedule Import</strong> from the schedule editor.</li>
+<li>Review the preview: rows show date/time, type, opponent/title, location, and import status. Likely duplicate local events are flagged as conflicts.</li>
+<li>Deselect conflicting entries. Select <strong>Import</strong> to apply only non-conflicting entries.</li>
+<li>Registration source metadata is stored on imported events for audit purposes.</li>
+</ol>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>When should I import a calendar vs add games manually?</strong></li>
@@ -418,6 +449,14 @@
 <li><strong>What is the fastest way to share with families?</strong></li>
 </ul>
 <p>Use <code>Share</code> from schedule or team cards. Use <code>Sync Calendar</code> on the team schedule when families want a live personal calendar subscription instead of a one-time file export.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>How do I subscribe to the team calendar (not just export)?</strong></li>
+</ul>
+<p>Use <strong>Sync Calendar</strong> beside the ICS export button. Choose Apple Calendar, Google Calendar, or copy the private HTTPS feed URL for a live subscription that stays current as events change.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Who can see the Fan Feed?</strong></li>
+</ul>
+<p>The Fan Feed is public — anyone with the link can subscribe. It only includes games from public teams or games marked as shareable. Practices, private events, and RSVP data are never included.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Event missing after save: check filters, enable <code>Show Practices</code>, and confirm <code>Upcoming</code> vs <code>Past</code>.</li>
@@ -426,6 +465,9 @@
 <li>Live link not useful yet: open <code>View Live</code> first, confirm game status, then resend with <code>Share</code>.</li>
 <li><code>.ics</code> export missing events: adjust filters, then export again.</li>
 <li>Access denied: confirm you are signed in with coach/admin manage access to that team.</li>
+<li><strong>ICS export shows wrong end times</strong>: Re-export — end times now use actual event end times with type-specific defaults (1 hr practices, 2 hr games).</li>
+<li><strong>Fan Feed option not showing</strong>: The Fan Feed only appears for public teams or when the game is explicitly marked as shareable.</li>
+<li><strong>Organization draft slots publishing to wrong teams</strong>: Save draft locally first, review all slot assignments, then publish.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
