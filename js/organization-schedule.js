@@ -31,6 +31,7 @@ export const ORGANIZATION_SCHEDULE_WEEKDAYS = [
 const ORGANIZATION_SCHEDULE_WEEKDAY_VALUES = new Set(ORGANIZATION_SCHEDULE_WEEKDAYS.map((day) => day.value));
 const TIME_VALUE_PATTERN = /^\d{2}:\d{2}$/;
 const DATE_VALUE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_ONLY_PATTERN = DATE_VALUE_PATTERN;
 
 function normalizeTextValue(value) {
     return String(value || '').trim();
@@ -218,6 +219,152 @@ function matchOrganizationTeam(teamName, label, organizationIndex, accessibleInd
 function readMappedValue(row, headerName) {
     if (!headerName) return '';
     return String(row?.[headerName] || '').trim();
+}
+
+function normalizeDateKey(value) {
+    if (!value) return '';
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString().slice(0, 10);
+    }
+    const text = String(value).trim();
+    if (DATE_ONLY_PATTERN.test(text)) return text;
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+}
+
+function parseLocalDateTime(dateKey, timeText) {
+    if (!DATE_ONLY_PATTERN.test(dateKey) || !/^\d{2}:\d{2}$/.test(String(timeText || '').trim())) {
+        return null;
+    }
+    const parsed = new Date(`${dateKey}T${String(timeText).trim()}:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function addMinutes(date, minutes) {
+    return new Date(date.getTime() + (Number(minutes) || 0) * 60000);
+}
+
+function buildTeamPairs(teams = []) {
+    const normalizedTeams = normalizeTeamList(teams);
+    const pairs = [];
+    normalizedTeams.forEach((homeTeam, homeIndex) => {
+        normalizedTeams.slice(homeIndex + 1).forEach((awayTeam) => {
+            pairs.push({ homeTeam, awayTeam });
+        });
+    });
+    return pairs;
+}
+
+function hasDateOverlap(dateKey, blackoutDates = []) {
+    return new Set((Array.isArray(blackoutDates) ? blackoutDates : [])
+        .map(normalizeDateKey)
+        .filter(Boolean))
+        .has(dateKey);
+}
+
+function normalizeAvailabilityWindows(venues = [], seasonStart = '', seasonEnd = '', durationMinutes = 60) {
+    const startKey = normalizeDateKey(seasonStart);
+    const endKey = normalizeDateKey(seasonEnd);
+
+    return (Array.isArray(venues) ? venues : []).flatMap((venue) => {
+        const venueName = String(venue?.name || venue?.venueName || '').trim();
+        const windows = Array.isArray(venue?.availability) ? venue.availability : [];
+
+        return windows.map((window) => {
+            const dateKey = normalizeDateKey(window?.date);
+            const startsAt = parseLocalDateTime(dateKey, window?.startTime);
+            const endsAt = parseLocalDateTime(dateKey, window?.endTime);
+            return {
+                venueName,
+                dateKey,
+                startsAt,
+                endsAt,
+                blackout: hasDateOverlap(dateKey, venue?.blackoutDates),
+                valid: !!venueName && !!startsAt && !!endsAt && addMinutes(startsAt, durationMinutes) <= endsAt
+            };
+        }).filter((window) => {
+            if (!window.dateKey || !window.valid) return false;
+            if (startKey && window.dateKey < startKey) return false;
+            if (endKey && window.dateKey > endKey) return false;
+            return true;
+        });
+    }).sort((left, right) => left.startsAt - right.startsAt || left.venueName.localeCompare(right.venueName));
+}
+
+export function buildOrganizationScheduleDraftSlots({
+    selectedTeams = [],
+    seasonStart = '',
+    seasonEnd = '',
+    venues = [],
+    organizationBlackoutDates = [],
+    durationMinutes = 60
+} = {}) {
+    const teams = normalizeTeamList(selectedTeams);
+    const duration = Math.max(1, Number(durationMinutes) || 60);
+    const pairs = buildTeamPairs(teams);
+    const remainingPairs = [...pairs];
+    const conflicts = [];
+    const teamSlotCounts = new Map(teams.map((team) => [team.id, 0]));
+
+    const windows = normalizeAvailabilityWindows(venues, seasonStart, seasonEnd, duration);
+    const usableWindows = windows.filter((window) => {
+        if (hasDateOverlap(window.dateKey, organizationBlackoutDates)) {
+            conflicts.push({ type: 'organization-blackout', date: window.dateKey, venueName: window.venueName });
+            return false;
+        }
+        if (window.blackout) {
+            conflicts.push({ type: 'venue-blackout', date: window.dateKey, venueName: window.venueName });
+            return false;
+        }
+        return true;
+    });
+
+    const draftSlots = [];
+    usableWindows.forEach((window) => {
+        let cursor = new Date(window.startsAt);
+        while (remainingPairs.length > 0 && addMinutes(cursor, duration) <= window.endsAt) {
+            const pair = remainingPairs.shift();
+            const endsAt = addMinutes(cursor, duration);
+            draftSlots.push({
+                id: `draft-${draftSlots.length + 1}`,
+                homeTeamId: pair.homeTeam.id,
+                homeTeamName: pair.homeTeam.name,
+                awayTeamId: pair.awayTeam.id,
+                awayTeamName: pair.awayTeam.name,
+                venueName: window.venueName,
+                startsAt: cursor.toISOString(),
+                endsAt: endsAt.toISOString(),
+                durationMinutes: duration,
+                notes: ''
+            });
+            teamSlotCounts.set(pair.homeTeam.id, (teamSlotCounts.get(pair.homeTeam.id) || 0) + 1);
+            teamSlotCounts.set(pair.awayTeam.id, (teamSlotCounts.get(pair.awayTeam.id) || 0) + 1);
+            cursor = endsAt;
+        }
+    });
+
+    remainingPairs.forEach((pair) => {
+        conflicts.push({
+            type: 'unscheduled-matchup',
+            homeTeamId: pair.homeTeam.id,
+            awayTeamId: pair.awayTeam.id,
+            message: `${pair.homeTeam.name} vs ${pair.awayTeam.name} could not be placed in saved availability.`
+        });
+    });
+
+    return {
+        draftSlots,
+        conflicts,
+        unassignedTeams: teams.filter((team) => (teamSlotCounts.get(team.id) || 0) === 0),
+        generatedSlotCounts: {
+            total: draftSlots.length,
+            byVenue: draftSlots.reduce((counts, slot) => {
+                counts[slot.venueName] = (counts[slot.venueName] || 0) + 1;
+                return counts;
+            }, {}),
+            byTeam: Object.fromEntries(teamSlotCounts)
+        }
+    };
 }
 
 export function getOrganizationTeams({ accessibleTeams = [], organizationOwnerId = null } = {}) {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
     buildBlackoutDatePayload,
     buildOrganizationScheduleCsvTemplate,
+    buildOrganizationScheduleDraftSlots,
     buildOrganizationScheduleImportPreview,
     buildOrganizationSharedGamePayload,
     buildVenueAvailabilityPayload,
@@ -203,6 +204,67 @@ describe('organization schedule helpers', () => {
         });
     });
 
+    it('generates editable draft slots only inside availability and blackout rules', () => {
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams: accessibleTeams.slice(0, 2),
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            durationMinutes: 60,
+            organizationBlackoutDates: ['2026-08-16'],
+            venues: [
+                {
+                    name: 'Main Field',
+                    availability: [
+                        { date: '2026-08-15', startTime: '09:00', endTime: '11:00' },
+                        { date: '2026-08-16', startTime: '09:00', endTime: '11:00' },
+                        { date: '2026-08-22', startTime: '09:00', endTime: '11:00' }
+                    ],
+                    blackoutDates: ['2026-08-22']
+                }
+            ]
+        });
+
+        expect(draft.draftSlots).toHaveLength(1);
+        expect(draft.draftSlots[0]).toMatchObject({
+            homeTeamId: 'team-1',
+            awayTeamId: 'team-2',
+            venueName: 'Main Field',
+            durationMinutes: 60
+        });
+        expect(draft.draftSlots[0].startsAt).toBe(new Date('2026-08-15T09:00:00').toISOString());
+        expect(draft.conflicts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'organization-blackout', date: '2026-08-16' }),
+            expect.objectContaining({ type: 'venue-blackout', date: '2026-08-22' })
+        ]));
+        expect(draft.unassignedTeams).toHaveLength(0);
+        expect(draft.generatedSlotCounts).toMatchObject({
+            total: 1,
+            byVenue: { 'Main Field': 1 },
+            byTeam: { 'team-1': 1, 'team-2': 1 }
+        });
+    });
+
+    it('reports unassigned teams and unscheduled conflicts when slots run out', () => {
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams: accessibleTeams,
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            durationMinutes: 60,
+            venues: [{
+                name: 'Main Field',
+                availability: [{ date: '2026-08-15', startTime: '09:00', endTime: '10:00' }],
+                blackoutDates: []
+            }]
+        });
+
+        expect(draft.draftSlots).toHaveLength(1);
+        expect(draft.unassignedTeams).toEqual([accessibleTeams[2]]);
+        expect(draft.conflicts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'unscheduled-matchup', homeTeamId: 'team-1', awayTeamId: 'team-3' }),
+            expect.objectContaining({ type: 'unscheduled-matchup', homeTeamId: 'team-2', awayTeamId: 'team-3' })
+        ]));
+    });
+
     it('exposes the organization schedule entry point from team schedule', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 
@@ -227,6 +289,19 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('id="organization-schedule-csv-input"');
         expect(source).toContain('buildOrganizationScheduleImportPreview');
         expect(source).toContain('createdVia: \'organizationScheduleCsvImport\'');
+    });
+
+    it('wires the organization draft generator review and save workflow', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="draft-generator-tab"');
+        expect(source).toContain('id="draft-team-ids"');
+        expect(source).toContain('id="draft-venue-availability"');
+        expect(source).toContain('id="draft-organization-blackouts"');
+        expect(source).toContain('buildOrganizationScheduleDraftSlots');
+        expect(source).toContain('renderDraftReview');
+        expect(source).toContain('draftGeneratorState.draftSlots.splice(index, 1);');
+        expect(source).toContain('localStorage.setItem(`organizationScheduleDraft:${anchorTeam?.id || \'unknown\'}`');
     });
 
     it('caps organization schedule CSV imports before preview and import', () => {
