@@ -199,12 +199,12 @@
 
   <script type="module">
     import { getTeam, getGame, getPlayers, getConfigs, collection, getDocs, deleteDoc, uploadStatSheetPhoto } from './js/db.js?v=31';
-    import { db } from './js/firebase.js?v=11';
-    import { writeBatch, doc, setDoc } from './js/firebase.js?v=11';
+    import { db } from './js/firebase.js?v=12';
+    import { writeBatch, doc, setDoc } from './js/firebase.js?v=12';
     import { renderHeader, renderFooter, getUrlParams, escapeHtml, formatDate } from './js/utils.js?v=8';
     import { checkAuth } from './js/auth.js?v=15';
     import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-    import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=5';
+    import { ensureImageAuth, getImageAuthError } from './js/firebase-images.js?v=6';
     import { validateTrackStatsheetApplyRows, buildTrackStatsheetApplyPlan } from './js/track-statsheet-apply.js?v=2';
     import { getApp } from './js/vendor/firebase-app.js';
     import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';

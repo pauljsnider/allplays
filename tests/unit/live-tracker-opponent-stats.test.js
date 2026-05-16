@@ -438,7 +438,7 @@ describe('live tracker opponent stats harness', () => {
         "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=31';",
         "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=1000';"
       )
-      .replace('./firebase.js?v=11', './firebase.js?v=77')
+      .replace('./firebase.js?v=12', './firebase.js?v=77')
       .replace('./utils.js?v=9', './utils.js?v=123')
       .replace('./auth.js?v=15', './auth.js?v=457');
 
