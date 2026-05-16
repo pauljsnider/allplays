@@ -230,6 +230,11 @@ export const Timestamp = {
     }
 };
 
+export const auth = {
+    currentUser: { getIdToken: async () => 'id-token' },
+    app: { options: { projectId: 'demo-project' } }
+};
+
 export function deleteField() {
     return '__delete_field__';
 }

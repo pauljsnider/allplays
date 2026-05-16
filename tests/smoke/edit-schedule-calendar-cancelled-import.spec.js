@@ -187,6 +187,10 @@ export const Timestamp = {
         return { toDate: () => date };
     }
 };
+export const auth = {
+    currentUser: { getIdToken: async () => 'id-token' },
+    app: { options: { projectId: 'demo-project' } }
+};
 export function deleteField() {
     return Symbol('deleteField');
 }
