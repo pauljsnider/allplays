@@ -408,14 +408,14 @@
 </ol>
 <h2 id="private-calendar-feed">Private Team Calendar Feed</h2>
 <p>The private team calendar feed is a Firebase HTTPS endpoint that serves a token-authorized ICS calendar file. Unlike a one-time export, this is a live subscription — Apple Calendar, Google Calendar, or any ICS-compatible app can subscribe to the URL and receive automatic updates as events are added, changed, or canceled.</p>
-<ol class="ml-6 list-decimal space-y-1">
+<ul class="ml-6 list-disc space-y-1">
 <li>On the schedule page or <code>calendar.html</code>, click <strong>Sync Calendar</strong> next to the ICS export button.</li>
 <li>The Sync Calendar dialog opens with three options: <strong>Apple Calendar</strong> (opens the URL directly in Calendar on Mac or iOS), <strong>Google Calendar</strong> (opens Google Calendar's "Add by URL" subscription flow), and <strong>Copy Link</strong> (copies the private HTTPS URL to your clipboard).</li>
 <li>The URL is token-authorized — it encodes a stable SHA-256 token that verifies your team membership. Do not share this URL publicly; it grants read access to your team's full schedule including practices, notes, and arrival times.</li>
 <li>What's included in the feed: all games and practices with location, arrival time (if set), event notes, and cancellation status. Canceled events appear with <code>STATUS:CANCELLED</code> so subscribers' calendars update correctly instead of showing stale events.</li>
 <li>Stable event UIDs: each event has a consistent Firestore-based UID so edits to existing events sync correctly to subscribing calendars rather than creating duplicate entries.</li>
 <li>Token security: revoked or expired tokens are rejected at the feed endpoint. Membership visibility checks run on every request — if you lose team access, your feed subscription stops returning data automatically. There is no separate per-URL revoke action; access is tied to team membership.</li>
-</ol>
+</ul>
 <p>Because the feed reads live Firestore data on every sync, updates appear in your calendar app the next time it polls the URL. Apple Calendar polls every 24 hours by default; you can force a refresh by right-clicking the calendar and choosing <strong>Refresh</strong>, or reduce the sync interval in Calendar Preferences.</p>
 <h2 id="public-fan-feed">Public Fan Games Feed</h2>
 <p>The public fan feed (<code>publicTeamGamesIcs</code> Firebase Function) serves a read-only, games-only ICS calendar for public teams or explicitly shareable games. It is designed for distribution to fans, league websites, and club newsletters without exposing any private team data.</p>
@@ -440,7 +440,7 @@
 <h3>Who accesses organization scheduling</h3>
 <p>Platform admins and organization-level users can load all active teams in the organization schedule editor. Team-level coaches do not have access to the org scheduling view — they only see their own team's published events.</p>
 <h3>Draft slot generator — full flow</h3>
-<ol class="ml-6 list-decimal space-y-1">
+<ul class="ml-6 list-disc space-y-1">
 <li>Open organization scheduling and select the <strong>Draft Generator</strong> tab.</li>
 <li>Select participating teams — you can select all active teams or a targeted subset.</li>
 <li>Set the season start and end dates to define the scheduling window.</li>
@@ -451,16 +451,16 @@
 <li>Review the preview before saving. The preview shows: total slots generated, which teams are unassigned (when the number of teams exceeds available slots), conflict count (slots that overlap with blackout windows), and slot count per team.</li>
 <li>Edit the draft: manually add, remove, or edit individual slots in the grid before saving. Assign teams to slots by drag or direct selection.</li>
 <li>Save the draft locally — the draft is stored in the organization scheduling context but NOT published to individual team schedules. Teams cannot see draft slots until you explicitly publish.</li>
-</ol>
+</ul>
 <h3>Publishing organization draft slots</h3>
 <p>Publishing is a separate, explicit action. When publishing, you choose which team schedules to push the draft slots to — you can publish all at once or target a subset of teams. When a shared matchup is published, if the away-team mirror write fails the home-team game write is rolled back and the failure is surfaced to the user so they can retry. Previously, mirror write errors were silently swallowed. Stat config isolation is maintained: team-scoped <code>statTrackerConfigId</code> values are not copied into shared schedule payloads for opponent teams — each team's stat config remains independent.</p>
 <h3>Bulk import</h3>
-<ol class="ml-6 list-decimal space-y-1">
+<ul class="ml-6 list-disc space-y-1">
 <li>Download the CSV template from the org scheduling import panel.</li>
 <li>Fill in team assignments, dates, times, and locations in the template.</li>
 <li>Upload the completed CSV. A validation preview shows row status for each row: <strong>Valid</strong>, <strong>Invalid format</strong>, <strong>Duplicate</strong>, or <strong>Conflict</strong>.</li>
 <li>Import only non-conflicting, valid rows. Conflict and invalid rows are excluded automatically.</li>
-</ol>
+</ul>
 <h3>Progressive tournament fields</h3>
 <p>Tournament slot editing shows relevant fields based on the source type selected. <strong>Fixed team</strong> shows only the Team name field by default. <strong>Home/Away</strong> shows additional assignment fields for both sides. When you re-open an edit, the correct visible field group is restored based on the saved source type — you will not need to re-select the type to see the right fields.</p>
 <h2 id="registration-schedule-import">Registration Schedule Import (Extended)</h2>
@@ -489,13 +489,13 @@
 <p>ICS exports now use actual event end times. Falls back to type-specific defaults (1 hour for practices, 2 hours for games) when no end time is set.</p>
 <h2 id="organization-draft-slots">Organization Draft Slot Generator</h2>
 <p>For league/organization admins managing multiple teams, the draft slot generator builds a full season slot grid before publishing to individual team schedules.</p>
-<ol class="ml-6 list-decimal space-y-1">
+<ul class="ml-6 list-disc space-y-1">
 <li>Open organization scheduling and select the <strong>Draft Generator</strong> tab.</li>
 <li>Select teams, season start/end dates, venue availability windows, blackout dates (organization and venue), and game duration.</li>
 <li>Review the generated draft: conflicts, unassigned teams, and slot counts are shown before saving.</li>
 <li>Edit or remove individual draft slots manually as needed.</li>
 <li>Save draft locally — slots are not published to team schedules until explicitly published.</li>
-</ol>
+</ul>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>When should I import a calendar vs add games manually?</strong></li>
