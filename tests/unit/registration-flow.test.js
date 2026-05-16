@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
     buildInstallmentSchedule,
     buildPendingRegistrationRecord,
+    calculateRegistrationFeeSnapshot,
     collectFieldValues,
     decideRegistrationPlacement,
     formatFeeAmount,
     getPaymentPlanChoices,
+    formatFeeSnapshotLines,
     normalizeRegistrationForm,
     validateRegistrationSubmission
 } from '../../js/registration-flow.js';
@@ -97,7 +99,15 @@ describe('public registration flow', () => {
             },
             status: 'pending',
             submittedAt: now,
-            source: 'public-registration'
+            source: 'public-registration',
+            feeSnapshot: {
+                currency: 'USD',
+                quantity: 1,
+                originalFeeAmountCents: 5000,
+                subtotalAmountCents: 5000,
+                appliedDiscounts: [],
+                finalAmountDueCents: 5000
+            }
         });
     });
 
@@ -142,6 +152,39 @@ describe('public registration flow', () => {
                 { label: 'Installment 3', dueDate: '2026-07-31', amountCents: 3334 }
             ]
         });
+    });
+
+    it('calculates eligible registration discounts for fee previews and snapshots', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            feeAmountCents: 10000,
+            currency: 'USD',
+            published: true,
+            discountRules: [
+                { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2026-03-01' },
+                { id: 'siblings', type: 'quantity', label: 'Sibling/cart', amountType: 'percent', amountValue: 10, minimumQuantity: 2 }
+            ]
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        const snapshot = calculateRegistrationFeeSnapshot(form, { quantity: 2, now: new Date('2026-02-15T12:00:00Z') });
+
+        expect(snapshot).toEqual({
+            currency: 'USD',
+            quantity: 2,
+            originalFeeAmountCents: 10000,
+            subtotalAmountCents: 20000,
+            appliedDiscounts: [
+                { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: 2500, amountCents: 2500 },
+                { id: 'siblings', type: 'quantity', label: 'Sibling/cart', amountType: 'percent', amountValue: 10, amountCents: 1750 }
+            ],
+            finalAmountDueCents: 15750
+        });
+        expect(formatFeeSnapshotLines(snapshot).map(line => line.label)).toEqual([
+            'Original fee',
+            'Early bird',
+            'Sibling/cart',
+            'Final amount due'
+        ]);
     });
 
     it('requires an active registration option when configured', () => {
@@ -245,6 +288,8 @@ describe('public registration flow', () => {
         expect(page).toContain('registration-options-section');
         expect(page).toContain('payment-plan-section');
         expect(page).toContain('getPaymentPlanChoices');
+        expect(page).toContain('fee-summary-section');
+        expect(page).toContain('calculateRegistrationFeeSnapshot');
         expect(page).toContain('runTransaction(db, async (transaction)');
         expect(page).toContain('decideRegistrationPlacement');
         expect(page).toContain('registrationCapacityUpdateId: registrationRef.id');
@@ -264,6 +309,8 @@ describe('public registration flow', () => {
         expect(rules).toContain("'selectedOption'");
         expect(rules).toContain("'paymentPlan'");
         expect(rules).toContain('isRegistrationPaymentPlanValid');
+        expect(rules).toContain("'feeSnapshot'");
+        expect(rules).toContain('isRegistrationFeeSnapshotValid');
         expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
         expect(rules).toContain('registrationCapacityUpdateId');
         expect(rules).toContain('existsAfter(registrationPath)');

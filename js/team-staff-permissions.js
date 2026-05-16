@@ -27,6 +27,11 @@ function getPermissionGrantLabels(permission) {
     return getUniqueLabels(normalized.memberIds);
 }
 
+function getStreamScoreGrantLabels(permissions) {
+    const scorekeeperGrants = new Set(getPermissionGrantLabels(permissions.scorekeeping));
+    return getPermissionGrantLabels(permissions.streaming).filter((memberId) => scorekeeperGrants.has(memberId));
+}
+
 export function buildTeamStaffPermissionsViewModel(team = {}, pendingAdminInvites = []) {
     const adminEmails = uniqueEmails(team.adminEmails);
     const ownerLabel = normalizeEmail(team.ownerEmail) || String(team.ownerId || '').trim();
@@ -59,6 +64,12 @@ export function buildTeamStaffPermissionsViewModel(team = {}, pendingAdminInvite
                 title: 'Scorekeeper',
                 grants: getPermissionGrantLabels(permissions.scorekeeping),
                 emptyText: 'No scorekeeper helpers are assigned yet.'
+            },
+            {
+                key: 'stream-score',
+                title: 'Stream & Score',
+                grants: getStreamScoreGrantLabels(permissions),
+                emptyText: 'No Stream & Score volunteers are assigned yet.'
             },
             {
                 key: 'videographer',
@@ -105,7 +116,7 @@ export function renderTeamStaffPermissionsSection(container, { team = {}, pendin
             <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
                 <div>
                     <h2 class="text-2xl font-bold text-gray-900">Team Staff &amp; Permissions</h2>
-                    <p class="text-sm text-gray-500 mt-1">Full staff admin access is separate from scoped game-day helper permissions for scorekeeping, video, and volunteers.</p>
+                    <p class="text-sm text-gray-500 mt-1">Full staff admin access is separate from scoped game-day helper permissions for scorekeeping, Stream &amp; Score, video, and volunteers.</p>
                 </div>
                 <a href="edit-team.html#teamId=${encodeURIComponent(team.id || '')}" class="inline-flex items-center justify-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700 transition">Manage staff</a>
             </div>
@@ -117,11 +128,11 @@ export function renderTeamStaffPermissionsSection(container, { team = {}, pendin
                 </div>
                 <div class="rounded-xl border border-emerald-100 bg-emerald-50 p-4">
                     <h3 class="text-sm font-bold text-emerald-900 uppercase tracking-wide mb-2">Admin vs game-day helpers</h3>
-                    <p class="text-sm text-emerald-800">Admins can manage the team. Scoped helpers are intended for specific game-day jobs and do not grant roster, schedule, RSVP, scoring setup, or full team settings access.</p>
+                    <p class="text-sm text-emerald-800">Admins can manage the team. Scoped helpers are intended for specific game-day jobs. Stream &amp; Score grants only scorekeeping plus streaming capability, not roster, schedule, RSVP, scoring setup, or full team settings access.</p>
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                 ${viewModel.helperPermissions.map((permission) => `
                     <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
                         <h3 class="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">${escapeHtml(permission.title)}</h3>

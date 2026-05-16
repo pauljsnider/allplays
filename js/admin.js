@@ -15,6 +15,8 @@ import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
     formatFieldLabels,
+    formatRegistrationDiscountRulesText,
+    parseRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
 } from './admin-registration-forms.js?v=3';
@@ -602,6 +604,7 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-installment-interval').value = installmentPlan.intervalDays || '';
     document.getElementById('registration-participant-fields').value = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
     document.getElementById('registration-guardian-fields').value = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
+    document.getElementById('registration-discount-rules').value = formatRegistrationDiscountRulesText(form.discountRules);
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
     renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
@@ -768,6 +771,7 @@ async function saveRegistrationForm(event) {
             firstDueDate: document.getElementById('registration-installment-first-date').value,
             intervalDays: document.getElementById('registration-installment-interval').value
         },
+        discountRules: parseRegistrationDiscountRulesText(document.getElementById('registration-discount-rules').value),
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
     }, { teamId });
