@@ -24,14 +24,28 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('id="goal-sport-controls"');
     expect(source).toContain('id="goal-scorer-input"');
     expect(source).toContain('id="goal-note-input"');
-    expect(source).toContain("getGoalSportProfile({ game: currentGame, team: currentTeam, config: currentConfig })");
-    expect(source).toContain('hasExplicitStatTrackerConfig');
+    expect(source).toContain('id="live-notes-list"');
+    expect(source).toContain('resolveGoalSportTrackerProfile');
+    expect(source).toContain("from './js/live-game-state.js?v=7'");
+    expect(source).toContain("from './js/live-tracker-notes.js?v=3'");
+    expect(source).toContain('buildGoalSportNoteText');
+    expect(source).toContain('removeGameSummaryLine');
+    expect(source).toContain('const { teamId, gameId, trackerMode } = getUrlParams();');
+    expect(source).toContain('trackerMode,');
+    expect(source).toContain('game: currentGame,');
+    expect(source).toContain('team: currentTeam,');
+    expect(source).toContain('config: currentConfig');
     expect(source).toContain("recordGoalSportGoal('home')");
     expect(source).toContain("recordGoalSportGoal('away')");
     expect(source).toContain("type: 'goal'");
     expect(source).toContain('statKey: event.statKey');
     expect(source).toContain('isOpponent: event.isOpponent');
     expect(source).toContain('buildGoalSportEvent({');
+    expect(source).toContain("const liveNote = addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');");
+    expect(source).toContain('liveNoteId: liveNote?.id || null');
+    expect(source).toContain('liveNoteText: liveNote?.text || null');
+    expect(source).toContain('removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText);');
+    expect(source).toContain('function renderLiveNotes()');
   });
 
   it('includes bounded football play logging with down-distance context', () => {

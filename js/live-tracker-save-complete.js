@@ -1,6 +1,6 @@
 import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=3';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=2';
+import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=3';
 
 export const LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
@@ -42,9 +42,13 @@ export function addAggregatedStatsWritesToBatch({
   currentGameId,
   createDocRef
 } = {}) {
-  aggregatedStatsWrites.forEach(({ playerId, data }) => {
+  aggregatedStatsWrites.forEach(({ playerId, data, privateData }) => {
     const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
     batch.set(statsRef, data);
+    if (privateData) {
+      const privateStatsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, playerId);
+      batch.set(privateStatsRef, privateData);
+    }
   });
 }
 
@@ -180,6 +184,7 @@ export async function runSaveAndCompleteWorkflow({
     opponentName: currentGame?.opponent || 'Unknown Opponent',
     recipientEmail,
     columns: currentConfig?.columns || [],
+    statTrackerConfig: currentConfig || {},
     roster,
     statsByPlayerId: state.stats,
     opponentEntries: state.opp,

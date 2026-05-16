@@ -261,6 +261,7 @@
         }
       }
     </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="flex flex-col min-h-screen">
     <div id="header-container"></div>
@@ -301,6 +302,10 @@
 <li>Manage live substitutions, logs, score, and stats.</li>
 <li>Complete wrap-up and hand off to reporting and practice planning.</li>
 <li>Recover from common game-day issues.</li>
+<li>Set up broadcast session and stream controls.</li>
+<li>Access the live play announcer for audio narration of events.</li>
+<li>Generate an embeddable scoreboard widget for external websites.</li>
+<li>Use wrap-up scores for AI game summary generation.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -340,15 +345,50 @@
 <ol class="ml-6 list-decimal space-y-1">
 <li>Validate pre-game details.</li>
 </ol>
-<p>In <strong>Pre-Game</strong>, verify opponent, date/time, location, home/away, and kit badges. If needed, select <strong>Edit game details →</strong>, save fixes, and return.</p>
+<p>In <strong>Pre-Game</strong>, verify each badge in the game summary strip before any other action. Here is what each field controls and why it matters:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Opponent name</strong> — shown in the AI-generated game summary, the match report title, and all fan-facing live views. A typo here propagates everywhere. Fix it before the AI generates anything.</li>
+<li><strong>Date and time</strong> — used by the scheduling grid, the parent dashboard Upcoming Games panel, and any calendar export links. If the time is wrong, parents and fans see the wrong kickoff, and any schedule-sorted game lists are ordered incorrectly.</li>
+<li><strong>Location</strong> — displayed to parents on the team page and in game detail views. Correct this before parents start asking where to drive.</li>
+<li><strong>Home or Away</strong> — determines which team's stats appear on the left in report layouts. Some stat exports and AI prompts use home/away context to label possession and territory. Flip it now if it is wrong — it is hard to fix cleanly after stats are recorded.</li>
+<li><strong>Kit color</strong> — displayed alongside the lineup in the live game view so viewers know which color your team is wearing. It has no effect on stat recording itself, but parents and fans reference it on the live stream and scoreboard.</li>
+</ul>
+<p>If any field is wrong, select <strong>Edit game details →</strong>. This opens the game edit panel from <code>edit-schedule.html</code> in context — you do not need to navigate away from Command Center manually. Save your corrections there and the Pre-Game strip will refresh. Use the Edit route for any factual fix. Do not attempt to work around a wrong opponent or date by just relying on notes — the data flows into AI, reports, and the parent view, so accuracy here pays dividends throughout the game lifecycle.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Finalize availability and pre-game notes.</li>
 </ol>
-<p>In the RSVP panel, set each player to <strong>Going</strong>, <strong>Maybe</strong>, or <strong>Out</strong>. Add scouting notes. Use <strong>AI Coach Focus</strong> if you want a quick directive.</p>
+<p>The RSVP panel in Pre-Game is your source of truth for who will be on the field today. Each player card shows their current RSVP state. The three states are:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Going</strong> — the player has confirmed they will be there. Going players are the pool auto-fill uses when building a fresh lineup. If a player is Going and you run AI Optimize, they are included in the optimization.</li>
+<li><strong>Maybe</strong> — the player is uncertain. They appear in the lineup builder as selectable but are not included in auto-fill. Build your lineup without them and slot them in manually if they show up.</li>
+<li><strong>Out</strong> — the player is unavailable. They are excluded from auto-fill and AI Optimize entirely. If someone was Going but text you at the field that they cannot make it, update their state to Out before you build or finalize the lineup — this prevents them from appearing in the starting position on the canvas.</li>
+</ul>
+<p>You can update RSVP states at any point before kickoff directly in the RSVP panel — you do not need to leave Command Center. Last-minute absences are best handled by setting Out immediately and then re-running Balance or AI Optimize so the lineup reflects reality.</p>
+<p>The <strong>Scouting / Pre-Game Notes</strong> field is a free-text area for opponent notes, weather conditions, tactical reminders, or anything else the coaching staff wants visible before the match. These notes are saved to the game record and appear in the wrap-up view so you can reference them when writing post-game analysis.</p>
+<p><strong>AI Coach Focus</strong> is an optional tool in the Pre-Game panel. When you trigger it, the AI reviews previous game event data for this team — recent results, patterns in where events were conceded or generated, and current player availability — and generates a short tactical emphasis point for today's game. Think of it as a suggested conversation starter with your team during warm-up, not a binding instruction. It is most useful when you want a quick framing point but haven't had time to review the last few match reports in detail. The output is brief by design — one to three sentences with a specific focus area.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Build and save lineup.</li>
 </ol>
-<p>Select a formation. Place players on the lineup canvas, or use <strong>Balance</strong> or <strong>AI Optimize</strong>. Select <strong>Save Lineup</strong> before kickoff.</p>
+<p>The lineup builder is a canvas-based formation editor. Here is how each part works in detail:</p>
+<p><strong>Formation selection.</strong> Choose a formation from the formation picker (for example, 4-3-3, 4-4-2, 3-5-2). Selecting a formation immediately redraws the position layout on the canvas — positions shift to match the tactical shape you chose. The canvas always shows the full pitch, with your team displayed on one half and positions labeled by role (GK, CB, LB, RB, CM, CAM, ST, etc.). Changing formation at any time resets positions, so pick a formation before you start dragging players.</p>
+<p><strong>Auto-fill for empty lineups.</strong> When the lineup has not been saved before for this game, the builder auto-fills positions with players whose RSVP state is Going. The assignment is one-to-one: the first Going player goes to the first position, the second to the second, and so on. This gives you a starting point immediately — it is not a tactical recommendation, just a population of the canvas so you can adjust from a non-empty state. Auto-fill does not run if a saved lineup already exists; in that case, the saved lineup loads instead.</p>
+<p><strong>Manual adjustment.</strong> To move players, tap or click a player card on the canvas and drag it to the target position circle. You can also tap a player and then tap an empty position to assign without dragging. Swapping two players who are both already positioned works by dragging one onto the other — they swap slots automatically. There is no automatic save during manual adjustment; all changes stay local until you select Save Lineup.</p>
+<p><strong>Balance button.</strong> Balance runs an algorithm that redistributes players across positions based on each player's historical position data from past games. If your squad has players who frequently played center-back, Balance tends to slot them there rather than in forward positions. It does not optimize for the current opponent or for balance of scoring threat — it is a history-based assignment that usually produces a more positionally natural starting shape than raw auto-fill. Use it as a quick sanity check after auto-fill if you have not had time to build the lineup manually.</p>
+<p><strong>AI Optimize.</strong> AI Optimize sends the current Going player pool, each player's historical game data, and the formation to the AI backend, which suggests a lineup designed to maximize positional fit based on how players have actually performed over recorded games. The AI returns a complete position assignment. You can accept it as-is or continue adjusting manually from that suggestion. AI Optimize takes a few seconds to complete — wait for the canvas to update before making further changes. Note: AI Optimize requires backend connectivity; if it fails, a fallback message appears and you can proceed manually.</p>
+<p><strong>Game Plan link.</strong> If you previously built a game plan for this specific game using <code>game-plan.html</code> — and saved a lineup there — the Game Day lineup builder loads that saved lineup automatically instead of running auto-fill. This is the expected workflow for coaches who plan lineups in advance: build in game-plan.html the day before, arrive on game day, and the Command Center lineup canvas shows exactly what was saved. If no game plan lineup exists, the builder falls back to auto-fill from the Going pool.</p>
+<p><strong>Save Lineup is required before kickoff.</strong> Changes to the canvas are not auto-saved. If you adjust positions, swap players, or run AI Optimize and then navigate away or switch to live mode without saving, those changes are lost and the previously saved lineup (or no lineup at all) will be what the live view and stats tracker see. Make Save Lineup the last action you take in Pre-Game before switching to Game Day live mode.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Set up broadcast session (optional).</li>
+</ol>
+<p>If your game will be streamed, open <strong>Broadcast Setup</strong> from the Game Day panel. The setup flow has three sequential states — Checking, Ready, and Permission Failed — and the experience differs depending on who is accessing the panel. Here is the full breakdown:</p>
+<p><strong>Who should use Broadcast Setup.</strong> Broadcast Setup is for anyone who will be capturing or managing the video stream for this game: the head coach running their own stream from a phone, an assigned videographer on the sideline, or a Stream &amp; Score volunteer who has been granted combined streaming and scorekeeping access. Stat-only admins and parent-view users do not see Broadcast Setup controls.</p>
+<p><strong>Entering a session name.</strong> The first field in Broadcast Setup is the session name. This is a short label — something like "vs. Lincoln United - April 12" — that is attached to the broadcast session in replay metadata. It appears in the replay list and in the game media hub so coaches and fans can identify which recording corresponds to which match. Use a consistent naming convention if you run multiple streams per season.</p>
+<p><strong>The Checking state.</strong> When you open the panel and the session name is entered, the panel enters Checking state. It is confirming that the browser can access the device's camera and microphone. This typically takes one to three seconds. During this state, the stream cannot begin — wait for the state to resolve before tapping any other control.</p>
+<p><strong>The Ready state.</strong> When camera and microphone permissions are confirmed, the panel transitions to Ready. You will see a green indicator and a Begin Streaming button. At this point the browser has been granted hardware access and the stream can start immediately. The video preview may appear so you can verify framing before going live.</p>
+<p><strong>The Permission Failed state.</strong> If the browser has denied camera or microphone access — either because the user previously blocked the site or because the device has restrictions — the panel shows a Permission Failed message. To recover: open your browser's site permissions (usually in the address bar or browser settings), find the camera and microphone entries for this site, change them from Blocked to Allow, and then reload the Broadcast Setup panel. On iOS Safari, camera access must be granted from device Settings → Safari → Camera. On Android Chrome, it is in Site Settings for the current URL.</p>
+<p><strong>Stream &amp; Score volunteers.</strong> A user who has been granted both scorekeeping permission and streaming permission sees a combined workspace in the Game Day panel. This workspace shows game context (current period, score), scoring controls so they can update the score as it changes, and the Broadcast Setup flow — all in one view. Stream &amp; Score volunteers do not need full admin access to access this workspace; the permissions grant is scoped specifically to live-game scoring and streaming tasks. This allows coaches to assign a dedicated sideline person to handle both jobs without giving them access to roster management, team settings, or schedule editing.</p>
+<p><strong>Videographers.</strong> Team members granted Videographer Access from the Team Staff &amp; Permissions panel see native camera capture controls in their scoped game-day workspace. This workspace is focused strictly on live-game media capture — they can start and manage the stream but cannot access roster data, the schedule, player stats history, or team settings. Videographer Access is appropriate for a parent volunteer or student manager who you trust with the camera but not with administrative functions.</p>
+<p><strong>What streaming means in this context.</strong> When Broadcast Setup talks about streaming, it means native camera capture initiated from the browser — the device camera feed is used directly. This is not screen capture of the app itself, and it is not a third-party screen recording. The capture goes to the broadcast platform configured for your team. After the game, the recording is processed and becomes a replay available on the game page.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Switch to live operations.</li>
 </ol>
@@ -356,7 +396,17 @@
 <ol class="ml-6 list-decimal space-y-1">
 <li>Run live controls.</li>
 </ol>
-<p>For substitutions, select <strong>OUT</strong> and <strong>IN</strong>, then select <strong>Apply Sub</strong>. Log events with <strong>Timeout</strong>, <strong>Formation Change</strong>, <strong>Injury</strong>, or free-text <strong>Log</strong>. Update score and select <strong>Save Score</strong> after key changes.</p>
+<p>The live controls panel is the primary coaching interface during the match. It is organized into substitutions, event logging, and score management. Here is each in detail:</p>
+<p><strong>Substitutions.</strong> To make a substitution, first tap the player coming <strong>OUT</strong> in the field player list — that player is highlighted. Then tap the player coming <strong>IN</strong> from the bench list. Both must be selected before the confirm button activates. Select <strong>Apply Sub</strong> to record the substitution. The event is logged in the play-by-play feed with the current timestamp, and the on-field roster updates immediately. If you selected the wrong player, tap a different player to change the selection before confirming. Playing time tracking begins automatically: each player's on-field time accumulates from the moment they are shown as on the field, and bench time accumulates when they are subbed out. These totals are visible in the Stats view and included in post-game reports.</p>
+<p><strong>Event logging.</strong> Four event types are available from the live controls panel:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Timeout</strong> — records which team called the timeout and the current game time. In modes where the app tracks clock state, logging a Timeout also pauses the clock display. Use this to keep a clean record of stoppages, especially in sports with limited timeouts per half.</li>
+<li><strong>Formation Change</strong> — records the new formation name (for example, switching from 4-3-3 to 4-5-1 mid-game). The event appears in the play-by-play feed and is referenced in the AI wrap-up analysis to provide context for the second half.</li>
+<li><strong>Injury</strong> — flags the affected player and records the game time. You will be prompted to optionally substitute the injured player out immediately. The injury flag appears in the player's game record and in the match report so medical or coaching staff can follow up.</li>
+<li><strong>Log (free text)</strong> — a catch-all for anything else the coach wants to record: a referee decision, a weather change, a tactical observation, a player callout. Free-text logs appear in the play-by-play feed with a timestamp and are included in the wrap-up notes available to the AI during analysis.</li>
+</ul>
+<p><strong>Score management.</strong> The score display in Game Day shows the current home and away scores. To update: tap the score field for the relevant team, enter the new value, and select <strong>Save Score</strong>. Score is not auto-saved — entering a number in the field without saving means the score will revert if you navigate away or the session refreshes. As a habit, select Save Score immediately after any goal or significant score change. The saved score is what parents and fans see on the live scoreboard and what the AI uses if you trigger analysis before completing wrap-up.</p>
+<p><strong>Play Announcer.</strong> The Play Announcer is an optional audio narration layer for the live play-by-play panel. When enabled, the browser reads each logged event aloud as it is recorded, using the Web Speech API built into modern browsers. This allows a coach or assistant to hear event confirmations without looking at the screen — useful when coaching from the sideline and tapping events quickly. The announcer can be muted or paused at any time from the panel toggle; it does not affect event recording in any way. The preference (enabled or disabled) is saved per session — it resets to off when you close Command Center. Note that Web Speech API support varies by browser; if no voice plays, check that your browser supports it and that the device volume is not muted.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Keep live stats accurate.</li>
 </ol>
@@ -364,11 +414,55 @@
 <ol class="ml-6 list-decimal space-y-1">
 <li>Complete wrap-up.</li>
 </ol>
-<p>Open <strong>Wrap-Up</strong>. Confirm final score and add post-game notes. Run <strong>Analyze Game → Generate Practice Feed</strong>. Run <strong>Generate Game Summary</strong>.</p>
+<p>Open <strong>Wrap-Up</strong> after the final whistle. This is the step that closes the game record and feeds into AI analysis, reporting, and practice planning. Here is what each Wrap-Up action does:</p>
+<p><strong>Confirm the final score.</strong> The Wrap-Up panel has dedicated final score fields for home and away. These are separate from the in-game running score. The AI for "Analyze Game" and "Generate Game Summary" reads the Wrap-Up final score — not the score that was updated during live play. This matters because the in-game score may have been partially updated or left at an intermediate value. Always enter the confirmed final score here before running any AI action. If penalties or overtime changed the result, enter the actual final outcome, not the score at the end of regulation.</p>
+<p><strong>Add Wrap-Up notes.</strong> The notes field is for post-game coaching observations — key moments, individual player callouts, tactical things that worked or did not work, anything you want preserved in the game record. These notes are stored with the game and used as context by the AI during analysis. They are also visible in the match report, so write them with the assumption that an assistant coach or team admin will read them later.</p>
+<p><strong>Analyze Game → Generate Practice Feed.</strong> Selecting Analyze Game sends all logged game events — substitutions, goals, timeouts, formation changes, injury flags, free-text logs — along with the Wrap-Up final score to the AI. The AI reviews the full picture and generates two outputs: a structured analysis (what went well, areas to improve, key player performance highlights) and a practice feed (a set of focus areas and associated drill recommendations for the next training session). The practice feed integrates with <code>drills.html</code> so the coach can review recommendations and schedule them directly. Run Analyze Game before Generate Game Summary if you want the analysis context to inform the summary text.</p>
+<p><strong>Generate Game Summary.</strong> This action writes a natural-language paragraph summarizing the game for the match report. It uses the Wrap-Up final score, the opponent name, and the key events logged during the game. The output appears in an editable text field — you can review it, correct anything the AI got wrong, and add phrases the AI missed. Select <strong>Save Summary</strong> to commit the text to the game record. The Save Summary button re-enables every time the editor is opened, which means you can generate a draft, save it, come back later, run Generate again or manually edit the text, and save again. The match report always shows the most recently saved version.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Close and hand off.</li>
 </ol>
 <p>Select <strong>Done — See Match Report →</strong> to mark the game complete. Continue report sharing and replay from <code>team.html</code>, and practice planning in <code>drills.html</code>.</p>
+<h2 id="broadcasting-and-streaming">Broadcast and Streaming Setup</h2>
+<p>Game Day Command Center supports live video streaming from a native camera — coaches, videographers, and Stream &amp; Score volunteers all interact with this pipeline in different ways depending on the permissions they have been granted. Understanding the full broadcast lifecycle helps you avoid the most common setup failures and get the stream live before kickoff.</p>
+<p>The broadcast pipeline begins in the Game Day panel under <strong>Broadcast Setup</strong>. Any authorized user — head coach, assigned videographer, or Stream &amp; Score volunteer — opens this panel from the live game workspace. The first action is entering a session name: a short, descriptive label like "vs. Riverside United — May 3" that will appear in the replay list and game media hub after the game is processed. Use a consistent naming convention across the season so replays are easy to identify when reviewing games weeks later.</p>
+<p>After entering the session name, the panel enters the <strong>Checking</strong> state. This means the app is requesting access to the device camera and microphone. Most browsers will display a permission prompt at this point — you must allow access for the state to advance. The Checking state typically resolves within two or three seconds. Do not tap other controls during this time; wait for the state to change before proceeding.</p>
+<p>When permissions are confirmed, the panel moves to <strong>Ready</strong> state. A green ready indicator appears and the Begin Streaming button becomes active. At this point the stream can begin immediately. A video preview may appear so you can verify framing and focus before going live. Adjust camera angle or zoom as needed, then start the stream.</p>
+<p>If the browser has previously denied camera or microphone access — or if device-level permissions block the browser from accessing hardware — the panel shows <strong>Permission Failed</strong> with guidance text. To recover: on desktop Chrome or Edge, click the camera icon in the browser address bar and change the permission to Allow, then reload the panel. On iOS Safari, go to device Settings → Safari → Camera and Microphone, and set both to Allow. On Android Chrome, open Site Settings for the current URL and enable Camera and Microphone. After changing permissions, reload the Broadcast Setup panel and go through the Checking flow again. Do not attempt to start a stream in Permission Failed state — the hardware is not accessible and the attempt will silently fail.</p>
+<p><strong>Stream &amp; Score volunteers</strong> are team members granted both streaming permission and scorekeeping permission from the Team Staff &amp; Permissions panel. When a Stream &amp; Score volunteer opens the Game Day workspace, they see a combined interface that is distinct from both the full coach view and the stat-tracker view. Their workspace shows the current game context (period, running score), scoring controls so they can update the score live as goals are scored, stream setup status, and external streaming provider guidance — all in a single panel. This makes them self-sufficient on the sideline without requiring any coaching or admin access to roster, schedule, or team settings. The combined workspace is intentional: the most common game-day staffing situation is one person handling both the camera and the scoreboard simultaneously.</p>
+<p><strong>Videographers</strong> are team members granted Videographer Access specifically. Their game-day workspace is scoped only to live-game media capture. They can start and manage the broadcast stream, see the current game, and access any media-related controls — but they cannot view the roster, access the schedule editor, see player statistics history, or make any changes to team settings. This scope makes Videographer Access appropriate for a parent volunteer or student manager who will operate the camera reliably but should not have broader administrative reach into the team's data.</p>
+<p>In this context, <strong>streaming means native camera capture</strong> initiated through the browser. The device's actual camera hardware is used — this is not a screen recording of the app, and it is not capturing a second display. The video feed goes to the broadcast platform configured for your team and is recorded for later replay. After the game ends, the recording is processed asynchronously. The game page will show the replay in one of four states:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Unavailable</strong> — no replay was recorded or the recording was not associated with this game. Playback is not possible.</li>
+<li><strong>Processing</strong> — the recording was received and is being prepared. Playback is blocked until processing completes. Check back after a few minutes.</li>
+<li><strong>Failed</strong> — a processing error occurred. The replay cannot be recovered automatically. Contact support with the session name and game date so the raw recording can be located manually.</li>
+<li><strong>Ready</strong> — processing completed successfully. The full game replay is available on the game page for coaches, admins, and permissioned parents to view.</li>
+</ul>
+<p>After a replay becomes Ready, coaches can save highlights directly from the replay player. A highlight clip captures a defined time range from the recording and saves it to the game media hub with a title, timestamp, player tags, and a seek-to-moment control. When a fan or coach opens the game page and clicks a highlight, the replay player seeks directly to that moment. Highlights are useful for tagging individual player moments, key goals, or defensive sequences you want to review in the next practice session.</p>
+<p>The <strong>embeddable scoreboard widget</strong> is a companion feature to live game tracking. Coaches and admins can copy an iframe embed snippet or a direct widget URL from the team page. The iframe snippet can be pasted into any HTML page — a club website, a league page, or a parent group page — to display a compact, automatically updating scoreboard showing the current score, period, and game status. The direct widget URL can be shared as a standalone link for fans who want to open the scoreboard in a browser tab without visiting the full team page. The widget is public and read-only — it never requires a login — and it updates in real time as the Game Day tracker or Live Tracker records score changes. Best practice is to share the widget link at the start of the season in your team's league page, club website, or parent communication channel so fans can bookmark it before the first game rather than asking for a link at kickoff.</p>
+
+<h2 id="ai-game-actions">AI Game Actions</h2>
+<p>Game Day Command Center includes four distinct AI actions spread across the pre-game and wrap-up phases. Each is triggered manually — no AI action runs automatically without your confirmation. Here is what each one does, when to run it, and what to do if it fails.</p>
+<h3 id="ai-coach-focus">AI Coach Focus (Pre-Game)</h3>
+<p>AI Coach Focus runs from the Pre-Game RSVP panel. When you trigger it, the AI reviews previous game event data for this team — recent match results, patterns in where events were conceded or generated, which players have been most involved in positive sequences — and combines that with the current player availability (Going, Maybe, Out states) to produce a short tactical focus point for today's game. The output is brief and opinionated: one to three sentences with a specific emphasis, such as "Your last two games showed repeated breakdown on the left flank in the second half — consider a more defensive-minded left midfielder today, especially given that your primary LM is Out." Use it as a conversation starter with your team during warm-up or pre-game team talk. It is a suggested emphasis, not a mandatory instruction — override it any time your own scouting or experience points elsewhere.</p>
+<h3 id="ai-analyze-game">Analyze Game (Wrap-Up)</h3>
+<p>Analyze Game runs from the Wrap-Up panel after the final whistle. It sends the complete set of logged game events — substitutions with timestamps, goals, timeouts, formation changes, injury flags, free-text coach logs — plus the Wrap-Up final score to the AI backend for review. The AI returns a structured analysis organized around three areas: what went well based on the event pattern, areas to improve where the event data shows gaps or repeated problems, and key player performance callouts based on involvement in positive or negative sequences. Alongside the analysis, the AI generates a practice feed: a set of focus areas — specific skills or tactical patterns that the game data suggests need work — each linked to drill recommendations. The practice feed integrates with <code>drills.html</code> so you can review the suggestions and schedule them into upcoming practice sessions without leaving the post-game workflow. The AI uses the <strong>Wrap-Up final score</strong>, not the running in-game score, for all analysis — confirm the Wrap-Up score is correct before running Analyze Game or the analysis output may reference the wrong result context.</p>
+<h3 id="ai-generate-summary">Generate Game Summary (Wrap-Up)</h3>
+<p>Generate Game Summary writes a natural-language paragraph summarizing the match for the public-facing match report. It uses the Wrap-Up final score, the opponent name from the game details, and the key events recorded during the game to produce a readable narrative — something a parent or fan could read to understand what happened without accessing the raw stat sheet. The output appears in an editable text field immediately after generation. Review it: the AI sometimes misattributes timing or omits events that mattered more than the raw event log suggests. Edit the text directly before saving. Select <strong>Save Summary</strong> to commit the text to the game record. The Save Summary button re-enables every time the editor is opened, which means you can generate a draft now, save it, come back after reviewing the match report, run Generate again or manually revise the text, and save the updated version. The match report always displays the most recently saved version. There is no limit to how many times you can save.</p>
+<h3 id="ai-failure">What If AI Actions Fail</h3>
+<p>All AI actions require backend connectivity and successful communication with the AI service. If an action fails — network error, service timeout, or a transient backend issue — a fallback message appears in the panel. The failure does not affect any saved data: your events, score, and notes are independent of AI processing. Continue manually: save your Wrap-Up notes, confirm the final score, and finish the game record. The match report will be complete except for the AI-generated analysis text and summary. You can re-run AI Coach Focus, Analyze Game, or Generate Game Summary later by returning to the game's edit view from the team schedule or match report. If a specific AI action fails consistently on the same game over multiple sessions, capture the game ID and the error message and share with your team admin for support investigation.</p>
+
+<h2 id="scoreboard-widget">Embeddable Scoreboard Widget</h2>
+<p>The embeddable scoreboard widget lets coaches and admins share a compact, read-only live scoreboard with anyone — fans, parents, league staff, or club website visitors — without requiring them to log in or navigate the full ALL PLAYS team interface. The widget is designed for external embedding and standalone sharing, and it updates automatically as the game progresses.</p>
+<p>To access the scoreboard widget, open the team page (<code>team.html</code>) and locate the <strong>Scoreboard Widget</strong> option in the admin tools section. You will see two sharing formats:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>iframe embed snippet</strong> — a short block of HTML that you paste into any webpage. Once embedded, the scoreboard appears as a contained panel on that page. It shows the current score, the active period (or game status — pre-game, live, final), and the team names. The panel refreshes automatically in real time as the tracker updates the score — no manual refresh is needed. This format is appropriate for a club website, a league results page, or any site where you have access to the HTML source.</li>
+<li><strong>Direct widget URL</strong> — a standalone link that opens the scoreboard in its own browser tab or window. Share this as a link in a parent group chat, on a social media bio, or in a league communication. Anyone who opens the link sees the current scoreboard without needing an ALL PLAYS account.</li>
+</ul>
+<p>The widget is fully public and read-only. It does not expose any private player data — only the score, period, and team names that are already public in the live game view. No login is required to view it, which makes it suitable for sharing with league officials, opposing team staff, or casual fans who have no ALL PLAYS account.</p>
+<p>The widget updates in real time as the Game Day tracker or Live Tracker records score changes via <strong>Save Score</strong>. This means the displayed score reflects the last saved score — not the number currently typed in a score field that has not yet been saved. Make it a habit to select Save Score immediately after each goal so the widget stays accurate for anyone watching remotely.</p>
+<p>Best practice is to share the widget link or embed it before the season begins, not right before each game. Put the widget URL in your team's league page listing, club website team profile, or the pinned post of your parent communication channel at the start of the season. That way, fans and parents can bookmark it once and return to it automatically for every game — instead of you needing to redistribute a link before each match. The same widget URL remains valid for all games played by that team throughout the season; the scoreboard automatically switches to display whichever game is currently live.</p>
+
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>Do I have to include <code>gameId</code> in the URL?</strong> Recommended: yes. If it is missing, Game Day auto-selects a game in this order: live first, then nearest upcoming, then most recent.</li>
@@ -377,6 +471,14 @@
 <li><strong>Do lineup and score changes auto-save?</strong> No. Use <strong>Save Lineup</strong> for lineup changes and <strong>Save Score</strong> for score changes.</li>
 <li><strong>Where does the summary go?</strong> <strong>Generate Game Summary</strong> saves to the game record and appears in the match report.</li>
 </ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can I share a scoreboard widget with fans?</strong></li>
+</ul>
+<p>Yes. Coaches and admins can copy an iframe embed snippet or direct widget link from the team page to embed a compact, read-only scoreboard on external websites.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Which score is used for AI summary generation?</strong></li>
+</ul>
+<p>The AI "Analyze Game" and "Generate Game Summary" actions use the score entered in the <strong>Wrap-Up</strong> fields — not the in-game running score. Enter and confirm the final score in Wrap-Up before generating.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>Missing <code>teamId</code> or bad URL:</strong> Reopen from <code>edit-schedule.html</code> using <strong>Command Center</strong> so IDs pass correctly.</li>
@@ -387,6 +489,8 @@
 <li><strong>Score changed on screen but not in report:</strong> Re-enter the score and select <strong>Save Score</strong> before wrap-up completion.</li>
 <li><strong>AI actions fail in chat or wrap-up:</strong> Continue manually. Save notes, confirm final score, and finish the game. Re-run analysis later.</li>
 <li><strong>Wrap-up closed by mistake:</strong> Switch back to <strong>Wrap-Up</strong> mode from the top mode switcher.</li>
+<li><strong>Play Announcer not speaking</strong>: The browser's Web Speech API may not be supported. Check browser support and reload.</li>
+<li><strong>Broadcast setup stuck on checking</strong>: Confirm camera/microphone permission is granted in the browser, then retry.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -432,25 +536,6 @@
         const allLinks = [...links];
         let mobileWrapper = null;
 
-        if (mobileToc && window.innerWidth < 1024) {
-          const wrapper = document.createElement('details');
-          wrapper.className = 'wf-panel-section wf-panel';
-          wrapper.style.marginBottom = '0.95rem';
-          wrapper.style.padding = '0.8rem 1rem';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Jump to section';
-          summary.style.cursor = 'pointer';
-          summary.style.fontWeight = '700';
-          summary.style.color = '#0f172a';
-          const list = toc.cloneNode(true);
-          list.style.marginTop = '0.6rem';
-          allLinks.push(...Array.from(list.querySelectorAll('a')));
-          wrapper.appendChild(summary);
-          wrapper.appendChild(list);
-          mobileToc.appendChild(wrapper);
-          mobileWrapper = wrapper;
-        }
-
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const setActive = (activeId) => {
           let active = sectionById.get(activeId) || headings[0];
@@ -462,17 +547,46 @@
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        allLinks.forEach((a) => {
-          a.addEventListener('click', () => {
-            setActive(a.getAttribute('href').slice(1));
-            if (mobileWrapper && mobileWrapper.contains(a)) {
-              mobileWrapper.open = false;
-            }
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
           });
-        });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>

@@ -261,6 +261,7 @@
         }
       }
     </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="flex flex-col min-h-screen">
     <div id="header-container"></div>
@@ -272,7 +273,7 @@
           <h1 class="wf-title">Plan Schedule and Launch Game Flows</h1>
           <p class="wf-summary">Use this workflow to publish reliable games and practices, then launch game-day tools from the schedule.</p>
           <div class="wf-meta-row">
-            <span class="wf-meta-pill">5 min read</span>
+            <span class="wf-meta-pill">12 min read</span>
             <span class="wf-meta-pill">Updated from live product pages</span>
           </div>
         </section>
@@ -309,6 +310,9 @@
 <li>Launch planning, tracking, command center, and live tools.</li>
 <li>Share live links and find replay/report links.</li>
 <li>Verify availability visibility and export <code>.ics</code> files.</li>
+<li>Subscribe to live calendar feeds (private team feed and public games feed).</li>
+<li>Use the draft slot generator for organization-level scheduling.</li>
+<li>Preview registration schedule imports before applying.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -329,6 +333,9 @@
 <li>Prepare game execution: use Step 8 and Step 9.</li>
 <li>Share live or replay access with families: use Step 10.</li>
 <li>Validate final visibility, personal calendar sync, and export views: use Step 11.</li>
+<li>Subscribe to a live calendar feed: use <strong>Sync Calendar</strong> from the schedule page or export the private HTTPS feed URL.</li>
+<li>Share a public games feed with fans: use the <strong>Fan Feed</strong> option (only for public/shareable games).</li>
+<li>Generate organization draft slots: open organization scheduling and use the <strong>Draft Generator</strong> tab.</li>
 </ol>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-4">
@@ -347,6 +354,9 @@
 <p>Enter <code>Date &amp; Time</code>, <code>Opponent</code>, <code>Location</code>, and <code>Home/Away</code>.</p>
 <p>Add useful optional data: <code>Kit Color</code>, <code>Season Label</code>, <code>Competition Type</code>, <code>Arrival Time</code>, notes, and assignments.</p>
 <p>Select the stat config you plan to use, then save.</p>
+<p><strong>Stat tracker config selection:</strong> When a game is saved, a <code>statTrackerConfigId</code> is assigned to it. This ID controls which sport and column layout the tracker uses. For basketball games (those whose config has <code>baseType: Basketball</code>), when you select <strong>Track</strong> at game time you are prompted to choose a tracker mode: <strong>Standard</strong> (routes to <code>track.html</code>), <strong>Beta</strong> (routes to <code>track-basketball.html</code>, the basketball-optimized mobile tracker), <strong>Live Broadcast Tracker</strong> (full stats plus broadcast), or <strong>Photo Score Sheet</strong> (stat import via photo analysis). For non-basketball configs the mode chooser is skipped and the game always opens in <code>track.html</code>.</p>
+<p><strong>Live status persistence:</strong> After a game goes live its <code>liveStatus</code> field is written to Firestore and persists when the schedule editor reloads. The <strong>Live Now</strong> and <strong>Watch Replay</strong> labels appear correctly on schedule and team cards because they read directly from the saved <code>liveStatus</code> value — no manual refresh is needed after a game transitions from live to completed.</p>
+<p><strong>Score sheet upload:</strong> After a game is complete, coaches and admins can upload a score sheet image from the game's action menu. The photo is analyzed by AI and the parsed stats are previewed before being imported. The upload button re-enables after a prior sheet is removed, so you can replace an incorrect upload without reloading the page.</p>
 </li>
 <li>
 <p>Add practices in the <strong>Practice</strong> tab.</p>
@@ -396,6 +406,96 @@
 <p>In <code>calendar.html</code>, use filters (view, range, type, team), verify availability status, and export <code>.ics</code> when needed.</p>
 </li>
 </ol>
+<h2 id="private-calendar-feed">Private Team Calendar Feed</h2>
+<p>The private team calendar feed is a Firebase HTTPS endpoint that serves a token-authorized ICS calendar file. Unlike a one-time export, this is a live subscription — Apple Calendar, Google Calendar, or any ICS-compatible app can subscribe to the URL and receive automatic updates as events are added, changed, or canceled.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>On the schedule page or <code>calendar.html</code>, click <strong>Sync Calendar</strong> next to the ICS export button.</li>
+<li>The Sync Calendar dialog opens with three options: <strong>Apple Calendar</strong> (opens the URL directly in Calendar on Mac or iOS), <strong>Google Calendar</strong> (opens Google Calendar's "Add by URL" subscription flow), and <strong>Copy Link</strong> (copies the private HTTPS URL to your clipboard).</li>
+<li>The URL is token-authorized — it encodes a stable SHA-256 token that verifies your team membership. Do not share this URL publicly; it grants read access to your team's full schedule including practices, notes, and arrival times.</li>
+<li>What's included in the feed: all games and practices with location, arrival time (if set), event notes, and cancellation status. Canceled events appear with <code>STATUS:CANCELLED</code> so subscribers' calendars update correctly instead of showing stale events.</li>
+<li>Stable event UIDs: each event has a consistent Firestore-based UID so edits to existing events sync correctly to subscribing calendars rather than creating duplicate entries.</li>
+<li>Token security: revoked or expired tokens are rejected at the feed endpoint. Membership visibility checks run on every request — if you lose team access, your feed subscription stops returning data automatically. There is no separate per-URL revoke action; access is tied to team membership.</li>
+</ul>
+<p>Because the feed reads live Firestore data on every sync, updates appear in your calendar app the next time it polls the URL. Apple Calendar polls every 24 hours by default; you can force a refresh by right-clicking the calendar and choosing <strong>Refresh</strong>, or reduce the sync interval in Calendar Preferences.</p>
+<h2 id="public-fan-feed">Public Fan Games Feed</h2>
+<p>The public fan feed (<code>publicTeamGamesIcs</code> Firebase Function) serves a read-only, games-only ICS calendar for public teams or explicitly shareable games. It is designed for distribution to fans, league websites, and club newsletters without exposing any private team data.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Who can see it:</strong> Anyone with the link. No token or login is required.</li>
+<li><strong>What's included:</strong> Games only — date, time, opponent, location, and home/away designation. Practices, private events, RSVP data, player assignments, officiating slots, and notes are never included in this feed.</li>
+<li><strong>When it appears in the UI:</strong> The <strong>Fan Feed</strong> option is shown in the schedule and calendar export area only when the team is set to Public (visible in Browse Teams) or when individual games are explicitly marked as shareable. If the team is private and no games are shareable, the Fan Feed option is hidden.</li>
+<li><strong>Stable UIDs:</strong> The same Firestore-based UID scheme is used as in the private feed, so fan calendar subscriptions update correctly when game details change rather than creating duplicate entries.</li>
+<li><strong>Use case:</strong> Share the fan feed URL with your league website, club newsletter, local sports calendar aggregator, or any public venue that wants live schedule updates without requiring team membership.</li>
+<li><strong>How to get the URL:</strong> Find the <strong>Fan Feed</strong> option in the schedule or calendar export area. Copy the URL and distribute it freely — it carries no private data.</li>
+</ul>
+<h2 id="ics-export-details">ICS Export Details</h2>
+<p>The one-time ICS export and the live calendar feeds all use the same event time logic, but behave differently after the export point.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Actual end times:</strong> ICS exports now use the actual <code>endTime</code> field from the event record when it is set. This was a recent fix — previously, exports used type-specific defaults regardless of the saved end time.</li>
+<li><strong>Fallback defaults:</strong> If no end time is set on an event, the export applies a type-specific fallback: <strong>1 hour</strong> for practices and <strong>2 hours</strong> for games. These defaults produce reasonable calendar blocks when end times have not been entered.</li>
+<li><strong>One-time export vs. live subscription:</strong> A one-time export downloads a static <code>.ics</code> file reflecting the schedule at that moment. It will not update if events change after you download it. A live subscription (private feed or fan feed) reads current Firestore data on each calendar app sync and stays current throughout the season. For season-long calendar sync, prefer a live subscription over repeated one-time exports.</li>
+<li><strong>Re-export if times look wrong:</strong> If a previously exported file shows incorrect end times, re-export. The export now uses actual event end times with type-specific defaults as the fallback. The fix is applied on every new export — no data migration is needed.</li>
+</ul>
+<h2 id="organization-scheduling">Organization Scheduling (Extended)</h2>
+<p>Organization-level scheduling is used by platform admins or organization-level users — not team-level coaches. It allows league operators to build a full season grid and publish game slots to individual team schedules in a controlled, reviewable flow.</p>
+<h3>Who accesses organization scheduling</h3>
+<p>Platform admins and organization-level users can load all active teams in the organization schedule editor. Team-level coaches do not have access to the org scheduling view — they only see their own team's published events.</p>
+<h3>Draft slot generator — full flow</h3>
+<ul class="ml-6 list-disc space-y-1">
+<li>Open organization scheduling and select the <strong>Draft Generator</strong> tab.</li>
+<li>Select participating teams — you can select all active teams or a targeted subset.</li>
+<li>Set the season start and end dates to define the scheduling window.</li>
+<li>Configure venue availability windows: which days of the week and time ranges the venue is available for games.</li>
+<li>Enter organization blackout dates (holidays, league-wide breaks) and venue blackout dates (maintenance closures, other events booked at the venue).</li>
+<li>Set the default game duration. This is used for slot spacing and for ICS export of published events.</li>
+<li>The generator runs locally in the browser and produces a draft grid of candidate slots. No data is written yet.</li>
+<li>Review the preview before saving. The preview shows: total slots generated, which teams are unassigned (when the number of teams exceeds available slots), conflict count (slots that overlap with blackout windows), and slot count per team.</li>
+<li>Edit the draft: manually add, remove, or edit individual slots in the grid before saving. Assign teams to slots by drag or direct selection.</li>
+<li>Save the draft locally — the draft is stored in the organization scheduling context but NOT published to individual team schedules. Teams cannot see draft slots until you explicitly publish.</li>
+</ul>
+<h3>Publishing organization draft slots</h3>
+<p>Publishing is a separate, explicit action. When publishing, you choose which team schedules to push the draft slots to — you can publish all at once or target a subset of teams. When a shared matchup is published, if the away-team mirror write fails the home-team game write is rolled back and the failure is surfaced to the user so they can retry. Previously, mirror write errors were silently swallowed. Stat config isolation is maintained: team-scoped <code>statTrackerConfigId</code> values are not copied into shared schedule payloads for opponent teams — each team's stat config remains independent.</p>
+<h3>Bulk import</h3>
+<ul class="ml-6 list-disc space-y-1">
+<li>Download the CSV template from the org scheduling import panel.</li>
+<li>Fill in team assignments, dates, times, and locations in the template.</li>
+<li>Upload the completed CSV. A validation preview shows row status for each row: <strong>Valid</strong>, <strong>Invalid format</strong>, <strong>Duplicate</strong>, or <strong>Conflict</strong>.</li>
+<li>Import only non-conflicting, valid rows. Conflict and invalid rows are excluded automatically.</li>
+</ul>
+<h3>Progressive tournament fields</h3>
+<p>Tournament slot editing shows relevant fields based on the source type selected. <strong>Fixed team</strong> shows only the Team name field by default. <strong>Home/Away</strong> shows additional assignment fields for both sides. When you re-open an edit, the correct visible field group is restored based on the saved source type — you will not need to re-select the type to see the right fields.</p>
+<h2 id="registration-schedule-import">Registration Schedule Import (Extended)</h2>
+<p>The registration schedule import pulls scheduled events (games, practices) from the connected registration provider (such as Sports Connect) and previews them before any changes are applied to your local schedule. No events are created or modified until you explicitly confirm the import.</p>
+<h3>The preview</h3>
+<p>Each row in the import preview shows: date and time, event type (game or practice), opponent name or event title, location, and import status. Status values:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Add:</strong> A new event that does not exist locally. It will be created on import.</li>
+<li><strong>Update:</strong> Matches an existing local event but has field-level differences. The existing event will be updated with provider values.</li>
+<li><strong>Unchanged:</strong> Matches an existing local event exactly. No action will be taken — the row is shown for visibility only.</li>
+<li><strong>Conflict:</strong> Detected as a likely duplicate based on date, time, and opponent/title closeness. Conflict rows are flagged and excluded from import by default — they cannot be selected for import.</li>
+</ul>
+<h3>Conflict detection</h3>
+<p>A "likely duplicate" is detected when the date, time, and opponent or title closely match an existing local event. Conflicts are automatically excluded — you cannot accidentally import a duplicate through normal import flow. If you believe a conflict is not a real duplicate, edit the existing local event first to remove the conflicting detail, then re-run the import preview.</p>
+<h3>Partial import and row selection</h3>
+<p>Use the row checkboxes in the preview to deselect specific Add or Update rows you want to skip. Only checked rows are included in the import. Conflict rows have their checkboxes disabled — they cannot be selected regardless of user action.</p>
+<h3>Metadata and audit</h3>
+<p>Registration source metadata is stored on every imported event: provider name, external event ID, and import timestamp. This information is preserved for audit purposes and is visible in the event's admin detail view. After import, events appear in your schedule normally and can be edited in <code>edit-schedule.html</code> — registration metadata is preserved through edits but all event fields remain editable.</p>
+<h2 id="calendar-feeds">Calendar Feeds and Sync</h2>
+<p>ALL PLAYS provides multiple calendar feed types for different audiences.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Private team feed</strong>: Token-authorized HTTPS ICS feed. Includes games and practices with location, notes, arrival time, and cancellation status. Subscribe via Apple Calendar, Google Calendar, or copy the link from the <strong>Sync Calendar</strong> dialog.</li>
+<li><strong>Public games feed (Fan Feed)</strong>: Read-only, games-only ICS feed for public teams or explicitly shareable games. Excludes practices, private events, RSVP data, and assignments. The <strong>Fan Feed</strong> option appears in the schedule UI only when visibility allows it.</li>
+<li><strong>One-time ICS export</strong>: Still available for a point-in-time snapshot.</li>
+</ul>
+<p>ICS exports now use actual event end times. Falls back to type-specific defaults (1 hour for practices, 2 hours for games) when no end time is set.</p>
+<h2 id="organization-draft-slots">Organization Draft Slot Generator</h2>
+<p>For league/organization admins managing multiple teams, the draft slot generator builds a full season slot grid before publishing to individual team schedules.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Open organization scheduling and select the <strong>Draft Generator</strong> tab.</li>
+<li>Select teams, season start/end dates, venue availability windows, blackout dates (organization and venue), and game duration.</li>
+<li>Review the generated draft: conflicts, unassigned teams, and slot counts are shown before saving.</li>
+<li>Edit or remove individual draft slots manually as needed.</li>
+<li>Save draft locally — slots are not published to team schedules until explicitly published.</li>
+</ul>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>When should I import a calendar vs add games manually?</strong></li>
@@ -417,6 +517,30 @@
 <li><strong>What is the fastest way to share with families?</strong></li>
 </ul>
 <p>Use <code>Share</code> from schedule or team cards. Use <code>Sync Calendar</code> on the team schedule when families want a live personal calendar subscription instead of a one-time file export.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>How do I subscribe to the team calendar (not just export)?</strong></li>
+</ul>
+<p>Use <strong>Sync Calendar</strong> beside the ICS export button. Choose Apple Calendar, Google Calendar, or copy the private HTTPS feed URL for a live subscription that stays current as events change.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Who can see the Fan Feed?</strong></li>
+</ul>
+<p>The Fan Feed is public — anyone with the link can subscribe. It only includes games from public teams or games marked as shareable. Practices, private events, and RSVP data are never included.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>How often does the private calendar feed update?</strong></li>
+</ul>
+<p>The private feed reads live Firestore data on every request, so its content is always current. Updates appear in your calendar app the next time the app polls the subscription URL. Apple Calendar polls every 24 hours by default; Google Calendar typically polls every 24 hours as well. Force a manual refresh in Apple Calendar by right-clicking the subscribed calendar and choosing <strong>Refresh</strong>.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can I revoke a calendar feed subscription?</strong></li>
+</ul>
+<p>The private feed URL is token-authorized and tied to team membership. If a user's team membership is revoked, the feed immediately stops returning data on the next sync — there is no separate per-URL revoke action. For complete removal, the user should also delete the subscribed calendar from their calendar app to stop future sync attempts.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What if an imported game has the wrong opponent name?</strong></li>
+</ul>
+<p>Edit the game in <code>edit-schedule.html</code> after import. Registration source metadata (provider name, external event ID, import timestamp) is preserved on the event record for audit purposes, but all event fields — including opponent name, date, time, and location — are fully editable after import.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can I bulk-publish organization draft slots to specific teams only?</strong></li>
+</ul>
+<p>Yes. When publishing from the organization draft, you choose which team schedules to push the slots to. You can publish to all participating teams at once or select a subset. Review the draft on the draft review screen before publishing to confirm slot assignments and avoid duplicating previously published slots.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Event missing after save: check filters, enable <code>Show Practices</code>, and confirm <code>Upcoming</code> vs <code>Past</code>.</li>
@@ -425,6 +549,13 @@
 <li>Live link not useful yet: open <code>View Live</code> first, confirm game status, then resend with <code>Share</code>.</li>
 <li><code>.ics</code> export missing events: adjust filters, then export again.</li>
 <li>Access denied: confirm you are signed in with coach/admin manage access to that team.</li>
+<li><strong>ICS export shows wrong end times</strong>: Re-export — end times now use actual event end times with type-specific defaults (1 hr practices, 2 hr games).</li>
+<li><strong>Fan Feed option not showing</strong>: The Fan Feed only appears for public teams or when the game is explicitly marked as shareable.</li>
+<li><strong>Organization draft slots publishing to wrong teams</strong>: Save draft locally first, review all slot assignments, then publish.</li>
+<li><strong>Private feed not updating in Apple Calendar</strong>: Apple Calendar syncs subscriptions approximately every 24 hours. To force an immediate refresh, right-click the subscribed calendar in the Calendar app and choose <strong>Refresh</strong>. You can also reduce the default sync interval in Calendar Preferences under the Accounts tab for the relevant account.</li>
+<li><strong>Fan Feed URL not visible in the schedule UI</strong>: The Fan Feed option only appears when the team is set to Public in team settings, or when at least one game is explicitly marked as shareable. Confirm the team visibility setting in <code>edit-team.html</code> before looking for the Fan Feed option.</li>
+<li><strong>Organization draft slots publishing duplicates</strong>: Before publishing, open the draft review screen and check the status of each slot. Slots that were already published in a prior session will be flagged. Do not re-publish a draft set that has already been applied — use the per-team schedule editor to add any missing individual slots instead.</li>
+<li><strong>ICS export times are wrong</strong>: Re-export the file. The export now uses actual end times from the event record. If an event has no end time set, it defaults to +1 hour for practices and +2 hours for games. If times still look incorrect after re-exporting, confirm that end times are saved on the event in <code>edit-schedule.html</code>.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -473,25 +604,6 @@
         const allLinks = [...links];
         let mobileWrapper = null;
 
-        if (mobileToc && window.innerWidth < 1024) {
-          const wrapper = document.createElement('details');
-          wrapper.className = 'wf-panel-section wf-panel';
-          wrapper.style.marginBottom = '0.95rem';
-          wrapper.style.padding = '0.8rem 1rem';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Jump to section';
-          summary.style.cursor = 'pointer';
-          summary.style.fontWeight = '700';
-          summary.style.color = '#0f172a';
-          const list = toc.cloneNode(true);
-          list.style.marginTop = '0.6rem';
-          allLinks.push(...Array.from(list.querySelectorAll('a')));
-          wrapper.appendChild(summary);
-          wrapper.appendChild(list);
-          mobileToc.appendChild(wrapper);
-          mobileWrapper = wrapper;
-        }
-
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const setActive = (activeId) => {
           let active = sectionById.get(activeId) || headings[0];
@@ -503,17 +615,46 @@
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        allLinks.forEach((a) => {
-          a.addEventListener('click', () => {
-            setActive(a.getAttribute('href').slice(1));
-            if (mobileWrapper && mobileWrapper.contains(a)) {
-              mobileWrapper.open = false;
-            }
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
           });
-        });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>

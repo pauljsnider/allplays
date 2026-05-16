@@ -261,6 +261,7 @@
         }
       }
     </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="flex flex-col min-h-screen">
     <div id="header-container"></div>
@@ -272,7 +273,7 @@
           <h1 class="wf-title">Build and Maintain Team Roster</h1>
           <p class="wf-summary">Use this workflow to keep your team roster accurate and parent access connected.</p>
           <div class="wf-meta-row">
-            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">10 min read</span>
             <span class="wf-meta-pill">Updated from live product pages</span>
           </div>
         </section>
@@ -307,6 +308,9 @@
 <li>How to choose the right roster action.</li>
 <li>Step-by-step roster and parent invite actions.</li>
 <li>How to recover from common invite or roster issues.</li>
+<li>Track player completion status with roster tracking items.</li>
+<li>Send household invites and revoke household contact access.</li>
+<li>Preview roster import conflicts before applying changes.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -329,6 +333,10 @@
 <li>Bring a player back: Use <strong>Reactivate</strong>.</li>
 <li>Link a parent: Use <strong>Invite Parent</strong> on an active player.</li>
 <li>Invite Parent is disabled: Reactivate the player first, then send the invite.</li>
+<li>Track player items (forms, certifications, equipment checks): Use <strong>Roster Tracking</strong>.</li>
+<li>Invite another caregiver to access a player: Use <strong>Household Invite</strong> from Parent Dashboard.</li>
+<li>Revoke a household contact's access: Use <strong>Revoke Access</strong> in Parent Dashboard.</li>
+<li>Import roster from an external source: Use <strong>Roster Import</strong> with conflict preview.</li>
 </ul>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-1">
@@ -361,6 +369,9 @@
 <li>No email available: Leave email blank to generate a shareable code/link.</li>
 <li>Existing account detected: Share the shown code/link so the parent can connect.</li>
 </ul>
+<p><strong>Invite email enforcement:</strong> When a parent redeems an invite code during signup, the email they use for the new account must match the invite email exactly (case-insensitive, whitespace-normalized). A mismatch is rejected immediately after the activation code validation step — before the Firebase Auth account is created. This prevents parents from accidentally creating accounts under a different email than the one the invite was addressed to. If the parent receives an email mismatch error, they must use the exact email the invite was sent to, or ask the admin to resend the invite to the correct address.</p>
+<p><strong>Invite context preservation:</strong> When a parent follows an invite link and is sent to the signup or login page, the invite code and invite type are carried through automatically in the URL parameters. The activation code field on the signup form is pre-filled with the code from the invite link. The parent does not need to re-enter the invite code manually during signup — the context is preserved through the full authentication flow.</p>
+<p><strong>Duplicate invite code resolution:</strong> If multiple invite documents exist for the same code (for example, a stale record and an active record), the system selects the currently redeemable document — not necessarily the first Firestore result. This prevents failed invite redemptions caused by stale or superseded invite records that happen to share a code value.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Verify your updates.</li>
 </ol>
@@ -375,6 +386,49 @@
 <li>Parent opens the invite link or enters the 8-character code.</li>
 <li>If they open it on another device, they confirm the invited email and complete join.</li>
 </ul>
+<h2 id="roster-tracking-items">Roster Tracking Items</h2>
+<p>Admins can create player-scoped tracking items (forms, equipment checks, certifications) and toggle complete/incomplete status per player.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Roster Tracking</strong> from team management.</li>
+<li>Create tracking items with a label. Set items as active, private (admin-only), or public (visible to linked parents).</li>
+<li>Mark each player's status as complete or incomplete. Completion counts are shown in the roster matrix.</li>
+<li>Parents with linked players see their player's public tracking items in read-only view on the team page.</li>
+</ol>
+<h2 id="household-invites-and-revocation">Household Invites and Revocation</h2>
+<p>Parents can share player access with other caregivers and revoke that access when needed.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Parent Dashboard</strong> and navigate to the player's entry.</li>
+<li>Select <strong>Invite Household Member</strong>. The invite is scoped to your linked players and stored as a pending record — no access is granted until the invitee redeems it.</li>
+<li>To revoke: select <strong>Revoke Access</strong> next to a household contact. This marks their membership revoked, removes delegated parent/player links, and invalidates related invite tokens. Revoked invite codes are blocked at redemption.</li>
+<li>Roster view shows delegated household contacts with relation, inviter name, and current status.</li>
+</ol>
+<h2 id="roster-import-with-conflict-preview">Roster Import with Conflict Preview</h2>
+<p>When importing a roster from an external source, a preview shows each row's status before you commit.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Roster Import</strong> and upload or paste the roster data.</li>
+<li>Review the preview: rows are labeled <strong>Add</strong>, <strong>Update</strong>, <strong>Unchanged</strong>, or <strong>Conflict</strong>.</li>
+<li>Uncheck safe add/update rows you want to skip. Conflict rows are automatically excluded — they are not applied.</li>
+<li>Select <strong>Apply</strong>. Source metadata and import audit fields are stored on applied records.</li>
+</ol>
+<h2 id="athlete-profiles">Athlete Profile Name Prefill</h2>
+<p>When creating a new athlete profile that is linked to an existing player record, the name field is now pre-filled from the player record that matches the <code>teamId</code> and <code>playerId</code> parameters in the URL. This avoids the most common source of name mismatches between the player roster record and the athlete profile display name.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>The prefill applies only when creating a new profile where no name has been saved yet. Existing saved profile names are never overwritten by the prefill — edits you have already made are preserved.</li>
+<li>If the profile builder is opened without both <code>teamId</code> and <code>playerId</code> in the URL, the prefill cannot run and the name field will be blank. Confirm the URL contains both parameters if you expect prefill to work.</li>
+<li>This feature removes a common manual step during onboarding flows where the admin creates profiles for multiple players in sequence and must type the same name that already exists on the roster record.</li>
+</ul>
+<h2 id="parent-dashboard-roster">Parent Dashboard and Roster Visibility</h2>
+<p>Parents and coaches see different views of the roster and schedule. Understanding what each role can see prevents confusion about missing items or missing controls.</p>
+<h3>What parents see</h3>
+<ul class="ml-6 list-disc space-y-1">
+<li>Parents linked to active players see their player's public tracking items in a read-only view on the team page. Items marked as private (admin-only) are not visible to parents regardless of their relationship to the player.</li>
+<li>Parents cannot edit tracking items, mark completion status, or create new tracking items — those controls are available only to coaches and admins.</li>
+<li>Standalone practice sessions — sessions that exist in Firestore without a linked schedule event — now appear on the parent dashboard schedule. Previously, only sessions linked to a calendar event were visible. Parents can now see all practice activity their player was associated with.</li>
+</ul>
+<h3>Sibling RSVP</h3>
+<p>Parents with multiple children on the same team now see separate RSVP controls for each child in the calendar event modal. Previously, submitting an RSVP for one child could affect the RSVP record for siblings on the same team. Each child's availability is now tracked independently, so a parent can mark one child as <strong>Going</strong> and another as <strong>Can't Go</strong> for the same event without the responses interfering with each other.</p>
+<h3>What admins and coaches see</h3>
+<p>Coaches and admins see the full roster including inactive players (when the inactive filter is enabled), all tracking items regardless of public/private status, completion counts per player in the roster matrix, and delegated household contacts with their current access status (active, pending, or revoked). Admins can toggle completion status and create or archive tracking items at any time.</p>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Should I delete or deactivate a player?</li>
@@ -392,6 +446,26 @@
 <li>Where do I confirm changes?</li>
 <li>Check the team roster list, then open the player page.</li>
 </ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can parents see tracking items?</strong></li>
+</ul>
+<p>Only tracking items marked as <strong>public</strong> are visible to linked parents. Private items are admin-only.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What happens to a revoked household contact's data?</strong></li>
+</ul>
+<p>Their membership access is marked revoked, delegated parent/player links are removed, and any pending invite tokens are invalidated. Their account is not deleted.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What if the parent gets an "email mismatch" error during signup?</strong></li>
+</ul>
+<p>The parent is attempting to create an account with a different email address than the one the invite was sent to. The signup process enforces an exact match (case-insensitive, whitespace-normalized) between the signup email and the invite email. The parent must use the exact email the invite was addressed to. If they cannot access that email address, the admin should resend the invite to the email the parent wants to use.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Why do I see a "delegated contact" in the roster view?</strong></li>
+</ul>
+<p>Household contacts invited by a parent appear as delegated contacts in the roster view. Each delegated contact entry shows the contact's name or email, their relation to the player, the name of the parent who invited them, and their current access status — <strong>Active</strong> (invite redeemed and access is live), <strong>Pending</strong> (invite sent but not yet redeemed), or <strong>Revoked</strong> (access was withdrawn by the inviting parent or an admin). Delegated contacts with active status have the same player visibility as the inviting parent.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can I see which practices a parent has viewed?</strong></li>
+</ul>
+<p>No — parent dashboard usage is not tracked per-user. Admins can see which tracking items have been marked complete and which practice sessions exist, but there is no log of which parents have opened specific schedule items or dashboard pages.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Invite button is disabled.</li>
@@ -416,6 +490,14 @@
 <ul class="ml-6 list-disc space-y-1">
 <li>Duplicate player was added.</li>
 <li>Keep the correct profile active and deactivate the duplicate.</li>
+</ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Household invite not showing for parent</strong>: Confirm the invitee used the correct email address and the invite has not already been revoked.</li>
+<li><strong>Roster import showing conflicts</strong>: Conflict rows are skipped automatically. Review the preview and apply only add/update rows that are safe.</li>
+<li><strong>Parent signup rejected with email mismatch</strong>: The parent must use the same email the invite was sent to. The admin should open the invite record, check the stored invite email, and resend to the correct address if the wrong one was used when the invite was created.</li>
+<li><strong>Parent invite appears stuck on "pending"</strong>: The invitee has not yet redeemed the code. They should open the original invite link or visit <code>accept-invite.html</code> and enter the 8-character code manually. If the invite link has expired or the email was lost, generate a fresh invite from the player's row and share the new code directly.</li>
+<li><strong>Household contact showing "revoked" status</strong>: A revocation was applied from the inviting parent's Parent Dashboard or by an admin. The contact's delegated access has been removed and their invite token invalidated. To restore access, the parent must re-invite the contact using <strong>Invite Household Member</strong> — the old invite code cannot be reactivated.</li>
+<li><strong>Athlete profile name not prefilling</strong>: Confirm the profile builder URL includes both <code>teamId</code> and <code>playerId</code> query parameters. If either is missing, the system cannot look up the linked player record and the name field will remain blank. Navigate to the profile builder from the roster row link to ensure both parameters are present.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -461,25 +543,6 @@
         const allLinks = [...links];
         let mobileWrapper = null;
 
-        if (mobileToc && window.innerWidth < 1024) {
-          const wrapper = document.createElement('details');
-          wrapper.className = 'wf-panel-section wf-panel';
-          wrapper.style.marginBottom = '0.95rem';
-          wrapper.style.padding = '0.8rem 1rem';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Jump to section';
-          summary.style.cursor = 'pointer';
-          summary.style.fontWeight = '700';
-          summary.style.color = '#0f172a';
-          const list = toc.cloneNode(true);
-          list.style.marginTop = '0.6rem';
-          allLinks.push(...Array.from(list.querySelectorAll('a')));
-          wrapper.appendChild(summary);
-          wrapper.appendChild(list);
-          mobileToc.appendChild(wrapper);
-          mobileWrapper = wrapper;
-        }
-
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const setActive = (activeId) => {
           let active = sectionById.get(activeId) || headings[0];
@@ -491,17 +554,46 @@
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        allLinks.forEach((a) => {
-          a.addEventListener('click', () => {
-            setActive(a.getAttribute('href').slice(1));
-            if (mobileWrapper && mobileWrapper.contains(a)) {
-              mobileWrapper.open = false;
-            }
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
           });
-        });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>

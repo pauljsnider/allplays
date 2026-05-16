@@ -44,6 +44,7 @@
       }
     }
   </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -63,6 +64,33 @@
     </div>
 
     <!-- Teams Grid -->
+    <!-- Search Bar -->
+    <div class="mb-8 md:mb-12 max-w-2xl mx-auto">
+      <form id="search-form" class="flex items-center space-x-2">
+        <input
+          type="text"
+          id="location-search-input"
+          placeholder="Search by city, state, or zip..."
+          class="flex-grow px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+        />
+        <button
+          type="submit"
+          id="search-button"
+          class="px-5 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition font-medium"
+        >
+          Search
+        </button>
+        <button
+          type="button"
+          id="clear-search-button"
+          class="px-3 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition font-medium"
+        >
+          Clear
+        </button>
+      </form>
+    </div>
+
+    <!-- Teams Grid -->
     <div id="teams-list" class="space-y-8">
       <div class="col-span-full text-center text-gray-500 py-12">
         <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
@@ -74,9 +102,9 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeams } from './js/db.js?v=29';
-    import { renderHeader, renderFooter } from './js/utils.js?v=8';
-    import { checkAuth } from './js/auth.js?v=14';
+    import { getTeams } from './js/db.js?v=32';
+    import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=9';
+    import { checkAuth } from './js/auth.js?v=15';
 
     checkAuth((user) => {
       // Allow viewing without login - user can be null
@@ -85,53 +113,45 @@
 
     renderFooter(document.getElementById('footer-container'));
 
-    const zipCache = new Map();
+    const searchForm = document.getElementById('search-form');
+    const locationSearchInput = document.getElementById('location-search-input');
+    const searchButton = document.getElementById('search-button');
+    const clearSearchButton = document.getElementById('clear-search-button');
 
-    async function resolveZip(zip) {
-      if (!zip) return null;
-      if (zipCache.has(zip)) return zipCache.get(zip);
-      try {
-        const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
-        if (!res.ok) {
-          zipCache.set(zip, null);
-          return null;
-        }
-        const data = await res.json();
-        const place = data?.places?.[0];
-        if (!place) {
-          zipCache.set(zip, null);
-          return null;
-        }
-        const city = place['place name'];
-        const state = place['state abbreviation'];
-        const label = `${city}, ${state}`;
-        zipCache.set(zip, label);
-        return label;
-      } catch (err) {
-        zipCache.set(zip, null);
-        return null;
-      }
+    function getLocationSearchValue() {
+      return locationSearchInput.value.trim();
     }
 
-    async function loadTeams() {
+    function setSearchPending(isPending) {
+      searchButton.disabled = isPending;
+      clearSearchButton.disabled = isPending;
+      searchButton.classList.toggle('opacity-70', isPending);
+      clearSearchButton.classList.toggle('opacity-70', isPending);
+    }
+
+    async function loadTeams(locationFilter = '') {
+      const container = document.getElementById('teams-list');
+      setSearchPending(true);
       try {
-        const allTeams = await getTeams();
+        const allTeams = await getTeams(locationFilter ? { locationFilter } : {});
         // Filter out private teams (isPublic === false)
         // Default isPublic to true if undefined
         const teams = allTeams.filter(t => t.isPublic !== false);
-        const container = document.getElementById('teams-list');
 
         if (teams.length === 0) {
+          const emptyMessage = locationFilter
+            ? `No public teams found for "${escapeHtml(locationFilter)}".`
+            : 'No teams found yet.';
           container.innerHTML = `
             <div class="col-span-full text-center py-16 bg-white rounded-2xl shadow-md border border-gray-200">
               <div class="max-w-md mx-auto">
                 <svg class="w-16 h-16 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
                 </svg>
-                <p class="text-gray-600 text-lg mb-4">No teams found yet.</p>
-                <a href="login.html#signup" class="inline-block px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition font-medium">
+                <p class="text-gray-600 text-lg mb-4">${emptyMessage}</p>
+                ${locationFilter ? '' : `<a href="login.html#signup" class="inline-block px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition font-medium">
                   Create the First Team
-                </a>
+                </a>`}
               </div>
             </div>
           `;
@@ -159,48 +179,60 @@
           return a.localeCompare(b);
         });
 
-        const card = (team) => `
-          <div class="team-card group bg-white rounded-xl shadow-md hover:shadow-xl transition duration-300 overflow-hidden cursor-pointer border border-gray-200 hover:border-primary-300" data-team-id="${team.id}">
+        const card = (team) => {
+          const teamName = String(team.name || 'Unnamed Team');
+          const escapedTeamName = escapeHtml(teamName);
+          const escapedTeamId = escapeHtml(team.id);
+          const safePhotoUrl = getSafeImageUrl(team.photoUrl);
+          const initial = escapeHtml(teamName.trim().charAt(0) || '?');
+          const sport = escapeHtml(team.sport || 'Sport not set');
+          const description = escapeHtml(team.description || 'No description available');
+          const location = team.zip && zipToLocation[team.zip] ? zipToLocation[team.zip] : '';
+          const escapedLocation = escapeHtml(location);
+
+          return `
+          <div class="team-card group bg-white rounded-xl shadow-md hover:shadow-xl transition duration-300 overflow-hidden cursor-pointer border border-gray-200 hover:border-primary-300" data-team-id="${escapedTeamId}">
             <div class="p-6">
               <div class="flex items-center space-x-4 mb-4">
-                ${team.photoUrl
-            ? `<img src="${team.photoUrl}" alt="${team.name}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
+                ${safePhotoUrl
+            ? `<img src="${safePhotoUrl}" alt="${escapedTeamName}" class="w-16 h-16 rounded-full object-cover border-2 border-gray-200 group-hover:border-primary-400 transition">`
             : `<div class="w-16 h-16 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-gray-200 group-hover:border-primary-400 transition">
-                      <span class="text-2xl font-bold text-primary-600">${team.name ? team.name.charAt(0) : '?'}</span>
+                      <span class="text-2xl font-bold text-primary-600">${initial}</span>
                     </div>`
           }
                 <div class="flex-grow">
-                  <h3 class="text-xl font-bold text-gray-900 group-hover:text-primary-600 transition mb-1">${team.name}</h3>
+                  <h3 class="text-xl font-bold text-gray-900 group-hover:text-primary-600 transition mb-1">${escapedTeamName}</h3>
                   <div class="flex items-center gap-2">
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
-                      ${team.sport || 'Sport not set'}
+                      ${sport}
                     </span>
                   </div>
                 </div>
               </div>
-              <p class="text-gray-600 text-sm line-clamp-2 mb-3">${team.description || 'No description available'}</p>
-              ${team.zip && zipToLocation[team.zip]
+              <p class="text-gray-600 text-sm line-clamp-2 mb-3">${description}</p>
+              ${location
             ? `<div class="flex items-center text-xs text-gray-500">
                     <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path>
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path>
                     </svg>
-                    <a class="hover:text-primary-600 transition" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(zipToLocation[team.zip])}">${zipToLocation[team.zip]}</a>
+                    <a class="hover:text-primary-600 transition" target="_blank" rel="noopener noreferrer" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}">${escapedLocation}</a>
                   </div>`
             : ''
           }
             </div>
           </div>
         `;
+        };
 
         container.innerHTML = locationKeys.map(loc => {
-          const teamsForLoc = grouped[loc].sort((a, b) => a.name.localeCompare(b.name));
+          const teamsForLoc = grouped[loc].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
           return `
             <section class="space-y-4">
               <div class="flex items-center justify-between px-2">
                 <div class="flex items-center gap-3">
                   <div class="h-1 w-12 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
-                  <h2 class="text-2xl md:text-3xl font-bold text-gray-900">${loc === 'Other' ? 'Location Unavailable' : loc}</h2>
+                  <h2 class="text-2xl md:text-3xl font-bold text-gray-900">${loc === 'Other' ? 'Location Unavailable' : escapeHtml(loc)}</h2>
                 </div>
                 <span class="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full font-medium">
                   ${teamsForLoc.length} team${teamsForLoc.length === 1 ? '' : 's'}
@@ -227,7 +259,7 @@
         });
       } catch (error) {
         console.error("Error loading teams:", error);
-        document.getElementById('teams-list').innerHTML = `
+        container.innerHTML = `
           <div class="col-span-full text-center py-16 bg-white rounded-2xl shadow-md border border-red-200">
             <svg class="w-16 h-16 text-red-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -235,8 +267,21 @@
             <p class="text-red-600 text-lg">Error loading teams. Please try again later.</p>
           </div>
         `;
+      } finally {
+        setSearchPending(false);
       }
     }
+
+    searchForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await loadTeams(getLocationSearchValue());
+    });
+
+    clearSearchButton.addEventListener('click', async () => {
+      locationSearchInput.value = '';
+      await loadTeams();
+      locationSearchInput.focus();
+    });
 
     loadTeams();
   </script>

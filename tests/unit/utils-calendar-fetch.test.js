@@ -97,7 +97,7 @@ describe('fetchAndParseCalendar', () => {
       if (String(url).startsWith('https://corsproxy.io/')) {
         return makeTextResponse('', { ok: false, status: 403, statusText: 'Forbidden' });
       }
-      if (String(url).includes('r.jina.ai/https://ical-cdn.teamsnap.com/team_schedule/test.ics?cachebust=1700000000000')) {
+      if (String(url) === 'https://r.jina.ai/https://ical-cdn.teamsnap.com/team_schedule/test.ics?cachebust=1700000000000') {
         return makeTextResponse(sampleIcs('from-proxy'));
       }
       return makeTextResponse('', { ok: false, status: 404, statusText: 'Not Found' });

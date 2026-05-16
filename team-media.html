@@ -8,6 +8,7 @@
     <title>Team Media - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
+    <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="bg-gray-50 text-gray-900">
     <div id="header-container"></div>
@@ -32,6 +33,14 @@
                 <input id="photo-files" type="file" accept="image/*" multiple class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required>
                 <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2">Upload photos</button>
                 <div id="upload-progress" class="space-y-2 text-sm"></div>
+            </form>
+            <form id="file-upload-form" class="mt-5 space-y-3 border-t border-gray-100 pt-5">
+                <h2 class="font-semibold text-gray-900">Upload files</h2>
+                <p class="text-sm text-gray-500">Share PDFs, Office documents, text files, or CSVs with the team.</p>
+                <select id="file-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
+                <input id="media-files" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv" multiple class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required>
+                <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2">Upload files</button>
+                <div id="file-upload-progress" class="space-y-2 text-sm"></div>
             </form>
         </section>
 
@@ -87,6 +96,6 @@
         <section id="album-detail"></section>
     </main>
 
-    <script type="module" src="js/team-media.js?v=3"></script>
+    <script type="module" src="js/team-media.js?v=4"></script>
 </body>
 </html>

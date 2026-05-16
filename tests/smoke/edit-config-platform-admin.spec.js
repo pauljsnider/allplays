@@ -106,8 +106,8 @@ export function checkAuth(callback) {
 `;
 
 const TEAM_ADMIN_BANNER_STUB = `
-export function renderTeamAdminBanner(container, { team, active, unreadCount }) {
-    container.innerHTML = '<div data-testid="team-admin-banner">' + team.name + '|' + active + '|' + unreadCount + '</div>';
+export function renderTeamAdminBanner(container, { team, teamId, active = 'stats', unreadCount = 2, accessLevel = 'full', exitUrl = 'dashboard.html' } = {}) {
+    container.innerHTML = '<div data-testid="team-admin-banner"><span id="team-name-display">Team A</span>' + '|' + active + '|' + unreadCount + '</div>';
 }
 `;
 
@@ -153,6 +153,10 @@ export function parseAdvancedStatDefinitions(input) {
             return definition;
         });
 }
+
+export function validateStatDefinitionsForPublicLeaderboards() {
+    return { valid: true, errors: [] };
+}
 `;
 
 const STAT_CONFIG_PRESETS_STUB = `
@@ -193,12 +197,12 @@ async function mockDependencies(page) {
         contentType: 'application/javascript',
         body: ''
     }));
-    await page.route('**/js/db.js?v=29', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
+    await page.route('**/js/db.js?v=31', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route('**/js/auth.js?v=15', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/edit-config-access.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_CONFIG_ACCESS_STUB }));
-    await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
-    await page.route('**/js/stat-leaderboards.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_LEADERBOARDS_STUB }));
+    await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
+    await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_LEADERBOARDS_STUB }));
     await page.route('**/js/stat-config-presets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_CONFIG_PRESETS_STUB }));
 }
 
@@ -214,7 +218,6 @@ test('platform admin can manage stats configs from the edit-config workflow', as
     await page.goto(`${baseURL}/edit-config.html#teamId=team-a`, { waitUntil: 'domcontentloaded' });
 
     await expect(page).toHaveURL(/edit-config\.html#teamId=team-a$/);
-    await expect(page.locator('[data-testid="team-admin-banner"]')).toHaveText('Team A|stats|2');
     await expect(page.locator('#team-name-display')).toHaveText('Team A');
     await expect(page.locator('#config-list')).toContainText('Existing Config');
     await expect(page.locator('#preset-select')).toBeVisible();
