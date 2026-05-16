@@ -9,7 +9,7 @@ function stripAnsiCodes(str) {
 
 describe('teams page HTML escaping', () => {
     it('escapes team-supplied text before it is inserted with innerHTML', () => {
-        expect(stripAnsiCodes(escapeHtml(`<img src=x onerror=alert('xss')>`))).toBe('&lt;img src=x onerror=alert(&#39;xss&#39;)&gt;');
+        expect(stripAnsiCodes(escapeHtml(`<img src=x onerror=alert('xss')>`))).toBe('&lt;img src=x onerror=alert(&#039;xss&#039;)&gt;');
         expect(escapeHtml('A&B "Team"')).toBe('A&amp;B &quot;Team&quot;');
     });
 
