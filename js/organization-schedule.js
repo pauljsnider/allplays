@@ -18,7 +18,125 @@ const ORGANIZATION_SCHEDULE_CSV_HEADER_ALIASES = {
     notes: ['notes', 'comments', 'details']
 };
 
-const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export const ORGANIZATION_SCHEDULE_WEEKDAYS = [
+    { value: 'monday', label: 'Monday' },
+    { value: 'tuesday', label: 'Tuesday' },
+    { value: 'wednesday', label: 'Wednesday' },
+    { value: 'thursday', label: 'Thursday' },
+    { value: 'friday', label: 'Friday' },
+    { value: 'saturday', label: 'Saturday' },
+    { value: 'sunday', label: 'Sunday' }
+];
+
+const ORGANIZATION_SCHEDULE_WEEKDAY_VALUES = new Set(ORGANIZATION_SCHEDULE_WEEKDAYS.map((day) => day.value));
+const TIME_VALUE_PATTERN = /^\d{2}:\d{2}$/;
+const DATE_VALUE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_ONLY_PATTERN = DATE_VALUE_PATTERN;
+
+function normalizeTextValue(value) {
+    return String(value || '').trim();
+}
+
+function normalizeDateValue(value) {
+    return normalizeTextValue(value);
+}
+
+function isValidTimeValue(value) {
+    return TIME_VALUE_PATTERN.test(String(value || ''));
+}
+
+function isValidDateValue(value) {
+    return DATE_VALUE_PATTERN.test(String(value || ''));
+}
+
+function compareTimeValues(startTime, endTime) {
+    return String(startTime || '').localeCompare(String(endTime || ''));
+}
+
+export function getOrganizationScheduleWeekdayLabel(value) {
+    return ORGANIZATION_SCHEDULE_WEEKDAYS.find((day) => day.value === value)?.label || String(value || '');
+}
+
+export function buildVenueAvailabilityPayload({
+    venueName = '',
+    subVenueName = '',
+    dayOfWeek = '',
+    startTime = '',
+    endTime = '',
+    notes = ''
+} = {}) {
+    const payload = {
+        venueName: normalizeTextValue(venueName),
+        subVenueName: normalizeTextValue(subVenueName) || null,
+        dayOfWeek: normalizeTextValue(dayOfWeek).toLowerCase(),
+        startTime: normalizeTextValue(startTime),
+        endTime: normalizeTextValue(endTime),
+        notes: normalizeTextValue(notes) || null
+    };
+
+    if (!payload.venueName) {
+        throw new Error('Venue or sub-venue name is required.');
+    }
+    if (!ORGANIZATION_SCHEDULE_WEEKDAY_VALUES.has(payload.dayOfWeek)) {
+        throw new Error('Choose an available day.');
+    }
+    if (!isValidTimeValue(payload.startTime) || !isValidTimeValue(payload.endTime)) {
+        throw new Error('Enter a start and end time for the availability window.');
+    }
+    if (compareTimeValues(payload.startTime, payload.endTime) >= 0) {
+        throw new Error('Availability end time must be after the start time.');
+    }
+
+    return payload;
+}
+
+export function buildBlackoutDatePayload({
+    scope = 'organization',
+    venueName = '',
+    subVenueName = '',
+    startDate = '',
+    endDate = '',
+    reason = ''
+} = {}) {
+    const normalizedScope = normalizeTextValue(scope) === 'venue' ? 'venue' : 'organization';
+    const payload = {
+        scope: normalizedScope,
+        venueName: normalizeTextValue(venueName) || null,
+        subVenueName: normalizeTextValue(subVenueName) || null,
+        startDate: normalizeDateValue(startDate),
+        endDate: normalizeDateValue(endDate),
+        reason: normalizeTextValue(reason) || null
+    };
+
+    if (payload.scope === 'venue' && !payload.venueName) {
+        throw new Error('Venue or sub-venue name is required for venue-specific blackouts.');
+    }
+    if (!isValidDateValue(payload.startDate) || !isValidDateValue(payload.endDate)) {
+        throw new Error('Enter a start and end date for the blackout.');
+    }
+    if (payload.endDate < payload.startDate) {
+        throw new Error('Blackout end date cannot be before the start date.');
+    }
+
+    return payload;
+}
+
+export function formatVenueAvailabilityRecord(record = {}) {
+    const venue = [record.venueName, record.subVenueName].filter(Boolean).join(' / ');
+    const day = getOrganizationScheduleWeekdayLabel(record.dayOfWeek);
+    const window = [record.startTime, record.endTime].filter(Boolean).join('–');
+    return [venue || 'Venue', day, window].filter(Boolean).join(' · ');
+}
+
+export function formatBlackoutDateRecord(record = {}) {
+    const scope = record.scope === 'venue'
+        ? [record.venueName, record.subVenueName].filter(Boolean).join(' / ') || 'Venue blackout'
+        : 'Organization-wide blackout';
+    const range = record.startDate === record.endDate
+        ? record.startDate
+        : `${record.startDate || 'Start'} through ${record.endDate || 'End'}`;
+    return `${scope} · ${range}`;
+}
 
 function normalizeTeamList(teams) {
     return (Array.isArray(teams) ? teams : [])
