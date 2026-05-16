@@ -2246,9 +2246,13 @@ Respond ONLY with valid JSON.`;
 
         window.saveScore = async function() {
             try {
+                const scoreUpdatedAt = new Date().toISOString();
                 await updateGame(state.teamId, state.gameId, {
                     homeScore: state.score.home,
-                    awayScore: state.score.away
+                    awayScore: state.score.away,
+                    scoreUpdatedAt,
+                    scoreUpdatedBy: state.user?.uid || null,
+                    scoreStreamSessionId: state.game?.broadcastSession?.id || null
                 });
             } catch (err) {
                 console.error('saveScore error', err);

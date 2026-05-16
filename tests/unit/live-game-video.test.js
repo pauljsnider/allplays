@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
     BROADCAST_SETUP_STATUSES,
+    BROADCAST_PROVIDER_TYPES,
     MAX_HIGHLIGHT_CLIP_MS,
     buildBroadcastSetupSession,
     buildHighlightShareUrl,
+    buildStreamScoreContext,
     createHighlightClipDraft,
     normalizeGameClipRecords,
     normalizeGameRecapHighlightClips,
     normalizeSavedHighlightClips,
     canAccessNativeCameraCapture,
     canSaveBroadcastSetupSession,
+    resolveBroadcastProviderMetadata,
     resolveGameMediaHub,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
@@ -622,6 +625,14 @@ describe('broadcast setup session helpers', () => {
             status: 'ready_for_managed_stream',
             setupOnly: true,
             managedStreamReady: true,
+            streamStatus: 'ready_for_managed_stream',
+            provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
+            setupMetadata: {
+                setupOnly: true,
+                managedStreamReady: true,
+                cameraVerified: true,
+                microphoneVerified: true
+            },
             permissions: { camera: true, microphone: true },
             updatedBy: 'coach-1',
             updatedByEmail: 'coach@example.com',
@@ -646,10 +657,47 @@ describe('broadcast setup session helpers', () => {
             name: 'Existing session',
             status: 'permission_failed',
             managedStreamReady: false,
+            streamStatus: 'permission_failed',
             permissions: { camera: false, microphone: false },
             errorMessage: 'Permission denied. Allow access and retry.',
             createdAt: '2026-05-01T00:00:00.000Z',
-            updatedAt: '2026-05-10T08:00:00.000Z'
+            updatedAt: '2026-05-10T08:00:00.000Z',
+            failedAt: '2026-05-10T08:00:00.000Z'
+        });
+    });
+
+    it('records external provider metadata and score correlation context', () => {
+        expect(resolveBroadcastProviderMetadata({ twitchChannel: 'allplayslive' })).toEqual({
+            type: BROADCAST_PROVIDER_TYPES.TWITCH,
+            name: 'Twitch',
+            channel: 'allplayslive'
+        });
+
+        const session = buildBroadcastSetupSession({
+            sessionName: 'Game stream',
+            provider: resolveBroadcastProviderMetadata({ youtubeEmbedUrl: 'https://www.youtube.com/embed/abc12345678' }),
+            status: BROADCAST_SETUP_STATUSES.READY,
+            permissions: { camera: true, microphone: true },
+            now: new Date('2026-05-10T09:00:00.000Z')
+        });
+
+        expect(session.provider).toMatchObject({
+            type: BROADCAST_PROVIDER_TYPES.YOUTUBE,
+            name: 'YouTube',
+            embedUrl: 'https://www.youtube.com/embed/abc12345678'
+        });
+        expect(buildStreamScoreContext({
+            homeScore: 12,
+            awayScore: 10,
+            scoreUpdatedAt: '2026-05-10T09:05:00.000Z',
+            broadcastSession: session
+        })).toMatchObject({
+            sessionId: session.id,
+            streamStatus: BROADCAST_SETUP_STATUSES.READY,
+            providerName: 'YouTube',
+            score: { home: 12, away: 10 },
+            scoreUpdatedAt: '2026-05-10T09:05:00.000Z',
+            sessionUpdatedAt: '2026-05-10T09:00:00.000Z'
         });
     });
 });

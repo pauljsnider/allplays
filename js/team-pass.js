@@ -1,4 +1,4 @@
-import { auth } from './firebase.js?v=12';
+import { auth } from './firebase.js?v=13';
 import { hasFullTeamAccess } from './team-access.js';
 
 function getFunctionsBaseUrl() {
@@ -117,7 +117,7 @@ function arrayIncludesTeamId(values, teamId) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return deps.firebase;
-    return import('./firebase.js?v=12');
+    return import('./firebase.js?v=13');
 }
 
 function dataFromSnapshot(docSnap) {

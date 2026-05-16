@@ -9,23 +9,30 @@ const redeemParentInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=12', () => ({
-    auth: { currentUser: null },
-    signInWithEmailAndPassword: vi.fn(),
-    createUserWithEmailAndPassword: vi.fn(),
-    signOut: signOutMock,
-    onAuthStateChanged: vi.fn(),
-    GoogleAuthProvider: class MockGoogleAuthProvider {},
-    signInWithPopup: signInWithPopupMock,
-    signInWithRedirect: signInWithRedirectMock,
-    getRedirectResult: getRedirectResultMock,
-    sendPasswordResetEmail: vi.fn(),
-    sendEmailVerification: vi.fn(),
-    sendSignInLinkToEmail: vi.fn(),
-    isSignInWithEmailLink: vi.fn(),
-    signInWithEmailLink: vi.fn(),
-    updatePassword: vi.fn()
-}));
+vi.mock('../../js/firebase.js?v=13', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        auth: { currentUser: null },
+        signInWithEmailAndPassword: vi.fn(),
+        createUserWithEmailAndPassword: vi.fn(),
+        signOut: signOutMock,
+        onAuthStateChanged: vi.fn(),
+        GoogleAuthProvider: class MockGoogleAuthProvider {},
+        signInWithPopup: signInWithPopupMock,
+        signInWithRedirect: signInWithRedirectMock,
+        getRedirectResult: getRedirectResultMock,
+        sendPasswordResetEmail: vi.fn(),
+        sendEmailVerification: vi.fn(),
+        sendSignInLinkToEmail: vi.fn(),
+        isSignInWithEmailLink: vi.fn(),
+        signInWithEmailLink: vi.fn(),
+        updatePassword: vi.fn(),
+        // Explicitly mock 'limit' and 'startAfter' which are used in db.js
+        limit: vi.fn((_limit) => _limit),
+        startAfter: vi.fn((_startAfter) => _startAfter),
+    };
+});
 
 vi.mock('../../js/db.js?v=31', () => ({
     validateAccessCode: validateAccessCodeMock,

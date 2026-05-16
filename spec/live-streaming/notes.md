@@ -130,6 +130,7 @@ All use the same server/browser pipeline. Only the RTMP destination URL changes.
 - `setupVideoPanel()` in `live-game.js` — shows/hides video panel based on team data
 - YouTube live stream embed in `live-game.html` — 3-column desktop layout (plays | video | stats)
 - Team settings field in `edit-team.html` — paste any YouTube URL or channel ID
+- `games/{gameId}.broadcastSession` stores setup-only Stream & Score metadata: `streamStatus`, provider details, setup verification, and setup timestamps. Score saves also retain `scoreUpdatedAt`, `scoreUpdatedBy`, and `scoreStreamSessionId` so score changes can be correlated with the active stream setup/session.
 
 ## What Needs to Be Built for Twitch (Phase 1)
 

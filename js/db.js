@@ -30,7 +30,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=12';
+} from './firebase.js?v=13';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
