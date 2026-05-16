@@ -49,12 +49,9 @@ function normalizeFirebaseConfig(rawConfig) {
 }
 
 async function fetchFirebaseConfigFromHosting() {
-    if (typeof window === 'undefined' || !window.location || !window.location.origin) {
-        // In a non-browser environment (e.g., Node.js tests), relative URLs like FIREBASE_INIT_JSON_URL
-        // will fail to parse. Proactively throw to trigger fallback.
-        throw new Error('Cannot fetch Firebase config from1 hosting in a non-browser environment.');
-    }
-    const response = await fetch(FIREBASE_INIT_JSON_URL, { cache: 'no-store' });
+    const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : 'http://localhost';
+    const fullUrl = new URL(FIREBASE_INIT_JSON_URL, baseUrl).toString();
+    const response = await fetch(fullUrl, { cache: 'no-store' });
     if (!response.ok) {
         throw new Error(`Firebase config request failed (${response.status})`);
     }

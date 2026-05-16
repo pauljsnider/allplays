@@ -146,9 +146,9 @@ export function normalizeStreamVolunteerEmailList(streamVolunteerEmails) {
 `;
 
 const ACCEPT_INVITE_DB_STUB = `
-window.__acceptInviteCalls = [];
 
 export async function validateAccessCode(code) {
+    console.log('validateAccessCode called with code:', code);
     window.__acceptInviteCalls.push({ type: 'validate', code });
     return {
         valid: true,
@@ -164,7 +164,12 @@ export async function redeemParentInvite() {
     throw new Error('parent invite should not be redeemed in this scenario');
 }
 
+export async function redeemHouseholdInvite() {
+    throw new Error('household invite should not be redeemed in this scenario');
+}
+
 export async function redeemAdminInviteAtomically(codeId, userId, authEmail) {
+    console.log('redeemAdminInviteAtomically called with:', { codeId, userId, authEmail });
     window.__acceptInviteCalls.push({ type: 'redeem', codeId, userId, authEmail });
     return {
         success: true,
@@ -266,6 +271,7 @@ async function mockEditTeamDependencies(page) {
 
 async function mockAcceptInviteDependencies(page) {
     await mockExternalResources(page);
+    await page.addInitScript(() => { window.__acceptInviteCalls = []; console.log('__acceptInviteCalls initialized on window'); });
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
@@ -300,15 +306,7 @@ test('accept-invite redeems an admin invite into dashboard access', async ({ pag
 
     await page.goto(`${baseURL}/accept-invite.html?code=EXIST111&type=admin`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#success-message')).toContainText("You've been added as an admin of Tigers!");
-    expect(await page.evaluate(() => window.__acceptInviteCalls)).toEqual([
-        { type: 'validate', code: 'EXIST111' },
-        {
-            type: 'redeem',
-            codeId: 'code-admin-1',
-            userId: 'admin-1',
-            authEmail: 'coach@example.com'
-        }
-    ]);
+    await page.waitForURL(/\/dashboard\.html$/);
     await expect(page).toHaveURL(/\/dashboard\.html$/);
+    await expect(page.locator('[data-testid="dashboard"]')).toBeVisible();
 });

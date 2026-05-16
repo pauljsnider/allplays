@@ -908,7 +908,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=30';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=30';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
         import { checkAuth } from './js/auth.js?v=14';
@@ -927,7 +927,7 @@
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=1';
-        import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage } from './js/schedule-notifications.js?v=4';
+        import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage, buildAvailabilityReminderRecipients, buildAvailabilityReminderEmailPreview } from './js/schedule-notifications.js?v=5';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
@@ -2243,8 +2243,10 @@
                     try {
                         const breakdown = await getRsvpBreakdownByPlayer(currentTeamId, gameId);
                         if (requestToken !== currentRsvpRequestToken) return;
-                        const grouped = breakdown.grouped;
-                        const counts = breakdown.counts;
+                        const { grouped, counts, players, rsvps } = breakdown;
+                        const notRespondedIds = new Set(grouped.not_responded.map((r) => String(r.playerId)));
+                        const recipients = buildAvailabilityReminderRecipients(players, rsvps);
+                        const emailPreview = buildAvailabilityReminderEmailPreview(players, rsvps, notRespondedIds);
                         const renderRows = (rows) => rows.length
                             ? rows.map((row) => {
                                 const name = escapeHtml(row.playerName || 'Unknown Player');
@@ -2253,6 +2255,18 @@
                                 return `<div class="text-sm py-1">${name}${jersey}${note}</div>`;
                             }).join('')
                             : '<p class="text-xs text-gray-400">None</p>';
+                        const renderEmailPreviewRows = (rows) => rows.length
+                            ? rows.map((row) => {
+                                const name = escapeHtml(row.playerName || 'Unknown Player');
+                                const jersey = row.playerNumber ? ` <span class="text-gray-400 text-xs">#${escapeHtml(row.playerNumber)}</span>` : '';
+                                if (row.hasEligibleParentEmail) {
+                                    const emails = row.parentEmails.map((email) => escapeHtml(email)).join(', ');
+                                    return `<div class="rounded border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs"><div class="font-semibold text-indigo-900">${name}${jersey}</div><div class="mt-1 text-indigo-700 break-words">${emails}</div></div>`;
+                                }
+                                return `<div class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs"><div class="font-semibold text-amber-900">${name}${jersey}</div><div class="mt-1 text-amber-700">No eligible parent or guardian email</div></div>`;
+                            }).join('')
+                            : '<p class="text-xs text-gray-400">Everyone has responded. No RSVP email follow-up recipients.</p>';
+                        const emailPreviewSummary = `${emailPreview.eligibleEmailCount} eligible parent/guardian ${emailPreview.eligibleEmailCount === 1 ? 'email' : 'emails'} across ${recipients.playerCount} no-response ${recipients.playerCount === 1 ? 'player' : 'players'}.`;
                         content.innerHTML = `
                             <div class="space-y-4">
                                 <div>
@@ -2270,6 +2284,11 @@
                                 <div>
                                     <h4 class="text-sm font-bold text-gray-700 mb-2">Not Responded (${counts.notResponded})</h4>
                                     ${renderRows(grouped.not_responded)}
+                                </div>
+                                <div class="border-t border-gray-200 pt-4">
+                                    <h4 class="text-sm font-bold text-indigo-700 mb-1">RSVP email recipient preview</h4>
+                                    <p class="text-xs text-gray-500 mb-3">${emailPreviewSummary}</p>
+                                    <div class="space-y-2">${renderEmailPreviewRows(emailPreview.players)}</div>
                                 </div>
                             </div>
                         `;

@@ -207,6 +207,25 @@ service cloud.firestore {
              isParentForPlayer(data.teamId, data.playerId);
     }
 
+    function isFamilyMembershipAcceptance(data) {
+      return isSignedIn() &&
+             resource.data.status == 'pending' &&
+             resource.data.email is string &&
+             request.auth.token.email is string &&
+             resource.data.email == request.auth.token.email.lower() &&
+             data.status == 'active' &&
+             data.userId == request.auth.uid &&
+             data.diff(resource.data).affectedKeys().hasOnly(['status', 'userId', 'acceptedAt', 'updatedAt']);
+    }
+
+    function isFamilyMembershipInviteMetadataUpdate(data, userId) {
+      return isOwner(userId) &&
+             resource.data.status == 'pending' &&
+             data.organizerUserId == userId &&
+             data.status == 'pending' &&
+             data.diff(resource.data).affectedKeys().hasOnly(['accessCodeId', 'accessCode', 'inviteUrl', 'updatedAt']);
+    }
+
     function isTeamFeeRecipientForCurrentParent(data, teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       let playerId = data.get('playerId', '');
@@ -317,6 +336,13 @@ service cloud.firestore {
              (data.get('options', []) is list && data.get('options', []).size() > 0);
     }
 
+    function isRegistrationPaymentSettingsPayloadValid(settings) {
+      return settings is map &&
+             settings.keys().hasOnly(['offlinePaymentEnabled', 'onlineCheckoutEnabled']) &&
+             settings.offlinePaymentEnabled is bool &&
+             settings.onlineCheckoutEnabled is bool;
+    }
+
     function isRegistrationSelectedOptionPayloadValid(option) {
       return option is map &&
              option.keys().hasOnly(['id', 'countKey', 'title', 'feeAmountCents', 'capacityLimit', 'waitlistEnabled']) &&
@@ -328,6 +354,96 @@ service cloud.firestore {
              option.waitlistEnabled is bool;
     }
 
+    function isRegistrationInstallmentValid(installment) {
+      return installment is map &&
+             installment.keys().hasOnly(['label', 'dueDate', 'amountCents']) &&
+             installment.label is string &&
+             installment.dueDate is string &&
+             installment.amountCents is int &&
+             installment.amountCents >= 0;
+    }
+
+    function isRegistrationScheduleValid(schedule) {
+      return schedule is list &&
+             schedule.size() >= 1 &&
+             schedule.size() <= 12 &&
+             isRegistrationInstallmentValid(schedule[0]) &&
+             (schedule.size() < 2 || isRegistrationInstallmentValid(schedule[1])) &&
+             (schedule.size() < 3 || isRegistrationInstallmentValid(schedule[2])) &&
+             (schedule.size() < 4 || isRegistrationInstallmentValid(schedule[3])) &&
+             (schedule.size() < 5 || isRegistrationInstallmentValid(schedule[4])) &&
+             (schedule.size() < 6 || isRegistrationInstallmentValid(schedule[5])) &&
+             (schedule.size() < 7 || isRegistrationInstallmentValid(schedule[6])) &&
+             (schedule.size() < 8 || isRegistrationInstallmentValid(schedule[7])) &&
+             (schedule.size() < 9 || isRegistrationInstallmentValid(schedule[8])) &&
+             (schedule.size() < 10 || isRegistrationInstallmentValid(schedule[9])) &&
+             (schedule.size() < 11 || isRegistrationInstallmentValid(schedule[10])) &&
+             (schedule.size() < 12 || isRegistrationInstallmentValid(schedule[11]));
+    }
+
+    function isRegistrationPaymentPlanValid(plan) {
+      return plan is map &&
+             plan.keys().hasOnly(['id', 'type', 'title', 'installmentCount', 'totalBalanceDueCents', 'schedule']) &&
+             plan.id in ['pay_full', 'installments'] &&
+             plan.type in ['pay_full', 'installments'] &&
+             plan.id == plan.type &&
+             plan.title is string &&
+             plan.installmentCount is int &&
+             plan.totalBalanceDueCents is int &&
+             plan.totalBalanceDueCents >= 0 &&
+             isRegistrationScheduleValid(plan.schedule) &&
+             plan.installmentCount == plan.schedule.size();
+    }
+
+    function isRegistrationDiscountApplicationValid(discount) {
+      return discount is map &&
+             discount.keys().hasOnly(['id', 'type', 'label', 'amountType', 'amountValue', 'amountCents']) &&
+             discount.id is string &&
+             discount.type in ['early_bird', 'quantity'] &&
+             discount.label is string &&
+             discount.amountType in ['fixed', 'percent'] &&
+             (discount.amountValue is int || discount.amountValue is float) &&
+             discount.amountCents is int &&
+             discount.amountCents >= 0;
+    }
+
+    function areRegistrationDiscountApplicationsValid(discounts) {
+      return discounts is list &&
+             discounts.size() <= 10 &&
+             (discounts.size() < 1 || isRegistrationDiscountApplicationValid(discounts[0])) &&
+             (discounts.size() < 2 || isRegistrationDiscountApplicationValid(discounts[1])) &&
+             (discounts.size() < 3 || isRegistrationDiscountApplicationValid(discounts[2])) &&
+             (discounts.size() < 4 || isRegistrationDiscountApplicationValid(discounts[3])) &&
+             (discounts.size() < 5 || isRegistrationDiscountApplicationValid(discounts[4])) &&
+             (discounts.size() < 6 || isRegistrationDiscountApplicationValid(discounts[5])) &&
+             (discounts.size() < 7 || isRegistrationDiscountApplicationValid(discounts[6])) &&
+             (discounts.size() < 8 || isRegistrationDiscountApplicationValid(discounts[7])) &&
+             (discounts.size() < 9 || isRegistrationDiscountApplicationValid(discounts[8])) &&
+             (discounts.size() < 10 || isRegistrationDiscountApplicationValid(discounts[9]));
+    }
+
+    function isRegistrationFeeSnapshotValid(snapshot) {
+      return snapshot is map &&
+             snapshot.keys().hasOnly([
+               'currency',
+               'quantity',
+               'originalFeeAmountCents',
+               'subtotalAmountCents',
+               'appliedDiscounts',
+               'finalAmountDueCents'
+             ]) &&
+             snapshot.currency is string &&
+             snapshot.quantity is int &&
+             snapshot.quantity >= 1 &&
+             snapshot.originalFeeAmountCents is int &&
+             snapshot.subtotalAmountCents is int &&
+             snapshot.finalAmountDueCents is int &&
+             snapshot.originalFeeAmountCents >= 0 &&
+             snapshot.subtotalAmountCents >= 0 &&
+             snapshot.finalAmountDueCents >= 0 &&
+             areRegistrationDiscountApplicationsValid(snapshot.appliedDiscounts);
+    }
+
     function isPendingRegistrationPayloadValid(teamId, formId, data) {
       return data.keys().hasOnly([
                'teamId',
@@ -335,14 +451,17 @@ service cloud.firestore {
                'programName',
                'feeAmountCents',
                'currency',
+               'paymentSettings',
                'participant',
                'guardian',
                'waiverAccepted',
                'waiverText',
+               'paymentPlan',
                'status',
                'submittedAt',
                'waitlistedAt',
                'selectedOption',
+               'feeSnapshot',
                'source'
              ]) &&
              data.teamId == teamId &&
@@ -351,6 +470,11 @@ service cloud.firestore {
              data.waiverAccepted == true &&
              hasOnlyFlatStringValues(data.participant) &&
              hasOnlyFlatStringValues(data.guardian) &&
+             data.keys().hasAny(['paymentSettings']) &&
+             isRegistrationPaymentSettingsPayloadValid(data.paymentSettings) &&
+             isRegistrationPaymentPlanValid(data.paymentPlan) &&
+             data.keys().hasAny(['feeSnapshot']) &&
+             isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
              (data.status == 'waitlisted' || !data.keys().hasAny(['waitlistedAt'])) &&
              (data.status != 'waitlisted' || data.keys().hasAny(['waitlistedAt'])) &&
@@ -724,11 +848,14 @@ service cloud.firestore {
       }
 
       match /familyMemberships/{memberId} {
-        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow read: if isOwner(userId) || isGlobalAdmin() ||
+                       (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
-        allow update: if isOwner(userId) &&
-                      isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt']);
+        allow update: if (isOwner(userId) &&
+                         isFamilyMembershipRemoval(request.resource.data, userId) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])) ||
+                      isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
+                      isFamilyMembershipAcceptance(request.resource.data);
         allow delete: if false;
       }
 
@@ -918,6 +1045,8 @@ service cloud.firestore {
 	        // - Public player doc: photo only
 	        allow update: if isParentForPlayer(teamId, playerId) &&
 	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
+	        allow update: if isParentForPlayer(teamId, playerId) &&
+	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents']);
 
         // Private player profile (sensitive fields)
         match /private/profile {
@@ -1119,6 +1248,12 @@ service cloud.firestore {
         match /aggregatedStats/{statId} {
           allow read: if true;
           allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow delete: if isTeamOwnerOrAdmin(teamId);
+        }
+
+        // Manager-only player stats subcollection for private player-scoped metrics.
+        match /privatePlayerStats/{statId} {
+          allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
 

@@ -8,16 +8,18 @@ import {
     getTelemetryEventDaily,
     getTelemetrySessions
 } from './db.js?v=30';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=10';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=12';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=14';
+import { checkAuth } from './auth.js?v=15';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
     formatFieldLabels,
+    formatRegistrationDiscountRulesText,
+    parseRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
-} from './admin-registration-forms.js?v=2';
+} from './admin-registration-forms.js?v=3';
 
 let allTeams = [];
 let allUsers = [];
@@ -595,8 +597,16 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-program-type').value = form.programType || 'season';
     document.getElementById('registration-season').value = form.season || '';
     document.getElementById('registration-fee').value = Number(form.feeAmountCents || 0) / 100;
+    const installmentPlan = form.installmentPlan || {};
+    document.getElementById('registration-installments-enabled').checked = installmentPlan.enabled === true;
+    document.getElementById('registration-installment-count').value = installmentPlan.installmentCount || '';
+    document.getElementById('registration-installment-first-date').value = installmentPlan.firstDueDate || '';
+    document.getElementById('registration-installment-interval').value = installmentPlan.intervalDays || '';
     document.getElementById('registration-participant-fields').value = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
     document.getElementById('registration-guardian-fields').value = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
+    document.getElementById('registration-offline-payment').checked = form.paymentSettings?.offlinePaymentEnabled === true;
+    document.getElementById('registration-online-checkout').checked = form.paymentSettings?.onlineCheckoutEnabled === true;
+    document.getElementById('registration-discount-rules').value = formatRegistrationDiscountRulesText(form.discountRules);
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
     renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
@@ -757,6 +767,17 @@ async function saveRegistrationForm(event) {
         participantFieldsText: document.getElementById('registration-participant-fields').value,
         guardianFieldsText: document.getElementById('registration-guardian-fields').value,
         registrationOptions: collectRegistrationOptionsFromEditor(),
+        paymentSettings: {
+            offlinePaymentEnabled: document.getElementById('registration-offline-payment').checked,
+            onlineCheckoutEnabled: document.getElementById('registration-online-checkout').checked
+        },
+        installmentPlan: {
+            enabled: document.getElementById('registration-installments-enabled').checked,
+            installmentCount: document.getElementById('registration-installment-count').value,
+            firstDueDate: document.getElementById('registration-installment-first-date').value,
+            intervalDays: document.getElementById('registration-installment-interval').value
+        },
+        discountRules: parseRegistrationDiscountRulesText(document.getElementById('registration-discount-rules').value),
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
     }, { teamId });

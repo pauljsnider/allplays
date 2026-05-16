@@ -204,6 +204,36 @@ describe('accept invite flow', () => {
         expect(deps.redeemParentInvite).not.toHaveBeenCalled();
     });
 
+    it('redeems household invite codes through the household redemption handler', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                type: 'household_invite',
+                data: {
+                    teamId: 'team-1',
+                    playerId: 'player-1',
+                    playerName: 'Sam',
+                    playerNum: '12',
+                    email: 'household@example.com'
+                }
+            })),
+            redeemParentInvite: vi.fn(),
+            redeemHouseholdInvite: vi.fn().mockResolvedValue({ success: true, teamId: 'team-1', playerId: 'player-1' }),
+            getTeam: vi.fn(async () => ({ id: 'team-1', name: 'Tigers' }))
+        };
+
+        const processInvite = createInviteProcessor(deps);
+        const result = await processInvite('user-10', 'HOME1234', 'household@example.com');
+
+        expect(result).toEqual({
+            success: true,
+            message: "You've been added to follow #12 on Tigers!",
+            redirectUrl: 'parent-dashboard.html'
+        });
+        expect(deps.redeemHouseholdInvite).toHaveBeenCalledWith('user-10', 'HOME1234');
+        expect(deps.redeemParentInvite).not.toHaveBeenCalled();
+    });
+
     it('rejects admin invite redemption when the signed-in email does not match the invited email', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({

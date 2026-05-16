@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=11';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
+} from './firebase.js?v=12';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
@@ -45,6 +45,7 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
+import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -83,7 +84,7 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=1';
-import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
+import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
@@ -1079,6 +1080,44 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
         'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function grantStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(docRef);
+    const teamData = teamSnap.exists() ? teamSnap.data() : {};
+    const currentStreamingMode = teamData?.teamPermissions?.streaming?.mode;
+
+    const updatePayload = {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    };
+
+    // Only force streaming mode to 'selected' if it's not currently 'all_confirmed'
+    if (currentStreamingMode !== 'all_confirmed') {
+        updatePayload['teamPermissions.streaming.mode'] = 'selected';
+    }
+
+    await updateDoc(docRef, updatePayload);
+}
+
+export async function revokeStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayRemove(normalizedUserId),
         updatedAt: Timestamp.now()
     });
 }
@@ -2561,26 +2600,46 @@ export async function logStatEvent(teamId, gameId, eventData) {
     await addDoc(getGameSubcollectionRef(teamId, gameId, 'events'), eventData);
 }
 
-export async function updatePlayerStats(teamId, gameId, playerId, statKey, change, playerName, playerNumber) {
-    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
+export async function updatePlayerStats(teamId, gameId, playerId, statKey, change, playerName, playerNumber, options = {}) {
+    const normalizedStatKey = String(statKey || '').trim().toLowerCase();
+    const split = splitPlayerStatsByVisibility(options.statTrackerConfig || {}, { [normalizedStatKey]: change });
+    const subcollectionName = Object.prototype.hasOwnProperty.call(split.privateStats, normalizedStatKey) ? 'privatePlayerStats' : 'aggregatedStats';
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/${subcollectionName}`, playerId);
     await setDoc(docRef, {
         playerName,
         playerNumber,
         stats: {
-            [statKey]: increment(change)
+            [normalizedStatKey]: increment(change)
         }
     }, { merge: true });
 }
 
 export async function setCompletedGamePlayerStats(teamId, gameId, playerId, statsPayload = {}) {
-    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
-    await setDoc(docRef, {
+    const { publicStats, privateStats } = splitPlayerStatsByVisibility(
+        statsPayload.statTrackerConfig || {},
+        statsPayload.stats || {}
+    );
+    const basePayload = {
         playerName: statsPayload.playerName || '',
         playerNumber: statsPayload.playerNumber || '',
-        stats: statsPayload.stats || {},
         timeMs: Number.isFinite(Number(statsPayload.timeMs)) ? Number(statsPayload.timeMs) : 0,
         didNotPlay: statsPayload.didNotPlay === true
+    };
+    const gameRef = getGameDocRef(teamId, gameId);
+    const publicDocRef = doc(db, `${gameRef.path}/aggregatedStats`, playerId);
+    const privateDocRef = doc(db, `${gameRef.path}/privatePlayerStats`, playerId);
+
+    await setDoc(publicDocRef, {
+        ...basePayload,
+        stats: publicStats
     }, { merge: true });
+
+    if (Object.keys(privateStats).length > 0) {
+        await setDoc(privateDocRef, {
+            ...basePayload,
+            stats: privateStats
+        }, { merge: true });
+    }
 }
 
 // Calendar Functions
@@ -3185,6 +3244,233 @@ export async function redeemParentInvite(userId, code) {
     return { success: true, teamId: codeData.teamId };
 }
 
+function normalizeHouseholdInviteEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function assertHouseholdInviteEmailMatches(codeData) {
+    const invitedEmail = normalizeHouseholdInviteEmail(codeData?.email);
+    if (!invitedEmail) {
+        return;
+    }
+
+    const signedInEmail = normalizeHouseholdInviteEmail(auth.currentUser?.email);
+    if (signedInEmail !== invitedEmail) {
+        throw new Error(`This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+    }
+}
+
+async function resetHouseholdInviteCodeClaim(codeRef, userId) {
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) return;
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
+            transaction.update(codeRef, {
+                used: false,
+                usedBy: null,
+                usedAt: null
+            });
+        }
+    });
+}
+
+async function rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rollbackState = {}) {
+    const teamId = codeData?.teamId || null;
+    const playerId = codeData?.playerId || null;
+    const { userWasUpdated = false, playerWasUpdated = false, priorMembershipSnapshot = null, membershipWasUpdated = false } = rollbackState;
+
+    if (userWasUpdated && teamId && playerId) {
+        try {
+            const userRef = doc(db, "users", userId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) {
+                const userData = userSnap.data() || {};
+                const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+                const filteredParentOf = parentOf.filter(link =>
+                    !(link?.teamId === teamId && link?.playerId === playerId)
+                );
+                const filteredParentTeamIds = [...new Set(
+                    filteredParentOf.map(link => link?.teamId).filter(Boolean)
+                )];
+                const filteredParentPlayerKeys = [...new Set(
+                    filteredParentOf
+                        .map(link => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : null))
+                        .filter(Boolean)
+                )];
+                const existingRoles = Array.isArray(userData.roles) ? userData.roles : [];
+                const filteredRoles = filteredParentOf.length === 0
+                    ? existingRoles.filter(role => role !== 'parent')
+                    : existingRoles;
+
+                await setDoc(userRef, {
+                    parentOf: filteredParentOf,
+                    parentTeamIds: filteredParentTeamIds,
+                    parentPlayerKeys: filteredParentPlayerKeys,
+                    roles: filteredRoles
+                }, { merge: true });
+            }
+        } catch (rollbackErr) {
+            console.error('redeemHouseholdInvite: failed to rollback user profile updates', rollbackErr);
+        }
+    }
+
+    if (playerWasUpdated && teamId && playerId) {
+        try {
+            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
+            const playerSnap = await getDoc(playerRef);
+            if (playerSnap.exists()) {
+                const playerData = playerSnap.data() || {};
+                const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
+                const filteredParents = parents.filter(parent => parent?.userId !== userId);
+                await updateDoc(playerRef, { parents: filteredParents });
+            }
+        } catch (rollbackErr) {
+            console.error('redeemHouseholdInvite: failed to rollback player parent updates', rollbackErr);
+        }
+    }
+
+    if (membershipWasUpdated && codeData?.organizerUserId && codeData?.familyMembershipId) {
+        try {
+            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
+            if (priorMembershipSnapshot?.exists()) {
+                await setDoc(membershipRef, priorMembershipSnapshot.data() || {});
+            } else {
+                await deleteDoc(membershipRef);
+            }
+        } catch (rollbackErr) {
+            console.error('redeemHouseholdInvite: failed to rollback family membership updates', rollbackErr);
+        }
+    }
+
+    try {
+        await resetHouseholdInviteCodeClaim(codeRef, userId);
+    } catch (rollbackErr) {
+        console.error('redeemHouseholdInvite: failed to rollback code claim', rollbackErr);
+    }
+}
+
+export async function redeemHouseholdInvite(userId, code) {
+    console.log('[redeemHouseholdInvite] start', { userId, code });
+
+    const q = query(
+        collection(db, "accessCodes"),
+        where("code", "==", code.toUpperCase())
+    );
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) throw new Error("Invalid or used code");
+
+    const householdInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'household_invite');
+    if (householdInviteDocs.length === 0) throw new Error("Invalid or used code");
+
+    const codeDoc = householdInviteDocs.find((d) => {
+        const invite = d.data() || {};
+        return invite.used !== true && invite.revoked !== true && !isAccessCodeExpired(invite.expiresAt);
+    }) || householdInviteDocs[0];
+    const codeRef = codeDoc.ref;
+    let codeData;
+
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) {
+            throw new Error("Invalid or used code");
+        }
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.type !== 'household_invite') {
+            throw new Error("Not a household invite code");
+        }
+        if (latestCodeData.used) {
+            throw new Error("Invalid or used code");
+        }
+        if (latestCodeData.revoked) {
+            throw new Error("Invite has been revoked");
+        }
+        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+            throw new Error("Code has expired");
+        }
+
+        assertHouseholdInviteEmailMatches(latestCodeData);
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        codeData = latestCodeData;
+    });
+
+    const rollbackState = {
+        userWasUpdated: false,
+        playerWasUpdated: false,
+        priorMembershipSnapshot: null,
+        membershipWasUpdated: false
+    };
+
+    try {
+        assertHouseholdInviteEmailMatches(codeData);
+
+        const [team, player] = await Promise.all([
+            getTeam(codeData.teamId),
+            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
+        ]);
+
+        if (!team || !player) {
+            throw new Error("Team or Player not found");
+        }
+
+        const userRef = doc(db, "users", userId);
+        await setDoc(userRef, {
+            parentOf: arrayUnion({
+                teamId: codeData.teamId,
+                playerId: codeData.playerId,
+                teamName: team.name,
+                playerName: player.name,
+                playerNumber: player.number,
+                playerPhotoUrl: player.photoUrl || null,
+                relation: codeData.relation || 'Household contact'
+            }),
+            parentTeamIds: arrayUnion(codeData.teamId),
+            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
+            roles: arrayUnion('parent')
+        }, { merge: true });
+        rollbackState.userWasUpdated = true;
+
+        const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+        await updateDoc(playerRef, {
+            parents: arrayUnion({
+                userId,
+                email: codeData.email || 'pending',
+                relation: codeData.relation || 'Household contact',
+                status: 'accepted',
+                acceptedAt: Timestamp.now(),
+                addedAt: Timestamp.now()
+            })
+        });
+        rollbackState.playerWasUpdated = true;
+
+        if (codeData.organizerUserId && codeData.familyMembershipId) {
+            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
+            rollbackState.priorMembershipSnapshot = await getDoc(membershipRef);
+            await updateDoc(membershipRef, {
+                status: 'active',
+                userId,
+                acceptedAt: Timestamp.now(),
+                updatedAt: Timestamp.now()
+            });
+            rollbackState.membershipWasUpdated = true;
+        }
+    } catch (err) {
+        await rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rollbackState);
+        throw err;
+    }
+
+    console.log('[redeemHouseholdInvite] completed', { codeId: codeDoc.id });
+    return { success: true, teamId: codeData.teamId, playerId: codeData.playerId };
+}
+
 export async function rollbackParentInviteRedemption(userId, code) {
     console.log('[rollbackParentInviteRedemption] start', { userId, code });
 
@@ -3341,6 +3627,13 @@ export async function getTeamFeeBatch(teamId, batchId) {
     const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
     const batchSnap = await getDoc(batchRef);
     return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeBatches(teamId) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'feeBatches');
+    const snapshot = await getDocs(query(batchesRef, orderBy('createdAt', 'desc'), limit(25)));
+    return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
 }
 
 export async function listTeamFeeRecipients(teamId, batchId) {
@@ -5618,16 +5911,7 @@ async function getEventDateForAvailabilityCutoff(teamId, gameId) {
     const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
     const snap = await getDoc(gameRef);
     if (!snap.exists()) return null;
-    const game = snap.data();
-    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
-        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
-        if (!Number.isNaN(occurrenceDate.getTime())) {
-            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
-            return occurrenceDate;
-        }
-    }
-    return baseDate;
+    return resolveAvailabilityCutoffEventDate(snap.data(), instanceDate);
 }
 
 async function assertAvailabilityOpen(teamId, gameId) {
@@ -6064,7 +6348,8 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    const breakdown = buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    return { ...breakdown, players, rsvps };
 }
 
 export async function getPublicTrackingItems(teamId) {
