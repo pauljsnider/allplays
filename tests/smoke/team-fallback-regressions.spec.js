@@ -540,6 +540,9 @@ export function buildBroadcastSetupSession() {
 export function buildHighlightShareUrl() {
     return '';
 }
+export function buildStreamScoreContext() {
+    return null;
+}
 export function canAccessNativeCameraCapture() {
     return false;
 }
@@ -548,6 +551,9 @@ export function canSaveBroadcastSetupSession() {
 }
 export function createHighlightClipDraft() {
     return { startMs: 0, endMs: 0, title: '' };
+}
+export function resolveBroadcastProviderMetadata() {
+    return { providerName: '' };
 }
 export function resolveReplayVideoOptions() {
     return {

@@ -2524,10 +2524,9 @@ async function init() {
     return;
   }
 
-  // Explicitly set the recorded replay paywall state based on URL config for testing.
   if (params.config === 'team-pass-enabled') {
     game.recordedReplayPaywallEnabled = true;
-  } else {
+  } else if (params.config === 'team-pass-disabled') {
     game.recordedReplayPaywallEnabled = false;
   }
 
