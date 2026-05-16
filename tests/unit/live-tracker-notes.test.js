@@ -3,6 +3,7 @@ import {
   isVoiceRecognitionSupported,
   normalizeGameNoteText,
   appendGameSummaryLine,
+  removeGameSummaryLine,
   buildGameNoteLogText,
   buildGoalSportNoteText
 } from '../../js/live-tracker-notes.js';
@@ -30,6 +31,15 @@ describe('live tracker note helpers', () => {
 
   it('does not append empty note lines', () => {
     expect(appendGameSummaryLine('First note', '   ')).toBe('First note');
+  });
+
+  it('removes the last matching summary line', () => {
+    expect(removeGameSummaryLine('Goal A\nGoal B\nGoal A', 'Goal A')).toBe('Goal A\nGoal B');
+  });
+
+  it('leaves summaries unchanged when a matching line is not found', () => {
+    expect(removeGameSummaryLine('Goal A\nGoal B', 'Goal C')).toBe('Goal A\nGoal B');
+    expect(removeGameSummaryLine('Goal A\nGoal B', '   ')).toBe('Goal A\nGoal B');
   });
 
   it('formats text note log entries', () => {

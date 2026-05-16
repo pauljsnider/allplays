@@ -682,7 +682,7 @@
         import { applyBaseballScorekeepingAction, createBaseballLiveState, getBaseballPeriodLabel, getBaseballSituationSummary, isBaseballScorekeepingSport, parseBaseballPeriodLabel } from './js/live-scorekeeping-baseball.js?v=1';
         import { checkAuth } from './js/auth.js?v=14';
         import { getApp } from './js/vendor/firebase-app.js';
-        import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText, buildGoalSportNoteText } from './js/live-tracker-notes.js?v=2';
+        import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, removeGameSummaryLine, buildGameNoteLogText, buildGoalSportNoteText } from './js/live-tracker-notes.js?v=3';
         import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
@@ -1252,6 +1252,10 @@
                 awayScore,
                 createdBy: currentUser?.uid || null
             });
+            const noteTeamLabel = teamSide === 'away'
+                ? resolveOpponentDisplayName(currentGame)
+                : currentTeam?.name || 'Home';
+            const liveNote = addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');
             await addLogEntry(event.description, {
                 type: 'goal',
                 statKey: event.statKey,
@@ -1261,12 +1265,10 @@
                 scorer: event.scorer,
                 note: event.note,
                 playerName: event.playerName,
-                opponentPlayerName: event.opponentPlayerName
+                opponentPlayerName: event.opponentPlayerName,
+                liveNoteId: liveNote?.id || null,
+                liveNoteText: liveNote?.text || null
             });
-            const noteTeamLabel = teamSide === 'away'
-                ? resolveOpponentDisplayName(currentGame)
-                : currentTeam?.name || 'Home';
-            addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');
             broadcastLiveEvent(currentTeamId, currentGameId, event).catch(console.warn);
             scheduleLiveHasData();
 
@@ -1952,22 +1954,46 @@
 
         function addLiveNoteRecord(text, type = 'text') {
             const clean = normalizeGameNoteText(text);
-            if (!clean) return false;
+            if (!clean) return null;
 
             const summaryField = document.getElementById('gameSummary');
             if (summaryField) {
                 summaryField.value = appendGameSummaryLine(summaryField.value, clean);
             }
 
-            gameState.liveNotes.unshift({
+            const entry = {
+                id: `note-${Date.now()}-${Math.random().toString(36).slice(2)}`,
                 text: clean,
                 type,
                 period: gameState.currentPeriod,
                 time: getGameTime(),
                 timestamp: Date.now()
-            });
+            };
+            gameState.liveNotes.unshift(entry);
             renderLiveNotes();
-            return true;
+            return entry;
+        }
+
+        function removeLiveNoteRecord(noteId, noteText) {
+            const clean = normalizeGameNoteText(noteText);
+            const beforeCount = gameState.liveNotes.length;
+            if (noteId) {
+                gameState.liveNotes = gameState.liveNotes.filter((entry) => entry.id !== noteId);
+            } else if (clean) {
+                const index = gameState.liveNotes.findIndex((entry) => normalizeGameNoteText(entry.text) === clean);
+                if (index !== -1) {
+                    gameState.liveNotes.splice(index, 1);
+                }
+            }
+
+            if (gameState.liveNotes.length !== beforeCount) {
+                renderLiveNotes();
+            }
+
+            const summaryField = document.getElementById('gameSummary');
+            if (summaryField && clean) {
+                summaryField.value = removeGameSummaryLine(summaryField.value, clean);
+            }
         }
 
         async function appendGameNote(text, type = 'text') {
@@ -2822,6 +2848,7 @@
             }
 
             if (undoData && undoData.type === 'goal') {
+                removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText);
                 const goalValue = Number(undoData.value) || 1;
                 if (undoData.teamSide === 'away') {
                     awayScore = Math.max(0, awayScore - goalValue);

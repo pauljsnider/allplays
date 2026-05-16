@@ -14,6 +14,18 @@ export function appendGameSummaryLine(existingSummary, noteText) {
   return summary ? `${summary}\n${note}` : note;
 }
 
+export function removeGameSummaryLine(existingSummary, noteText) {
+  const note = normalizeGameNoteText(noteText);
+  if (!note) return normalizeGameNoteText(existingSummary);
+
+  const lines = String(existingSummary || '').split('\n');
+  const index = lines.map(normalizeGameNoteText).lastIndexOf(note);
+  if (index === -1) return normalizeGameNoteText(existingSummary);
+
+  lines.splice(index, 1);
+  return lines.map(normalizeGameNoteText).filter(Boolean).join('\n');
+}
+
 export function buildGameNoteLogText(noteText, type = 'text') {
   const note = normalizeGameNoteText(noteText);
   if (!note) return '';

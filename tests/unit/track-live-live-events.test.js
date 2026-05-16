@@ -27,8 +27,9 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('id="live-notes-list"');
     expect(source).toContain('resolveGoalSportTrackerProfile');
     expect(source).toContain("from './js/live-game-state.js?v=7'");
-    expect(source).toContain("from './js/live-tracker-notes.js?v=2'");
+    expect(source).toContain("from './js/live-tracker-notes.js?v=3'");
     expect(source).toContain('buildGoalSportNoteText');
+    expect(source).toContain('removeGameSummaryLine');
     expect(source).toContain('const { teamId, gameId, trackerMode } = getUrlParams();');
     expect(source).toContain('trackerMode,');
     expect(source).toContain('game: currentGame,');
@@ -40,7 +41,10 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('statKey: event.statKey');
     expect(source).toContain('isOpponent: event.isOpponent');
     expect(source).toContain('buildGoalSportEvent({');
-    expect(source).toContain("addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');");
+    expect(source).toContain("const liveNote = addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');");
+    expect(source).toContain('liveNoteId: liveNote?.id || null');
+    expect(source).toContain('liveNoteText: liveNote?.text || null');
+    expect(source).toContain('removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText);');
     expect(source).toContain('function renderLiveNotes()');
   });
 
