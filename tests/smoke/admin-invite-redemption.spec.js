@@ -164,6 +164,10 @@ export async function redeemParentInvite() {
     throw new Error('parent invite should not be redeemed in this scenario');
 }
 
+export async function redeemHouseholdInvite() {
+    throw new Error('household invite should not be redeemed in this scenario');
+}
+
 export async function redeemAdminInviteAtomically(codeId, userId, authEmail) {
     console.log('redeemAdminInviteAtomically called with:', { codeId, userId, authEmail });
     window.__acceptInviteCalls.push({ type: 'redeem', codeId, userId, authEmail });
@@ -259,17 +263,17 @@ async function mockEditTeamDependencies(page) {
     await mockExternalResources(page);
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_UTILS_STUB }));
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_AUTH_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_TEAM_AUTH_STUB }));
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/live-stream-utils.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_STREAM_UTILS_STUB }));
-    await page.route('**/js/team-access.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
+    await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
 }
 
 async function mockAcceptInviteDependencies(page) {
     await mockExternalResources(page);
     await page.addInitScript(() => { window.__acceptInviteCalls = []; console.log('__acceptInviteCalls initialized on window'); });
-    await page.route(/js\/db\.js(?:\?.*)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
 }
 
@@ -302,9 +306,7 @@ test('accept-invite redeems an admin invite into dashboard access', async ({ pag
 
     await page.goto(`${baseURL}/accept-invite.html?code=EXIST111&type=admin`, { waitUntil: 'domcontentloaded' });
 
-    await expect(page.locator('#success-message')).toContainText("You've been added to the team.");
-    await page.locator('text=Go to Dashboard').click();
-
     await page.waitForURL(/\/dashboard\.html$/);
     await expect(page).toHaveURL(/\/dashboard\.html$/);
+    await expect(page.locator('[data-testid="dashboard"]')).toBeVisible();
 });

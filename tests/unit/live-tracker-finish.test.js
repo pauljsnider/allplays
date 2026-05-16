@@ -159,6 +159,33 @@ describe('live tracker finish completion plan', () => {
     expect(hasPlayerProfileParticipation(standardFinishAggregateDoc)).toBe(true);
   });
 
+  it('splits private player stats into manager-only finish writes', () => {
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 8,
+      requestedAway: 4,
+      liveHome: 8,
+      liveAway: 4,
+      columns: ['PTS', 'EFFORT'],
+      statTrackerConfig: {
+        columns: ['PTS', 'EFFORT'],
+        statDefinitions: [
+          { label: 'PTS', acronym: 'PTS' },
+          { label: 'Coach Effort', acronym: 'EFFORT', id: 'effort', visibility: 'private', scope: 'player' }
+        ]
+      },
+      roster: [{ id: 'p1', name: 'Alex', num: '4' }],
+      statsByPlayerId: { p1: { pts: 8, effort: 5, fouls: 1 } }
+    });
+
+    expect(plan.aggregatedStatsWrites).toEqual([
+      {
+        playerId: 'p1',
+        data: expect.objectContaining({ stats: { pts: 8, fouls: 1 } }),
+        privateData: expect.objectContaining({ stats: { effort: 5 } })
+      }
+    ]);
+  });
+
   it('preserves video timestamp metadata on persisted scoring events', () => {
     const plan = buildFinishCompletionPlan({
       requestedHome: 2,

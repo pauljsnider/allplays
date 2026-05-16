@@ -554,6 +554,9 @@
                 <button id="live-note-add"
                     class="px-3 py-2 rounded bg-teal text-ink text-xs font-semibold hover:bg-teal/80">Add</button>
             </div>
+            <div id="live-notes-list" class="space-y-1">
+                <div class="p-2 bg-slate/60 rounded text-sand/50 text-xs">No live notes yet</div>
+            </div>
         </div>
 
         <!-- Game Log -->
@@ -664,22 +667,22 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage } from './js/db.js?v=29';
+        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage } from './js/db.js?v=31';
         import { db } from './js/firebase.js?v=11';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=11';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns } from './js/live-game-state.js?v=6';
+        import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=7';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, runTrackLiveResetPersistence } from './js/track-live-state.js?v=2';
-        import { getDefaultLivePeriod, getGoalSportProfile, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
+        import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
         import { applyGoalSportScore, buildGoalSportEvent } from './js/live-scorekeeping-goal-sports.js?v=1';
 
         import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
 
         import { applyBaseballScorekeepingAction, createBaseballLiveState, getBaseballPeriodLabel, getBaseballSituationSummary, isBaseballScorekeepingSport, parseBaseballPeriodLabel } from './js/live-scorekeeping-baseball.js?v=1';
-        import { checkAuth } from './js/auth.js?v=14';
+        import { checkAuth } from './js/auth.js?v=15';
         import { getApp } from './js/vendor/firebase-app.js';
-        import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './js/live-tracker-notes.js?v=1';
+        import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, removeGameSummaryLine, buildGameNoteLogText, buildGoalSportNoteText } from './js/live-tracker-notes.js?v=3';
         import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
         // Note: firebase-ai will be lazy-loaded when AI summary is requested
 
@@ -735,6 +738,7 @@
             voiceListening: false,
             activeVoiceRecognition: null,
             gameLog: [],
+            liveNotes: [],
             playerStats: {}, // In-memory player stats (replaces real-time DB writes)
             opponentStats: {},
             currentPeriod: getDefaultLivePeriod(),
@@ -815,7 +819,7 @@
         });
 
         async function init() {
-            const { teamId, gameId } = getUrlParams();
+            const { teamId, gameId, trackerMode } = getUrlParams();
             console.log('Track init - teamId:', teamId, 'gameId:', gameId);
             if (!teamId || !gameId) {
                 console.error('Missing teamId or gameId');
@@ -899,11 +903,12 @@
                         })
                     };
                 }
-                const hasExplicitStatTrackerConfig = !!String(currentGame?.statTrackerConfigId || '').trim();
-                const hasResolvedStatTrackerConfig = !!String(currentConfig?.id || '').trim();
-                currentGoalSportProfile = hasExplicitStatTrackerConfig || hasResolvedStatTrackerConfig
-                    ? null
-                    : getGoalSportProfile({ game: currentGame, team: currentTeam, config: currentConfig });
+                currentGoalSportProfile = resolveGoalSportTrackerProfile({
+                    trackerMode,
+                    game: currentGame,
+                    team: currentTeam,
+                    config: currentConfig
+                });
 
 
                 const volleyballMode = isVolleyballGame();
@@ -1247,6 +1252,10 @@
                 awayScore,
                 createdBy: currentUser?.uid || null
             });
+            const noteTeamLabel = teamSide === 'away'
+                ? resolveOpponentDisplayName(currentGame)
+                : currentTeam?.name || 'Home';
+            const liveNote = addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');
             await addLogEntry(event.description, {
                 type: 'goal',
                 statKey: event.statKey,
@@ -1256,7 +1265,9 @@
                 scorer: event.scorer,
                 note: event.note,
                 playerName: event.playerName,
-                opponentPlayerName: event.opponentPlayerName
+                opponentPlayerName: event.opponentPlayerName,
+                liveNoteId: liveNote?.id || null,
+                liveNoteText: liveNote?.text || null
             });
             broadcastLiveEvent(currentTeamId, currentGameId, event).catch(console.warn);
             scheduleLiveHasData();
@@ -1941,17 +1952,57 @@
             setVoiceNoteHint(false);
         }
 
-        async function appendGameNote(text, type = 'text') {
+        function addLiveNoteRecord(text, type = 'text') {
             const clean = normalizeGameNoteText(text);
-            if (!clean) return false;
-            const logText = buildGameNoteLogText(clean, type);
-            if (!logText) return false;
+            if (!clean) return null;
 
             const summaryField = document.getElementById('gameSummary');
             if (summaryField) {
                 summaryField.value = appendGameSummaryLine(summaryField.value, clean);
             }
 
+            const entry = {
+                id: `note-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                text: clean,
+                type,
+                period: gameState.currentPeriod,
+                time: getGameTime(),
+                timestamp: Date.now()
+            };
+            gameState.liveNotes.unshift(entry);
+            renderLiveNotes();
+            return entry;
+        }
+
+        function removeLiveNoteRecord(noteId, noteText) {
+            const clean = normalizeGameNoteText(noteText);
+            const beforeCount = gameState.liveNotes.length;
+            if (noteId) {
+                gameState.liveNotes = gameState.liveNotes.filter((entry) => entry.id !== noteId);
+            } else if (clean) {
+                const index = gameState.liveNotes.findIndex((entry) => normalizeGameNoteText(entry.text) === clean);
+                if (index !== -1) {
+                    gameState.liveNotes.splice(index, 1);
+                }
+            }
+
+            if (gameState.liveNotes.length !== beforeCount) {
+                renderLiveNotes();
+            }
+
+            const summaryField = document.getElementById('gameSummary');
+            if (summaryField && clean) {
+                summaryField.value = removeGameSummaryLine(summaryField.value, clean);
+            }
+        }
+
+        async function appendGameNote(text, type = 'text') {
+            const clean = normalizeGameNoteText(text);
+            if (!clean) return false;
+            const logText = buildGameNoteLogText(clean, type);
+            if (!logText) return false;
+
+            addLiveNoteRecord(clean, type);
             await addLogEntry(logText, { type: 'note', note: clean, noteType: type });
             if (gameState.isRunning) {
                 broadcastLiveEvent(currentTeamId, currentGameId, {
@@ -1967,6 +2018,28 @@
                 }).catch(console.warn);
             }
             return true;
+        }
+
+        function renderLiveNotes() {
+            const notesList = document.getElementById('live-notes-list');
+            if (!notesList) return;
+            if (!gameState.liveNotes.length) {
+                notesList.innerHTML = '<div class="p-2 bg-slate/60 rounded text-sand/50 text-xs">No live notes yet</div>';
+                return;
+            }
+
+            notesList.innerHTML = gameState.liveNotes.map((entry) => {
+                const label = entry.type === 'voice' ? 'Voice' : (entry.type === 'goal' ? 'Goal' : 'Note');
+                return `
+                    <div class="p-2 bg-slate/60 rounded border-l-2 border-teal/60">
+                        <div class="flex items-center justify-between gap-2 text-[11px] text-teal">
+                            <span>${escapeHtml(label)}</span>
+                            <span>${escapeHtml(entry.period || 'Q1')} ${escapeHtml(entry.time || '0:00')}</span>
+                        </div>
+                        <div class="text-xs text-sand break-words">${escapeHtml(entry.text)}</div>
+                    </div>
+                `;
+            }).join('');
         }
 
         function addManualGameNote() {
@@ -2232,6 +2305,7 @@
 
                             gameState.playerStats = {};
                             gameState.gameLog = [];
+                            gameState.liveNotes = [];
                             gameState.playerFieldStatus = createFieldState(players);
                             homeScore = 0;
                             awayScore = 0;
@@ -2309,6 +2383,7 @@
 
                             updateScoreDisplay();
                             renderGameLog();
+                            renderLiveNotes();
                             renderBaseballScorekeeping();
                             if (!gameState.isBaseballScorekeeping && !isFootballTrackingConfig()) {
                                 renderStatsTable();
@@ -2386,6 +2461,7 @@
                 gameState.currentPeriod = getDefaultLivePeriod({ team: currentTeam, config: currentConfig, game: currentGame });
                 liveState.lastClockSyncAt = 0;
                 gameState.gameLog = [];
+                gameState.liveNotes = [];
                 gameState.playerStats = {}; // Clear in-memory player stats
                 gameState.playerFieldStatus = createFieldState(players);
                 opponentPlayers.forEach((opp) => {
@@ -2431,6 +2507,7 @@
                 }
                 updateScoreDisplay();
                 renderGameLog();
+                renderLiveNotes();
                 renderBaseballScorekeeping();
                 if (!gameState.isBaseballScorekeeping && !isFootballTrackingConfig()) {
                     renderStatsTable();
@@ -2771,6 +2848,7 @@
             }
 
             if (undoData && undoData.type === 'goal') {
+                removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText);
                 const goalValue = Number(undoData.value) || 1;
                 if (undoData.teamSide === 'away') {
                     awayScore = Math.max(0, awayScore - goalValue);

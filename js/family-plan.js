@@ -38,6 +38,21 @@ function loadFirebase(deps = {}) {
     return import('./firebase.js?v=11');
 }
 
+function normalizeAccessLinks(links = []) {
+    const normalized = Array.isArray(links) ? links : [links];
+    return normalized
+        .filter((link) => link && typeof link === 'object')
+        .map((link) => ({
+            teamId: normalizeString(link.teamId),
+            playerId: normalizeString(link.playerId),
+            teamName: normalizeString(link.teamName),
+            playerName: normalizeString(link.playerName),
+            playerNumber: normalizeString(link.playerNumber),
+            relation: normalizeString(link.relation)
+        }))
+        .filter((link) => link.teamId && link.playerId);
+}
+
 function dataFromSnapshot(docSnap) {
     return typeof docSnap?.data === 'function' ? docSnap.data() : {};
 }
@@ -58,6 +73,14 @@ export function normalizeFamilyMembers(records = []) {
             inviteUrl: normalizeString(record.inviteUrl),
             invitedAt: record.invitedAt || record.createdAt || null,
             updatedAt: record.updatedAt || null,
+            removedAt: record.removedAt || null,
+            relation: normalizeString(record.relation),
+            organizerUserId: normalizeString(record.organizerUserId || record.invitedByUserId),
+            organizerName: normalizeString(record.organizerName || record.invitedByName),
+            organizerEmail: normalizeString(record.organizerEmail || record.invitedByEmail),
+            accessCodeId: normalizeString(record.accessCodeId || record.inviteCodeId),
+            inviteCode: normalizeString(record.inviteCode || record.code),
+            playerAccess: normalizeAccessLinks(record.playerAccess || record.playerLinks || record.accessLinks || record.players || (record.player ? [record.player] : [])),
         }))
         .sort((a, b) => {
             const statusOrder = { active: 0, pending: 1, removed: 2 };
@@ -374,12 +397,37 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
 }
 
 
+async function revokeAccessCode(firebase, member, timestamp) {
+    const { db, doc, updateDoc, collection, query, where, getDocs } = firebase;
+    const payload = {
+        revoked: true,
+        revokedAt: timestamp,
+        used: true,
+        updatedAt: timestamp
+    };
+    if (member.accessCodeId && doc && updateDoc) {
+        await updateDoc(doc(db, 'accessCodes', member.accessCodeId), payload);
+        return;
+    }
+    if (member.inviteCode && collection && query && where && getDocs && updateDoc) {
+        const snapshot = await getDocs(query(collection(db, 'accessCodes'), where('code', '==', member.inviteCode.toUpperCase())));
+        await Promise.all(snapshot.docs.map((codeDoc) => updateDoc(codeDoc.ref, payload)));
+    }
+}
+
 export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
     if (!userId || !memberId) throw new Error('Missing family member to remove.');
-    const { db, doc, updateDoc, serverTimestamp } = await loadFirebase(deps);
+    const firebase = await loadFirebase(deps);
+    const { db, doc, getDoc, updateDoc, serverTimestamp } = firebase;
     const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
-    await updateDoc(doc(db, 'users', userId, 'familyMemberships', memberId), {
+    const memberRef = doc(db, 'users', userId, 'familyMemberships', memberId);
+    const memberSnap = getDoc ? await getDoc(memberRef) : null;
+    const member = normalizeFamilyMembers([{ id: memberId, ...dataFromSnapshot(memberSnap) }])[0] || { id: memberId };
+
+    await revokeAccessCode(firebase, member, timestamp);
+    await updateDoc(memberRef, {
         status: 'removed',
+        accessStatus: 'revoked',
         updatedAt: timestamp,
         removedAt: timestamp,
     });
@@ -403,9 +451,13 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
     const { deps = {}, entitlementReader = readAccountPremiumEntitlement } = options;
 
     try {
-        const state = await loadFamilyPlanState(user, { deps, entitlementReader });
         const playerLinks = normalizePlayerLinks(options.playerLinks || options.linkedPlayers || []);
-        container.innerHTML = buildFamilyPlanMarkup({ ...state, playerLinks });
+        const state = {
+            ...(await loadFamilyPlanState(user, { deps, entitlementReader })),
+            playerLinks,
+            linkedPlayers: playerLinks
+        };
+        container.innerHTML = buildFamilyPlanSectionMarkup(state);
 
         const addButton = container.querySelector('#family-plan-add-member-btn');
         const validationEl = container.querySelector('#family-plan-validation');
@@ -451,6 +503,31 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
                 }
                 addButton.disabled = false;
                 addButton.textContent = originalText;
+            }
+        });
+
+        const householdButton = container.querySelector('#household-invite-add-btn');
+        const householdValidationEl = container.querySelector('#household-invite-validation');
+        householdButton?.addEventListener('click', async () => {
+            const originalText = householdButton.textContent;
+            householdButton.disabled = true;
+            householdButton.textContent = 'Saving...';
+            try {
+                await addPendingHouseholdInvite(user.uid, {
+                    playerKey: container.querySelector('#household-invite-player')?.value,
+                    contactName: container.querySelector('#household-invite-name')?.value,
+                    email: container.querySelector('#household-invite-email')?.value,
+                    relation: container.querySelector('#household-invite-relation')?.value,
+                    teamAccessIntent: container.querySelector('#household-invite-team-access')?.checked === true,
+                }, { deps, linkedPlayers: state.linkedPlayers });
+                await renderFamilyPlanSection(container, user, options);
+            } catch (error) {
+                if (householdValidationEl) {
+                    householdValidationEl.textContent = error.message || 'Unable to create household invite.';
+                    householdValidationEl.className = 'text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200';
+                }
+                householdButton.disabled = false;
+                householdButton.textContent = originalText;
             }
         });
 

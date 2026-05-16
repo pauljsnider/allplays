@@ -234,8 +234,49 @@ describe('family plan helpers', () => {
         expect(firebase.doc).toHaveBeenCalledWith({}, 'users', 'user-1', 'familyMemberships', 'member-1');
         expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1/familyMemberships/member-1' }, expect.objectContaining({
             status: 'removed',
+            accessStatus: 'revoked',
             removedAt: 'server-now'
         }));
+    });
+
+    it('revokes invite tokens before marking a member removed without unprivileged profile or player writes', async () => {
+        const updateDoc = vi.fn().mockResolvedValue();
+        const docs = new Map([
+            ['users/organizer/familyMemberships/member-1', {
+                email: 'household@example.com',
+                userId: 'contact-1',
+                accessCodeId: 'code-1',
+                status: 'active',
+                organizerUserId: 'organizer',
+                playerAccess: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Team', playerName: 'Player' }]
+            }]
+        ]);
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async (ref) => ({
+                exists: () => docs.has(ref.path),
+                data: () => docs.get(ref.path) || {}
+            })),
+            updateDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await removeFamilyMember('organizer', 'member-1', { deps: { firebase } });
+
+        expect(updateDoc).toHaveBeenNthCalledWith(1, { path: 'accessCodes/code-1' }, expect.objectContaining({
+            revoked: true,
+            used: true,
+            revokedAt: 'server-now'
+        }));
+        expect(updateDoc).toHaveBeenNthCalledWith(2, { path: 'users/organizer/familyMemberships/member-1' }, expect.objectContaining({
+            status: 'removed',
+            accessStatus: 'revoked',
+            removedAt: 'server-now'
+        }));
+        const updatedPaths = updateDoc.mock.calls.map(([ref]) => ref.path);
+        expect(updatedPaths).not.toContain('users/contact-1');
+        expect(updatedPaths).not.toContain('teams/team-1/players/player-1');
     });
 
     it('loads family members and account entitlement state together', async () => {
@@ -262,7 +303,8 @@ describe('family plan helpers', () => {
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
         expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
         expect(rules).toContain('allow update: if isOwner(userId) &&');
-        expect(rules).toContain("affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt'])");
+        expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])");
+        expect(rules).toContain("data.accessStatus == 'revoked'");
         expect(rules).toContain('isFamilyMembershipInviteMetadataUpdate');
         expect(rules).toContain('isFamilyMembershipAcceptance');
         expect(rules).toContain('allow delete: if false;');

@@ -129,7 +129,7 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
 
         return {
             success: true,
-            message: `You've been added as an admin of ${redeemResult.teamName || 'the team'}!`,
+            message: `You've been added as an admin of ${redeemResult.teamName || team?.name || 'the team'}!`,
             redirectUrl: 'dashboard.html'
         };
     }
