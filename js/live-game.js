@@ -1817,7 +1817,17 @@ function updateMomentum(event) {
     state.lastRunAnnounced = 0;
   }
 
-  state.scoringRun.points += Math.abs(event.value || 0);
+  const eventValue = event.value || 0;
+  if (eventValue < 0) {
+    // Point deduction for the current scoring team, reset the run.
+    // If it's a deduction for the other team, it will already reset in the `if (state.scoringRun.team !== scoringTeam)` block.
+    state.scoringRun.team = null; // Clear team to ensure it resets next score
+    state.scoringRun.points = 0;
+    state.lastRunAnnounced = 0;
+  } else if (eventValue > 0) {
+    // Only add positive points to the scoring run
+    state.scoringRun.points += eventValue;
+  }
 
   if (state.scoringRun.points >= 5 && state.scoringRun.points !== state.lastRunAnnounced) {
     state.lastRunAnnounced = state.scoringRun.points;
