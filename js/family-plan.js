@@ -11,6 +11,28 @@ function normalizeStatus(value) {
     return ['pending', 'active', 'removed'].includes(status) ? status : 'pending';
 }
 
+function generateHouseholdInviteCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 8; i += 1) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
+
+function normalizePlayerLinks(playerLinks = []) {
+    return playerLinks
+        .filter((link) => link?.teamId && link?.playerId)
+        .map((link) => ({
+            teamId: normalizeString(link.teamId),
+            playerId: normalizeString(link.playerId),
+            teamName: normalizeString(link.teamName),
+            playerName: normalizeString(link.playerName || link.name),
+            playerNumber: normalizeString(link.playerNumber || link.number),
+            playerPhotoUrl: normalizeString(link.playerPhotoUrl || link.photoUrl),
+        }));
+}
+
 function loadFirebase(deps = {}) {
     if (deps.firebase) return Promise.resolve(deps.firebase);
     return import('./firebase.js?v=11');
@@ -44,6 +66,11 @@ export function normalizeFamilyMembers(records = []) {
             displayName: normalizeString(record.displayName || record.name || record.memberName),
             userId: normalizeString(record.userId || record.accountUserId || record.uid),
             status: normalizeStatus(record.status),
+            teamName: normalizeString(record.teamName),
+            playerName: normalizeString(record.playerName),
+            playerNumber: normalizeString(record.playerNumber),
+            accessCode: normalizeString(record.accessCode),
+            inviteUrl: normalizeString(record.inviteUrl),
             invitedAt: record.invitedAt || record.createdAt || null,
             updatedAt: record.updatedAt || null,
             removedAt: record.removedAt || null,
@@ -90,6 +117,76 @@ function statusClasses(status) {
     return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
+export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked', validationMessage = '', playerLinks = [] } = {}) {
+    const normalized = normalizeFamilyMembers(members);
+    const normalizedPlayerLinks = normalizePlayerLinks(playerLinks);
+    const counts = getFamilySlotCounts(normalized);
+    const slotsFull = counts.used >= counts.max;
+    const entitlementActive = entitlementState === 'unlocked';
+    const rows = normalized.length
+        ? normalized.map((member) => {
+            const label = member.displayName || member.email || 'Family member';
+            const subline = member.displayName && member.email ? `<div class="text-xs text-gray-500 mt-0.5">${escapeHtml(member.email)}</div>` : '';
+            const accessLine = member.status === 'pending' && (member.accessCode || member.inviteUrl)
+                ? `<div class="text-xs text-gray-500 mt-1">Invite code: <span class="font-mono font-semibold text-gray-700">${escapeHtml(member.accessCode)}</span>${member.inviteUrl ? ` · <span class="font-mono">${escapeHtml(member.inviteUrl)}</span>` : ''}</div>`
+                : '';
+            const playerLine = member.playerName || member.teamName
+                ? `<div class="text-xs text-gray-500 mt-0.5">Access: ${escapeHtml(`${member.playerName || 'Player'}${member.playerNumber ? ` #${member.playerNumber}` : ''}${member.teamName ? `, ${member.teamName}` : ''}`)}</div>`
+                : '';
+            const removeButton = member.status === 'removed'
+                ? ''
+                : `<button type="button" data-family-plan-remove="${escapeHtml(member.id)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>`;
+            return `
+                <div class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3">
+                    <div>
+                        <div class="font-semibold text-gray-900">${escapeHtml(label)}</div>
+                        ${subline}
+                        ${playerLine}
+                        ${accessLine}
+                    </div>
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(member.status)}">${escapeHtml(member.status)}</span>
+                        ${removeButton}
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : '<div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600">No family members or pending invites yet.</div>';
+
+    return `
+        <div class="p-6 border-b border-gray-100 bg-gray-50">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                    <h2 class="text-xl font-bold text-gray-900">Family Plan</h2>
+                    <p class="text-xs text-gray-500 mt-1">Manage up to ${MAX_FAMILY_PLAN_SLOTS} household accounts or pending invites.</p>
+                </div>
+                <span class="self-start px-3 py-1 rounded-full border text-xs font-semibold ${entitlementActive ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}">${entitlementActive ? 'Premium active' : 'Setup only'}</span>
+            </div>
+        </div>
+        <div class="p-6 space-y-4">
+            ${entitlementActive ? '' : '<div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Billing and premium activation are not connected yet. These slots only capture the intended household members until an active account entitlement exists.</div>'}
+            <div class="flex items-center justify-between gap-3 text-sm">
+                <div class="font-semibold text-gray-900">Member slots</div>
+                <div class="text-gray-600"><span class="font-bold text-gray-900">${counts.used}</span> / ${counts.max} used</div>
+            </div>
+            <div class="space-y-2">${rows}</div>
+            <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+                ${normalizedPlayerLinks.length ? `<select id="family-plan-player-link" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
+                    <option value="">Select player access to share</option>
+                    ${normalizedPlayerLinks.map((link) => `<option value="${escapeHtml(`${link.teamId}::${link.playerId}`)}">${escapeHtml(`${link.playerName || 'Player'}${link.playerNumber ? ` #${link.playerNumber}` : ''}${link.teamName ? `, ${link.teamName}` : ''}`)}</option>`).join('')}
+                </select>` : ''}
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input id="family-plan-member-name" type="text" placeholder="Name (optional)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
+                    <input id="family-plan-member-email" type="email" placeholder="Email for pending invite" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
+                </div>
+                <input id="family-plan-member-relation" type="text" placeholder="Relation (for example: guardian, step-parent)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
+                <button id="family-plan-add-member-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${slotsFull ? 'disabled' : ''}>Add pending member</button>
+                <div id="family-plan-validation" class="${validationMessage || slotsFull ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 ${validationMessage ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">${escapeHtml(validationMessage || `Family Plan is limited to ${MAX_FAMILY_PLAN_SLOTS} active accounts or pending invites.`)}</div>
+            </div>
+        </div>
+    `;
+}
+
 export function normalizeHouseholdInvites(records = []) {
     return records
         .filter((record) => record && typeof record === 'object')
@@ -113,14 +210,10 @@ export function normalizeHouseholdInvites(records = []) {
 }
 
 function normalizeLinkedPlayers(players = []) {
-    return players
-        .filter((player) => player?.teamId && player?.playerId)
-        .map((player) => ({
-            teamId: normalizeString(player.teamId),
-            teamName: normalizeString(player.teamName),
-            playerId: normalizeString(player.playerId),
-            playerName: normalizeString(player.playerName || player.name) || 'Player',
-        }));
+    return normalizePlayerLinks(players).map((player) => ({
+        ...player,
+        playerName: player.playerName || 'Player',
+    }));
 }
 
 export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], validationMessage = '' } = {}) {
@@ -171,66 +264,6 @@ export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], v
             <div class="space-y-2">
                 <div class="text-sm font-semibold text-gray-900">Pending household invites</div>
                 ${pendingRows}
-            </div>
-        </div>
-    `;
-}
-
-export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked', validationMessage = '' } = {}) {
-    const normalized = normalizeFamilyMembers(members);
-    const counts = getFamilySlotCounts(normalized);
-    const slotsFull = counts.used >= counts.max;
-    const entitlementActive = entitlementState === 'unlocked';
-    const rows = normalized.length
-        ? normalized.map((member) => {
-            const label = member.displayName || member.email || 'Family member';
-            const subline = member.displayName && member.email ? `<div class="text-xs text-gray-500 mt-0.5">${escapeHtml(member.email)}</div>` : '';
-            const accessLine = member.playerAccess.length
-                ? `<div class="text-xs text-gray-500 mt-1">Access: ${escapeHtml(member.playerAccess.map((link) => `${link.playerName || link.playerId}${link.teamName ? ` (${link.teamName})` : ''}`).join(', '))}</div>`
-                : '';
-            const removeButton = member.status === 'removed'
-                ? ''
-                : `<button type="button" data-family-plan-remove="${escapeHtml(member.id)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Revoke access</button>`;
-            return `
-                <div class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3">
-                    <div>
-                        <div class="font-semibold text-gray-900">${escapeHtml(label)}</div>
-                        ${subline}
-                        ${accessLine}
-                    </div>
-                    <div class="flex flex-col items-end gap-2">
-                        <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(member.status)}">${escapeHtml(member.status)}</span>
-                        ${removeButton}
-                    </div>
-                </div>
-            `;
-        }).join('')
-        : '<div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 text-sm text-gray-600">No family members or pending invites yet.</div>';
-
-    return `
-        <div class="p-6 border-b border-gray-100 bg-gray-50">
-            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                <div>
-                    <h2 class="text-xl font-bold text-gray-900">Family Plan</h2>
-                    <p class="text-xs text-gray-500 mt-1">Manage up to ${MAX_FAMILY_PLAN_SLOTS} household accounts or pending invites.</p>
-                </div>
-                <span class="self-start px-3 py-1 rounded-full border text-xs font-semibold ${entitlementActive ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}">${entitlementActive ? 'Premium active' : 'Setup only'}</span>
-            </div>
-        </div>
-        <div class="p-6 space-y-4">
-            ${entitlementActive ? '' : '<div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Billing and premium activation are not connected yet. These slots only capture the intended household members until an active account entitlement exists.</div>'}
-            <div class="flex items-center justify-between gap-3 text-sm">
-                <div class="font-semibold text-gray-900">Member slots</div>
-                <div class="text-gray-600"><span class="font-bold text-gray-900">${counts.used}</span> / ${counts.max} used</div>
-            </div>
-            <div class="space-y-2">${rows}</div>
-            <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <input id="family-plan-member-name" type="text" placeholder="Name (optional)" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
-                    <input id="family-plan-member-email" type="email" placeholder="Email for pending invite" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" ${slotsFull ? 'disabled' : ''}>
-                </div>
-                <button id="family-plan-add-member-btn" class="w-full bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed" ${slotsFull ? 'disabled' : ''}>Add pending member</button>
-                <div id="family-plan-validation" class="${validationMessage || slotsFull ? '' : 'hidden'} text-xs rounded-lg px-3 py-2 ${validationMessage ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}">${escapeHtml(validationMessage || `Family Plan is limited to ${MAX_FAMILY_PLAN_SLOTS} active accounts or pending invites.`)}</div>
             </div>
         </div>
     `;
@@ -303,16 +336,64 @@ export async function addPendingFamilyMember(userId, member, { deps = {}, existi
     const duplicate = normalizedExisting.some((existing) => existing.status !== 'removed' && existing.email.toLowerCase() === email);
     if (duplicate) throw new Error('That family member is already active or pending.');
 
-    const { db, collection, addDoc, serverTimestamp } = await loadFirebase(deps);
+    const playerId = normalizeString(member?.playerId);
+    const teamId = normalizeString(member?.teamId);
+    if (!teamId || !playerId) {
+        throw new Error('Select the player access to share with this household contact.');
+    }
+
+    const { db, collection, addDoc, updateDoc, doc, serverTimestamp, Timestamp } = await loadFirebase(deps);
     const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
-    await addDoc(collection(db, `users/${userId}/familyMemberships`), {
+    const membershipRef = await addDoc(collection(db, `users/${userId}/familyMemberships`), {
         email,
         displayName,
         status: 'pending',
         organizerUserId: userId,
+        teamId,
+        playerId,
+        teamName: normalizeString(member?.teamName),
+        playerName: normalizeString(member?.playerName),
+        playerNumber: normalizeString(member?.playerNumber),
+        playerPhotoUrl: normalizeString(member?.playerPhotoUrl),
+        relation: normalizeString(member?.relation) || 'Household contact',
         invitedAt: timestamp,
         updatedAt: timestamp,
     });
+
+    const code = generateHouseholdInviteCode();
+    const expiresAt = Timestamp?.fromMillis
+        ? Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const accessCodeRef = await addDoc(collection(db, 'accessCodes'), {
+        code,
+        type: 'household_invite',
+        email,
+        displayName,
+        generatedBy: userId,
+        organizerUserId: userId,
+        familyMembershipId: membershipRef.id,
+        teamId,
+        playerId,
+        teamName: normalizeString(member?.teamName),
+        playerName: normalizeString(member?.playerName),
+        playerNum: normalizeString(member?.playerNumber),
+        playerPhotoUrl: normalizeString(member?.playerPhotoUrl),
+        relation: normalizeString(member?.relation) || 'Household contact',
+        createdAt: timestamp,
+        expiresAt,
+        used: false,
+        usedBy: null,
+        usedAt: null,
+        revoked: false
+    });
+    await updateDoc(doc(db, 'users', userId, 'familyMemberships', membershipRef.id), {
+        accessCodeId: accessCodeRef.id,
+        accessCode: code,
+        inviteUrl: `accept-invite.html?code=${code}`,
+        updatedAt: timestamp
+    });
+
+    return { code, inviteUrl: `accept-invite.html?code=${code}` };
 }
 
 
@@ -370,9 +451,11 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
     const { deps = {}, entitlementReader = readAccountPremiumEntitlement } = options;
 
     try {
+        const playerLinks = normalizePlayerLinks(options.playerLinks || options.linkedPlayers || []);
         const state = {
             ...(await loadFamilyPlanState(user, { deps, entitlementReader })),
-            linkedPlayers: options.linkedPlayers || []
+            playerLinks,
+            linkedPlayers: playerLinks
         };
         container.innerHTML = buildFamilyPlanSectionMarkup(state);
 
@@ -404,9 +487,13 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
             addButton.disabled = true;
             addButton.textContent = 'Saving...';
             try {
+                const selectedPlayerKey = container.querySelector('#family-plan-player-link')?.value || '';
+                const selectedPlayer = playerLinks.find((link) => `${link.teamId}::${link.playerId}` === selectedPlayerKey) || {};
                 await addPendingFamilyMember(user.uid, {
                     email: emailEl?.value,
                     displayName: nameEl?.value,
+                    relation: container.querySelector('#family-plan-member-relation')?.value,
+                    ...selectedPlayer,
                 }, { deps, existingMembers: state.members });
                 await renderFamilyPlanSection(container, user, options);
             } catch (error) {
@@ -443,6 +530,7 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
                 householdButton.textContent = originalText;
             }
         });
+
     } catch (error) {
         console.error('[family-plan] Unable to load Family Plan section:', error);
         container.innerHTML = '<div class="p-6 rounded-2xl border border-amber-200 bg-amber-50 text-sm text-amber-800">Family Plan could not be loaded right now.</div>';

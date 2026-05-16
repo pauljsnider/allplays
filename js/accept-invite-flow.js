@@ -18,6 +18,31 @@ function assertInviteEmailMatches(validation, authEmail) {
     throw new Error(`This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
 }
 
+
+function getHouseholdInviteRedemptionMessage(error) {
+    const rawMessage = String(error?.message || '');
+    const lowerMessage = rawMessage.toLowerCase();
+    const code = String(error?.code || '').toLowerCase();
+
+    if (lowerMessage.includes('this invite was sent to')) {
+        return rawMessage;
+    }
+    if (lowerMessage.includes('invalid or used') || lowerMessage.includes('expired') || lowerMessage.includes('revoked')) {
+        return 'This invite is invalid, expired, revoked, or has already been used.';
+    }
+    if (lowerMessage.includes('team or player not found')) {
+        return 'This invite points to a team or player that no longer exists. Ask the coach to send a new invite.';
+    }
+    if (code.includes('permission-denied') || lowerMessage.includes('permission')) {
+        return 'We could not accept this invite because your account does not have permission. Sign in with the invited email or ask the coach to resend it.';
+    }
+    if (code.includes('unavailable') || lowerMessage.includes('network') || lowerMessage.includes('offline')) {
+        return 'We could not accept this invite because of a network issue. Check your connection and try again.';
+    }
+
+    return 'We could not accept this household invite. Please try again or ask the coach to send a new invite.';
+}
+
 export function createInviteProcessor(deps) {
     return async function processInvite(userId, code, authEmail = null) {
         return processInviteCode(userId, code, deps, authEmail);
@@ -33,7 +58,8 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         updateTeam,
         updateUserProfile,
         markAccessCodeAsUsed,
-        redeemAdminInviteAtomically
+        redeemAdminInviteAtomically,
+        redeemHouseholdInvite
     } = deps;
 
     const validation = await validateAccessCode(code);
@@ -49,6 +75,28 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         return {
             success: true,
             message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : 'a player'} on ${team?.name || 'the team'}!`,
+            redirectUrl: 'parent-dashboard.html'
+        };
+    }
+
+    if (validation.type === 'household_invite') {
+        if (typeof redeemHouseholdInvite !== 'function') {
+            throw new Error('Missing household invite redemption handler');
+        }
+
+        let redeemResult;
+        try {
+            redeemResult = await redeemHouseholdInvite(userId, code);
+        } catch (error) {
+            console.error('Failed to redeem household invite', error);
+            throw new Error(getHouseholdInviteRedemptionMessage(error));
+        }
+
+        const teamId = redeemResult?.teamId || validation.data.teamId;
+        const team = await getTeam(teamId);
+        return {
+            success: true,
+            message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : validation.data.playerName || 'a player'} on ${team?.name || validation.data.teamName || 'the team'}!`,
             redirectUrl: 'parent-dashboard.html'
         };
     }
