@@ -97,7 +97,7 @@ import {
     summarizeRegistration
 } from './registration-review.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=1';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=2';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -654,11 +654,58 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     return docRef.id;
 }
 
+export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanFolderId = String(folderId || '').trim();
+    const currentUser = auth.currentUser;
+    if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading files.');
+    if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
+    if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file.');
+
+    const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
+
+    const snapshot = await new Promise((resolve, reject) => {
+        uploadTask.on('state_changed', (progressSnapshot) => {
+            if (typeof options.onProgress === 'function') {
+                const percent = progressSnapshot.totalBytes > 0
+                    ? Math.round((progressSnapshot.bytesTransferred / progressSnapshot.totalBytes) * 100)
+                    : 0;
+                options.onProgress({
+                    bytesTransferred: progressSnapshot.bytesTransferred,
+                    totalBytes: progressSnapshot.totalBytes,
+                    percent
+                });
+            }
+        }, reject, () => resolve(uploadTask.snapshot));
+    });
+
+    const url = await getDownloadURL(snapshot.ref);
+    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+        folderId: cleanFolderId,
+        title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
+        fileName: String(file.name || '').trim(),
+        type: 'file',
+        url,
+        storagePath,
+        uploadedBy: currentUser.uid,
+        size: Number(file.size || 0),
+        mimeType: file.type,
+        order: existingItems.length,
+        deleted: false,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+    });
+    return docRef.id;
+}
+
 export async function deleteTeamMediaItem(teamId, item) {
     const cleanTeamId = String(teamId || '').trim();
     const itemId = String(item?.id || '').trim();
     if (!cleanTeamId || !itemId) throw new Error('Media item is required.');
-    if (item?.type === 'photo' && !item.storagePath) {
+    if (['photo', 'file'].includes(item?.type) && !item.storagePath) {
         console.error('Media object missing file reference:', itemId);
         throw new Error('Cannot delete media: missing file reference');
     }
@@ -676,7 +723,7 @@ export async function deleteTeamMediaItem(teamId, item) {
         updatedAt: serverTimestamp()
     });
 
-    if (item?.type === 'photo') {
+    if (['photo', 'file'].includes(item?.type)) {
         try {
             await deleteObject(ref(storage, item.storagePath));
         } catch (error) {
