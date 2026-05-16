@@ -35,6 +35,88 @@
             <div id="organization-access-alert" class="hidden rounded-xl border px-4 py-3 text-sm"></div>
             <div id="organization-success" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800"></div>
 
+            <section class="rounded-2xl bg-white p-6 shadow-md">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold text-gray-900">Venue availability and blackouts</h2>
+                        <p class="mt-2 text-sm text-gray-600">Define usable venue windows and blackout dates before building generated schedules.</p>
+                    </div>
+                    <button id="refresh-venue-controls-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Refresh</button>
+                </div>
+
+                <div class="mt-5 grid gap-5 lg:grid-cols-2">
+                    <form id="venue-availability-form" class="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <h3 class="font-semibold text-gray-900">Add available window</h3>
+                        <div>
+                            <label for="availability-venue-name" class="block text-sm font-medium text-gray-700">Venue</label>
+                            <input id="availability-venue-name" type="text" required placeholder="Main Field" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label for="availability-sub-venue-name" class="block text-sm font-medium text-gray-700">Sub-venue <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="availability-sub-venue-name" type="text" placeholder="Court 1" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-3">
+                            <div>
+                                <label for="availability-day" class="block text-sm font-medium text-gray-700">Day</label>
+                                <select id="availability-day" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
+                            </div>
+                            <div>
+                                <label for="availability-start-time" class="block text-sm font-medium text-gray-700">Start</label>
+                                <input id="availability-start-time" type="time" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="availability-end-time" class="block text-sm font-medium text-gray-700">End</label>
+                                <input id="availability-end-time" type="time" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="availability-notes" class="block text-sm font-medium text-gray-700">Notes <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="availability-notes" type="text" placeholder="Lights available after 6 PM" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <button id="save-venue-availability-btn" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Add availability</button>
+                    </form>
+
+                    <form id="blackout-date-form" class="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <h3 class="font-semibold text-gray-900">Add blackout date</h3>
+                        <div>
+                            <label for="blackout-scope" class="block text-sm font-medium text-gray-700">Blackout scope</label>
+                            <select id="blackout-scope" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="organization">Organization-wide</option>
+                                <option value="venue">Venue-specific</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="blackout-venue-name" class="block text-sm font-medium text-gray-700">Venue <span class="font-normal text-gray-500">required for venue-specific</span></label>
+                            <input id="blackout-venue-name" type="text" placeholder="Main Field" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label for="blackout-sub-venue-name" class="block text-sm font-medium text-gray-700">Sub-venue <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="blackout-sub-venue-name" type="text" placeholder="Court 1" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <label for="blackout-start-date" class="block text-sm font-medium text-gray-700">Start date</label>
+                                <input id="blackout-start-date" type="date" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="blackout-end-date" class="block text-sm font-medium text-gray-700">End date</label>
+                                <input id="blackout-end-date" type="date" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="blackout-reason" class="block text-sm font-medium text-gray-700">Reason <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="blackout-reason" type="text" placeholder="Tournament, maintenance, holiday" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <button id="save-blackout-date-btn" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Add blackout</button>
+                    </form>
+                </div>
+
+                <div class="mt-6">
+                    <h3 class="font-semibold text-gray-900">Review saved scheduling controls</h3>
+                    <div id="venue-controls-list" class="mt-3 space-y-3 text-sm"></div>
+                </div>
+            </section>
+
             <div class="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
                 <section class="rounded-2xl bg-white p-6 shadow-md">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -186,17 +268,22 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { addGame, getTeam, getTeams, getUserTeamsWithAccess } from './js/db.js?v=30';
+        import { addGame, createOrganizationBlackout, createVenueAvailability, createVenueBlackout, getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls } from './js/db.js?v=31';
         import { parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=14';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { Timestamp } from './js/firebase.js?v=11';
         import {
+            ORGANIZATION_SCHEDULE_WEEKDAYS,
+            buildBlackoutDatePayload,
             buildOrganizationScheduleCsvTemplate,
             buildOrganizationScheduleDraftSlots,
             buildOrganizationScheduleImportPreview,
             buildOrganizationSharedGamePayload,
+            buildVenueAvailabilityPayload,
+            formatBlackoutDateRecord,
+            formatVenueAvailabilityRecord,
             getOrganizationTeams,
             inferOrganizationScheduleCsvMapping,
             validateOrganizationMatchup
@@ -236,8 +323,82 @@
         let organizationTeams = [];
         let accessibleTeams = [];
         let organizationCsvState = { fileName: '', preview: null };
+        const availabilityForm = document.getElementById('venue-availability-form');
+        const blackoutForm = document.getElementById('blackout-date-form');
+        const availabilityDaySelect = document.getElementById('availability-day');
+        const venueControlsList = document.getElementById('venue-controls-list');
+        const saveAvailabilityButton = document.getElementById('save-venue-availability-btn');
+        const saveBlackoutButton = document.getElementById('save-blackout-date-btn');
+        const refreshVenueControlsButton = document.getElementById('refresh-venue-controls-btn');
         let draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
 
+        function setButtonBusy(button, busyText, busy) {
+            if (!button) return;
+            if (busy) {
+                button.dataset.defaultText = button.textContent;
+                button.disabled = true;
+                button.textContent = busyText;
+            } else {
+                button.disabled = false;
+                button.textContent = button.dataset.defaultText || button.textContent;
+            }
+        }
+
+        function renderVenueControlGroup(title, records, formatter) {
+            const section = document.createElement('section');
+            section.className = 'rounded-xl border border-gray-200 bg-white p-4';
+
+            const heading = document.createElement('h4');
+            heading.className = 'font-semibold text-gray-900';
+            heading.textContent = `${title} (${records.length})`;
+            section.appendChild(heading);
+
+            if (records.length === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'mt-2 text-gray-500';
+                empty.textContent = 'No records saved yet.';
+                section.appendChild(empty);
+                return section;
+            }
+
+            const list = document.createElement('ul');
+            list.className = 'mt-3 space-y-2';
+            records.forEach((record) => {
+                const item = document.createElement('li');
+                item.className = 'rounded-lg border border-gray-100 bg-gray-50 px-3 py-2';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'font-medium text-gray-900';
+                titleEl.textContent = formatter(record);
+                item.appendChild(titleEl);
+
+                if (record.notes || record.reason) {
+                    const note = document.createElement('div');
+                    note.className = 'mt-1 text-xs text-gray-600';
+                    note.textContent = record.notes || record.reason;
+                    item.appendChild(note);
+                }
+                list.appendChild(item);
+            });
+            section.appendChild(list);
+            return section;
+        }
+
+        async function refreshVenueControls() {
+            if (!anchorTeam?.id) return;
+            venueControlsList.textContent = 'Loading scheduling controls…';
+            try {
+                const controls = await listOrganizationScheduleControls(anchorTeam.id);
+                venueControlsList.replaceChildren(
+                    renderVenueControlGroup('Availability windows', controls.availability || [], formatVenueAvailabilityRecord),
+                    renderVenueControlGroup('Organization blackouts', controls.organizationBlackouts || [], formatBlackoutDateRecord),
+                    renderVenueControlGroup('Venue blackouts', controls.venueBlackouts || [], formatBlackoutDateRecord)
+                );
+            } catch (error) {
+                console.error('Unable to load venue controls:', error);
+                venueControlsList.textContent = `Unable to load scheduling controls: ${error.message}`;
+            }
+        }
 
         function showScheduleMode(mode) {
             const isBulk = mode === 'bulk';
@@ -266,6 +427,19 @@
             singleTab.disabled = true;
             bulkTab.disabled = true;
             draftTab.disabled = true;
+            refreshVenueControlsButton.disabled = true;
+            availabilityForm.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = true;
+            });
+            blackoutForm.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = true;
+            });
+        }
+
+        function canManageVenueControls() {
+            if (!currentUser || !anchorTeam?.id || organizationTeams.length < 2) return false;
+            const accessInfo = getTeamAccessInfo(currentUser, anchorTeam);
+            return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
         }
 
         function downloadCsvFile(filename, text) {
@@ -564,13 +738,80 @@
 
             renderTeamOptions(homeTeamSelect, organizationTeams, anchorTeam.id);
             renderTeamOptions(awayTeamSelect, organizationTeams, organizationTeams.find((team) => team.id !== anchorTeam.id)?.id || organizationTeams[0]?.id);
+            availabilityDaySelect.replaceChildren(...ORGANIZATION_SCHEDULE_WEEKDAYS.map((day) => {
+                const option = document.createElement('option');
+                option.value = day.value;
+                option.textContent = day.label;
+                return option;
+            }));
             renderTeamOptions(draftTeamSelect, organizationTeams, anchorTeam.id);
             Array.from(draftTeamSelect.options).forEach((option) => { option.selected = true; });
             resetOrganizationCsvState();
             resetDraftGeneratorState();
+            await refreshVenueControls();
         }
 
 
+
+        refreshVenueControlsButton.addEventListener('click', refreshVenueControls);
+
+        availabilityForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setAlert('');
+            if (!canManageVenueControls()) {
+                setAlert('Venue scheduling controls are not available for this team.');
+                return;
+            }
+            try {
+                setButtonBusy(saveAvailabilityButton, 'Saving…', true);
+                const payload = buildVenueAvailabilityPayload({
+                    venueName: document.getElementById('availability-venue-name').value,
+                    subVenueName: document.getElementById('availability-sub-venue-name').value,
+                    dayOfWeek: document.getElementById('availability-day').value,
+                    startTime: document.getElementById('availability-start-time').value,
+                    endTime: document.getElementById('availability-end-time').value,
+                    notes: document.getElementById('availability-notes').value
+                });
+                await createVenueAvailability(anchorTeam.id, payload);
+                availabilityForm.reset();
+                await refreshVenueControls();
+            } catch (error) {
+                setAlert(error.message);
+            } finally {
+                setButtonBusy(saveAvailabilityButton, 'Saving…', false);
+            }
+        });
+
+        blackoutForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setAlert('');
+            if (!canManageVenueControls()) {
+                setAlert('Venue scheduling controls are not available for this team.');
+                return;
+            }
+            try {
+                setButtonBusy(saveBlackoutButton, 'Saving…', true);
+                const payload = buildBlackoutDatePayload({
+                    scope: document.getElementById('blackout-scope').value,
+                    venueName: document.getElementById('blackout-venue-name').value,
+                    subVenueName: document.getElementById('blackout-sub-venue-name').value,
+                    startDate: document.getElementById('blackout-start-date').value,
+                    endDate: document.getElementById('blackout-end-date').value,
+                    reason: document.getElementById('blackout-reason').value
+                });
+                if (payload.scope === 'venue') {
+                    await createVenueBlackout(anchorTeam.id, payload);
+                } else {
+                    await createOrganizationBlackout(anchorTeam.id, payload);
+                }
+                blackoutForm.reset();
+                await refreshVenueControls();
+            } catch (error) {
+                setAlert(error.message);
+            } finally {
+                setButtonBusy(saveBlackoutButton, 'Saving…', false);
+            }
+        });
 
         singleTab.addEventListener('click', () => showScheduleMode('single'));
         bulkTab.addEventListener('click', () => showScheduleMode('bulk'));
