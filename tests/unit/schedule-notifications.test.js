@@ -6,6 +6,7 @@ import {
     buildScheduleNotificationTargets,
     postScheduleNotificationTargets,
     buildAvailabilityReminderRecipients,
+    buildAvailabilityReminderEmailPreview,
     buildRsvpReminderMessage,
     buildNextReminderAt,
     buildScheduleNotificationMetadata
@@ -260,6 +261,38 @@ describe('schedule notification helpers', () => {
         expect(recipients.playerIds).toEqual(['p1', 'p2']);
         expect(recipients.parentIds).toEqual(['u2']);
         expect(recipients.recipientCount).toBe(2);
+    });
+
+    it('builds parent email preview for no-response players', () => {
+        const preview = buildAvailabilityReminderEmailPreview([
+            { id: 'p1', name: 'A', parents: [{ userId: 'u1', email: 'one@example.com' }] },
+            { id: 'p2', name: 'B', parents: [{ userId: 'u2', email: 'pending' }] },
+            { id: 'p3', name: 'C', parents: [{ userId: 'u3', email: 'three@example.com' }] }
+        ], [
+            { userId: 'u3', playerIds: ['p3'], response: 'going' }
+        ]);
+
+        expect(preview).toEqual({
+            players: [
+                {
+                    playerId: 'p1',
+                    playerName: 'A',
+                    playerNumber: '',
+                    parentEmails: ['one@example.com'],
+                    hasEligibleParentEmail: true
+                },
+                {
+                    playerId: 'p2',
+                    playerName: 'B',
+                    playerNumber: '',
+                    parentEmails: [],
+                    hasEligibleParentEmail: false
+                }
+            ],
+            eligibleEmails: ['one@example.com'],
+            eligibleEmailCount: 1,
+            missingEmailPlayerIds: ['p2']
+        });
     });
 
     it('builds RSVP reminder messages for the no-response group', () => {

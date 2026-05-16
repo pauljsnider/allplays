@@ -34,13 +34,20 @@ describe('family plan helpers', () => {
     it('renders the setup-only billing and premium activation notice without active entitlement', () => {
         const markup = buildFamilyPlanMarkup({
             entitlementState: 'locked',
-            members: [member('active', 'active@example.com'), member('pending', 'pending@example.com'), member('removed', 'removed@example.com')]
+            members: [
+                member('active', 'active@example.com'),
+                { ...member('pending', 'pending@example.com'), playerName: 'Sam', playerNumber: '12', teamName: 'Tigers', accessCode: 'HOME1234', inviteUrl: 'accept-invite.html?code=HOME1234' },
+                member('removed', 'removed@example.com')
+            ]
         });
 
         expect(markup).toContain('Family Plan');
         expect(markup).toContain('Billing and premium activation are not connected yet');
         expect(markup).toContain('active');
         expect(markup).toContain('pending');
+        expect(markup).toContain('Invite code');
+        expect(markup).toContain('HOME1234');
+        expect(markup).toContain('Access: Sam #12, Tigers');
         expect(markup).toContain('removed');
     });
 
@@ -51,21 +58,36 @@ describe('family plan helpers', () => {
     });
 
     it('rejects malformed pending member email addresses', async () => {
-        await expect(addPendingFamilyMember('user-1', { email: 'invalid' }, {
+        await expect(addPendingFamilyMember('user-1', { email: 'invalid', teamId: 'team-1', playerId: 'player-1' }, {
             existingMembers: []
         })).rejects.toThrow('valid email');
     });
 
-    it('writes a pending family membership record for an available slot', async () => {
-        const addDoc = vi.fn().mockResolvedValue({ id: 'member-1' });
+    it('writes a pending household invite and access code for an available slot', async () => {
+        const addDoc = vi.fn()
+            .mockResolvedValueOnce({ id: 'member-1' })
+            .mockResolvedValueOnce({ id: 'code-1' });
+        const updateDoc = vi.fn().mockResolvedValue();
         const firebase = {
             db: {},
             collection: vi.fn((_db, path) => ({ path })),
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
             addDoc,
+            updateDoc,
+            Timestamp: { fromMillis: (value) => ({ millis: value }) },
             serverTimestamp: () => 'server-now'
         };
 
-        await addPendingFamilyMember('user-1', { email: ' NEW@EXAMPLE.COM ', displayName: ' New Person ' }, {
+        const result = await addPendingFamilyMember('user-1', {
+            email: ' NEW@EXAMPLE.COM ',
+            displayName: ' New Person ',
+            teamId: 'team-1',
+            playerId: 'player-1',
+            teamName: 'Tigers',
+            playerName: 'Sam',
+            playerNumber: '12',
+            relation: 'Guardian'
+        }, {
             deps: { firebase },
             existingMembers: []
         });
@@ -75,8 +97,32 @@ describe('family plan helpers', () => {
             email: 'new@example.com',
             displayName: 'New Person',
             status: 'pending',
-            organizerUserId: 'user-1'
+            organizerUserId: 'user-1',
+            teamId: 'team-1',
+            playerId: 'player-1',
+            relation: 'Guardian'
         }));
+        expect(addDoc).toHaveBeenCalledWith({ path: 'accessCodes' }, expect.objectContaining({
+            type: 'household_invite',
+            email: 'new@example.com',
+            organizerUserId: 'user-1',
+            familyMembershipId: 'member-1',
+            teamId: 'team-1',
+            playerId: 'player-1',
+            used: false,
+            revoked: false
+        }));
+        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1/familyMemberships/member-1' }, expect.objectContaining({
+            accessCodeId: 'code-1',
+            inviteUrl: expect.stringContaining('accept-invite.html?code=')
+        }));
+        expect(result.inviteUrl).toContain('accept-invite.html?code=');
+    });
+
+    it('requires a selected player before creating a household invite', async () => {
+        await expect(addPendingFamilyMember('user-1', { email: 'new@example.com' }, {
+            existingMembers: []
+        })).rejects.toThrow('Select the player access');
     });
 
     it('renders household invite form and pending invites scoped to linked players', () => {
@@ -188,8 +234,49 @@ describe('family plan helpers', () => {
         expect(firebase.doc).toHaveBeenCalledWith({}, 'users', 'user-1', 'familyMemberships', 'member-1');
         expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1/familyMemberships/member-1' }, expect.objectContaining({
             status: 'removed',
+            accessStatus: 'revoked',
             removedAt: 'server-now'
         }));
+    });
+
+    it('revokes invite tokens before marking a member removed without unprivileged profile or player writes', async () => {
+        const updateDoc = vi.fn().mockResolvedValue();
+        const docs = new Map([
+            ['users/organizer/familyMemberships/member-1', {
+                email: 'household@example.com',
+                userId: 'contact-1',
+                accessCodeId: 'code-1',
+                status: 'active',
+                organizerUserId: 'organizer',
+                playerAccess: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Team', playerName: 'Player' }]
+            }]
+        ]);
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async (ref) => ({
+                exists: () => docs.has(ref.path),
+                data: () => docs.get(ref.path) || {}
+            })),
+            updateDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await removeFamilyMember('organizer', 'member-1', { deps: { firebase } });
+
+        expect(updateDoc).toHaveBeenNthCalledWith(1, { path: 'accessCodes/code-1' }, expect.objectContaining({
+            revoked: true,
+            used: true,
+            revokedAt: 'server-now'
+        }));
+        expect(updateDoc).toHaveBeenNthCalledWith(2, { path: 'users/organizer/familyMemberships/member-1' }, expect.objectContaining({
+            status: 'removed',
+            accessStatus: 'revoked',
+            removedAt: 'server-now'
+        }));
+        const updatedPaths = updateDoc.mock.calls.map(([ref]) => ref.path);
+        expect(updatedPaths).not.toContain('users/contact-1');
+        expect(updatedPaths).not.toContain('teams/team-1/players/player-1');
     });
 
     it('loads family members and account entitlement state together', async () => {
@@ -216,7 +303,10 @@ describe('family plan helpers', () => {
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
         expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
         expect(rules).toContain('allow update: if isOwner(userId) &&');
-        expect(rules).toContain("affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt'])");
+        expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])");
+        expect(rules).toContain("data.accessStatus == 'revoked'");
+        expect(rules).toContain('isFamilyMembershipInviteMetadataUpdate');
+        expect(rules).toContain('isFamilyMembershipAcceptance');
         expect(rules).toContain('allow delete: if false;');
     });
 
