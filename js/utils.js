@@ -215,6 +215,30 @@ export function renderHeader(container, user) {
   }
 }
 
+export function getSafeImageUrl(value) {
+  if (!value) return '';
+  const strValue = String(value);
+
+  // Directly check for absolute http/https URLs
+  if (strValue.startsWith('https://') || strValue.startsWith('http://')) {
+    // Basic validation to prevent common scriptable protocols being snuck in
+    if (strValue.match(/^https?:\/\//i)) {
+      return strValue;
+    }
+  }
+
+  try {
+    const url = new URL(strValue, window.location.origin);
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.href;
+    }
+  } catch (err) {
+    // URL constructor failed, likely invalid format or unsupported protocol
+    return '';
+  }
+  return '';
+}
+
 export function renderFooter(container) {
   container.innerHTML = `
       <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
@@ -1661,6 +1685,38 @@ export function expandRecurrence(master, windowDays = 180) {
  * @param {Object} recurrence - Recurrence object { freq, interval, byDays, until, count }
  * @returns {string} Human-readable recurrence description
  */
+// ============================================
+// Location Utilities
+// ============================================
+
+const zipCache = new Map();
+
+export async function resolveZip(zip) {
+  if (!zip) return null;
+  if (zipCache.has(zip)) return zipCache.get(zip);
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
+    if (!res.ok) {
+      zipCache.set(zip, null);
+      return null;
+    }
+    const data = await res.json();
+    const place = data?.places?.[0];
+    if (!place) {
+      zipCache.set(zip, null);
+      return null;
+    }
+    const city = place['place name'];
+    const state = place['state abbreviation'];
+    const label = `${city}, ${state}`;
+    zipCache.set(zip, label);
+    return label;
+  } catch (err) {
+    zipCache.set(zip, null);
+    return null;
+  }
+}
+
 export function formatRecurrence(recurrence) {
   if (!recurrence) return '';
 

@@ -475,12 +475,45 @@ export async function uploadStatSheetPhoto(file) {
     }
 }
 
+import { resolveZip } from './utils.js?v=9'; // Import resolveZip
+
 // Teams
 export async function getTeams(options = {}) {
     const includeInactive = !!options.includeInactive;
+    const locationFilter = String(options.locationFilter || '').trim().toLowerCase();
+
     const q = query(collection(db, "teams"), orderBy("name"));
-    const snapshot = await getDocs(q);
-    const teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    let teams = (await getDocs(q)).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Apply location filter if provided
+    if (locationFilter) {
+        const filteredTeams = [];
+        const zipToLocationCache = new Map(); // Local cache for this function call
+
+        for (const team of teams) {
+            if (team.zip) {
+                let resolvedLocation = zipToLocationCache.get(team.zip);
+                if (resolvedLocation === undefined) {
+                    resolvedLocation = await resolveZip(team.zip);
+                    zipToLocationCache.set(team.zip, resolvedLocation);
+                }
+
+                const teamLocation = resolvedLocation ? String(resolvedLocation).toLowerCase() : '';
+
+                // Match zip code directly or resolved city/state
+                if (team.zip.toLowerCase().includes(locationFilter) || teamLocation.includes(locationFilter)) {
+                    filteredTeams.push(team);
+                }
+            } else if (team.city && team.state) {
+                const teamCityState = `${team.city.toLowerCase()}, ${team.state.toLowerCase()}`;
+                if (teamCityState.includes(locationFilter)) {
+                    filteredTeams.push(team);
+                }
+            }
+        }
+        teams = filteredTeams;
+    }
+
     return filterTeamsByActive(teams, includeInactive);
 }
 
