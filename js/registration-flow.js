@@ -15,6 +15,7 @@ export function normalizeRegistrationForm(form = {}, context = {}) {
         waiverText: String(form.waiverText || form.waiver || '').trim(),
         status: String(form.status || '').trim(),
         published: form.published === true || form.status === 'published',
+        discountRules: normalizeRegistrationDiscountRules(form.discountRules || []),
         registrationOptions: normalizeRegistrationOptions(form.registrationOptions || form.options || [])
     };
 }
@@ -81,6 +82,89 @@ export function normalizeFieldType(type) {
     return 'text';
 }
 
+export function normalizeRegistrationDiscountRules(rules = []) {
+    if (!Array.isArray(rules)) return [];
+
+    return rules
+        .map((rule, index) => {
+            const type = String(rule?.type || '').toLowerCase();
+            const amountType = rule?.amountType === 'percent' ? 'percent' : 'fixed';
+            const amountValue = Math.max(0, Number(rule?.amountValue || 0));
+            const earlyBirdDeadline = String(rule?.earlyBirdDeadline || '').trim();
+            const minimumQuantity = Math.max(1, Math.floor(Number(rule?.minimumQuantity || 1)));
+            if (!['early_bird', 'quantity'].includes(type) || amountValue <= 0) return null;
+
+            return {
+                id: String(rule?.id || `discount_${index + 1}`).trim(),
+                type,
+                label: String(rule?.label || (type === 'early_bird' ? 'Early bird discount' : 'Sibling/cart discount')).trim(),
+                amountType,
+                amountValue,
+                earlyBirdDeadline,
+                minimumQuantity,
+                active: rule?.active !== false
+            };
+        })
+        .filter(Boolean);
+}
+
+export function calculateRegistrationFeeSnapshot(form = {}, options = {}) {
+    const currency = String(form.currency || 'USD').trim() || 'USD';
+    const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
+    const quantity = Math.max(1, Math.floor(Number(options.quantity || 1)));
+    const submittedAt = options.now instanceof Date ? options.now : new Date();
+    const subtotalAmountCents = originalFeeAmountCents * quantity;
+    let remainingAmountCents = subtotalAmountCents;
+    const appliedDiscounts = [];
+
+    normalizeRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+        if (!rule.active || !isDiscountRuleEligible(rule, { quantity, now: submittedAt })) return;
+        const discountAmountCents = rule.amountType === 'percent'
+            ? Math.round(remainingAmountCents * (rule.amountValue / 100))
+            : Math.round(rule.amountValue);
+        const appliedAmountCents = Math.min(remainingAmountCents, Math.max(0, discountAmountCents));
+        if (appliedAmountCents <= 0) return;
+        remainingAmountCents -= appliedAmountCents;
+        appliedDiscounts.push({
+            id: rule.id,
+            type: rule.type,
+            label: rule.label,
+            amountType: rule.amountType,
+            amountValue: rule.amountValue,
+            amountCents: appliedAmountCents
+        });
+    });
+
+    return {
+        currency,
+        quantity,
+        originalFeeAmountCents,
+        subtotalAmountCents,
+        appliedDiscounts,
+        finalAmountDueCents: remainingAmountCents
+    };
+}
+
+function isDiscountRuleEligible(rule, { quantity, now }) {
+    if (rule.type === 'quantity') return quantity >= rule.minimumQuantity;
+    if (rule.type === 'early_bird') {
+        const deadline = Date.parse(`${rule.earlyBirdDeadline}T23:59:59.999`);
+        return Number.isFinite(deadline) && now.getTime() <= deadline;
+    }
+    return false;
+}
+
+export function formatFeeSnapshotLines(snapshot = {}) {
+    const lines = [
+        { label: 'Original fee', amountCents: snapshot.subtotalAmountCents ?? snapshot.originalFeeAmountCents ?? 0 }
+    ];
+    (snapshot.appliedDiscounts || []).forEach((discount) => {
+        lines.push({ label: discount.label, amountCents: -Math.abs(Number(discount.amountCents || 0)) });
+    });
+    lines.push({ label: 'Final amount due', amountCents: snapshot.finalAmountDueCents ?? 0, strong: true });
+    return lines;
+}
+
 export function formatFeeAmount(feeAmountCents = 0, currency = 'USD') {
     const amount = Number(feeAmountCents) || 0;
     return new Intl.NumberFormat('en-US', {
@@ -124,7 +208,7 @@ function validateRequiredFields(fields, values, groupLabel, errors) {
     });
 }
 
-export function buildPendingRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, status = 'pending' }) {
+export function buildPendingRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, status = 'pending', feeSnapshot = null }) {
     return buildRegistrationRecord({
         form,
         participant,
@@ -132,17 +216,20 @@ export function buildPendingRegistrationRecord({ form, participant, guardian, wa
         waiverAccepted,
         now,
         selectedOption,
-        status
+        status,
+        feeSnapshot
     });
 }
 
-export function buildRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, status = 'pending' }) {
+export function buildRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, status = 'pending', feeSnapshot = null }) {
+    const registrationFeeSnapshot = feeSnapshot || calculateRegistrationFeeSnapshot(form, { now: now instanceof Date ? now : new Date() });
     const record = {
         teamId: form.teamId,
         formId: form.id,
         programName: form.programName,
         feeAmountCents: form.feeAmountCents,
         currency: form.currency,
+        feeSnapshot: registrationFeeSnapshot,
         participant,
         guardian,
         waiverAccepted: waiverAccepted === true,
