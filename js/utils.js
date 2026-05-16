@@ -183,7 +183,7 @@ export function renderHeader(container, user) {
 
     // Add logout handler
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=14');
+      const { logout } = await import('./auth.js?v=15');
       await logout();
       window.location.href = 'index.html';
     });
@@ -213,6 +213,30 @@ export function renderHeader(container, user) {
   } catch (e) {
     console.warn('[GlobalSearch] Failed to initialize:', e);
   }
+}
+
+export function getSafeImageUrl(value) {
+  if (!value) return '';
+  const strValue = String(value);
+
+  // Directly check for absolute http/https URLs
+  if (strValue.startsWith('https://') || strValue.startsWith('http://')) {
+    // Basic validation to prevent common scriptable protocols being snuck in
+    if (strValue.match(/^https?:\/\//i)) {
+      return strValue;
+    }
+  }
+
+  try {
+    const url = new URL(strValue, window.location.origin);
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.href;
+    }
+  } catch (err) {
+    // URL constructor failed, likely invalid format or unsupported protocol
+    return '';
+  }
+  return '';
 }
 
 export function renderFooter(container) {
@@ -1377,6 +1401,7 @@ export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
     date: eventDate,
     location: event.location || 'TBD',
     status: getCalendarEventStatus(event),
+    end: event?.dtend instanceof Date ? event.dtend : null, // Add this line
     source: 'ics'
   };
 }
@@ -1660,6 +1685,38 @@ export function expandRecurrence(master, windowDays = 180) {
  * @param {Object} recurrence - Recurrence object { freq, interval, byDays, until, count }
  * @returns {string} Human-readable recurrence description
  */
+// ============================================
+// Location Utilities
+// ============================================
+
+const zipCache = new Map();
+
+export async function resolveZip(zip) {
+  if (!zip) return null;
+  if (zipCache.has(zip)) return zipCache.get(zip);
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
+    if (!res.ok) {
+      zipCache.set(zip, null);
+      return null;
+    }
+    const data = await res.json();
+    const place = data?.places?.[0];
+    if (!place) {
+      zipCache.set(zip, null);
+      return null;
+    }
+    const city = place['place name'];
+    const state = place['state abbreviation'];
+    const label = `${city}, ${state}`;
+    zipCache.set(zip, label);
+    return label;
+  } catch (err) {
+    zipCache.set(zip, null);
+    return null;
+  }
+}
+
 export function formatRecurrence(recurrence) {
   if (!recurrence) return '';
 

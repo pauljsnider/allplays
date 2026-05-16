@@ -12,8 +12,10 @@ import {
     getTeamMediaUploaderName,
     isSafeTeamMediaPhoto,
     isSafeTeamMediaUrl,
+    isSupportedTeamMediaDocument,
     isSupportedTeamMediaVideoUrl,
     isSupportedTeamMediaImage,
+    isTeamMediaDocument,
     normalizeAlbumVisibility,
     normalizeSelectedMediaIds,
     normalizeTeamMediaFolderDraft,
@@ -41,11 +43,13 @@ describe('team media management permissions', () => {
         expect(canContributeTeamMedia({ uid: 'other-1', parentTeamIds: ['other-team'] }, team)).toBe(false);
     });
 
-    it('allows owners or admins to moderate all photos and uploaders to delete their own photos', () => {
+    it('allows owners or admins to moderate all uploads and uploaders to delete their own files', () => {
         const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: [] };
         const item = { id: 'photo-1', type: 'photo', uploadedBy: 'parent-1' };
+        const fileItem = { id: 'file-1', type: 'file', uploadedBy: 'parent-1' };
 
         expect(canDeleteTeamMediaItem({ uid: 'parent-1' }, team, item)).toBe(true);
+        expect(canDeleteTeamMediaItem({ uid: 'parent-1' }, team, fileItem)).toBe(true);
         expect(canDeleteTeamMediaItem({ uid: 'parent-2' }, team, item)).toBe(false);
         expect(canDeleteTeamMediaItem({ uid: 'coach-1' }, team, item)).toBe(true);
     });
@@ -163,6 +167,15 @@ describe('team media bulk actions', () => {
         expect(isSupportedTeamMediaImage({ type: 'image/png' })).toBe(true);
         expect(isSupportedTeamMediaImage({ type: 'video/mp4' })).toBe(false);
         expect(isSupportedTeamMediaImage(null)).toBe(false);
+    });
+
+    it('accepts approved document files for team media uploads', () => {
+        expect(isSupportedTeamMediaDocument({ type: 'application/pdf' })).toBe(true);
+        expect(isSupportedTeamMediaDocument({ type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })).toBe(true);
+        expect(isSupportedTeamMediaDocument({ type: 'text/csv' })).toBe(true);
+        expect(isSupportedTeamMediaDocument({ type: 'video/mp4' })).toBe(false);
+        expect(isSupportedTeamMediaDocument({ type: 'image/png' })).toBe(false);
+        expect(isTeamMediaDocument({ type: 'file' })).toBe(true);
     });
 
     it('sorts by saved order with stable name fallback', () => {

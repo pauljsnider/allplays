@@ -5,7 +5,7 @@ const ORIGINAL_WINDOW = globalThis.window;
 const ORIGINAL_FETCH = globalThis.fetch;
 
 function resetGlobals() {
-    globalThis.window = {};
+    globalThis.window = { location: { origin: 'http://localhost' } }; // Mock window.location for fetchFirebaseConfigFromHosting
     delete globalThis.window.__ALLPLAYS_CONFIG__;
     delete globalThis.window.ALLPLAYS_FIREBASE_CONFIG;
     delete globalThis.window.ALLPLAYS_FIREBASE_IMAGE_CONFIG;

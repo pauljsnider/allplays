@@ -35,13 +35,33 @@
                             <dt class="text-sm text-gray-500">Fee</dt>
                             <dd id="program-fee" class="font-semibold text-gray-900"></dd>
                         </div>
+                        <div id="registration-quantity-wrapper" class="hidden rounded border border-gray-200 p-3 sm:col-span-2">
+                            <label for="registration-quantity" class="block text-sm text-gray-500">Participants for fee preview</label>
+                            <input id="registration-quantity" type="number" min="1" step="1" value="1" class="mt-1 w-32 rounded border border-gray-300 p-2">
+                        </div>
                     </dl>
+                </section>
+
+                <section id="fee-summary-section" class="hidden rounded border border-indigo-100 bg-indigo-50 p-4">
+                    <h2 class="text-xl font-semibold text-gray-900">Fee summary</h2>
+                    <div id="fee-summary-lines" class="mt-3 space-y-2 text-sm"></div>
+                </section>
+
+                <section id="registration-payment-section" class="hidden rounded border border-indigo-100 bg-indigo-50 p-4">
+                    <h2 class="text-xl font-semibold text-gray-900">Payment</h2>
+                    <p id="registration-payment-notice" class="mt-1 text-sm text-gray-700"></p>
                 </section>
 
                 <section id="registration-options-section" class="hidden">
                     <h2 class="text-xl font-semibold text-gray-900">Registration option</h2>
                     <p class="mt-1 text-sm text-gray-600">Choose the option that fits this participant.</p>
                     <div id="registration-options" class="mt-3 grid gap-3"></div>
+                </section>
+
+                <section id="payment-plan-section" class="hidden">
+                    <h2 class="text-xl font-semibold text-gray-900">Payment plan</h2>
+                    <p class="mt-1 text-sm text-gray-600">Choose how you expect to pay. Payments are not charged by this form.</p>
+                    <div id="payment-plan-options" class="mt-3 grid gap-3"></div>
                 </section>
 
                 <section>
@@ -73,18 +93,24 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { db, doc, getDoc, collection, addDoc, serverTimestamp, runTransaction } from './js/firebase.js?v=10';
+        import { db, doc, getDoc, collection, addDoc, serverTimestamp, runTransaction } from './js/firebase.js?v=12';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import {
             buildPendingRegistrationRecord,
+            calculateRegistrationFeeSnapshot,
             collectFieldValues,
             decideRegistrationPlacement,
             formatFeeAmount,
+            formatFeeSnapshotLines,
             getActiveRegistrationOptions,
+            getRegistrationPaymentNotice,
+            hasRegistrationPaymentSettings,
+            getPaymentPlanChoices,
+            hasInstallmentPlan,
             normalizeRegistrationForm,
             requiresRegistrationOption,
             validateRegistrationSubmission
-        } from './js/registration-flow.js?v=2';
+        } from './js/registration-flow.js?v=3';
 
         renderHeader(document.getElementById('header-container'), null);
         renderFooter(document.getElementById('footer-container'));
@@ -148,6 +174,8 @@
             document.getElementById('program-description').textContent = form.description || 'Complete the required details below.';
             document.getElementById('program-season').textContent = form.season || 'Not specified';
             document.getElementById('program-fee').textContent = formatFeeAmount(form.feeAmountCents, form.currency);
+            document.getElementById('registration-quantity-wrapper').classList.toggle('hidden', !(form.discountRules || []).some(rule => rule.type === 'quantity'));
+            renderFeeSummary(form);
             document.getElementById('waiver-text').textContent = form.waiverText || 'No waiver text was provided.';
 
             const participantContainer = document.getElementById('participant-fields');
@@ -156,10 +184,28 @@
             guardianContainer.innerHTML = '';
             form.participantFields.forEach(field => renderField(participantContainer, field, 'participant'));
             form.guardianFields.forEach(field => renderField(guardianContainer, field, 'guardian'));
+            renderRegistrationPaymentSettings(form);
             renderRegistrationOptions(form);
+            renderPaymentPlanChoices(form);
 
             loadingState.classList.add('hidden');
             formElement.classList.remove('hidden');
+        }
+
+        function renderRegistrationPaymentSettings(form) {
+            const section = document.getElementById('registration-payment-section');
+            const notice = document.getElementById('registration-payment-notice');
+            const paymentNotice = getRegistrationPaymentNotice(form);
+            if (!hasRegistrationPaymentSettings(form) || !paymentNotice) {
+                section.classList.add('hidden');
+                notice.textContent = '';
+                submitButton.textContent = 'Submit registration';
+                return;
+            }
+
+            notice.textContent = paymentNotice;
+            submitButton.textContent = 'Submit registration';
+            section.classList.remove('hidden');
         }
 
         function renderRegistrationOptions(form) {
@@ -203,6 +249,69 @@
 
             section.classList.remove('hidden');
         }
+
+        function renderPaymentPlanChoices(form) {
+            const section = document.getElementById('payment-plan-section');
+            const container = document.getElementById('payment-plan-options');
+            container.innerHTML = '';
+
+            if (!hasInstallmentPlan(form)) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            getPaymentPlanChoices(form).forEach((choice, index) => {
+                const label = document.createElement('label');
+                label.className = 'flex gap-3 rounded border border-gray-200 p-3 text-sm text-gray-700 hover:border-indigo-300';
+                const input = document.createElement('input');
+                input.type = 'radio';
+                input.name = 'paymentPlanId';
+                input.value = choice.id;
+                input.required = true;
+                input.className = 'mt-1 h-4 w-4 border-gray-300 text-indigo-600 focus:ring-indigo-500';
+                if (index === 0) input.checked = true;
+
+                const copy = document.createElement('span');
+                const title = document.createElement('span');
+                title.className = 'block font-semibold text-gray-900';
+                title.textContent = choice.title;
+                copy.appendChild(title);
+
+                if (choice.id === 'installments') {
+                    const detail = document.createElement('span');
+                    detail.className = 'mt-1 block text-gray-600';
+                    detail.textContent = `${form.installmentPlan.installmentCount} installments starting ${form.installmentPlan.firstDueDate}`;
+                    copy.appendChild(detail);
+                }
+
+                label.append(input, copy);
+                container.appendChild(label);
+            });
+
+            section.classList.remove('hidden');
+        }
+
+        function getRegistrationQuantity() {
+            const quantityInput = document.getElementById('registration-quantity');
+            return Math.max(1, Math.floor(Number(quantityInput?.value || 1)));
+        }
+
+        function renderFeeSummary(form) {
+            const section = document.getElementById('fee-summary-section');
+            const container = document.getElementById('fee-summary-lines');
+            const snapshot = calculateRegistrationFeeSnapshot(form, { quantity: getRegistrationQuantity(), now: new Date() });
+            container.innerHTML = formatFeeSnapshotLines(snapshot).map(line => `
+                <div class="flex justify-between gap-4 ${line.strong ? 'border-t border-indigo-200 pt-2 font-semibold text-gray-900' : 'text-gray-700'}">
+                    <span>${line.label}</span>
+                    <span>${formatFeeAmount(line.amountCents, snapshot.currency)}</span>
+                </div>
+            `).join('');
+            section.classList.remove('hidden');
+        }
+
+        document.getElementById('registration-quantity')?.addEventListener('input', () => {
+            if (activeForm) renderFeeSummary(activeForm);
+        });
 
         function readGroupValues(groupName, fields) {
             return collectFieldValues(fields, Array.from(formElement.querySelectorAll(`[data-group="${groupName}"]`)).reduce((values, input) => {
@@ -248,7 +357,9 @@
                 participant: readGroupValues('participant', activeForm.participantFields),
                 guardian: readGroupValues('guardian', activeForm.guardianFields),
                 waiverAccepted: document.getElementById('waiver-accepted').checked,
-                selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || ''
+                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
+                selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
+                feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
             };
             const validationErrors = validateRegistrationSubmission(activeForm, submission);
 
@@ -268,6 +379,8 @@
                 if (result.status === 'waitlisted') {
                     confirmationMessage.querySelector('h1').textContent = 'Registration waitlisted';
                     confirmationMessage.querySelector('p').textContent = 'This option is currently full, so your registration has been added to the waitlist.';
+                } else if (hasRegistrationPaymentSettings(activeForm)) {
+                    confirmationMessage.querySelector('p').textContent = getRegistrationPaymentNotice(activeForm) || 'The program organizer will follow up with next steps.';
                 }
                 confirmationMessage.classList.remove('hidden');
             } catch (error) {
@@ -331,6 +444,7 @@
                     ...submission,
                     selectedOption: placement.selectedOption,
                     status: placement.status,
+                    feeSnapshot: calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.feeSnapshot?.quantity || 1, now: new Date() }),
                     now: serverTimestamp()
                 }));
 

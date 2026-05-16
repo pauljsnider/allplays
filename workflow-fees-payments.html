@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Manage Team Fees and Payments - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+      .wf-shell { width: min(1160px, 100%); margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+      .wf-back-link { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 700; color: #4338ca; }
+      .wf-hero { margin-top: 0.75rem; background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%); border-radius: 1.1rem; padding: 1.25rem 1.25rem 1.15rem; color: #ecfeff; box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22); }
+      .wf-kicker { font-size: 0.73rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.84; }
+      .wf-title { margin-top: 0.4rem; font-size: clamp(1.75rem, 2.8vw, 2.35rem); line-height: 1.15; font-weight: 800; }
+      .wf-summary { margin-top: 0.75rem; max-width: 60ch; color: rgba(236, 254, 255, 0.95); line-height: 1.58; }
+      .wf-meta-row { margin-top: 0.95rem; display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
+      .wf-meta-pill { display: inline-flex; align-items: center; font-size: 0.78rem; font-weight: 700; border-radius: 999px; border: 1px solid rgba(236, 254, 255, 0.36); background: rgba(236, 254, 255, 0.12); color: #ecfeff; padding: 0.24rem 0.62rem; }
+      .wf-layout { margin-top: 1rem; display: grid; gap: 1rem; }
+      .wf-panel { background: var(--wf-panel); border: 1px solid var(--wf-border); border-radius: 1rem; box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08); }
+      .wf-panel-section { padding: 1rem; border-bottom: 1px solid var(--wf-border); }
+      .wf-panel-section:last-child { border-bottom: 0; }
+      .wf-panel-title { font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #334155; margin-bottom: 0.6rem; }
+      .wf-role-chip { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; padding: 0.22rem 0.66rem; font-size: 0.74rem; font-weight: 700; }
+      .wf-roles { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      .wf-toc { display: grid; gap: 0.33rem; }
+      .wf-toc a { display: block; padding: 0.43rem 0.52rem; border-radius: 0.55rem; color: #334155; font-size: 0.82rem; line-height: 1.35; transition: background 120ms ease, color 120ms ease; }
+      .wf-toc a:hover { background: #eef2ff; color: #3730a3; }
+      .wf-toc a.is-active { background: #e0e7ff; color: #312e81; font-weight: 700; }
+      .wf-content { padding: 1.2rem 1.15rem; }
+      .help-workflow-body { display: grid; gap: 0.45rem; }
+      .help-workflow-body h2 { font-size: 1.4rem; font-weight: 800; color: #1f2937; margin-top: 1.25rem; padding-top: 1.05rem; border-top: 1px solid #dbe7f0; scroll-margin-top: 6rem; }
+      .help-workflow-body h2:first-of-type { margin-top: 0.15rem; padding-top: 0; border-top: 0; }
+      .help-workflow-body h3 { font-size: 1.08rem; font-weight: 700; color: #1e293b; margin-top: 0.88rem; scroll-margin-top: 6rem; }
+      .help-workflow-body p, .help-workflow-body li { color: var(--wf-muted); line-height: 1.67; }
+      .help-workflow-body ol, .help-workflow-body ul { margin-left: 1.2rem; }
+      .help-workflow-body code { background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; padding: 0.1rem 0.35rem; border-radius: 0.3rem; font-size: 0.86em; }
+      .wf-mobile-toc { margin-top: 0.95rem; }
+      @media (min-width: 1024px) {
+        .wf-layout { grid-template-columns: 270px minmax(0, 1fr); align-items: start; }
+        .wf-sidebar { position: sticky; top: 1rem; }
+      }
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) { display: none; }
+      }
+    </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Manage Team Fees and Payments</h1>
+          <p class="wf-summary">Create fee records, generate Stripe Checkout links, track installments, record offline payments, and let parents view and pay invoices from their dashboard.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">5 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles">
+                <span class="wf-role-chip">Parent</span>
+                <span class="wf-role-chip">Coach</span>
+                <span class="wf-role-chip">Admin</span>
+              </div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body">
+
+              <h2 id="overview">Overview</h2>
+              <p>The team fees system handles the complete payment lifecycle — from creating a fee record and defining what families owe, through online payment via Stripe or manual recording of offline payments, to tracking every recipient's current balance and status. Admins create fee records with an optional list of line items that itemize how the total is broken down, and an optional installment schedule that divides the total into multiple payments with individual due dates. Once a fee record exists, recipients (typically team families) immediately see it in their parent dashboard as an invoice-style view.</p>
+              <p>For online payment, admins generate a Stripe Checkout link from the fee record. This calls a server-side function that creates a Stripe-hosted checkout session for the correct amount. When a parent clicks <strong>Pay</strong> from their dashboard, they are taken to Stripe's secure checkout page. On a successful payment, Stripe posts a webhook back to the system, which updates the fee record automatically — recording the Stripe session ID, payment intent, amount paid, and receipt URL for the audit trail. Critically, only a <em>completed and successful</em> Stripe session updates the fee status. Expired sessions, failed payments, and abandoned checkouts leave the fee status completely unchanged — parents must retry or contact the admin to record an offline alternative.</p>
+              <p>Admins can also record offline payments (cash, check, bank transfer) directly on the fee record as manual ledger entries, apply positive or negative balance adjustments with a required reason field for audit purposes, and cancel fee records for individual recipients. All of these actions update the recipient's balance and status in real time. Parents only ever see their own fee records — no family has visibility into another family's payment status, amounts owed, or adjustment history.</p>
+
+              <h2 id="in-this-article">In This Article</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li>Creating a fee record with recipients and optional line items</li>
+                <li>Setting up installment schedules with due dates and amounts</li>
+                <li>Generating a Stripe Checkout link for online payment</li>
+                <li>How Stripe session outcomes affect fee status (success, failure, expiry)</li>
+                <li>Recording offline payments and balance adjustments</li>
+                <li>Canceling a fee for a specific recipient</li>
+                <li>Parent invoice view: what they see, when the Pay button appears</li>
+                <li>Fee recipient status states: Paid, Unpaid, Partial, Canceled</li>
+              </ul>
+
+              <h2 id="who-is-this-for">Who Is This For</h2>
+              <p><strong>Admins</strong> are responsible for the full fee management workflow. An admin creates fee records, sets the recipient list, defines line items and installment schedules, generates Stripe Checkout links, records offline payments when families pay by cash or check, applies manual balance adjustments (discounts, corrections, late fees, scholarship credits), cancels fees for individual recipients, and monitors per-recipient payment status across the whole team. Admins see all fee records and all recipient details — there is no financial detail that is hidden from the admin role. This role handles every task described in the admin sections of this guide.</p>
+              <p><strong>Coaches</strong> may have visibility into fee status depending on the team's access level configuration. Coaches with admin access can perform all admin tasks. Coaches without admin access can typically view aggregate payment status for their team — useful for knowing whether families have outstanding balances before a tournament — but they cannot create fees, record payments, or apply adjustments. If a coach needs to manage fees directly, they should be granted admin access by the team owner. When in doubt, defer fee management tasks to the designated admin.</p>
+              <p><strong>Parents</strong> have a read-only view of their own fee records. In the parent dashboard, they can see each fee assigned to their player: the fee name, total amount, amount already paid, remaining balance, all line items with labels and amounts, and the full installment schedule with per-installment due dates and paid/unpaid status. The <strong>Pay</strong> button appears when a Stripe Checkout URL exists for the fee <em>and</em> the fee status is either Unpaid or Partial — it does not appear for fees that are already fully paid or canceled. Parents cannot see any other family's fee information.</p>
+
+              <h2 id="prerequisites">Prerequisites</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li>Admin access on the team is required to create fees, generate payment links, record offline payments, apply adjustments, or cancel fees. Team owners have admin access by default. Coaches can be granted admin access by the owner.</li>
+                <li>For online payment via Stripe, Stripe must be configured for your organization on the backend. The "Generate Payment Link" action calls a server-side function — if Stripe is not configured, this button will not produce a working link. Contact your platform administrator if you are unsure whether Stripe is enabled.</li>
+                <li>Parents must be linked to the team to see fee records in their dashboard. A parent account must have the team listed in their linked parent team IDs. If a parent cannot see a fee, check their team linkage first.</li>
+                <li>For recording offline payments or applying adjustments, the fee record must already exist. You cannot record a payment for a fee that has not been created yet.</li>
+              </ul>
+
+              <h2 id="choose-your-path">Choose Your Path</h2>
+
+              <h3>1. Create a new fee and send a payment link to all recipients</h3>
+              <p>Use this path when you are setting up a new fee for the season — registration, uniform costs, tournament fees, or any other team expense. You will create the fee record, add all team families as recipients, optionally itemize with line items, generate a Stripe link, and let parents pay from their dashboard.</p>
+
+              <h3>2. Set up installments so payments are spread over time</h3>
+              <p>Use this path when the total fee is large enough that you want to allow families to pay in multiple installments over time — for example, splitting a $200 annual registration into four $50 payments due monthly. Configure the installment schedule when creating the fee, and generate a Stripe link for each installment as its due date approaches.</p>
+
+              <h3>3. Record that a parent paid offline</h3>
+              <p>Use this path when a family hands you cash or a check at practice, pays by bank transfer, or settles their balance in any way that does not go through Stripe. Open their fee record, record an offline payment entry with the amount and a description, and their balance and status will update immediately.</p>
+
+              <h3>4. Apply a balance adjustment</h3>
+              <p>Use this path to apply a discount (negative adjustment), add a late fee or extra charge (positive adjustment), or correct a data entry error in the original fee amount. All adjustments require a written reason that becomes part of the audit trail. Common uses include early-payment discounts, scholarship credits, and corrections for previous recording errors.</p>
+
+              <h3>5. Cancel a fee for a specific recipient</h3>
+              <p>Use this path when a family should no longer owe a particular fee — because the player left the team, received a full scholarship, or the fee was created for them in error. Canceling the fee removes the outstanding balance from their parent dashboard view and marks the record as Canceled rather than Unpaid.</p>
+
+              <h3>6. Parent wants to pay online</h3>
+              <p>Use this path when walking a parent through their first online payment, or when troubleshooting why the Pay button is not appearing. The parent opens the fee from their dashboard, confirms the amount and line items, and taps Pay — which takes them to Stripe's hosted checkout page.</p>
+
+              <h2 id="step-by-step">Step-by-Step Workflow</h2>
+
+              <h3>Admin: Creating and managing fees</h3>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Create the fee record.</strong> Go to your team's admin panel and open the <strong>Fees</strong> section. Click <strong>New Fee</strong>. Enter a clear fee name that parents will recognize (for example, <em>Spring 2026 Registration</em> or <em>Tournament Travel Fee — June</em>) and an optional description that provides more context. Set the total amount for the fee. This total is the amount a single recipient owes — not a team aggregate. Add recipients by selecting players or families from the roster. Each recipient gets their own independent fee record with their own status and balance. You can add all team families at once or select a subset. Once saved, the fee immediately appears in each recipient's parent dashboard.
+                </li>
+                <li>
+                  <strong>Add line items (optional).</strong> Line items let you break the total into labeled components so parents understand what they are paying for. For example, a $150 registration fee might break down into <em>Uniform: $45</em>, <em>League Registration: $80</em>, and <em>Insurance: $25</em>. Click <strong>Add Line Item</strong> for each component, enter a label and amount, and confirm that the line item amounts sum to the fee total. Line items are displayed in the parent's invoice view as a formatted list — this transparency reduces the number of questions you receive from families about what the fee covers.
+                </li>
+                <li>
+                  <strong>Set an installment schedule (optional).</strong> If you want to allow families to pay over time, add installment entries. Each installment has three fields: a label (for example, <em>First Installment</em>), an amount (for example, $75), and a due date (for example, April 1, 2026). Add as many installments as you need. The installment amounts should sum to the fee total. Parents see the full installment schedule in their invoice view, including which installments are due, which are overdue, and which have been paid. Note that installment schedules are informational by default — they show parents when payments are expected, but the system does not automatically generate Stripe links for each installment. The admin generates Stripe links manually as each installment comes due.
+                </li>
+                <li>
+                  <strong>Save the fee record.</strong> Before saving, review the recipient list, fee total, line items, and installment schedule carefully. Once you save, recipients can see the fee in their parent dashboard. Confirm that the total amount is correct — changing the total after parents have already made partial payments requires using a manual adjustment to correct the balance, which creates an audit trail entry. It is much cleaner to get the amount right at creation time.
+                </li>
+                <li>
+                  <strong>Generate a Stripe Checkout link.</strong> From the saved fee record, click <strong>Generate Payment Link</strong>. The system calls a server-side function that creates a Stripe Checkout session using the fee amount stored on the record. The resulting Stripe-hosted URL is stored on the fee record. Important: the amount used for the Stripe session is taken from the fee record at the time the link is generated. If you subsequently edit the fee amount before any payments are made, generate a new link — the old link will charge the old amount. For installment-based fees, generate a new link for each installment when you are ready to collect that payment.
+                </li>
+                <li>
+                  <strong>Share the payment link or let parents access it from their dashboard.</strong> You can copy the Stripe URL from the fee record and share it directly with families via team chat, email, or text message. Alternatively, parents can access the Pay button directly from their parent dashboard without you sharing anything — the button appears automatically once a Stripe URL exists on the fee record. Both methods result in the same Stripe checkout experience. Direct sharing is useful for urgent payment requests or to reach families who may not regularly check the parent dashboard.
+                </li>
+                <li>
+                  <strong>Monitor payment status.</strong> In the fee management section, open any fee record to see a per-recipient status table. Each recipient shows their current status badge, the amount paid so far, and the remaining balance. Status values are: <strong>Unpaid</strong> (no payment received), <strong>Partial</strong> (some amount received but balance remains), <strong>Paid</strong> (full balance received), and <strong>Canceled</strong> (fee has been canceled for this recipient). Status updates automatically when Stripe confirms a completed payment — you do not need to manually refresh. Use this view to follow up with families who have outstanding balances as due dates approach.
+                </li>
+                <li>
+                  <strong>Record an offline payment.</strong> When a parent pays by cash, check, or any method outside of Stripe, select the recipient's fee record and choose <strong>Record Offline Payment</strong> (or <strong>Add Adjustment</strong> with type set to Offline Payment). Enter the amount received and write a description that will serve as the record of the transaction — include details such as the payment method and the date received (for example, <em>Cash received at practice, May 3 2026, $75</em>). The description field is required. Once saved, the paid amount on the fee record increases by the amount entered, the remaining balance decreases accordingly, and the status updates from Unpaid to Partial or Paid depending on whether the full balance has been covered.
+                </li>
+                <li>
+                  <strong>Apply a manual balance adjustment.</strong> Use <strong>Add Adjustment</strong> with type set to Manual Adjustment for any situation that does not fit the standard payment flow. Enter a positive amount to credit the recipient's account (reducing what they owe) or a negative amount to add a charge (increasing what they owe). A reason is required for every adjustment — write a clear explanation that you or another admin will be able to understand months from now. Example reasons: <em>10% early-payment discount applied</em>, <em>Partial scholarship — board approved 2026-04-15</em>, <em>Correction: previous entry overstated amount by $20</em>, <em>Late registration surcharge per team policy</em>. These reasons are stored on the fee record and constitute the audit trail for any financial discrepancies.
+                </li>
+                <li>
+                  <strong>Cancel a fee for a recipient.</strong> Open the recipient's fee record and choose <strong>Cancel Fee</strong>. Add a reason note explaining why the fee is being canceled. Once canceled, the fee status changes to Canceled and the outstanding balance is removed from the parent's invoice view — it no longer appears as money owed. Canceled fees remain visible in the admin fee management view for record-keeping purposes. You cannot uncancelce a fee — if you cancel in error, create a new fee record for that recipient.
+                </li>
+              </ol>
+
+              <h3>Parent: Viewing and paying a fee</h3>
+              <ol class="ml-6 list-decimal space-y-1" start="11">
+                <li>
+                  <strong>Open the parent dashboard and navigate to Fees.</strong> Log in to your ALL PLAYS account and open the parent dashboard for your team. Look for the <strong>Fees</strong> section or tab — this may appear as a card on the dashboard home or as a dedicated section within the team view. Each fee that the admin has created for your player appears here with the fee name and a status badge. You only see fees assigned to your player — no other family's fees are visible to you.
+                </li>
+                <li>
+                  <strong>Expand a fee to see the full invoice detail.</strong> Tap or click the fee card to expand it. The expanded view shows the invoice-style breakdown: the total amount owed, the amount you have already paid (zero if this is your first payment), the remaining balance, all line items with their labels and amounts, and the installment schedule if one has been set up. Each installment in the schedule shows its label, amount, due date, and whether it has been paid. If the admin has added any notes to your fee record, they appear here as well. Read through this information before paying so you know exactly what the payment covers.
+                </li>
+                <li>
+                  <strong>Tap Pay to go to Stripe checkout.</strong> The <strong>Pay</strong> button appears only when two conditions are both true: a Stripe Checkout URL has been generated by the admin for this fee, and the fee status is Unpaid or Partial. If the fee is already fully Paid or has been Canceled, the Pay button does not appear. If you believe you should be able to pay but the Pay button is missing, contact your team admin — either the Stripe link has not yet been generated or your balance has already been settled. Tapping Pay opens Stripe's hosted checkout page in your browser.
+                </li>
+                <li>
+                  <strong>Complete Stripe checkout.</strong> On Stripe's checkout page, enter your payment details (card number, expiration, CVC, and billing information). Stripe's checkout is fully hosted by Stripe — ALL PLAYS never sees or stores your payment card details. Review the amount shown on the Stripe page before confirming; it should match the fee total or the installment amount the admin configured for this link. Click <strong>Pay</strong> on the Stripe page to submit the payment. On a successful payment, Stripe sends a confirmation webhook back to ALL PLAYS, which updates your fee record within a few seconds. Your fee status changes to Paid or Partial depending on whether the full balance has been covered, and you should see the updated status the next time you open your dashboard. If your payment fails or you close the Stripe page without completing the payment, your fee status remains unchanged — contact your admin if you cannot complete payment through Stripe.
+                </li>
+              </ol>
+
+              <h2 id="common-questions">Common Questions</h2>
+
+              <h3>What if the Stripe session expires before the parent completes checkout?</h3>
+              <p>Stripe Checkout sessions expire after a set period of inactivity (typically 24 hours, but this depends on the session configuration). If a session expires, the parent is no longer able to use that checkout link and the fee status remains Unpaid. The admin must generate a new Stripe Checkout link from the fee record and either share it directly with the parent or let them access it again through the Pay button on their dashboard. No partial credit is applied for expired sessions — expiry is a clean reset.</p>
+
+              <h3>Can a parent pay individual installments separately?</h3>
+              <p>Yes, if the admin sets up installments and generates a Stripe Checkout link sized to a specific installment amount (rather than the full fee total). When a parent pays via that link, the payment updates the fee's paid amount and remaining balance — the status becomes Partial if the full balance has not yet been covered. The installment schedule in the parent's invoice view reflects which installments have been paid. Admins generate a new Stripe link for each installment as it comes due. If you want parents to be able to pay in installments, do not generate a single full-fee Stripe link upfront — instead, generate per-installment links on each due date.</p>
+
+              <h3>Can I edit a fee after parents have already paid part of it?</h3>
+              <p>Line item labels and the fee description can be edited at any time without affecting balances. However, if you need to change the fee total after partial payments have already been recorded, do not edit the total directly — instead, use a manual adjustment to bring the balance to the correct amount. For example, if the original fee was $200, a parent paid $100, and you discover the fee should have been $180, record a negative $20 adjustment with the reason "Correction: fee total reduced." This preserves the payment history and produces a clear audit trail rather than silently changing the original amount.</p>
+
+              <h3>Does the admin see when a parent views their invoice?</h3>
+              <p>No. The admin only sees payment status changes — when the status moves from Unpaid to Partial or Paid, or when an offline payment is recorded. There is no read-receipt or view-tracking for invoice views. If you need to know whether a parent is aware of a fee, follow up with them directly through team chat or email.</p>
+
+              <h3>Can I create a fee for all team families at once?</h3>
+              <p>Yes. When creating a fee record, add all active roster members as recipients at once. Each recipient gets their own independent fee record from that point forward — if one parent pays and another does not, their statuses are tracked completely independently. This is the standard approach for team-wide fees like registration and uniform costs.</p>
+
+              <h3>How does Stripe know the correct amount to charge?</h3>
+              <p>The server-side function that creates the Stripe Checkout session reads the fee amount from the fee record in Firestore at the moment the <strong>Generate Payment Link</strong> button is clicked. The amount is baked into the Stripe session at creation time. If you edit the fee amount after generating the link, the existing Stripe link will still charge the original amount — you must generate a new link to pick up the updated amount. Always confirm the fee total is correct before generating the Stripe link.</p>
+
+              <h3>What does "Partial" status mean?</h3>
+              <p>Partial means that at least one payment has been received and applied to the fee, but the total received so far is less than the full amount owed. For example, if the fee total is $150 and a parent has paid $75 (either via Stripe or recorded as an offline payment), the status is Partial and the remaining balance shows $75. A Partial fee is treated as still outstanding — the Pay button remains visible to the parent so they can pay the remaining balance. The status changes to Paid only when the remaining balance reaches zero.</p>
+
+              <h3>Can I remove a recipient from a fee after creating it?</h3>
+              <p>The standard approach is to cancel the fee for that recipient using the <strong>Cancel Fee</strong> option on their record. This sets their status to Canceled and removes the outstanding balance from their parent dashboard. It does not delete the fee record — the canceled record remains in the admin view for record-keeping. If the recipient was added in error and has made no payments, canceling is the cleanest approach. There is no "remove recipient" option that deletes the record entirely.</p>
+
+              <h2 id="recovery-troubleshooting">Recovery and Troubleshooting</h2>
+
+              <h3>Pay button is not showing for the parent</h3>
+              <p>Two conditions must both be true for the Pay button to appear: (1) a Stripe Checkout URL must exist on the fee record — check the fee record in the admin panel to confirm a link has been generated, and (2) the fee status must be Unpaid or Partial — if the fee is already Paid or Canceled, the Pay button does not appear. If both conditions are met and the parent still does not see the button, ask them to do a hard reload of the dashboard page (Ctrl+Shift+R on Windows/Linux, Cmd+Shift+R on Mac) to clear any cached page state.</p>
+
+              <h3>Stripe session expired before the parent completed checkout</h3>
+              <p>Generate a new Stripe Checkout link from the fee record admin panel by clicking <strong>Generate Payment Link</strong> again. The new link replaces the old one on the fee record. If the parent was using the direct URL you shared earlier, share the new URL with them as well. The parent can also access the new link through the Pay button on their dashboard without you needing to share anything.</p>
+
+              <h3>Payment was processed in Stripe but fee status still shows Unpaid</h3>
+              <p>Stripe webhook delivery can occasionally be delayed by a few seconds to a few minutes depending on network conditions. Wait a few minutes and then check the fee status again — it usually resolves on its own. If 24 hours have passed and the status has not updated, check whether the Stripe webhook endpoint is configured and active in your Stripe dashboard settings. Contact platform support if the webhook appears to be failing. As a workaround, the admin can record a manual offline payment adjustment to reflect the received amount while the webhook issue is investigated — this is reversible if the Stripe update eventually arrives.</p>
+
+              <h3>Manual adjustment will not save</h3>
+              <p>The reason field is required for every manual adjustment — the form cannot be submitted with an empty reason. Enter a descriptive reason before clicking Save. If the save button is still unresponsive, check that the amount field contains a valid number (no currency symbols or text characters) and that you have an active internet connection. The form submits to Firestore in real time and requires connectivity.</p>
+
+              <h3>Parent cannot see their fee record in the dashboard</h3>
+              <p>First, confirm the parent's account is linked to the team — their user record must have the team ID in their linked parent team IDs. Second, confirm the fee record has this parent's player listed as a recipient — open the fee in the admin panel and check the recipient list. Third, confirm the fee has not been canceled for this recipient (canceled fees do not appear as outstanding to parents, though they are still visible in the admin view). If all three checks pass and the parent still cannot see the fee, ask them to sign out and sign back in to refresh their session data.</p>
+
+              <h3>Installment schedule is not showing in the parent's invoice view</h3>
+              <p>Confirm that installment entries were added and saved on the fee record before the parent viewed it. Open the fee in the admin panel and verify that the installment section shows the expected entries with labels, amounts, and due dates. If the installment entries are present in the admin view but not visible to the parent, ask the parent to do a hard reload of their dashboard page. If entries are missing from the admin view, the installments were not saved — re-add them and save the fee record.</p>
+
+              <h3>Fee shows Partial but parent insists they paid the full amount</h3>
+              <p>First, verify the Stripe session total from the parent's Stripe receipt against the fee total in the admin record. If the Stripe session was generated for a partial installment amount rather than the full fee total, the system correctly shows Partial — the parent may have believed they were paying the full amount but the link was only for part of it. Discuss with the parent what amount they paid and what the full fee is. If a discrepancy exists and the payment truly covered the full balance, the admin can record a manual adjustment for the remaining difference with a reason explaining the reconciliation.</p>
+
+              <h3>Admin cannot find the fee management section</h3>
+              <p>Fee management is accessed through the team admin panel — look for a Fees or Payments section in the team management navigation. If you do not see this option, confirm that you have admin access on the team (not just coach access). Ask the team owner to verify your access level in team settings. If you have admin access and the Fees section is still not visible, contact your platform administrator — the feature may need to be enabled for your organization.</p>
+
+              <h2 id="related-workflows">Related Workflows</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li><a href="workflow-team-setup.html">Team Setup</a> — configure team details and grant admin access before creating fees</li>
+                <li><a href="workflow-roster.html">Manage Your Roster</a> — ensure players and linked parents are on the roster before assigning them as fee recipients</li>
+                <li><a href="workflow-registration.html">Registration</a> — registration fees may flow into team fee records as part of the onboarding process</li>
+              </ul>
+
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=14';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+        const allLinks = [...links];
+        let mobileWrapper = null;
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = (activeId) => {
+          let active = sectionById.get(activeId) || headings[0];
+          if (!sectionById.has(activeId)) {
+            for (const h of headings) {
+              if (h.getBoundingClientRect().top <= 140) active = h;
+            }
+          }
+          allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) { mobileWrapper.open = false; }
+            });
+          });
+        };
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+        addLinkHandlers(links);
+        ensureMobileToc();
+        window.addEventListener('scroll', () => setActive(null), { passive: true });
+        window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
+        setActive(window.location.hash.slice(1) || null);
+      })();
+    </script>
+</body>
+</html>

@@ -96,6 +96,14 @@ export async function revokeScorekeeperAccess() {
     return undefined;
 }
 
+export async function grantStreamScoreAccess() {
+    return undefined;
+}
+
+export async function revokeStreamScoreAccess() {
+    return undefined;
+}
+
 export async function getRsvps() {
     return [];
 }
@@ -344,6 +352,16 @@ const TEAM_PASS_STUB = `
 export function renderTeamPassCard() {}
 `;
 
+const PLAYER_TRACKING_SUMMARY_STUB = `
+export function getVisiblePlayerTrackingSummary() {
+    return [];
+}
+`;
+
+const TEAM_STAFF_PERMISSIONS_STUB = `
+export function renderTeamStaffPermissionsSection() {}
+`;
+
 const LOCAL_ATTRACTIONS_STUB = `
 export function normalizeExternalWebsiteUrl(value) {
     return value || '';
@@ -385,7 +403,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: NATIVE_STUB
     }));
-    await page.route('**/js/stat-leaderboards.js?v=1', (route) => route.fulfill({
+    await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: STAT_STUB
@@ -395,7 +413,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: SEASON_RECORD_STUB
     }));
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({
+    await page.route('**/js/auth.js?v=15', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: AUTH_STUB
@@ -444,6 +462,16 @@ async function mockTeamPageModules(page, scenario) {
         status: 200,
         contentType: 'application/javascript',
         body: TEAM_PASS_STUB
+    }));
+    await page.route('**/js/player-tracking-summary.js?v=*', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: PLAYER_TRACKING_SUMMARY_STUB
+    }));
+    await page.route('**/js/team-staff-permissions.js?v=*', (route) => route.fulfill({
+        status: 200,
+        contentType: 'application/javascript',
+        body: TEAM_STAFF_PERMISSIONS_STUB
     }));
 }
 

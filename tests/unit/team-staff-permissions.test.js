@@ -8,8 +8,8 @@ describe('team staff and permissions view model', () => {
             ownerEmail: 'Owner@Example.com',
             adminEmails: [' Coach@Example.com ', 'coach@example.com'],
             teamPermissions: {
-                scorekeeping: { mode: 'selected', memberIds: [' scorekeeper-1 ', 'scorekeeper-1'] },
-                streaming: { mode: 'selected', memberIds: ['video-1'] },
+                scorekeeping: { mode: 'selected', memberIds: [' scorekeeper-1 ', 'stream-score-1', 'scorekeeper-1'] },
+                streaming: { mode: 'selected', memberIds: ['video-1', 'stream-score-1'] },
                 volunteer: { mode: 'selected', memberIds: ['snacks-1'] }
             },
             streamVolunteerEmails: ['video@example.com']
@@ -25,8 +25,9 @@ describe('team staff and permissions view model', () => {
         ]);
         expect(viewModel.pendingInvites).toEqual(['pending@example.com', 'coach@example.com']);
         expect(viewModel.helperPermissions).toEqual([
-            expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1'] }),
-            expect.objectContaining({ key: 'videographer', grants: ['video-1', 'video@example.com'] }),
+            expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1', 'stream-score-1'] }),
+            expect.objectContaining({ key: 'stream-score', grants: ['stream-score-1'] }),
+            expect.objectContaining({ key: 'videographer', grants: ['video-1', 'stream-score-1', 'video@example.com'] }),
             expect.objectContaining({ key: 'volunteer', grants: ['snacks-1'] })
         ]);
     });
@@ -60,6 +61,7 @@ describe('team staff and permissions view model', () => {
         expect(container.classList.contains('hidden')).toBe(false);
         expect(container.innerHTML).toContain('No owner, admin staff, or pending admin invites found.');
         expect(container.innerHTML).toContain('No scorekeeper helpers are assigned yet.');
+        expect(container.innerHTML).toContain('No Stream &amp; Score volunteers are assigned yet.');
         expect(container.innerHTML).toContain('No videographer helpers are assigned yet.');
         expect(container.innerHTML).toContain('No general volunteer permissions are assigned yet.');
         expect(container.innerHTML).toContain('Full staff admin access is separate from scoped game-day helper permissions');

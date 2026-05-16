@@ -338,7 +338,7 @@ function renderRosterOptions(players) {
 
 function showMessage(message, type = 'info') {
     const el = document.getElementById('fee-message');
-    if (!el) return;
+    if (!el) return null;
 
     const colors = type === 'error'
         ? 'border-red-200 bg-red-50 text-red-700'
@@ -349,6 +349,13 @@ function showMessage(message, type = 'info') {
     el.className = `rounded-xl border p-4 text-sm ${colors}`;
     el.textContent = message;
     el.classList.remove('hidden');
+    return el;
+}
+
+function showHtmlMessage(html, type = 'info') {
+    const el = showMessage('', type);
+    if (!el) return;
+    el.innerHTML = html;
 }
 
 function collectFormValues(form) {
@@ -386,6 +393,55 @@ function renderInvoiceRow(type) {
             <input name="installmentAmount" type="number" min="0.01" step="0.01" placeholder="0.00" class="rounded-lg border-gray-300 text-sm" aria-label="Installment amount">
             <button type="button" data-remove-row class="rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white">Remove</button>
         </div>
+    `;
+}
+
+export function buildTeamFeeBatchManageUrl(teamId, batchId) {
+    return `team-fees.html#teamId=${encodeURIComponent(teamId)}&batchId=${encodeURIComponent(batchId)}`;
+}
+
+export function renderCreatedTeamFeeBatchSuccess(teamId, batchId) {
+    const manageUrl = buildTeamFeeBatchManageUrl(teamId, batchId);
+    return `
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>Fee batch saved with unpaid recipient records. Batch ID: ${escapeHtml(batchId)}</span>
+            <a href="${escapeHtml(manageUrl)}" class="rounded-lg bg-green-700 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-green-800">Manage this fee</a>
+        </div>
+    `;
+}
+
+export function renderTeamFeeBatchList(batches = [], teamId = '') {
+    if (!batches.length) return '';
+
+    return `
+        <section class="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Existing fee batches</h2>
+                    <p class="text-sm text-gray-500">Open a saved batch to record manual payments, adjustments, or cancellations.</p>
+                </div>
+                <span class="text-xs font-semibold uppercase tracking-wide text-gray-400">Latest 25</span>
+            </div>
+            <div class="mt-4 divide-y divide-gray-100">
+                ${batches.map((batch) => {
+                    const title = batch.title || batch.feeTitle || batch.name || 'Team fee';
+                    const amount = formatFeeCurrency(batch.amountCents ?? batch.totalAmountCents ?? 0);
+                    const recipientCount = Number(batch.recipientCount || 0);
+                    const dueDate = batch.dueDate ? ` · Due ${escapeHtml(batch.dueDate)}` : '';
+                    const status = batch.status ? ` · ${escapeHtml(batch.status)}` : '';
+                    const manageUrl = buildTeamFeeBatchManageUrl(teamId, batch.id);
+                    return `
+                        <a href="${escapeHtml(manageUrl)}" class="flex flex-col gap-2 py-3 hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between">
+                            <span>
+                                <span class="block font-semibold text-gray-900">${escapeHtml(title)}</span>
+                                <span class="text-sm text-gray-500">${amount} · ${recipientCount} recipient${recipientCount === 1 ? '' : 's'}${dueDate}${status}</span>
+                            </span>
+                            <span class="text-sm font-semibold text-primary-600">Manage</span>
+                        </a>
+                    `;
+                }).join('')}
+            </div>
+        </section>
     `;
 }
 
@@ -466,8 +522,14 @@ function canManageTeamFees(team, user, canModerateChat) {
     return isTeamFeeAdmin(team, user) || canModerateChat(user, team);
 }
 
-async function renderCreateMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch }) {
-    const players = await getPlayers(teamId);
+async function renderCreateMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch, listTeamFeeBatches }) {
+    const [players, existingBatches] = await Promise.all([
+        getPlayers(teamId),
+        listTeamFeeBatches ? listTeamFeeBatches(teamId).catch((error) => {
+            console.warn('[team-fees] Unable to load fee batches:', error);
+            return [];
+        }) : []
+    ]);
     container.innerHTML = `
         <div class="mb-6">
             <a href="dashboard.html" class="text-sm font-semibold text-primary-600 hover:text-primary-700">Back to My Teams</a>
@@ -479,6 +541,8 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
             <p class="font-bold">${OFFLINE_TEAM_FEE_LABEL}</p>
             <p class="mt-1 text-sm">No credit card, Stripe, checkout, email, push, or SMS workflow is created. This only records unpaid roster fee assignments.</p>
         </div>
+
+        ${renderTeamFeeBatchList(existingBatches, teamId)}
 
         <form id="team-fee-form" class="rounded-2xl border border-gray-200 bg-white p-6 shadow-md">
             <div id="fee-message" class="hidden"></div>
@@ -573,7 +637,7 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
             form.reset();
             lineItemsList.innerHTML = '';
             installmentsList.innerHTML = '';
-            showMessage(`Fee batch saved with unpaid recipient records. Batch ID: ${batch.id}`, 'success');
+            showHtmlMessage(renderCreatedTeamFeeBatchSuccess(teamId, batch.id), 'success');
         } catch (error) {
             showMessage(error?.message || 'Unable to save fee batch.', 'error');
         } finally {
@@ -666,8 +730,8 @@ async function initTeamFeesAdminPage() {
 
     renderFooter(document.getElementById('footer-container'));
 
-    const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=32'),
+    const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
+        import('./db.js?v=34'),
         import('./auth.js?v=12')
     ]);
 
@@ -711,7 +775,7 @@ async function initTeamFeesAdminPage() {
         if (batchId) {
             await renderManageMode({ container, teamId, batchId, team, user, getTeamFeeBatch, listTeamFeeRecipients, updateTeamFeeRecipient });
         } else {
-            await renderCreateMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch });
+            await renderCreateMode({ container, teamId, team, user, getPlayers, createTeamFeeBatch, listTeamFeeBatches });
         }
     } catch (error) {
         console.error('[team-fees] init failed:', error);
