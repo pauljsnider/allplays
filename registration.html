@@ -53,6 +53,12 @@
                     <div id="registration-options" class="mt-3 grid gap-3"></div>
                 </section>
 
+                <section id="payment-plan-section" class="hidden">
+                    <h2 class="text-xl font-semibold text-gray-900">Payment plan</h2>
+                    <p class="mt-1 text-sm text-gray-600">Choose how you expect to pay. Payments are not charged by this form.</p>
+                    <div id="payment-plan-options" class="mt-3 grid gap-3"></div>
+                </section>
+
                 <section>
                     <h2 class="text-xl font-semibold text-gray-900">Participant details</h2>
                     <div id="participant-fields" class="mt-3 grid gap-4"></div>
@@ -92,6 +98,8 @@
             formatFeeAmount,
             formatFeeSnapshotLines,
             getActiveRegistrationOptions,
+            getPaymentPlanChoices,
+            hasInstallmentPlan,
             normalizeRegistrationForm,
             requiresRegistrationOption,
             validateRegistrationSubmission
@@ -170,6 +178,7 @@
             form.participantFields.forEach(field => renderField(participantContainer, field, 'participant'));
             form.guardianFields.forEach(field => renderField(guardianContainer, field, 'guardian'));
             renderRegistrationOptions(form);
+            renderPaymentPlanChoices(form);
 
             loadingState.classList.add('hidden');
             formElement.classList.remove('hidden');
@@ -208,6 +217,47 @@
                     description.className = 'mt-1 block text-gray-600';
                     description.textContent = option.description;
                     copy.appendChild(description);
+                }
+
+                label.append(input, copy);
+                container.appendChild(label);
+            });
+
+            section.classList.remove('hidden');
+        }
+
+        function renderPaymentPlanChoices(form) {
+            const section = document.getElementById('payment-plan-section');
+            const container = document.getElementById('payment-plan-options');
+            container.innerHTML = '';
+
+            if (!hasInstallmentPlan(form)) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            getPaymentPlanChoices(form).forEach((choice, index) => {
+                const label = document.createElement('label');
+                label.className = 'flex gap-3 rounded border border-gray-200 p-3 text-sm text-gray-700 hover:border-indigo-300';
+                const input = document.createElement('input');
+                input.type = 'radio';
+                input.name = 'paymentPlanId';
+                input.value = choice.id;
+                input.required = true;
+                input.className = 'mt-1 h-4 w-4 border-gray-300 text-indigo-600 focus:ring-indigo-500';
+                if (index === 0) input.checked = true;
+
+                const copy = document.createElement('span');
+                const title = document.createElement('span');
+                title.className = 'block font-semibold text-gray-900';
+                title.textContent = choice.title;
+                copy.appendChild(title);
+
+                if (choice.id === 'installments') {
+                    const detail = document.createElement('span');
+                    detail.className = 'mt-1 block text-gray-600';
+                    detail.textContent = `${form.installmentPlan.installmentCount} installments starting ${form.installmentPlan.firstDueDate}`;
+                    copy.appendChild(detail);
                 }
 
                 label.append(input, copy);
@@ -283,6 +333,7 @@
                 participant: readGroupValues('participant', activeForm.participantFields),
                 guardian: readGroupValues('guardian', activeForm.guardianFields),
                 waiverAccepted: document.getElementById('waiver-accepted').checked,
+                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
                 selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
                 feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
             };

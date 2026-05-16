@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildInstallmentSchedule,
     buildPendingRegistrationRecord,
     calculateRegistrationFeeSnapshot,
     collectFieldValues,
     decideRegistrationPlacement,
     formatFeeAmount,
+    getPaymentPlanChoices,
     formatFeeSnapshotLines,
     normalizeRegistrationForm,
     validateRegistrationSubmission
@@ -87,6 +89,14 @@ describe('public registration flow', () => {
             guardian: { email: 'parent@example.com' },
             waiverAccepted: true,
             waiverText: 'Waiver',
+            paymentPlan: {
+                id: 'pay_full',
+                type: 'pay_full',
+                title: 'Pay in full',
+                installmentCount: 1,
+                totalBalanceDueCents: 5000,
+                schedule: [{ label: 'Pay in full', dueDate: '', amountCents: 5000 }]
+            },
             status: 'pending',
             submittedAt: now,
             source: 'public-registration',
@@ -98,6 +108,49 @@ describe('public registration flow', () => {
                 appliedDiscounts: [],
                 finalAmountDueCents: 5000
             }
+        });
+    });
+
+    it('normalizes installment plans and snapshots selected schedules', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            feeAmountCents: 10000,
+            published: true,
+            installmentPlan: { enabled: true, installmentCount: 3, firstDueDate: '2026-06-01', intervalDays: 30 }
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        expect(getPaymentPlanChoices(form)).toEqual([
+            { id: 'pay_full', type: 'pay_full', title: 'Pay in full' },
+            { id: 'installments', type: 'installments', title: 'Installment plan' }
+        ]);
+        expect(buildInstallmentSchedule(10000, form.installmentPlan)).toEqual([
+            { label: 'Installment 1', dueDate: '2026-06-01', amountCents: 3333 },
+            { label: 'Installment 2', dueDate: '2026-07-01', amountCents: 3333 },
+            { label: 'Installment 3', dueDate: '2026-07-31', amountCents: 3334 }
+        ]);
+        expect(validateRegistrationSubmission(form, { waiverAccepted: true, selectedPaymentPlanId: '' })).toEqual([
+            'Please select a payment plan.'
+        ]);
+
+        const record = buildPendingRegistrationRecord({
+            form,
+            participant: {},
+            guardian: {},
+            waiverAccepted: true,
+            selectedPaymentPlanId: 'installments',
+            now: { sentinel: 'serverTimestamp' }
+        });
+        expect(record.paymentPlan).toEqual({
+            id: 'installments',
+            type: 'installments',
+            title: 'Installment plan',
+            installmentCount: 3,
+            totalBalanceDueCents: 10000,
+            schedule: [
+                { label: 'Installment 1', dueDate: '2026-06-01', amountCents: 3333 },
+                { label: 'Installment 2', dueDate: '2026-07-01', amountCents: 3333 },
+                { label: 'Installment 3', dueDate: '2026-07-31', amountCents: 3334 }
+            ]
         });
     });
 
@@ -233,6 +286,8 @@ describe('public registration flow', () => {
         expect(page).toContain("doc(db, 'teams', teamId, 'registrationForms', formId)");
         expect(page).toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
         expect(page).toContain('registration-options-section');
+        expect(page).toContain('payment-plan-section');
+        expect(page).toContain('getPaymentPlanChoices');
         expect(page).toContain('fee-summary-section');
         expect(page).toContain('calculateRegistrationFeeSnapshot');
         expect(page).toContain('runTransaction(db, async (transaction)');
@@ -252,6 +307,8 @@ describe('public registration flow', () => {
         expect(rules).toContain('isPublishedRegistrationForm(get(formPath).data)');
         expect(rules).toContain("data.status in ['pending', 'waitlisted']");
         expect(rules).toContain("'selectedOption'");
+        expect(rules).toContain("'paymentPlan'");
+        expect(rules).toContain('isRegistrationPaymentPlanValid');
         expect(rules).toContain("'feeSnapshot'");
         expect(rules).toContain('isRegistrationFeeSnapshotValid');
         expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
