@@ -51,6 +51,32 @@ describe('post-game stat editor helpers', () => {
         });
     });
 
+    it('preserves punctuation in configured stat keys when building correction payloads', () => {
+        const statFields = resolvePostGameStatFields({
+            resolvedConfig: {
+                columns: ['AST/TO', 'FG%']
+            },
+            statsMap: {
+                p1: { 'ast/to': 2, 'fg%': 45 }
+            }
+        });
+
+        expect(statFields).toEqual([
+            { fieldName: 'ast/to', label: 'AST/TO' },
+            { fieldName: 'fg%', label: 'FG%' },
+            { fieldName: 'fouls', label: 'FOULS' }
+        ]);
+        expect(buildCompletedGamePlayerStatsPayload({
+            player: { name: 'Ava Cole', number: '3' },
+            statFields,
+            values: { 'ast/to': '3', 'fg%': '47', fouls: '1' }
+        }).stats).toEqual({
+            'ast/to': 3,
+            'fg%': 47,
+            fouls: 1
+        });
+    });
+
     it('resolves and builds manager-only team stat payloads from team-scoped definitions', () => {
         const statFields = resolvePostGameTeamStatFields({
             resolvedConfig: {

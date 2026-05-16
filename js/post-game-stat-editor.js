@@ -1,7 +1,7 @@
 import { buildConfiguredStatFields } from './game-report-stats.js?v=1';
 
 function normalizeStatKey(key) {
-    return String(key || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '');
+    return String(key || '').trim().toLowerCase().replace(/\s+/g, '');
 }
 
 export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {} } = {}) {
