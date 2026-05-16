@@ -2918,7 +2918,7 @@ export async function redeemParentInvite(userId, code) {
         if (latestCodeData.type !== 'parent_invite') {
             throw new Error("Not a parent invite code");
         }
-        if (latestCodeData.used) {
+        if (latestCodeData.used || latestCodeData.revoked === true || latestCodeData.status === 'removed') {
             throw new Error("Invalid or used code");
         }
         if (isAccessCodeExpired(latestCodeData.expiresAt)) {
