@@ -6,6 +6,36 @@ const VIDEO_HOST_PATTERNS = [
     /(^|\.)vimeo\.com$/
 ];
 
+const TEAM_MEDIA_DOCUMENT_TYPES = new Set([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+    'text/csv'
+]);
+
+const TEAM_MEDIA_DOCUMENT_EXTENSIONS = new Set([
+    'pdf',
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'ppt',
+    'pptx',
+    'txt',
+    'csv'
+]);
+
+const GENERIC_TEAM_MEDIA_DOCUMENT_TYPES = new Set([
+    '',
+    'application/octet-stream',
+    'binary/octet-stream'
+]);
+
 export const TEAM_MEDIA_VISIBILITIES = ['team', 'private'];
 
 function asTrimmedString(value) {
@@ -70,9 +100,24 @@ export function isSupportedTeamMediaImage(file) {
     return Boolean(file && String(file.type || '').startsWith('image/'));
 }
 
+export function isSupportedTeamMediaDocument(file) {
+    if (!file) return false;
+
+    const mimeType = String(file.type || '').toLowerCase();
+    if (TEAM_MEDIA_DOCUMENT_TYPES.has(mimeType)) return true;
+    if (!GENERIC_TEAM_MEDIA_DOCUMENT_TYPES.has(mimeType)) return false;
+
+    const extension = String(file.name || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || '';
+    return TEAM_MEDIA_DOCUMENT_EXTENSIONS.has(extension);
+}
+
+export function isTeamMediaDocument(item = {}) {
+    return String(item.type || '').toLowerCase() === 'file';
+}
+
 export function canDeleteTeamMediaItem(user, team, item) {
     if (!user || !item) return false;
-    return canManageTeamMedia(user, team) || (item.type === 'photo' && item.uploadedBy === user.uid);
+    return canManageTeamMedia(user, team) || (['photo', 'file'].includes(item.type) && item.uploadedBy === user.uid);
 }
 
 export function normalizeTeamMediaFolderDraft(draft = {}) {

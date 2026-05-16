@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gray-50 text-gray-900">
@@ -233,15 +234,17 @@
                                         <option value="pool_seed">Pool seed</option>
                                         <option value="game_result">Winner/loser of prior game</option>
                                     </select>
-                                    <input type="text" id="tournamentHomeTeamName" placeholder="Team name"
-                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentHomeTeamFields" data-tournament-slot-fields="team">
+                                        <input type="text" id="tournamentHomeTeamName" placeholder="Team name"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    </div>
+                                    <div id="tournamentHomePoolSeedFields" data-tournament-slot-fields="pool_seed" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentHomePoolName" placeholder="Pool name"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <input type="number" id="tournamentHomeSeed" min="1" placeholder="Seed"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                     </div>
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentHomeGameResultFields" data-tournament-slot-fields="game_result" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentHomeGameId" placeholder="Prior game ID"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <select id="tournamentHomeOutcome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
@@ -257,15 +260,17 @@
                                         <option value="pool_seed">Pool seed</option>
                                         <option value="game_result">Winner/loser of prior game</option>
                                     </select>
-                                    <input type="text" id="tournamentAwayTeamName" placeholder="Team name"
-                                        class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentAwayTeamFields" data-tournament-slot-fields="team">
+                                        <input type="text" id="tournamentAwayTeamName" placeholder="Team name"
+                                            class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                                    </div>
+                                    <div id="tournamentAwayPoolSeedFields" data-tournament-slot-fields="pool_seed" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentAwayPoolName" placeholder="Pool name"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <input type="number" id="tournamentAwaySeed" min="1" placeholder="Seed"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                     </div>
-                                    <div class="grid grid-cols-2 gap-2">
+                                    <div id="tournamentAwayGameResultFields" data-tournament-slot-fields="game_result" class="grid grid-cols-2 gap-2 hidden">
                                         <input type="text" id="tournamentAwayGameId" placeholder="Prior game ID"
                                             class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                                         <select id="tournamentAwayOutcome" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
@@ -791,6 +796,14 @@
                     </span>
                     Live Broadcast Tracker
                 </button>
+                <button id="basketball-tracker-live-simple"
+                    class="hidden w-full px-4 py-3 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 transition font-semibold flex items-center justify-center gap-2">
+                    <span class="inline-flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
+                        LIVE
+                    </span>
+                    Live Broadcast Simple
+                </button>
                 <button id="basketball-tracker-photo"
                     class="w-full px-4 py-3 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 transition font-semibold">
                     Photo Score Sheet
@@ -895,25 +908,26 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=30';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=31';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=10';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=1';
-        import { checkAuth } from './js/auth.js?v=14';
+        import { checkAuth } from './js/auth.js?v=15';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=3';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=2';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
+        import { getGoalSportProfile } from './js/live-sport-config.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
         import { buildSeasonRecordGameFields, hydrateSeasonRecordFormFields } from './js/edit-schedule-season-record.js?v=1';
         import { normalizeOfficialsDirectory } from './js/officiating-slots.js?v=1';
-        import { Timestamp, deleteField, auth } from "./js/firebase.js?v=12";
+        import { Timestamp, deleteField, auth } from "./js/firebase.js?v=14";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=1';
-        import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage, sendPublicRsvpReminderEmails } from './js/schedule-notifications.js?v=5';
+        import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage, sendPublicRsvpReminderEmails, buildAvailabilityReminderRecipients, buildAvailabilityReminderEmailPreview } from './js/schedule-notifications.js?v=5';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
@@ -985,19 +999,29 @@
             document.getElementById('tournament-settings').classList.toggle('hidden', !isTournament);
         }
 
+        function updateTournamentSlotVisibility(prefix) {
+            const sourceType = document.getElementById(`tournament${prefix}SourceType`).value || 'team';
+            document.getElementById(`tournament${prefix}TeamFields`).classList.toggle('hidden', sourceType !== 'team');
+            document.getElementById(`tournament${prefix}PoolSeedFields`).classList.toggle('hidden', sourceType !== 'pool_seed');
+            document.getElementById(`tournament${prefix}GameResultFields`).classList.toggle('hidden', sourceType !== 'game_result');
+        }
+
         function readTournamentSlot(prefix) {
             const sourceType = document.getElementById(`tournament${prefix}SourceType`).value || 'team';
-            return {
-                sourceType,
-                teamName: document.getElementById(`tournament${prefix}TeamName`).value.trim() || null,
-                poolName: document.getElementById(`tournament${prefix}PoolName`).value.trim() || null,
-                seed: (() => {
-                    const seedValue = Number.parseInt(document.getElementById(`tournament${prefix}Seed`).value, 10);
-                    return Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null;
-                })(),
-                gameId: document.getElementById(`tournament${prefix}GameId`).value.trim() || null,
-                outcome: document.getElementById(`tournament${prefix}Outcome`).value || 'winner'
-            };
+            const slot = { sourceType };
+            if (sourceType === 'pool_seed') {
+                const seedValue = Number.parseInt(document.getElementById(`tournament${prefix}Seed`).value, 10);
+                slot.poolName = document.getElementById(`tournament${prefix}PoolName`).value.trim() || null;
+                slot.seed = Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null;
+                return slot;
+            }
+            if (sourceType === 'game_result') {
+                slot.gameId = document.getElementById(`tournament${prefix}GameId`).value.trim() || null;
+                slot.outcome = document.getElementById(`tournament${prefix}Outcome`).value || 'winner';
+                return slot;
+            }
+            slot.teamName = document.getElementById(`tournament${prefix}TeamName`).value.trim() || null;
+            return slot;
         }
 
         function populateTournamentSlot(prefix, slot = {}) {
@@ -1007,6 +1031,7 @@
             document.getElementById(`tournament${prefix}Seed`).value = slot.seed || '';
             document.getElementById(`tournament${prefix}GameId`).value = slot.gameId || '';
             document.getElementById(`tournament${prefix}Outcome`).value = slot.outcome || 'winner';
+            updateTournamentSlotVisibility(prefix);
         }
 
         function resetTournamentForm() {
@@ -2039,6 +2064,7 @@
                         officiatingCoverageStatus: event.officiatingCoverageStatus || null,
                         rsvpSummary: event.rsvpSummary || null,
                         status: event.status,
+                        liveStatus: event.liveStatus || null,
                         sourceMetadata: event.sourceMetadata || null,
                         homeScore: event.homeScore,
                         awayScore: event.awayScore,
@@ -2226,8 +2252,10 @@
                     try {
                         const breakdown = await getRsvpBreakdownByPlayer(currentTeamId, gameId);
                         if (requestToken !== currentRsvpRequestToken) return;
-                        const grouped = breakdown.grouped;
-                        const counts = breakdown.counts;
+                        const { grouped, counts, players, rsvps } = breakdown;
+                        const notRespondedIds = new Set(grouped.not_responded.map((r) => String(r.playerId)));
+                        const recipients = buildAvailabilityReminderRecipients(players, rsvps);
+                        const emailPreview = buildAvailabilityReminderEmailPreview(players, rsvps, notRespondedIds);
                         const renderRows = (rows) => rows.length
                             ? rows.map((row) => {
                                 const name = escapeHtml(row.playerName || 'Unknown Player');
@@ -2236,6 +2264,18 @@
                                 return `<div class="text-sm py-1">${name}${jersey}${note}</div>`;
                             }).join('')
                             : '<p class="text-xs text-gray-400">None</p>';
+                        const renderEmailPreviewRows = (rows) => rows.length
+                            ? rows.map((row) => {
+                                const name = escapeHtml(row.playerName || 'Unknown Player');
+                                const jersey = row.playerNumber ? ` <span class="text-gray-400 text-xs">#${escapeHtml(row.playerNumber)}</span>` : '';
+                                if (row.hasEligibleParentEmail) {
+                                    const emails = row.parentEmails.map((email) => escapeHtml(email)).join(', ');
+                                    return `<div class="rounded border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs"><div class="font-semibold text-indigo-900">${name}${jersey}</div><div class="mt-1 text-indigo-700 break-words">${emails}</div></div>`;
+                                }
+                                return `<div class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs"><div class="font-semibold text-amber-900">${name}${jersey}</div><div class="mt-1 text-amber-700">No eligible parent or guardian email</div></div>`;
+                            }).join('')
+                            : '<p class="text-xs text-gray-400">Everyone has responded. No RSVP email follow-up recipients.</p>';
+                        const emailPreviewSummary = `${emailPreview.eligibleEmailCount} eligible parent/guardian ${emailPreview.eligibleEmailCount === 1 ? 'email' : 'emails'} across ${recipients.playerCount} no-response ${recipients.playerCount === 1 ? 'player' : 'players'}.`;
                         content.innerHTML = `
                             <div class="space-y-4">
                                 <div>
@@ -2253,6 +2293,11 @@
                                 <div>
                                     <h4 class="text-sm font-bold text-gray-700 mb-2">Not Responded (${counts.notResponded})</h4>
                                     ${renderRows(grouped.not_responded)}
+                                </div>
+                                <div class="border-t border-gray-200 pt-4">
+                                    <h4 class="text-sm font-bold text-indigo-700 mb-1">RSVP email recipient preview</h4>
+                                    <p class="text-xs text-gray-500 mb-3">${emailPreviewSummary}</p>
+                                    <div class="space-y-2">${renderEmailPreviewRows(emailPreview.players)}</div>
                                 </div>
                             </div>
                         `;
@@ -2450,6 +2495,7 @@
         let allTeamGamesCache = {};
         let pendingTrackGameId = null;
         let pendingTrackIsBasketball = false;
+        let pendingTrackSupportsSimpleLive = false;
 
         // Helper function to check if a stat config is for basketball
         function isBasketballConfig(configId) {
@@ -2471,36 +2517,57 @@
             return isBasketballConfig(game.statTrackerConfigId);
         }
 
+        function getStatConfigForGame(game) {
+            const configId = String(game?.statTrackerConfigId || '').trim();
+            if (!configId) return null;
+            return allConfigs.find(config => String(config.id || '').trim() === configId) || null;
+        }
+
+        function isGoalSportForGame(game) {
+            if (!game || isBasketballForGame(game)) return false;
+            const config = getStatConfigForGame(game);
+            const sport = game?.sport || config?.baseType || currentTeam?.sport || '';
+            return !!getGoalSportProfile({ sport });
+        }
+
         function closeBasketballTrackerModal() {
             document.getElementById('basketball-tracker-modal')?.classList.add('hidden');
             pendingTrackGameId = null;
             pendingTrackIsBasketball = false;
+            pendingTrackSupportsSimpleLive = false;
         }
 
-        function configureTrackerChoiceModal(isBasketball) {
+        function configureTrackerChoiceModal(isBasketball, supportsSimpleLive) {
             const description = document.getElementById('tracker-choice-description');
             const betaBtn = document.getElementById('basketball-tracker-beta');
+            const simpleBtn = document.getElementById('basketball-tracker-live-simple');
             const photoBtn = document.getElementById('basketball-tracker-photo');
             if (description) {
-                description.textContent = isBasketball
-                    ? 'This game uses a Basketball stat config. Which tracker do you want?'
-                    : 'Choose a tracker for this game.';
+                if (isBasketball) {
+                    description.textContent = 'This game uses a Basketball stat config. Which tracker do you want?';
+                } else if (supportsSimpleLive) {
+                    description.textContent = 'Choose full stat broadcasting or simple goal broadcasting for this game.';
+                } else {
+                    description.textContent = 'Choose a tracker for this game.';
+                }
             }
             if (betaBtn) betaBtn.classList.toggle('hidden', !isBasketball);
+            if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);
             if (photoBtn) photoBtn.classList.toggle('hidden', !isBasketball);
         }
 
-        function openTrackerChoiceModal(gameId, isBasketball) {
+        function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false) {
             pendingTrackGameId = gameId;
             pendingTrackIsBasketball = !!isBasketball;
-            configureTrackerChoiceModal(pendingTrackIsBasketball);
+            pendingTrackSupportsSimpleLive = !!supportsSimpleLive;
+            configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive);
             document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
         }
 
         function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
-            openTrackerChoiceModal(gameId, isBasketballForGame(game));
+            openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));
         }
 
         function renderDbGame(game) {
@@ -3020,6 +3087,8 @@
 
         document.getElementById('cancel-edit-game-btn').addEventListener('click', resetGameForm);
         document.getElementById('competitionType').addEventListener('change', updateTournamentSettingsVisibility);
+        document.getElementById('tournamentHomeSourceType').addEventListener('change', () => updateTournamentSlotVisibility('Home'));
+        document.getElementById('tournamentAwaySourceType').addEventListener('change', () => updateTournamentSlotVisibility('Away'));
         document.getElementById('tournament-standings-modal-close').addEventListener('click', closeTournamentStandingsModal);
         document.getElementById('cancel-tournament-standings-btn').addEventListener('click', closeTournamentStandingsModal);
         document.getElementById('tournament-standings-modal-backdrop').addEventListener('click', closeTournamentStandingsModal);
@@ -3630,7 +3699,11 @@
                     calendarEventUid: getCalendarEventTrackingId(calendarEvent)
                 });
 
-                openTrackerChoiceModal(gameId, isBasketballConfig(configId));
+                const trackingGame = {
+                    statTrackerConfigId: configId || null,
+                    sport: currentTeam?.sport || ''
+                };
+                openTrackerChoiceModal(gameId, isBasketballConfig(configId), isGoalSportForGame(trackingGame));
             } catch (error) {
                 console.error('Error tracking game:', error);
                 alert('Error tracking game: ' + error.message);
@@ -4752,6 +4825,12 @@ PARSING RULES:
             } else {
                 window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}`;
             }
+        });
+        document.getElementById('basketball-tracker-live-simple')?.addEventListener('click', () => {
+            if (!pendingTrackGameId || !pendingTrackSupportsSimpleLive) return closeBasketballTrackerModal();
+            const gameId = pendingTrackGameId;
+            closeBasketballTrackerModal();
+            window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}&trackerMode=simple`;
         });
         document.getElementById('basketball-tracker-photo')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();

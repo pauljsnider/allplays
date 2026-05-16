@@ -18,21 +18,27 @@ function buildHarness({ commitControl } = {}) {
   const renderLog = vi.fn();
   const endLiveBroadcast = vi.fn(async () => {});
 
-  const batch = {
-    set: vi.fn((ref, data) => {
-      setCalls.push({ ref, data });
-    }),
-    update: vi.fn((ref, data) => {
-      updateCalls.push({ ref, data });
-    }),
-    commit: vi.fn(() => {
-      if (commitControl?.promise) {
-        return commitControl.promise;
-      }
+  const batches = [];
+  const createBatch = vi.fn(() => {
+    const batchIndex = batches.length;
+    const batch = {
+      set: vi.fn((ref, data) => {
+        setCalls.push({ ref, data });
+      }),
+      update: vi.fn((ref, data) => {
+        updateCalls.push({ ref, data });
+      }),
+      commit: vi.fn(() => {
+        if (batch.update.mock.calls.length > 0 && commitControl?.promise) {
+          return commitControl.promise;
+        }
 
-      return Promise.resolve();
-    })
-  };
+        return Promise.resolve();
+      })
+    };
+    batches.push(batch);
+    return batch;
+  });
 
   const context = {
     finishSubmissionLock: { active: false },
@@ -77,7 +83,7 @@ function buildHarness({ commitControl } = {}) {
       emailBodyCalls.push({ finalHome, finalAway, summary, logEntries });
       return `Final ${finalHome}-${finalAway}\n${summary}`;
     }),
-    createBatch: vi.fn(() => batch),
+    createBatch,
     createCollectionRef: vi.fn((db, path) => ({ db, path })),
     createDocRef: vi.fn(buildDocRef),
     executeFinishNavigationPlan: vi.fn((navigation) => {
@@ -88,7 +94,10 @@ function buildHarness({ commitControl } = {}) {
 
   return {
     context,
-    batch,
+    get batch() {
+      return batches.find((batch) => batch.update.mock.calls.length > 0) || batches[0];
+    },
+    batches,
     setCalls,
     updateCalls,
     navigationCalls,
@@ -249,7 +258,7 @@ describe('live tracker save-and-complete workflow', () => {
         gameUpdate: expect.objectContaining({ status: 'completed' })
       })
     });
-    expect(harness.batch.commit).not.toHaveBeenCalled();
+    expect(harness.batches).toHaveLength(0);
     expect(harness.context.alertFn).not.toHaveBeenCalled();
     expect(harness.context.finishButton.disabled).toBe(false);
     expect(harness.endLiveBroadcast).not.toHaveBeenCalled();
@@ -285,12 +294,12 @@ describe('live tracker save-and-complete workflow', () => {
     expect(harness.batch.commit).toHaveBeenCalledTimes(1);
     expect(harness.setCalls).toEqual([
       {
-        ref: { kind: 'auto-doc', path: 'teams/team-1/games/game-9/events/AUTO_ID' },
-        data: { text: 'Home layup', gameTime: '01:20' }
-      },
-      {
         ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p1' },
         data: { playerName: 'Alex', stats: { pts: 2 }, timeMs: 1000 }
+      },
+      {
+        ref: { kind: 'auto-doc', path: 'teams/team-1/games/game-9/events/AUTO_ID' },
+        data: { text: 'Home layup', gameTime: '01:20' }
       }
     ]);
     expect(harness.updateCalls).toEqual([

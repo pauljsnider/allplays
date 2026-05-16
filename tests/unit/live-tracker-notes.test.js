@@ -3,7 +3,9 @@ import {
   isVoiceRecognitionSupported,
   normalizeGameNoteText,
   appendGameSummaryLine,
-  buildGameNoteLogText
+  removeGameSummaryLine,
+  buildGameNoteLogText,
+  buildGoalSportNoteText
 } from '../../js/live-tracker-notes.js';
 
 describe('live tracker note helpers', () => {
@@ -31,11 +33,26 @@ describe('live tracker note helpers', () => {
     expect(appendGameSummaryLine('First note', '   ')).toBe('First note');
   });
 
+  it('removes the last matching summary line', () => {
+    expect(removeGameSummaryLine('Goal A\nGoal B\nGoal A', 'Goal A')).toBe('Goal A\nGoal B');
+  });
+
+  it('leaves summaries unchanged when a matching line is not found', () => {
+    expect(removeGameSummaryLine('Goal A\nGoal B', 'Goal C')).toBe('Goal A\nGoal B');
+    expect(removeGameSummaryLine('Goal A\nGoal B', '   ')).toBe('Goal A\nGoal B');
+  });
+
   it('formats text note log entries', () => {
     expect(buildGameNoteLogText('Subbed in energy unit', 'text')).toBe('Note: Subbed in energy unit');
   });
 
   it('formats voice note log entries', () => {
     expect(buildGameNoteLogText('Great closeout by 12', 'voice')).toBe('Voice note: Great closeout by 12');
+  });
+
+  it('formats simple goal tracker notes with scoring context', () => {
+    expect(buildGoalSportNoteText('Jr KC Current', ' Header off corner ')).toBe('Jr KC Current goal: Header off corner');
+    expect(buildGoalSportNoteText('', 'Set piece')).toBe('Goal: Set piece');
+    expect(buildGoalSportNoteText('Jr KC Current', '   ')).toBe('');
   });
 });

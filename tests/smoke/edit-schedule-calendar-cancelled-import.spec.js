@@ -39,6 +39,8 @@ export async function getLatestGameAssignments() { return {}; }
 export async function postChatMessage() {}
 export async function applyTournamentAdvancementPatches() {}
 export async function getRsvpBreakdownByPlayer() { return {}; }
+export async function getPlayers() { return []; }
+export async function getRsvps() { return []; }
 export async function saveTournamentPoolOverride() {}
 export async function clearTournamentPoolOverride() {}
 export async function getOfficials() { return []; }
@@ -278,6 +280,14 @@ export async function sendPublicRsvpReminderEmails() {
 export function describeScheduleReminderWindow() {
     return 'Team default reminder window: 24 hours before event start.';
 }
+
+export function buildAvailabilityReminderRecipients() {
+    return [];
+}
+
+export function buildAvailabilityReminderEmailPreview() {
+    return { recipients: [], subject: '', body: '' };
+}
 `;
 
 const SCHEDULE_CSV_IMPORT_STUB = `
@@ -299,7 +309,7 @@ export function parseCsvText() {
 async function mockEditScheduleDependencies(page) {
     await page.route('**/js/db.js*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/utils.js?v=10', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/team-admin-banner.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route('**/js/team-access.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
     await page.route('**/js/live-game-state.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
@@ -310,8 +320,8 @@ async function mockEditScheduleDependencies(page) {
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
     await page.route('**/js/tournament-brackets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STUB }));
-    await page.route('**/js/schedule-notifications.js?v=5', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_NOTIFICATIONS_STUB }));
-    await page.route('**/js/tournament-standings.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STANDINGS_STUB }));
+    await page.route('**/js/schedule-notifications.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_NOTIFICATIONS_STUB }));
+    await page.route('**/js/tournament-standings.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TOURNAMENT_STANDINGS_STUB }));
     await page.route('**/js/schedule-csv-import.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_CSV_IMPORT_STUB }));
 }
 

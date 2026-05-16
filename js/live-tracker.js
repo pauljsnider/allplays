@@ -1,9 +1,9 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=29';
-import { db } from './firebase.js?v=11';
+import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=31';
+import { db } from './firebase.js?v=13';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
-import { checkAuth } from './auth.js?v=14';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=11';
+import { checkAuth } from './auth.js?v=15';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=13';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
@@ -17,7 +17,7 @@ import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=2';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=3';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,

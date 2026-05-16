@@ -38,7 +38,8 @@ function loadScorekeeperHelpers() {
                 email: target.email,
                 playerNames: target.playerNames
             })),
-            selectedIds: Array.from(getSelectedScorekeeperIds(context.team))
+            selectedIds: Array.from(getSelectedScorekeeperIds(context.team)),
+            selectedStreamScoreIds: Array.from(getSelectedStreamScoreIds(context.team))
         };
     `);
 }
@@ -50,7 +51,11 @@ describe('team scorekeeper grants', () => {
         expect(source).toContain('id="team-scorekeeper-section"');
         expect(source).toContain('grantScorekeeperAccess');
         expect(source).toContain('revokeScorekeeperAccess');
+        expect(source).toContain('grantStreamScoreAccess');
+        expect(source).toContain('revokeStreamScoreAccess');
         expect(source).toContain('window.toggleScorekeeperGrant = toggleScorekeeperGrant;');
+        expect(source).toContain('window.toggleStreamScoreGrant = toggleStreamScoreGrant;');
+        expect(source).toContain('Assign Stream & Score');
         expect(source).toContain('renderScorekeeperGrantControls(team, players);');
     });
 
@@ -61,7 +66,12 @@ describe('team scorekeeper grants', () => {
             currentUser: { uid: 'coach-1' },
             currentTeamAccessInfo: { hasAccess: true, accessLevel: 'full' },
             player: { name: 'Player', authUid: ' member-1 ' },
-            team: { teamPermissions: { scorekeeping: { mode: 'selected', memberIds: [' member-1 '] } } }
+            team: {
+                teamPermissions: {
+                    scorekeeping: { mode: 'selected', memberIds: [' member-1 '] },
+                    streaming: { mode: 'selected', memberIds: ['member-1'] }
+                }
+            }
         })).toEqual({
             canManageScorekeeperGrants: true,
             memberUserId: 'member-1',
@@ -71,7 +81,8 @@ describe('team scorekeeper grants', () => {
                 email: '',
                 playerNames: ['Player']
             }],
-            selectedIds: ['member-1']
+            selectedIds: ['member-1'],
+            selectedStreamScoreIds: ['member-1']
         });
 
         expect(helpers({

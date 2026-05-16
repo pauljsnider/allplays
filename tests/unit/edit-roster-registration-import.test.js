@@ -344,4 +344,13 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('player.externalPlayerId');
         expect(source).toContain('Local-only');
     });
+
+    it('surfaces delegated household contacts on roster rows', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain('Household Contacts');
+        expect(source).toContain("parent?.source === 'household'");
+        expect(source).toContain('invited by');
+        expect(source).toContain("contact.status || 'active'");
+    });
 });

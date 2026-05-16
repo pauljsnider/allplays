@@ -4,6 +4,7 @@ const Stripe = require('stripe');
 const dns = require('node:dns').promises;
 const net = require('node:net');
 const crypto = require('node:crypto');
+const { isPrivateIpAddress } = require('./utils/ip-address-validation');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -28,6 +29,14 @@ const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
+const {
+  hashRsvpToken,
+  createRawRsvpToken,
+  normalizeRsvpTokenCreateInput,
+  buildScopedRsvpDocId,
+  validateRsvpTokenRedemption,
+  buildRsvpTokenAuditPayload
+} = require('./rsvp-token-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -75,6 +84,206 @@ async function getUserForEligibility(uid) {
   const userSnap = await firestore.doc(`users/${uid}`).get();
   return userSnap.exists ? userSnap.data() || {} : {};
 }
+
+function hasTeamAdminAccess({ team, uid, email }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
+  return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
+}
+
+async function logRsvpTokenRedemptionAttempt({ teamId, payload }) {
+  const auditPayload = {
+    ...payload,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+  const collectionPath = teamId ? `teams/${teamId}/rsvpTokenAudit` : 'rsvpTokenAudit';
+  await firestore.collection(collectionPath).add(auditPayload);
+}
+
+exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before creating RSVP tokens.');
+  }
+
+  let input;
+  try {
+    input = normalizeRsvpTokenCreateInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid RSVP token request.');
+  }
+
+  const [teamSnap, gameSnap] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    firestore.doc(`teams/${input.teamId}/games/${input.gameId}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (!gameSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Event not found.');
+  }
+
+  const team = teamSnap.data() || {};
+  const user = await getUserForEligibility(context.auth.uid);
+  const email = context.auth.token?.email || user.email || '';
+  if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can create RSVP tokens.');
+  }
+
+  const token = createRawRsvpToken();
+  const tokenHash = hashRsvpToken(token);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const expiresAt = admin.firestore.Timestamp.fromMillis(input.expiresAtMs);
+  const tokenRef = firestore.doc(`teams/${input.teamId}/rsvpTokens/${tokenHash}`);
+  const rsvpDocId = buildScopedRsvpDocId(input);
+  await tokenRef.set({
+    tokenHash,
+    teamId: input.teamId,
+    gameId: input.gameId,
+    playerId: input.playerId,
+    guardianEmailHash: buildRsvpTokenAuditPayload({ guardianEmail: input.guardianEmail }).guardianEmailHash,
+    response: input.response,
+    rsvpDocId,
+    createdBy: context.auth.uid,
+    createdByEmail: email || null,
+    createdAt: now,
+    expiresAt,
+    revoked: false,
+    usedAt: null
+  });
+
+  return {
+    token,
+    tokenHash,
+    teamId: input.teamId,
+    gameId: input.gameId,
+    playerId: input.playerId,
+    guardianEmail: input.guardianEmail,
+    response: input.response,
+    expiresAt: expiresAt.toDate().toISOString()
+  };
+});
+
+exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  let body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (typeof req.body === 'string' && req.body.trim()) {
+    try {
+      body = JSON.parse(req.body);
+    } catch (error) {
+      res.status(400).json({ ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+  }
+  const teamId = String(body.teamId || req.query.teamId || '').trim();
+  const token = String(body.token || req.query.token || '').trim();
+  const tokenHash = hashRsvpToken(token);
+  if (!teamId || !tokenHash) {
+    await logRsvpTokenRedemptionAttempt({
+      teamId: teamId || null,
+      payload: buildRsvpTokenAuditPayload({ status: 'rejected', reason: 'missing_token', teamId, tokenHash })
+    });
+    res.status(400).json({ ok: false, error: 'Missing RSVP token' });
+    return;
+  }
+
+  if (teamId.includes('/')) {
+    res.status(400).json({ ok: false, error: 'Invalid teamId' });
+    return;
+  }
+
+  const tokenRef = firestore.doc(`teams/${teamId}/rsvpTokens/${tokenHash}`);
+  const auditRef = firestore.collection(`teams/${teamId}/rsvpTokenAudit`).doc();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const tokenSnap = await transaction.get(tokenRef);
+      if (!tokenSnap.exists) {
+        transaction.set(auditRef, {
+          ...buildRsvpTokenAuditPayload({ status: 'rejected', reason: 'invalid', teamId, tokenHash }),
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { ok: false, status: 403, error: 'Invalid RSVP token' };
+      }
+
+      const tokenData = tokenSnap.data() || {};
+      const validation = validateRsvpTokenRedemption({ tokenData, requestBody: body });
+      if (!validation.ok || tokenData.teamId !== teamId) {
+        const reason = tokenData.teamId !== teamId ? 'mismatched_team' : validation.reason;
+        transaction.set(auditRef, {
+          ...buildRsvpTokenAuditPayload({
+            status: 'rejected',
+            reason,
+            tokenHash,
+            teamId,
+            gameId: tokenData.gameId,
+            playerId: tokenData.playerId,
+            response: tokenData.response
+          }),
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { ok: false, status: 403, error: 'RSVP token cannot be used' };
+      }
+
+      const rsvpDocId = tokenData.rsvpDocId || buildScopedRsvpDocId(tokenData);
+      const rsvpRef = firestore.doc(`teams/${teamId}/games/${tokenData.gameId}/rsvps/${rsvpDocId}`);
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      transaction.set(rsvpRef, {
+        userId: null,
+        displayName: 'Email RSVP',
+        playerIds: [tokenData.playerId],
+        response: tokenData.response,
+        respondedAt: now,
+        note: null,
+        submittedVia: 'scoped_rsvp_token',
+        guardianEmailHash: tokenData.guardianEmailHash || buildRsvpTokenAuditPayload({ guardianEmail: tokenData.guardianEmail }).guardianEmailHash,
+        tokenHash
+      }, { merge: true });
+      transaction.update(tokenRef, {
+        usedAt: now,
+        usedForRsvpDocId: rsvpDocId,
+        usedFromIp: req.headers['x-forwarded-for'] || req.ip || null,
+        updatedAt: now
+      });
+      transaction.set(auditRef, {
+        ...buildRsvpTokenAuditPayload({
+          status: 'accepted',
+          tokenHash,
+          teamId,
+          gameId: tokenData.gameId,
+          playerId: tokenData.playerId,
+          response: tokenData.response
+        }),
+        rsvpDocId,
+        createdAt: now
+      });
+
+      return { ok: true, gameId: tokenData.gameId, playerId: tokenData.playerId, response: tokenData.response };
+    });
+
+    if (!result.ok) {
+      res.status(result.status || 403).json({ ok: false, error: result.error });
+      return;
+    }
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Failed to redeem scoped RSVP token:', error);
+    res.status(500).json({ ok: false, error: 'RSVP token redemption failed' });
+  }
+});
 
 exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -328,30 +537,6 @@ function normalizeIcsText(text) {
   return text.slice(markerIndex);
 }
 
-function isPrivateIpAddress(ip) {
-  const ipVersion = net.isIP(ip);
-  if (!ipVersion) {
-    return true;
-  }
-
-  if (ipVersion === 4) {
-    const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
-    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
-      return true;
-    }
-    if (parts[0] === 10 || parts[0] === 127 || parts[0] === 0) return true;
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    if (parts[0] === 192 && parts[1] === 168) return true;
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-    return false;
-  }
-
-  const normalized = ip.toLowerCase();
-  if (normalized === '::1' || normalized === '::') return true;
-  if (normalized.startsWith('fe80:')) return true;
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
-  return false;
-}
 
 function isBlockedHostname(host) {
   const blockedHosts = new Set([
@@ -465,15 +650,277 @@ function isAllowedOrigin(origin) {
   return allowedOriginSet.has(origin);
 }
 
-function writeCorsHeaders(req, res) {
+function isAllowedTelemetryOrigin(origin) {
+  return !!origin && allowedOriginSet.has(origin);
+}
+
+function writeCorsHeaders(req, res, methods = 'GET,OPTIONS') {
   const origin = req.headers.origin;
   if (origin && allowedOriginSet.has(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Vary', 'Origin');
   }
-  res.set('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Allow-Methods', methods);
+  res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
   res.set('Cache-Control', 'no-store');
+}
+
+function normalizeTelemetryString(value, maxLength = 160) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/\s+/g, ' ')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '[phone]')
+    .replace(/\b\d{5,}\b/g, '[number]')
+    .replace(/\b[A-Za-z0-9_-]{18,}\b/g, '[token]')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeTelemetryKey(value, maxLength = 80) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w:-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength);
+}
+
+function normalizeTelemetryIdentifier(value, maxLength = 120) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '')
+    .replace(/\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^\w:-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, maxLength);
+}
+
+function normalizeTelemetryObject(value, depth = 0) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || depth > 2) {
+    return {};
+  }
+
+  const normalized = {};
+  for (const [key, rawValue] of Object.entries(value).slice(0, 40)) {
+    const cleanKey = normalizeTelemetryKey(key, 60);
+    if (!cleanKey) continue;
+
+    if (rawValue === null || rawValue === undefined) {
+      normalized[cleanKey] = null;
+    } else if (typeof rawValue === 'boolean') {
+      normalized[cleanKey] = rawValue;
+    } else if (typeof rawValue === 'number') {
+      const sanitizedNumber = normalizeTelemetryString(rawValue, 240);
+      normalized[cleanKey] = sanitizedNumber === String(rawValue) ? rawValue : sanitizedNumber;
+    } else if (Array.isArray(rawValue)) {
+      normalized[cleanKey] = rawValue
+        .slice(0, 10)
+        .map((item) => normalizeTelemetryString(item, 80));
+    } else if (typeof rawValue === 'object') {
+      normalized[cleanKey] = normalizeTelemetryObject(rawValue, depth + 1);
+    } else {
+      normalized[cleanKey] = normalizeTelemetryString(rawValue, 240);
+    }
+  }
+  return normalized;
+}
+
+function normalizeTelemetryPath(value) {
+  const path = normalizeTelemetryString(value || '/', 220);
+  if (!path || path[0] !== '/') return '/';
+  return path.split('?')[0].split('#')[0] || '/';
+}
+
+function parseTelemetryBody(req) {
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body)) {
+    return req.body;
+  }
+
+  try {
+    if (typeof req.body === 'string') {
+      return JSON.parse(req.body);
+    }
+
+    if (Buffer.isBuffer(req.body)) {
+      return JSON.parse(req.body.toString('utf8'));
+    }
+  } catch (error) {
+    throw new Error('Invalid JSON body');
+  }
+
+  throw new Error('Invalid JSON body');
+}
+
+function getTelemetryBearerToken(req, payload) {
+  const authHeader = req.headers.authorization || '';
+  const match = typeof authHeader === 'string' ? authHeader.match(/^Bearer\s+(.+)$/i) : null;
+  if (match?.[1]) return match[1].trim();
+  return typeof payload?.authToken === 'string' ? payload.authToken.trim() : '';
+}
+
+async function verifyTelemetryAuth(req, payload) {
+  const token = getTelemetryBearerToken(req, payload);
+  if (!token) return null;
+
+  try {
+    return await admin.auth().verifyIdToken(token);
+  } catch (error) {
+    throw new Error('Invalid telemetry auth token');
+  }
+}
+
+function normalizeTelemetryEvent(rawEvent, receivedAt, authUid = null) {
+  if (!rawEvent || typeof rawEvent !== 'object') {
+    return null;
+  }
+
+  const name = normalizeTelemetryKey(rawEvent.name, 80);
+  const sessionId = normalizeTelemetryIdentifier(rawEvent.sessionId, 120);
+  const visitorId = normalizeTelemetryIdentifier(rawEvent.visitorId, 120);
+
+  if (!name || !sessionId || !visitorId) {
+    return null;
+  }
+
+  const clientTimestamp = Number.isNaN(Date.parse(rawEvent.clientTimestamp))
+    ? receivedAt.toISOString()
+    : new Date(rawEvent.clientTimestamp).toISOString();
+
+  return {
+    id: normalizeTelemetryIdentifier(rawEvent.id, 120) || `${sessionId}_${receivedAt.getTime()}`,
+    name,
+    version: normalizeTelemetryString(rawEvent.version, 24),
+    sessionId,
+    visitorId,
+    userId: authUid || null,
+    signedIn: !!authUid && rawEvent.signedIn === true,
+    clientTimestamp,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    receivedAt: receivedAt.toISOString(),
+    pagePath: normalizeTelemetryPath(rawEvent.pagePath),
+    pageTitle: normalizeTelemetryString(rawEvent.pageTitle, 140),
+    queryKeys: Array.isArray(rawEvent.queryKeys)
+      ? rawEvent.queryKeys.slice(0, 20).map((key) => normalizeTelemetryKey(key, 60)).filter(Boolean)
+      : [],
+    referrer: normalizeTelemetryString(rawEvent.referrer, 160),
+    viewport: normalizeTelemetryObject(rawEvent.viewport),
+    screen: normalizeTelemetryObject(rawEvent.screen),
+    timezone: normalizeTelemetryString(rawEvent.timezone, 80),
+    language: normalizeTelemetryString(rawEvent.language, 32),
+    userAgent: normalizeTelemetryString(rawEvent.userAgent, 260),
+    properties: normalizeTelemetryObject(rawEvent.properties)
+  };
+}
+
+function telemetryDocId(value) {
+  return normalizeTelemetryKey(value, 140) || 'unknown';
+}
+
+function getDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
+  const db = admin.firestore();
+  const increment = admin.firestore.FieldValue.increment;
+  const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
+  const isPageView = event.name === 'page_view';
+  const isInteraction = event.name.startsWith('interaction_');
+  const isError = event.name.startsWith('js_');
+
+  batch.set(db.collection('telemetryDaily').doc(dateKey), {
+    date: dateKey,
+    totalEvents: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    signedInEvents: increment(event.signedIn ? 1 : 0),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  const pageDocId = `${dateKey}_${telemetryDocId(event.pagePath)}`;
+  batch.set(db.collection('telemetryPagesDaily').doc(pageDocId), {
+    date: dateKey,
+    pagePath: event.pagePath,
+    totalEvents: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  const eventDocId = `${dateKey}_${telemetryDocId(event.name)}`;
+  batch.set(db.collection('telemetryEventsDaily').doc(eventDocId), {
+    date: dateKey,
+    name: event.name,
+    count: increment(1),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  const sessionUpdate = {
+    sessionId: event.sessionId,
+    visitorId: event.visitorId,
+    userId: event.userId || null,
+    signedIn: event.signedIn,
+    lastPage: event.pagePath,
+    lastEventName: event.name,
+    eventCount: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    updatedAt: serverTimestamp()
+  };
+
+  if (isPageView && !options.sessionExists) {
+    sessionUpdate.entryPage = event.pagePath;
+  }
+
+  batch.set(db.collection('telemetrySessions').doc(event.sessionId), sessionUpdate, { merge: true });
+}
+
+const MAX_TELEMETRY_EVENTS_PER_REQUEST = 25;
+const TELEMETRY_WRITES_PER_EVENT = 5;
+const FIRESTORE_WRITE_SAFETY_LIMIT = 450;
+
+async function commitTelemetryEvent(db, event, dateKey) {
+  const eventRef = db.collection('telemetryEvents').doc(event.id);
+  const sessionRef = db.collection('telemetrySessions').doc(event.sessionId);
+  return db.runTransaction(async (transaction) => {
+    const [existing, sessionSnap] = await Promise.all([
+      transaction.get(eventRef),
+      transaction.get(sessionRef)
+    ]);
+    if (existing.exists) {
+      return false;
+    }
+
+    transaction.create(eventRef, event);
+    applyTelemetryAggregateWrites(transaction, event, dateKey, { sessionExists: sessionSnap.exists });
+    return true;
+  });
+}
+
+async function commitTelemetryEvents(db, events, dateKey) {
+  const maxEventsPerChunk = Math.max(1, Math.floor(FIRESTORE_WRITE_SAFETY_LIMIT / TELEMETRY_WRITES_PER_EVENT));
+  let stored = 0;
+  let duplicates = 0;
+
+  for (let i = 0; i < events.length; i += maxEventsPerChunk) {
+    const chunk = events.slice(i, i + maxEventsPerChunk);
+    const results = await Promise.all(chunk.map((event) => commitTelemetryEvent(db, event, dateKey)));
+    stored += results.filter(Boolean).length;
+    duplicates += results.filter((result) => !result).length;
+  }
+
+  return { stored, duplicates };
 }
 
 const calendarServiceAccount =
@@ -1538,3 +1985,64 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     publicRsvpJsonError(res, 403, error?.message || 'Unable to submit RSVP.');
   }
 });
+
+exports.collectTelemetry = functions
+  .runWith({ timeoutSeconds: 15, memory: '256MB' })
+  .https
+  .onRequest(async (req, res) => {
+    writeCorsHeaders(req, res, 'POST,OPTIONS');
+
+    if (!isAllowedTelemetryOrigin(req.headers.origin)) {
+      res.status(403).json({ ok: false, error: 'Origin not allowed' });
+      return;
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.status(204).send('');
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.status(405).json({ ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    const rawSize = Number(req.headers['content-length'] || 0);
+    if (rawSize > 64 * 1024) {
+      res.status(413).json({ ok: false, error: 'Telemetry payload too large' });
+      return;
+    }
+
+    try {
+      const payload = parseTelemetryBody(req);
+      const verifiedAuth = await verifyTelemetryAuth(req, payload);
+      const rawEvents = Array.isArray(payload?.events)
+        ? payload.events.slice(0, MAX_TELEMETRY_EVENTS_PER_REQUEST)
+        : [];
+      if (!rawEvents.length) {
+        res.status(400).json({ ok: false, error: 'No telemetry events provided' });
+        return;
+      }
+
+      const receivedAt = new Date();
+      const dateKey = getDateKey(receivedAt);
+      const events = rawEvents
+        .map((event) => normalizeTelemetryEvent(event, receivedAt, verifiedAuth?.uid || null))
+        .filter(Boolean);
+
+      if (!events.length) {
+        res.status(400).json({ ok: false, error: 'No valid telemetry events provided' });
+        return;
+      }
+
+      const db = admin.firestore();
+      await commitTelemetryEvents(db, events, dateKey);
+      res.status(204).send('');
+    } catch (error) {
+      console.error('Telemetry collection failed:', error);
+      res.status(400).json({
+        ok: false,
+        error: error?.message || 'Telemetry collection failed'
+      });
+    }
+  });

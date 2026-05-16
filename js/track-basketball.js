@@ -1,9 +1,9 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=29';
-import { db } from './firebase.js?v=11';
+import { getTeam, getGame, getPlayers, getConfigs, updateGame, getMyRsvp, collection, getDocs, deleteDoc, query } from './db.js?v=31';
+import { db } from './firebase.js?v=13';
 import { getUrlParams, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=14';
-import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=11';
+import { checkAuth } from './auth.js?v=15';
+import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=13';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=3';
@@ -1431,6 +1431,7 @@ async function init() {
           const key = col.toLowerCase();
           if (data[key] !== undefined) stats[key] = data[key];
         });
+        if (data.fouls !== undefined) stats.fouls = data.fouls;
         return { id, name: data.name || '', number: data.number || '', stats };
       });
     } else {

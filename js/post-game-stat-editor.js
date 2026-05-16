@@ -1,7 +1,8 @@
 import { buildConfiguredStatFields } from './game-report-stats.js?v=1';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
 function normalizeStatKey(key) {
-    return String(key || '').trim().toLowerCase();
+    return String(key || '').trim().toLowerCase().replace(/\s+/g, '');
 }
 
 export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {} } = {}) {
@@ -23,7 +24,18 @@ export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {}
             .map((key) => ({ fieldName: key, label: key.toUpperCase() }));
     }
 
-    if (!fields.some((field) => field.fieldName === 'fouls')) {
+    const existingFieldNames = new Set(fields.map((field) => field.fieldName));
+    const privatePlayerFields = normalizeStatTrackerConfig(resolvedConfig || {}).statDefinitions
+        .filter((definition) => definition.scope === 'player' && definition.visibility === 'private' && definition.type === 'base')
+        .map((definition) => ({ fieldName: definition.id, label: definition.label || definition.acronym || definition.id.toUpperCase() }))
+        .filter((field) => field.fieldName && !existingFieldNames.has(field.fieldName));
+
+    privatePlayerFields.forEach((field) => {
+        fields.push(field);
+        existingFieldNames.add(field.fieldName);
+    });
+
+    if (!existingFieldNames.has('fouls')) {
         fields.push({ fieldName: 'fouls', label: 'FOULS' });
     }
 
@@ -33,6 +45,44 @@ export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {}
 function normalizeNumericInput(value) {
     const parsed = Number.parseInt(String(value ?? '').trim(), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+
+export function resolvePostGameTeamStatFields({ resolvedConfig = null, teamStats = {} } = {}) {
+    const definitions = Array.isArray(resolvedConfig?.statDefinitions) ? resolvedConfig.statDefinitions : [];
+    const configuredFields = definitions
+        .filter((definition) => definition?.scope === 'team' && definition?.type !== 'derived')
+        .map((definition) => ({
+            fieldName: normalizeStatKey(definition.id || definition.acronym || definition.label),
+            label: definition.label || definition.acronym || definition.id || 'Team stat'
+        }))
+        .filter((field) => field.fieldName);
+
+    const byKey = new Map();
+    configuredFields.forEach((field) => byKey.set(field.fieldName, field));
+
+    Object.keys(teamStats || {}).forEach((key) => {
+        const fieldName = normalizeStatKey(key);
+        if (fieldName && !byKey.has(fieldName)) {
+            byKey.set(fieldName, { fieldName, label: fieldName.toUpperCase() });
+        }
+    });
+
+    return Array.from(byKey.values());
+}
+
+export function buildCompletedGameTeamStatsPayload({
+    statFields = [],
+    values = {}
+} = {}) {
+    const stats = {};
+    statFields.forEach((field) => {
+        const key = normalizeStatKey(field?.fieldName);
+        if (!key) return;
+        stats[key] = normalizeNumericInput(values[key]);
+    });
+
+    return { stats };
 }
 
 export function resolvePostGameEditorDidNotPlay({

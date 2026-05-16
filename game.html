@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -275,6 +276,46 @@
             </div>
         </div>
 
+
+        <!-- Team Stats Section -->
+        <div id="team-stats-section" class="mb-8 md:mb-10 hidden">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="h-1 w-8 bg-gradient-to-r from-primary-500 to-primary-700 rounded-full"></div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900">Team Performance</h2>
+                </div>
+                <button id="edit-team-stats-btn"
+                    class="hidden px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+                    Edit Team Stats
+                </button>
+            </div>
+            <div id="team-stats-editor-admin" class="hidden mb-4 bg-white shadow-sm rounded-xl p-4 border border-gray-200">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <div class="text-sm font-semibold text-gray-900">Manager-only team stats</div>
+                        <p class="text-sm text-gray-500">Update game-level team metrics without assigning them to a player.</p>
+                    </div>
+                    <span id="team-stats-editor-status" class="text-sm text-gray-500"></span>
+                </div>
+                <div id="team-stats-editor-panel" class="hidden mt-4 space-y-4">
+                    <div id="team-stats-editor-fields" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+                    <div class="flex flex-wrap gap-2">
+                        <button id="team-stats-save-btn"
+                            class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-semibold text-sm">
+                            Save
+                        </button>
+                        <button id="team-stats-cancel-btn"
+                            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold text-sm">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white shadow-lg rounded-2xl overflow-hidden border border-gray-200">
+                <div id="team-stats-body" class="grid grid-cols-2 md:grid-cols-4 gap-3 p-4"></div>
+            </div>
+        </div>
+
         <!-- Game Log and Opponent Stats Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
             <div>
@@ -347,16 +388,17 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats } from './js/db.js?v=29';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats, getTeamStatsForGame, setCompletedGameTeamStats } from './js/db.js?v=31';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=14';
-        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=11";
-        import { db } from './js/firebase.js?v=11';
+        import { checkAuth } from './js/auth.js?v=15';
+        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=12";
+        import { db } from './js/firebase.js?v=13';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
+        import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
         import { resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=1';
-        import { resolvePostGameStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=2';
+        import { resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=3';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from './js/live-game-video.js?v=3';
 
         let currentUser = null;
@@ -699,6 +741,7 @@
                     status.textContent = `Error: ${error.message}`;
                 } finally {
                     removeBtn.disabled = false;
+                    uploadBtn.disabled = false; // Re-enable upload button after removal
                 }
             });
         }
@@ -726,11 +769,13 @@
             admin.classList.remove('hidden');
 
             let generatedSummary = '';
+            let isSavingSummary = false;
 
             const openEditor = (auto = false) => {
                 editor.classList.remove('hidden');
                 editBtn.classList.add('hidden');
                 summaryDiv.classList.add('hidden');
+                saveBtn.disabled = false;
                 if (auto && !game.summary) {
                     textarea.value = '';
                 }
@@ -740,6 +785,7 @@
                 editor.classList.add('hidden');
                 editBtn.classList.remove('hidden');
                 summaryDiv.classList.remove('hidden');
+                saveBtn.disabled = false;
                 textarea.value = game.summary || '';
                 status.textContent = '';
             };
@@ -814,12 +860,17 @@ Write the match report now:`;
             });
 
             saveBtn.addEventListener('click', async () => {
+                if (isSavingSummary) {
+                    return;
+                }
+
                 const summaryText = textarea.value.trim();
                 if (!summaryText && !generatedSummary) {
                     status.textContent = 'Add a summary or generate one first.';
                     return;
                 }
 
+                isSavingSummary = true;
                 saveBtn.disabled = true;
                 status.textContent = 'Saving summary…';
                 try {
@@ -830,10 +881,12 @@ Write the match report now:`;
                     setTimeout(() => {
                         summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
                     }, 100);
+                    isSavingSummary = false;
                     closeEditor();
                 } catch (error) {
                     console.error('Error saving summary:', error);
                     status.textContent = `Error: ${error.message}`;
+                    isSavingSummary = false;
                     saveBtn.disabled = false;
                 }
             });
@@ -891,6 +944,129 @@ Write the match report now:`;
                     </tr>
                 `;
             }).join('');
+        }
+
+
+        function renderTeamStatsSection({ teamStats = {}, teamStatFields = [] } = {}) {
+            const section = document.getElementById('team-stats-section');
+            const body = document.getElementById('team-stats-body');
+            if (!section || !body) return;
+
+            const visibleFields = (teamStatFields || []).filter((field) => field?.fieldName);
+            if (!canEditStats || visibleFields.length === 0) {
+                section.classList.add('hidden');
+                body.innerHTML = '';
+                return;
+            }
+
+            section.classList.remove('hidden');
+            body.innerHTML = visibleFields.map((field) => {
+                const key = field.fieldName;
+                return `
+                    <div class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <div class="text-xs font-semibold uppercase tracking-wider text-gray-500">${escapeHtml(field.label || key.toUpperCase())}</div>
+                        <div class="mt-2 text-2xl font-bold font-mono text-gray-900">${escapeHtml(String(teamStats[key] || 0))}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function setupPostGameTeamStatEditor({
+            teamId,
+            gameId,
+            game,
+            teamStats,
+            teamStatFields,
+            rerenderTeamStats
+        }) {
+            const editBtn = document.getElementById('edit-team-stats-btn');
+            const admin = document.getElementById('team-stats-editor-admin');
+            const panel = document.getElementById('team-stats-editor-panel');
+            const status = document.getElementById('team-stats-editor-status');
+            const fieldsEl = document.getElementById('team-stats-editor-fields');
+            const saveBtn = document.getElementById('team-stats-save-btn');
+            const cancelBtn = document.getElementById('team-stats-cancel-btn');
+
+            if (!editBtn || !admin || !panel || !status || !fieldsEl || !saveBtn || !cancelBtn) return;
+
+            const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
+            if (!canEditStats || !gameCompleted || !Array.isArray(teamStatFields) || teamStatFields.length === 0) {
+                editBtn.classList.add('hidden');
+                admin.classList.add('hidden');
+                return;
+            }
+
+            function renderEditor() {
+                fieldsEl.innerHTML = teamStatFields.map((field) => {
+                    const key = field.fieldName;
+                    const value = teamStats[key] || 0;
+                    return `
+                        <label class="block">
+                            <span class="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">${escapeHtml(field.label || key.toUpperCase())}</span>
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                data-team-stat-field="${escapeHtml(key)}"
+                                value="${escapeHtml(String(value))}"
+                                class="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm"
+                            >
+                        </label>
+                    `;
+                }).join('');
+            }
+
+            function openEditor() {
+                admin.classList.remove('hidden');
+                panel.classList.remove('hidden');
+                status.textContent = '';
+                renderEditor();
+            }
+
+            function closeEditor() {
+                panel.classList.add('hidden');
+                status.textContent = '';
+            }
+
+            async function saveTeamStats() {
+                const values = {};
+                fieldsEl.querySelectorAll('[data-team-stat-field]').forEach((input) => {
+                    values[input.dataset.teamStatField] = input.value;
+                });
+
+                const payload = buildCompletedGameTeamStatsPayload({
+                    statFields: teamStatFields,
+                    values
+                });
+
+                [saveBtn, cancelBtn, editBtn].forEach((button) => {
+                    if (button) button.disabled = true;
+                });
+                status.textContent = 'Saving team stats…';
+
+                try {
+                    await setCompletedGameTeamStats(teamId, gameId, payload);
+                    Object.keys(teamStats).forEach((key) => delete teamStats[key]);
+                    Object.assign(teamStats, payload.stats || {});
+                    rerenderTeamStats();
+                    closeEditor();
+                } catch (error) {
+                    console.error('Error saving team stats:', error);
+                    status.textContent = `Error: ${error.message}`;
+                } finally {
+                    [saveBtn, cancelBtn, editBtn].forEach((button) => {
+                        if (button) button.disabled = false;
+                    });
+                }
+            }
+
+            editBtn.classList.remove('hidden');
+            admin.classList.remove('hidden');
+            panel.classList.add('hidden');
+
+            editBtn.addEventListener('click', openEditor);
+            cancelBtn.addEventListener('click', closeEditor);
+            saveBtn.addEventListener('click', saveTeamStats);
         }
 
         function setupPostGameStatEditor({
@@ -1009,8 +1185,13 @@ Write the match report now:`;
                 status.textContent = 'Saving stats…';
 
                 try {
-                    await setCompletedGamePlayerStats(teamId, gameId, player.id, payload);
-                    statsMap[player.id] = { ...(payload.stats || {}) };
+                    await setCompletedGamePlayerStats(teamId, gameId, player.id, {
+                        ...payload,
+                        statTrackerConfig: resolvedConfig
+                    });
+                    const { publicStats } = splitPlayerStatsByVisibility(resolvedConfig || {}, payload.stats || {});
+                    statsMap[player.id] = publicStats;
+                    editorStatsMap[player.id] = { ...(payload.stats || {}) };
                     didNotPlayMap[player.id] = payload.didNotPlay === true;
                     pendingDidNotPlayMap[player.id] = payload.didNotPlay === true;
                     timeMap[player.id] = payload.timeMs || 0;
@@ -1268,6 +1449,15 @@ Write the match report now:`;
                     didNotPlayMap[doc.id] = data.didNotPlay === true;
                 });
 
+                let teamStats = {};
+                if (canEditStats) {
+                    try {
+                        teamStats = await getTeamStatsForGame(teamId, gameId);
+                    } catch (err) {
+                        console.error('Error fetching team stats:', err);
+                    }
+                }
+
                 // Fetch the config used for this game
                 let resolvedConfig = null;
 
@@ -1281,6 +1471,22 @@ Write the match report now:`;
                     });
                 } catch (err) {
                     console.error('Error fetching config:', err);
+                }
+
+                const editorStatsMap = { ...statsMap };
+                if (canEditStats) {
+                    try {
+                        const privateStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`));
+                        privateStatsSnapshot.forEach(doc => {
+                            const data = doc.data() || {};
+                            editorStatsMap[doc.id] = {
+                                ...(editorStatsMap[doc.id] || {}),
+                                ...(data.stats || {})
+                            };
+                        });
+                    } catch (err) {
+                        console.error('Error fetching private player stats:', err);
+                    }
                 }
 
                 const { statKeys, statLabels } = resolveReportStatColumns({
@@ -1333,12 +1539,26 @@ Write the match report now:`;
 
                 renderStatsTable();
 
+                const teamStatFields = resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
+                function rerenderTeamStats() {
+                    renderTeamStatsSection({ teamStats, teamStatFields });
+                }
+                rerenderTeamStats();
+                setupPostGameTeamStatEditor({
+                    teamId,
+                    gameId,
+                    game,
+                    teamStats,
+                    teamStatFields,
+                    rerenderTeamStats
+                });
+
                 setupPostGameStatEditor({
                     teamId,
                     gameId,
                     game,
                     players,
-                    statsMap,
+                    statsMap: editorStatsMap,
                     didNotPlayMap,
                     timeMap,
                     resolvedConfig,
