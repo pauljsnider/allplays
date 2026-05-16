@@ -7,10 +7,15 @@ function readRepoFile(relativePath) {
 
 function expectMobileTocActiveStateSupport(source) {
     expect(source).toContain('const allLinks = [...links];');
-    expect(source).toContain("allLinks.push(...Array.from(list.querySelectorAll('a')));");
+    expect(source).toContain('const ensureMobileToc = () => {');
+    expect(source).toContain('if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;');
+    expect(source).toContain("const mobileLinks = Array.from(list.querySelectorAll('a'));");
+    expect(source).toContain('allLinks.push(...mobileLinks);');
+    expect(source).toContain('addLinkHandlers(mobileLinks);');
     expect(source).toContain("allLinks.forEach((a) => a.classList.toggle('is-active'");
-    expect(source).toContain("a.addEventListener('click', () => {");
+    expect(source).toContain('const addLinkHandlers = (tocLinks) => {');
     expect(source).toContain("window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));");
+    expect(source).toContain("window.addEventListener('resize', ensureMobileToc, { passive: true });");
     expect(source).not.toContain("links.forEach((a) => a.classList.toggle('is-active'");
 }
 

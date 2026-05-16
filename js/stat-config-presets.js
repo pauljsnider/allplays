@@ -1,4 +1,4 @@
-import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
 const PRESET_DEFINITIONS = [
     {

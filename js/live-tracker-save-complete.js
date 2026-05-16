@@ -23,9 +23,13 @@ export function addFinishPlanWritesToBatch({
     batch.set(eventRef, data);
   });
 
-  finishPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
+  finishPlan.aggregatedStatsWrites.forEach(({ playerId, data, privateData }) => {
     const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
     batch.set(statsRef, data);
+    if (privateData) {
+      const privateStatsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, playerId);
+      batch.set(privateStatsRef, privateData);
+    }
   });
 
   const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
@@ -127,6 +131,7 @@ export async function runSaveAndCompleteWorkflow({
     opponentName: currentGame?.opponent || 'Unknown Opponent',
     recipientEmail,
     columns: currentConfig?.columns || [],
+    statTrackerConfig: currentConfig || {},
     roster,
     statsByPlayerId: state.stats,
     opponentEntries: state.opp,

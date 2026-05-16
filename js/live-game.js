@@ -15,12 +15,12 @@ import {
   subscribeGame,
   updateGame,
   uploadGameClip
-} from './db.js?v=29';
+} from './db.js?v=31';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=14';
+import { checkAuth } from './auth.js?v=15';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -1817,7 +1817,17 @@ function updateMomentum(event) {
     state.lastRunAnnounced = 0;
   }
 
-  state.scoringRun.points += Math.abs(event.value || 0);
+  const eventValue = event.value || 0;
+  if (eventValue < 0) {
+    // Point deduction for the current scoring team, reset the run.
+    // If it's a deduction for the other team, it will already reset in the `if (state.scoringRun.team !== scoringTeam)` block.
+    state.scoringRun.team = null; // Clear team to ensure it resets next score
+    state.scoringRun.points = 0;
+    state.lastRunAnnounced = 0;
+  } else if (eventValue > 0) {
+    // Only add positive points to the scoring run
+    state.scoringRun.points += eventValue;
+  }
 
   if (state.scoringRun.points >= 5 && state.scoringRun.points !== state.lastRunAnnounced) {
     state.lastRunAnnounced = state.scoringRun.points;

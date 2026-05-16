@@ -302,6 +302,8 @@
 <li>Set event status as <code>Going</code>, <code>Maybe</code>, or <code>Can&#39;t Go</code>.</li>
 <li>Offer rides, request spots, and manage request decisions.</li>
 <li>Recover quickly from common send, access, and RSVP issues.</li>
+<li>Send targeted messages to individuals or staff groups.</li>
+<li>Browse all team Photos &amp; Videos including older media.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -322,6 +324,7 @@
 <li>Submit event availability: use the schedule list or calendar event view.</li>
 <li>Coordinate transportation: use event rideshare.</li>
 <li>Communicate during a game: use live-game chat when enabled.</li>
+<li>5. Send a direct or staff-group message: use <strong>Conversations</strong> in team chat.</li>
 </ol>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <h3 id="path-a-team-messages-and-moderation">Path A: Team Messages and Moderation</h3>
@@ -337,6 +340,14 @@
 <li>If you are a Coach or Admin, remove off-topic or inappropriate messages from others when needed.</li>
 <li>For live-game chat, post short updates. If chat is locked, retry at game time.</li>
 </ol>
+<h3>Path A2: Targeted Conversations (Direct or Staff Messages)</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open team chat (<code>team-chat.html</code>) and select <strong>Conversations</strong>.</li>
+<li>Start a new conversation by selecting recipients — an individual member or a staff group.</li>
+<li>Send targeted messages visible only to the sender, listed recipients, and team owner/admin.</li>
+<li>Switch between conversations and the default team-wide channel using the conversations list.</li>
+</ol>
+<p>Note: The default team-wide channel is always available. Targeted messages are stored separately and are access-controlled — only listed participants can read them.</p>
 <h3 id="path-b-rsvp-availability">Path B: RSVP Availability</h3>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Open the event from schedule list, calendar, or day detail.</li>
@@ -362,6 +373,14 @@
 <li>Who can moderate chat? Everyone can manage their own messages. Coaches and admins can also remove messages from others.</li>
 <li>How do I ask the assistant a question? Type <code>@ALL PLAYS</code> and your question in one message.</li>
 </ul>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Who can see a targeted conversation?</strong></li>
+</ul>
+<p>Only the sender, listed recipients, and the team owner/admin can read targeted messages. Other team members cannot see them.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Why does the Photos &amp; Videos gallery sometimes load more images after it opens?</strong></li>
+</ul>
+<p>The gallery fetches older chat history when it opens so media beyond the initial real-time window is included. The count and grid refresh automatically once the older messages are loaded.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Message failed to send: Check your connection, resend, and keep the message short.</li>
@@ -370,6 +389,8 @@
 <li>Live-game chat is locked: Wait until game time, then post again.</li>
 <li>RSVP did not save: Reopen the event, reselect your response, and confirm the button stays active.</li>
 <li>Team chat access error: Return to team context and reopen chat from that team.</li>
+<li><strong>Cannot start a targeted conversation</strong>: Confirm you are a team member with chat access and the recipient is a confirmed team participant.</li>
+<li><strong>Gallery shows fewer photos than expected</strong>: Wait a moment for older chat history to load — the gallery fetches older messages on open and refreshes automatically.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -416,25 +437,6 @@
         const allLinks = [...links];
         let mobileWrapper = null;
 
-        if (mobileToc && window.innerWidth < 1024) {
-          const wrapper = document.createElement('details');
-          wrapper.className = 'wf-panel-section wf-panel';
-          wrapper.style.marginBottom = '0.95rem';
-          wrapper.style.padding = '0.8rem 1rem';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Jump to section';
-          summary.style.cursor = 'pointer';
-          summary.style.fontWeight = '700';
-          summary.style.color = '#0f172a';
-          const list = toc.cloneNode(true);
-          list.style.marginTop = '0.6rem';
-          allLinks.push(...Array.from(list.querySelectorAll('a')));
-          wrapper.appendChild(summary);
-          wrapper.appendChild(list);
-          mobileToc.appendChild(wrapper);
-          mobileWrapper = wrapper;
-        }
-
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const setActive = (activeId) => {
           let active = sectionById.get(activeId) || headings[0];
@@ -446,17 +448,46 @@
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        allLinks.forEach((a) => {
-          a.addEventListener('click', () => {
-            setActive(a.getAttribute('href').slice(1));
-            if (mobileWrapper && mobileWrapper.contains(a)) {
-              mobileWrapper.open = false;
-            }
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
           });
-        });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>

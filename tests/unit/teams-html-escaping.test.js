@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { escapeHtml, getSafeImageUrl } from '../../js/utils.js';
+
+function readTeamsPage() {
+    return readFileSync(new URL('../../teams.html', import.meta.url), 'utf8');
+}
 
 // Helper to strip ANSI escape codes from strings, often injected by test runners for colored output.
 function stripAnsiCodes(str) {
@@ -17,6 +22,17 @@ describe('teams page HTML escaping', () => {
         expect(getSafeImageUrl('javascript:alert(1)')).toBe('');
         expect(getSafeImageUrl('data:image/svg+xml,<svg onload=alert(1)>')).toBe('');
         expect(getSafeImageUrl('https://cdn.example.com/team.png')).toBe('https://cdn.example.com/team.png');
+    });
+
+    it('wires location search controls into the teams query without form navigation', () => {
+        const source = readTeamsPage();
+
+        expect(source).toContain("searchForm.addEventListener('submit'");
+        expect(source).toContain('event.preventDefault();');
+        expect(source).toContain('await loadTeams(getLocationSearchValue());');
+        expect(source).toContain('getTeams(locationFilter ? { locationFilter } : {})');
+        expect(source).toContain("clearSearchButton.addEventListener('click'");
+        expect(source).toContain("locationSearchInput.value = '';");
     });
 
     // This test now relies on the actual rendering logic in teams.html
