@@ -8,9 +8,13 @@ import {
     buildOrganizationSharedGamePayload,
     buildVenueAvailabilityPayload,
     formatBlackoutDateRecord,
+    formatOrganizationVenueLocation,
     formatVenueAvailabilityRecord,
     getOrganizationTeams,
     inferOrganizationScheduleCsvMapping,
+    normalizeOrganizationVenueDraft,
+    sortOrganizationVenues,
+    validateOrganizationVenueDraft,
     validateOrganizationMatchup
 } from '../../js/organization-schedule.js';
 
@@ -204,6 +208,34 @@ describe('organization schedule helpers', () => {
         });
     });
 
+    it('normalizes and validates organization venues with sub-venues', () => {
+        expect(normalizeOrganizationVenueDraft({
+            name: '  Sports Complex  ',
+            subVenues: 'Field 1, Field 2\nField 1'
+        })).toEqual({
+            name: 'Sports Complex',
+            address: null,
+            subVenues: ['Field 1', 'Field 2']
+        });
+
+        expect(validateOrganizationVenueDraft({ name: 'Sports Complex', subVenues: 'Field 1' })).toMatchObject({ ok: true });
+        expect(validateOrganizationVenueDraft({ name: 'Sports Complex', subVenues: '' })).toMatchObject({
+            ok: false,
+            error: 'Add at least one sub-venue, such as Field 1, Court A, or Rink 2.'
+        });
+    });
+
+    it('sorts venues and formats saved venue locations for schedule creation', () => {
+        const venues = sortOrganizationVenues([
+            { id: 'venue-2', name: 'Zoo Complex' },
+            { id: 'venue-1', name: 'Alpha Complex' }
+        ]);
+
+        expect(venues.map((venue) => venue.id)).toEqual(['venue-1', 'venue-2']);
+        expect(formatOrganizationVenueLocation({ name: 'Alpha Complex' }, 'Field 2')).toBe('Alpha Complex - Field 2');
+        expect(formatOrganizationVenueLocation({ name: 'Alpha Complex' })).toBe('Alpha Complex');
+    });
+
     it('generates editable draft slots only inside availability and blackout rules', () => {
         const draft = buildOrganizationScheduleDraftSlots({
             selectedTeams: accessibleTeams.slice(0, 2),
@@ -336,6 +368,25 @@ describe('organization schedule helpers', () => {
         expect(source).toContain("const homeLink = document.createElement('a');");
         expect(source).not.toContain('successAlert.innerHTML =');
     });
+    it('wires admin-managed organization venues and saved location selection', () => {
+        const html = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+        const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+
+        expect(html).toContain('id="organization-venue-form"');
+        expect(html).toContain('id="savedVenueId"');
+        expect(html).toContain('id="savedSubVenue"');
+        expect(html).toContain("collection(db, 'teams', anchorTeam.id, 'organizationVenues')");
+        expect(html).toContain('formatOrganizationVenueLocation');
+        expect(html).toContain('function canManageOrganizationVenues()');
+        expect(html).toContain('setOrganizationVenueManagementEnabled(false);');
+        expect(html).toContain('Organization venue management is available only to team admins.');
+        expect(html).toContain('await addDoc(getOrganizationVenuesCollectionRef()');
+        expect(html).toContain('await updateDoc(doc(db, \'teams\', anchorTeam.id, \'organizationVenues\'');
+        expect(html).toContain('await deleteDoc(doc(db, \'teams\', anchorTeam.id, \'organizationVenues\'');
+        expect(rules).toContain('match /organizationVenues/{venueId}');
+        expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+    });
+
     it('wires venue availability and blackout controls on the organization schedule page', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 

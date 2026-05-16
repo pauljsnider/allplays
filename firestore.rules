@@ -1151,6 +1151,10 @@ service cloud.firestore {
         allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /organizationVenues/{venueId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /venueAvailability/{availabilityId} {
         allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
