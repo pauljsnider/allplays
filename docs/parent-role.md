@@ -51,7 +51,7 @@
 ## Public Registration Forms
 - Coaches/admins manage published registration form documents at `teams/{teamId}/registrationForms/{formId}`.
 - `registration.html` reads only published forms by direct link and writes new records under `teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}` with `status: 'pending'`.
-- Public submissions are intentionally limited to form field values, explicit waiver acceptance, fee/program snapshot data, and submission metadata. Online payments, document upload, discounting, and auto-roster placement remain separate follow-up flows.
+- Public submissions are intentionally limited to form field values, explicit waiver acceptance, fee/program/payment settings snapshot data, and submission metadata. Admins can mark forms for offline payment or future online checkout; online payment processing, document upload, discounting, and auto-roster placement remain separate follow-up flows.
 
 ## Testing Ideas
 - Parent signup with valid/invalid code; cannot sign up without code.
