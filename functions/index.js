@@ -1196,10 +1196,10 @@ async function requirePublicRsvpAdmin(req) {
   return admin.auth().verifyIdToken(match[1]);
 }
 
-function publicRsvpUserCanManageTeam({ team, uid, email }) {
+function publicRsvpUserCanManageTeam({ team, user, uid, email }) {
   const normalizedEmail = normalizePublicRsvpEmail(email);
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map(normalizePublicRsvpEmail) : [];
-  return team?.ownerId === uid || (normalizedEmail && adminEmails.includes(normalizedEmail));
+  return user?.isAdmin === true || team?.ownerId === uid || (normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 
 function getPublicRsvpParentContacts(player) {
@@ -1230,6 +1230,13 @@ function publicRsvpIsResponded(response) {
   return PUBLIC_RSVP_RESPONSES.has(String(response || '').trim());
 }
 
+function getPublicRsvpResponseSortMs(rsvp, docSnap) {
+  const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);
+  if (respondedAt) return respondedAt.getTime();
+  const updateTime = coercePublicRsvpDate(docSnap?.updateTime);
+  return updateTime ? updateTime.getTime() : 0;
+}
+
 async function loadPublicRsvpEvent(teamId, gameId) {
   const gameSnap = await firestore.doc(`teams/${teamId}/games/${gameId}`).get();
   if (gameSnap.exists) return { id: gameSnap.id, path: `teams/${teamId}/games/${gameId}`, data: gameSnap.data() || {} };
@@ -1253,20 +1260,27 @@ async function buildPublicRsvpSummary(teamId, gameId) {
     if (player.active !== false) activePlayerIds.add(docSnap.id);
   });
 
-  const responded = new Set();
+  const responsesByPlayerId = new Map();
   const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0 };
   rsvpsSnap.forEach((docSnap) => {
     const rsvp = docSnap.data() || {};
     const response = normalizePublicRsvpResponse(rsvp.response);
     if (!response) return;
     const playerIds = getPublicRsvpPlayerIds(rsvp).filter((playerId) => activePlayerIds.has(playerId));
-    playerIds.forEach((playerId) => responded.add(playerId));
-    const increment = playerIds.length || 1;
-    if (response === 'going') summary.going += increment;
-    if (response === 'maybe') summary.maybe += increment;
-    if (response === 'not_going') summary.notGoing += increment;
+    const respondedAtMs = getPublicRsvpResponseSortMs(rsvp, docSnap);
+    playerIds.forEach((playerId) => {
+      const existing = responsesByPlayerId.get(playerId);
+      if (!existing || respondedAtMs >= existing.respondedAtMs) {
+        responsesByPlayerId.set(playerId, { response, respondedAtMs });
+      }
+    });
   });
-  summary.notResponded = Math.max(activePlayerIds.size - responded.size, 0);
+  responsesByPlayerId.forEach(({ response }) => {
+    if (response === 'going') summary.going += 1;
+    if (response === 'maybe') summary.maybe += 1;
+    if (response === 'not_going') summary.notGoing += 1;
+  });
+  summary.notResponded = Math.max(activePlayerIds.size - responsesByPlayerId.size, 0);
   return summary;
 }
 
@@ -1429,16 +1443,18 @@ exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const [teamSnap, eventRecord] = await Promise.all([
+    const [teamSnap, eventRecord, userSnap] = await Promise.all([
       firestore.doc(`teams/${teamId}`).get(),
-      loadPublicRsvpEvent(teamId, gameId)
+      loadPublicRsvpEvent(teamId, gameId),
+      firestore.doc(`users/${tokenData.uid}`).get()
     ]);
     if (!teamSnap.exists || !eventRecord) {
       publicRsvpJsonError(res, 404, 'Event not found.');
       return;
     }
     const team = teamSnap.data() || {};
-    if (!publicRsvpUserCanManageTeam({ team, uid: tokenData.uid, email: tokenData.email })) {
+    const user = userSnap.exists ? userSnap.data() || {} : {};
+    if (!publicRsvpUserCanManageTeam({ team, user, uid: tokenData.uid, email: tokenData.email })) {
       publicRsvpJsonError(res, 403, 'You do not have permission to send RSVP emails for this team.');
       return;
     }
