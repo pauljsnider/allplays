@@ -181,10 +181,11 @@ service cloud.firestore {
     }
 
     function isFamilyMembershipRemoval(data, userId) {
-      return data.keys().hasAll(['email', 'status', 'organizerUserId']) &&
+      return data.keys().hasAll(['email', 'status', 'organizerUserId', 'accessStatus']) &&
              data.organizerUserId == userId &&
              data.email is string &&
-             data.status == 'removed';
+             data.status == 'removed' &&
+             data.accessStatus == 'revoked';
     }
 
     function isHouseholdInvitePayloadValid(data, userId) {
@@ -460,8 +461,13 @@ service cloud.firestore {
              );
     }
 
-    function isOpenOfficiatingSelfAssignmentUpdate() {
-      return isSignedIn() &&
+    function canClaimOpenOfficiatingSlot(teamId) {
+      return isTeamOwnerOrAdmin(teamId) ||
+             isParentForTeam(teamId);
+    }
+
+    function isOpenOfficiatingSelfAssignmentUpdate(teamId) {
+      return canClaimOpenOfficiatingSlot(teamId) &&
              resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -706,7 +712,7 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
         allow update: if isOwner(userId) &&
                       isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt']);
         allow delete: if false;
       }
 
@@ -728,7 +734,9 @@ service cloud.firestore {
                        (resource.data.generatedBy == request.auth.uid ||
                         // Allow marking as used only if setting these specific fields
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
-                         request.resource.data.usedBy == request.auth.uid));
+                         request.resource.data.usedBy == request.auth.uid) ||
+                        (resource.data.generatedBy == request.auth.uid &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
 	    }
 
@@ -1070,7 +1078,7 @@ service cloud.firestore {
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
-        allow update: if isOpenOfficiatingSelfAssignmentUpdate();
+        allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);
 
         // Events subcollection
         match /events/{eventId} {
