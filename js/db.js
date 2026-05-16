@@ -45,6 +45,7 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
+import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -5618,16 +5619,7 @@ async function getEventDateForAvailabilityCutoff(teamId, gameId) {
     const gameRef = doc(db, `teams/${teamId}/games`, masterId || gameId);
     const snap = await getDoc(gameRef);
     if (!snap.exists()) return null;
-    const game = snap.data();
-    const baseDate = game.date?.toDate ? game.date.toDate() : new Date(game.date);
-    if (instanceDate && !Number.isNaN(baseDate.getTime())) {
-        const occurrenceDate = new Date(`${instanceDate}T00:00:00`);
-        if (!Number.isNaN(occurrenceDate.getTime())) {
-            occurrenceDate.setHours(baseDate.getHours(), baseDate.getMinutes(), baseDate.getSeconds(), baseDate.getMilliseconds());
-            return occurrenceDate;
-        }
-    }
-    return baseDate;
+    return resolveAvailabilityCutoffEventDate(snap.data(), instanceDate);
 }
 
 async function assertAvailabilityOpen(teamId, gameId) {
