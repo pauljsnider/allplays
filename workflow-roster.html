@@ -273,7 +273,7 @@
           <h1 class="wf-title">Build and Maintain Team Roster</h1>
           <p class="wf-summary">Use this workflow to keep your team roster accurate and parent access connected.</p>
           <div class="wf-meta-row">
-            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">10 min read</span>
             <span class="wf-meta-pill">Updated from live product pages</span>
           </div>
         </section>
@@ -369,6 +369,9 @@
 <li>No email available: Leave email blank to generate a shareable code/link.</li>
 <li>Existing account detected: Share the shown code/link so the parent can connect.</li>
 </ul>
+<p><strong>Invite email enforcement:</strong> When a parent redeems an invite code during signup, the email they use for the new account must match the invite email exactly (case-insensitive, whitespace-normalized). A mismatch is rejected immediately after the activation code validation step — before the Firebase Auth account is created. This prevents parents from accidentally creating accounts under a different email than the one the invite was addressed to. If the parent receives an email mismatch error, they must use the exact email the invite was sent to, or ask the admin to resend the invite to the correct address.</p>
+<p><strong>Invite context preservation:</strong> When a parent follows an invite link and is sent to the signup or login page, the invite code and invite type are carried through automatically in the URL parameters. The activation code field on the signup form is pre-filled with the code from the invite link. The parent does not need to re-enter the invite code manually during signup — the context is preserved through the full authentication flow.</p>
+<p><strong>Duplicate invite code resolution:</strong> If multiple invite documents exist for the same code (for example, a stale record and an active record), the system selects the currently redeemable document — not necessarily the first Firestore result. This prevents failed invite redemptions caused by stale or superseded invite records that happen to share a code value.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Verify your updates.</li>
 </ol>
@@ -407,6 +410,25 @@
 <li>Uncheck safe add/update rows you want to skip. Conflict rows are automatically excluded — they are not applied.</li>
 <li>Select <strong>Apply</strong>. Source metadata and import audit fields are stored on applied records.</li>
 </ol>
+<h2 id="athlete-profiles">Athlete Profile Name Prefill</h2>
+<p>When creating a new athlete profile that is linked to an existing player record, the name field is now pre-filled from the player record that matches the <code>teamId</code> and <code>playerId</code> parameters in the URL. This avoids the most common source of name mismatches between the player roster record and the athlete profile display name.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>The prefill applies only when creating a new profile where no name has been saved yet. Existing saved profile names are never overwritten by the prefill — edits you have already made are preserved.</li>
+<li>If the profile builder is opened without both <code>teamId</code> and <code>playerId</code> in the URL, the prefill cannot run and the name field will be blank. Confirm the URL contains both parameters if you expect prefill to work.</li>
+<li>This feature removes a common manual step during onboarding flows where the admin creates profiles for multiple players in sequence and must type the same name that already exists on the roster record.</li>
+</ul>
+<h2 id="parent-dashboard-roster">Parent Dashboard and Roster Visibility</h2>
+<p>Parents and coaches see different views of the roster and schedule. Understanding what each role can see prevents confusion about missing items or missing controls.</p>
+<h3>What parents see</h3>
+<ul class="ml-6 list-disc space-y-1">
+<li>Parents linked to active players see their player's public tracking items in a read-only view on the team page. Items marked as private (admin-only) are not visible to parents regardless of their relationship to the player.</li>
+<li>Parents cannot edit tracking items, mark completion status, or create new tracking items — those controls are available only to coaches and admins.</li>
+<li>Standalone practice sessions — sessions that exist in Firestore without a linked schedule event — now appear on the parent dashboard schedule. Previously, only sessions linked to a calendar event were visible. Parents can now see all practice activity their player was associated with.</li>
+</ul>
+<h3>Sibling RSVP</h3>
+<p>Parents with multiple children on the same team now see separate RSVP controls for each child in the calendar event modal. Previously, submitting an RSVP for one child could affect the RSVP record for siblings on the same team. Each child's availability is now tracked independently, so a parent can mark one child as <strong>Going</strong> and another as <strong>Can't Go</strong> for the same event without the responses interfering with each other.</p>
+<h3>What admins and coaches see</h3>
+<p>Coaches and admins see the full roster including inactive players (when the inactive filter is enabled), all tracking items regardless of public/private status, completion counts per player in the roster matrix, and delegated household contacts with their current access status (active, pending, or revoked). Admins can toggle completion status and create or archive tracking items at any time.</p>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Should I delete or deactivate a player?</li>
@@ -432,6 +454,18 @@
 <li><strong>What happens to a revoked household contact's data?</strong></li>
 </ul>
 <p>Their membership access is marked revoked, delegated parent/player links are removed, and any pending invite tokens are invalidated. Their account is not deleted.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What if the parent gets an "email mismatch" error during signup?</strong></li>
+</ul>
+<p>The parent is attempting to create an account with a different email address than the one the invite was sent to. The signup process enforces an exact match (case-insensitive, whitespace-normalized) between the signup email and the invite email. The parent must use the exact email the invite was addressed to. If they cannot access that email address, the admin should resend the invite to the email the parent wants to use.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Why do I see a "delegated contact" in the roster view?</strong></li>
+</ul>
+<p>Household contacts invited by a parent appear as delegated contacts in the roster view. Each delegated contact entry shows the contact's name or email, their relation to the player, the name of the parent who invited them, and their current access status — <strong>Active</strong> (invite redeemed and access is live), <strong>Pending</strong> (invite sent but not yet redeemed), or <strong>Revoked</strong> (access was withdrawn by the inviting parent or an admin). Delegated contacts with active status have the same player visibility as the inviting parent.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Can I see which practices a parent has viewed?</strong></li>
+</ul>
+<p>No — parent dashboard usage is not tracked per-user. Admins can see which tracking items have been marked complete and which practice sessions exist, but there is no log of which parents have opened specific schedule items or dashboard pages.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Invite button is disabled.</li>
@@ -460,6 +494,10 @@
 <ul class="ml-6 list-disc space-y-1">
 <li><strong>Household invite not showing for parent</strong>: Confirm the invitee used the correct email address and the invite has not already been revoked.</li>
 <li><strong>Roster import showing conflicts</strong>: Conflict rows are skipped automatically. Review the preview and apply only add/update rows that are safe.</li>
+<li><strong>Parent signup rejected with email mismatch</strong>: The parent must use the same email the invite was sent to. The admin should open the invite record, check the stored invite email, and resend to the correct address if the wrong one was used when the invite was created.</li>
+<li><strong>Parent invite appears stuck on "pending"</strong>: The invitee has not yet redeemed the code. They should open the original invite link or visit <code>accept-invite.html</code> and enter the 8-character code manually. If the invite link has expired or the email was lost, generate a fresh invite from the player's row and share the new code directly.</li>
+<li><strong>Household contact showing "revoked" status</strong>: A revocation was applied from the inviting parent's Parent Dashboard or by an admin. The contact's delegated access has been removed and their invite token invalidated. To restore access, the parent must re-invite the contact using <strong>Invite Household Member</strong> — the old invite code cannot be reactivated.</li>
+<li><strong>Athlete profile name not prefilling</strong>: Confirm the profile builder URL includes both <code>teamId</code> and <code>playerId</code> query parameters. If either is missing, the system cannot look up the linked player record and the name field will remain blank. Navigate to the profile builder from the roster row link to ensure both parameters are present.</li>
 </ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">

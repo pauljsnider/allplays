@@ -89,9 +89,9 @@
         <section class="wf-hero">
           <p class="wf-kicker">Workflow Guide</p>
           <h1 class="wf-title">Manage Team Media and Albums</h1>
-          <p class="wf-summary">Organize photos, videos, and highlights into albums, control visibility, and let members contribute uploads.</p>
+          <p class="wf-summary">Create albums, upload photos, add video links, and share organized media with players and families — with admin bulk-management controls.</p>
           <div class="wf-meta-row">
-            <span class="wf-meta-pill">4 min read</span>
+            <span class="wf-meta-pill">5 min read</span>
             <span class="wf-meta-pill">Updated from live product pages</span>
           </div>
         </section>
@@ -117,98 +117,165 @@
             <div class="help-workflow-body">
 
               <h2 id="overview">Overview</h2>
-              <p>Team Media is a team-scoped library where coaches and admins organize photos and video links into named albums. Members can browse member-visible albums and upload photos directly from the app. Admins have full creation, moderation, and bulk management controls — including visibility settings, cover selection, and bulk delete or move operations.</p>
+              <p>Team Media is a structured media library scoped to each team. Coaches and admins create albums organized by event, season, or topic — each with a <strong>Member-visible</strong> or <strong>Manager-only</strong> visibility setting. Admin and coach users can add YouTube and Vimeo video links and upload photos directly from within the app. Members with admin-approved upload access can also contribute their own photos. Admins have full moderation controls: bulk select, move items between albums, reorder within an album, delete, set album covers, and remove individual items. Parents and general members see only member-visible albums — manager-only albums are completely invisible to them. The <strong>Media</strong> navigation entry appears in the team management banner on <code>team.html</code> for quick access by coaches and admins. Members reach the gallery through their team view.</p>
 
               <h2 id="in-this-article">In This Article</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li>Open Team Media and browse existing albums</li>
-                <li>Create and manage albums with visibility controls</li>
-                <li>Add YouTube and Vimeo video links to an album</li>
-                <li>Upload photos with per-file progress tracking</li>
-                <li>Set an album cover image</li>
-                <li>Use admin bulk operations: select, delete, move, and reorder</li>
-                <li>Delete individual items as an uploader or admin</li>
+                <li>Opening Team Media from the team management banner</li>
+                <li>Creating albums with name and visibility settings (Member-visible vs Manager-only)</li>
+                <li>Reordering, renaming, and archiving albums without deleting content</li>
+                <li>Adding video links (YouTube, Vimeo) to an album as typed media items</li>
+                <li>Uploading photos with per-file progress tracking and isolated failure handling</li>
+                <li>What metadata is stored on each uploaded photo (URL, path, uploader, size, MIME type, timestamps)</li>
+                <li>Enabling member upload access for specific team members (admin only)</li>
+                <li>Setting an album cover image from any photo in the album</li>
+                <li>Browsing the gallery as an admin vs as a parent or member</li>
+                <li>Download links and uploader attribution in gallery view</li>
+                <li>Bulk operations: select all, move to another album, reorder, delete (admin only)</li>
+                <li>Deletion rights: uploader self-delete vs admin moderation rights</li>
+                <li>Visibility rules: which albums each role can see</li>
               </ul>
 
               <h2 id="who-is-this-for">Who Is This For</h2>
-              <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Admin</strong> — create and manage albums, set visibility, moderate uploads, set cover images, perform bulk operations (delete, move, reorder).</li>
-                <li><strong>Coach</strong> — add content (photos and video links) to albums, manage folders.</li>
-                <li><strong>Parent / Member</strong> — browse member-visible albums, view photos and video links, and upload photos when admin has enabled member upload access.</li>
-              </ul>
+              <p><strong>Admin</strong> — creates and manages albums, sets and changes visibility, enables member upload access, performs bulk operations (move, reorder, delete), moderates individual items, and sets album covers. Has unrestricted access to all albums regardless of visibility setting.</p>
+              <p><strong>Coach</strong> — adds video links and uploads photos to existing albums. Can create new albums and set their visibility. Cannot perform bulk admin moderation of items uploaded by others, but can delete their own uploads. Useful for adding game footage, practice clips, or drill recordings organized by date.</p>
+              <p><strong>Parent / Member</strong> — browses member-visible albums, views photos and video links, and may upload photos to member-visible albums if an admin has explicitly enabled member upload access for them. Parents cannot see manager-only albums at all — those albums are invisible in their team view. Parents cannot delete items, even their own uploads; admin mediation is required for content removal.</p>
 
               <h2 id="prerequisites">Prerequisites</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li>Signed in with a valid account.</li>
-                <li>Team access (member, coach, or admin on the team).</li>
-                <li>For member photo uploads: admin must have enabled member upload access for the team.</li>
+                <li>Signed in with a valid account and linked to the team in any role.</li>
+                <li>For album creation, management, and video link uploads: coach or admin access on the team.</li>
+                <li>For photo upload: either coach/admin role, or a member account for which an admin has enabled upload access.</li>
+                <li>Photos must be in a common image format (JPG, PNG, GIF). Very large files such as RAW or uncompressed images should be resized before upload. File size limits apply — an inline error message will specify the limit if exceeded.</li>
+                <li>Video links must be public YouTube or Vimeo URLs. Private, unlisted, or password-protected videos may not embed correctly.</li>
               </ul>
 
               <h2 id="choose-your-path">Choose Your Path</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Create or organize albums</strong> — admin uses the album management controls to add, rename, reorder, or delete albums.</li>
-                <li><strong>Add video links</strong> — admin or coach pastes a YouTube or Vimeo URL into any album.</li>
-                <li><strong>Upload photos</strong> — member or admin selects files from within an album view.</li>
-                <li><strong>Browse the gallery</strong> — any member with team access opens Team Media to view visible albums.</li>
-                <li><strong>Bulk manage items</strong> — admin uses multi-select to bulk delete, move to another album, or reorder items.</li>
+                <li><strong>Set up a new album structure</strong> — create albums for the season or events, set visibility for each, and reorder them to control what members see first.</li>
+                <li><strong>Add game footage</strong> — create one album per game, then add video links from your stream provider or recording service.</li>
+                <li><strong>Upload season photos</strong> — admin or enabled members upload photos to an existing album in batches with per-file progress.</li>
+                <li><strong>Share highlights with parents</strong> — verify albums are set to Member-visible and that photo content is ready; parents see the gallery on their next visit.</li>
+                <li><strong>Manage and curate existing content</strong> — set album covers, reorder items, bulk-move photos to a different album, or remove unwanted items.</li>
+                <li><strong>Browse as a parent</strong> — access <code>team.html</code> and open the Media section to see all member-visible albums and their contents.</li>
               </ul>
 
               <h2 id="step-by-step">Step-by-Step Workflow</h2>
 
-              <h3>1. Open Team Media</h3>
-              <p>Access Team Media from the team management banner. The <strong>Media</strong> entry point is available to admins and coaches. Members with team access can reach the gallery through their team view. The library opens to the album list.</p>
+              <h3>Part A: Setting Up Albums</h3>
 
-              <h3>2. Create and manage albums (Admin)</h3>
-              <p>Select <strong>Create Album</strong>, enter a name, and choose a <strong>visibility</strong> setting:</p>
-              <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Member-visible</strong> — all team members including parents can browse this album.</li>
-                <li><strong>Manager-only</strong> — visible only to admins and coaches; hidden from parents and general members.</li>
-              </ul>
-              <p>After creation, use the album management controls to <strong>rename</strong>, <strong>reorder</strong>, or <strong>delete</strong> any album. Deleting an album removes all items inside it.</p>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Open Team Media.</strong> Click the <strong>Media</strong> link in the team management banner on <code>team.html</code>. Coaches and admins see the full management interface with album creation and moderation controls. Parents and members see the browsable gallery showing only member-visible albums.
+                </li>
+                <li>
+                  <strong>Create an album.</strong> Click <strong>+ New Album</strong>. Enter a descriptive name — for example, "Fall Season 2026", "Championship Weekend", or "Practice Highlights — Defense". Album names are displayed to members for member-visible albums, so be clear about what the album contains.
+                </li>
+                <li>
+                  <strong>Set album visibility.</strong> Choose one of two settings: <strong>Member-visible</strong> (parents and all team members can see and browse this album) or <strong>Manager-only</strong> (only coaches and admins see this album; it is completely hidden from parents and general members). Manager-only is useful for internal coaching footage, pre-publication curation, or content not yet ready for the full team. You can change visibility at any time — the change is immediate.
+                </li>
+                <li>
+                  <strong>Save the album.</strong> The new album appears in the album list immediately. Empty albums show an empty state placeholder to members browsing the gallery.
+                </li>
+                <li>
+                  <strong>Reorder albums.</strong> Drag album cards or use the move controls to set display order. The sequence you define is exactly what members see when they open Team Media.
+                </li>
+                <li>
+                  <strong>Rename an album.</strong> Select the album and edit its name inline. The name change is visible to members immediately after saving.
+                </li>
+                <li>
+                  <strong>Archive an album.</strong> Archiving hides the album from the active gallery without deleting any content. All photos and video links inside the archived album are preserved in storage. Restore visibility at any time by unarchiving. Use archiving at the end of a season to keep the active gallery focused on current content while retaining historical records.
+                </li>
+              </ol>
 
-              <h3>3. Add video links</h3>
-              <p>Open an album and select <strong>Add Video Link</strong>. Paste a valid YouTube or Vimeo URL. The link is saved as a typed media item and renders in the gallery with its metadata (title, thumbnail when available). Video links are stored against the album and persist across sessions.</p>
+              <h3>Part B: Adding Content</h3>
 
-              <h3>4. Upload photos</h3>
-              <p>Open an album and select <strong>Upload Photos</strong>. Choose one or more image files. Each file uploads independently — a per-file progress indicator is shown. If a single file fails (due to size or format), that failure is shown inline and does not block the remaining files from completing. Each uploaded photo is stored with its URL, storage path, uploader identity, file size, MIME type, and upload timestamp.</p>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Add a video link.</strong> Open an album and click <strong>+ Add Video</strong>. Paste a public YouTube or Vimeo URL. The link is stored as a typed media item in Firestore — only the URL and metadata are stored, not the video file itself. In the gallery, the link renders as a playable or linked card. When possible, the video title is fetched from the provider automatically and shown on the card along with uploader name and date.
+                </li>
+                <li>
+                  <strong>Upload photos.</strong> Open an album and click <strong>Upload Photos</strong> (this control is visible only if upload access is enabled for your role). Select one or more image files from your device. Each file uploads to Firebase Storage independently — a per-file progress indicator shows the upload status for each file separately. If one file fails due to an exceeded size limit, unsupported format, or a network interruption, the remaining files continue uploading unaffected. Failed files are shown inline with a retry option; fix the issue (compress the file, convert the format) and retry without re-selecting all files.
+                </li>
+                <li>
+                  <strong>What gets stored on upload.</strong> For each successfully uploaded photo, ALL PLAYS stores: the public download URL, the Firebase Storage path (for deletion), the uploader's user ID and display name, file size in bytes, MIME type, creation timestamp, and last-updated timestamp. This metadata powers attribution display in the gallery, moderation controls, and deletion rights enforcement.
+                </li>
+                <li>
+                  <strong>Enable member upload access (admin only).</strong> By default, only coaches and admins can upload photos. To allow a specific member to upload, navigate to team permissions or the album settings and enable upload access for that member's account. Once enabled, the upload control becomes visible to them when they view that album. This can be revoked at any time.
+                </li>
+              </ol>
 
-              <h3>5. Set an album cover (Admin)</h3>
-              <p>Inside an album, select any photo and choose <strong>Set as Cover</strong>. The selected photo becomes the cover image shown on the album card in the main gallery view. You can change the cover at any time by selecting a different photo.</p>
+              <h3>Part C: Gallery Management</h3>
 
-              <h3>6. Browse the gallery</h3>
-              <p>Members see all member-visible albums in the Team Media gallery. Opening an album shows photo items with the <strong>uploader name</strong>, <strong>upload date</strong>, and a <strong>download link</strong>. Video link items display inline — click a video item to open the linked YouTube or Vimeo page.</p>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Set an album cover.</strong> Open an album in management view. Hover over any photo and click <strong>Set as Cover</strong>. The selected photo becomes the album thumbnail displayed in the gallery grid on the Team Media home screen. You can change the cover at any time by selecting a different photo — the previous cover photo is not deleted or moved.
+                </li>
+                <li>
+                  <strong>Browse as admin.</strong> The admin gallery view shows each item with a photo thumbnail (or a video link card for video items), the uploader's display name, the upload date, and a download link. Admins also see per-item moderation controls for moving and deleting items without entering bulk selection mode.
+                </li>
+                <li>
+                  <strong>Browse as parent or member.</strong> Members see only member-visible albums when they open Team Media. Within each album, each photo shows the uploader's name and upload date for attribution, plus a download link to save the photo to their device. Video link items appear as cards — clicking a video card opens the linked YouTube or Vimeo page in a new tab.
+                </li>
+              </ol>
 
-              <h3>7. Bulk operations (Admin)</h3>
-              <p>Enter multi-select mode within an album. Select one or more items, then choose an action:</p>
-              <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Bulk delete</strong> — removes all selected items. A confirmation prompt appears before any destructive action.</li>
-                <li><strong>Move</strong> — transfers selected items to another album you choose from a list.</li>
-                <li><strong>Reorder</strong> — drag selected items to a new position within the album.</li>
-              </ul>
+              <h3>Part D: Bulk Operations (Admin Only)</h3>
 
-              <h3>8. Delete individual items</h3>
-              <p>Any uploader can delete their own photos. Admins and team owners can delete any item regardless of who uploaded it. Select the item and choose <strong>Delete</strong>. Deletion is permanent and cannot be undone.</p>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Enter selection mode.</strong> In any album view, enable multi-select mode using the selection control. Click individual items to select them, or use <strong>Select All</strong> to select every item in the current album at once. A count indicator shows how many items are currently selected.
+                </li>
+                <li>
+                  <strong>Bulk move.</strong> With items selected, click <strong>Move</strong>. A picker appears listing all other albums on the team. Choose the destination album. A confirmation dialog shows the count of items being moved and the destination name before applying. Items are moved immediately — they no longer appear in the source album after the operation.
+                </li>
+                <li>
+                  <strong>Bulk delete.</strong> With items selected, click <strong>Delete</strong>. A confirmation dialog shows the count of items to be deleted. Deletion is permanent: photos are removed from both Firebase Storage and Firestore. Video link records are removed from Firestore only — the underlying video on YouTube or Vimeo is not affected. There is no undo for bulk delete; review your selection carefully before confirming.
+                </li>
+                <li>
+                  <strong>Reorder items.</strong> In album view, drag individual items to a new position within the album to set a custom display order. The order change is saved immediately and reflected in all gallery views including the member-facing gallery.
+                </li>
+              </ol>
+
+              <h3>Part E: Deleting Individual Items</h3>
+
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Deletion rights by role.</strong> Uploaders (any role) can delete photos they personally uploaded. Admins and team owners can delete any item in any album regardless of who uploaded it. Coaches can delete items they uploaded. Parents cannot delete items even if they uploaded them — if a parent needs content removed, an admin must perform the deletion.
+                </li>
+                <li>
+                  <strong>Delete a single item.</strong> Select the item's delete control (visible based on your role and whether you uploaded the item), then confirm in the dialog. Deletion is permanent for photos (removed from Firebase Storage and Firestore). Removing a video link deletes the Firestore record only — the video remains on the external platform.
+                </li>
+              </ol>
 
               <h2 id="common-questions">Common Questions</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Can parents see all albums?</strong> No — only albums with <strong>member-visible</strong> visibility are shown to parents and general members. Manager-only albums are hidden.</li>
-                <li><strong>Can members upload without admin approval?</strong> The upload control is available when an admin has enabled member upload access for the team. Individual uploads do not require per-upload approval.</li>
-                <li><strong>Are video links stored in the database?</strong> Yes — each video link is saved as a typed media item attached to the album, with the URL and metadata stored in Firestore.</li>
-                <li><strong>What happens to items when an album is deleted?</strong> All items inside the album — photos and video links — are permanently removed along with the album.</li>
+                <li><strong>Can parents upload photos?</strong> Only if an admin has explicitly enabled member upload access for their account. By default, upload is restricted to coaches and admins. The upload control does not appear for parents until access is granted.</li>
+                <li><strong>How large can photo files be?</strong> File size limits apply per upload based on your Firebase Storage configuration. If a file exceeds the limit, an inline error message will specify the limit. Compress or resize large images before uploading — most phone photos are fine as-is, but RAW or very high-resolution exports may need resizing.</li>
+                <li><strong>Can I embed a private YouTube video?</strong> No — video links must be publicly accessible URLs. Private or password-protected YouTube videos will not embed or link correctly. Unlisted YouTube videos may work but are not guaranteed.</li>
+                <li><strong>Is there a limit on albums or items per album?</strong> There is no hard cap enforced by the app. Practical limits depend on your team's Firebase Storage quota. Very large media libraries may affect load times for gallery browsing.</li>
+                <li><strong>Can I download all photos at once?</strong> Bulk download is not currently supported. Individual download links are available per photo in the gallery view. Use your browser's "Save image" feature or the per-item download link for individual photos.</li>
+                <li><strong>Does archiving delete content?</strong> No — archiving hides the album from the gallery but all photos remain in Firebase Storage and all metadata remains in Firestore. Unarchive the album at any time to restore full visibility. Archived content is not deleted until you explicitly delete the album or its individual items.</li>
+                <li><strong>Can a video link appear in multiple albums?</strong> No — each video link record is attached to exactly one album. If you want the same video accessible from multiple albums, add the URL again as a separate link in each target album.</li>
+                <li><strong>Can I make some photos in a member-visible album private?</strong> No — album visibility is all-or-nothing. If you need to keep some items from a given event private, create a separate manager-only album for those items and a member-visible album for the content you want to share.</li>
               </ul>
 
               <h2 id="recovery-troubleshooting">Recovery and Troubleshooting</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Album not visible to members</strong> — open the album settings and confirm visibility is set to <strong>member-visible</strong>. Manager-only albums are always hidden from parents.</li>
-                <li><strong>Photo upload failed</strong> — check the file size and format. Per-file failures are reported inline next to the affected file; other files in the same batch are not affected. Retry the failed file after reducing its size if needed.</li>
-                <li><strong>Video link not rendering correctly</strong> — confirm the URL is a direct YouTube or Vimeo link (e.g., <code>https://www.youtube.com/watch?v=...</code> or <code>https://vimeo.com/...</code>). Other video platforms are not supported.</li>
-                <li><strong>Upload controls not visible to members</strong> — an admin must enable member upload access in the team settings before the upload option appears for non-admin users.</li>
+                <li><strong>Upload button not visible</strong> — confirm you have coach or admin access, or that an admin has enabled member upload access for your specific account. The upload control is hidden when upload access is not granted for your role.</li>
+                <li><strong>Photo upload fails repeatedly</strong> — check the file format (JPG, PNG, and GIF are supported) and file size. Try compressing the image using an image editor or online compression tool. Check your network connection — per-file failures are shown inline next to the affected file; other files in the same batch are not blocked.</li>
+                <li><strong>Video link not playing or showing as broken</strong> — verify the YouTube or Vimeo URL is publicly accessible and correctly formatted (e.g., <code>https://www.youtube.com/watch?v=...</code> or <code>https://vimeo.com/...</code>). Other video platforms are not supported. If the video is private or unlisted, it may not render correctly.</li>
+                <li><strong>Album not visible to parents</strong> — open the album settings and confirm the visibility is set to <strong>Member-visible</strong> (not Manager-only). Manager-only albums are always invisible to parents and general members regardless of their team membership status.</li>
+                <li><strong>Bulk delete confirmation count appears wrong</strong> — refresh the album page and reselect items before performing the bulk delete. Selection state can become stale if another admin has added or deleted items since you opened the page.</li>
+                <li><strong>Deleted photo still appearing in gallery</strong> — clear your browser cache and reload the page. Firebase Storage deletion is immediate, but browser-level caching may continue to serve the image URL for a short period after deletion. The item will not appear to other users on fresh page loads.</li>
+                <li><strong>Album cover not updating after selection</strong> — reload the album page after setting the cover image. The cover selection is saved immediately, but the display may require a page reload to reflect the change in the gallery grid.</li>
+                <li><strong>Parent cannot see the Media section at all</strong> — confirm the parent account is linked to the team as a confirmed member. If their team membership is pending or they are viewing a different team's page, the Media entry will not appear. An admin can verify their membership status from the team roster or members list.</li>
               </ul>
 
               <h2 id="related-workflows">Related Workflows</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><a href="workflow-communication.html" style="color:#4338ca;font-weight:600;">Team Communication</a></li>
-                <li><a href="workflow-team-setup.html" style="color:#4338ca;font-weight:600;">Team Setup</a></li>
+                <li><a href="workflow-communication.html" style="color:#4338ca;font-weight:600;">Team Communication</a> — the Photos &amp; Videos section in team chat also links to team media albums; content shared in chat may reference media uploaded here.</li>
+                <li><a href="workflow-team-setup.html" style="color:#4338ca;font-weight:600;">Team Setup</a> — configure admin access, member roles, and upload permissions that control who can contribute media.</li>
+                <li><a href="workflow-awards-certificates.html" style="color:#4338ca;font-weight:600;">Awards and Certificates</a> — award photos and certificate images may be uploaded to team media albums for long-term storage and sharing with families.</li>
               </ul>
 
             </div>

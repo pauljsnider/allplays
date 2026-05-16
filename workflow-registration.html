@@ -89,9 +89,9 @@
         <section class="wf-hero">
           <p class="wf-kicker">Workflow Guide</p>
           <h1 class="wf-title">Manage Player Registration</h1>
-          <p class="wf-summary">Set up registration options, process applications, manage the waitlist, and sync with Sports Connect.</p>
+          <p class="wf-summary">Configure registration options with capacity limits and waitlists, process applications through a status queue, and sync rosters and schedules from Sports Connect.</p>
           <div class="wf-meta-row">
-            <span class="wf-meta-pill">5 min read</span>
+            <span class="wf-meta-pill">6 min read</span>
             <span class="wf-meta-pill">Updated from live product pages</span>
           </div>
         </section>
@@ -115,102 +115,155 @@
             <div class="help-workflow-body">
 
               <h2 id="overview">Overview</h2>
-              <p>ALL PLAYS supports a full registration workflow — from configuring options and capacity limits to managing the waitlist and syncing rosters from Sports Connect. Admins control the full pipeline; registrants and parents submit through a public-facing form. Every step from initial setup through roster approval can be handled inside the app without switching tools.</p>
+              <p>The registration system handles player enrollment from initial interest through roster approval. Admins configure options — for example, "Travel Team 14U" or "Recreational League" — each with a capacity limit, active/inactive status, and an optional waitlist. A public registration form enforces capacity in real time via a Firestore transaction so concurrent submissions never exceed the limit. When capacity fills and waitlists are enabled, new applicants are automatically queued as waitlisted rather than receiving an error. The admin review queue supports filtering across the full pipeline: <strong>Pending</strong>, <strong>Waitlisted</strong>, <strong>Offer Extended</strong>, <strong>Offer Accepted</strong>, <strong>Enrolled</strong>, <strong>Released</strong>, and <strong>Rejected</strong>. Admins can extend offers to specific waitlisted applicants, release applicants who are no longer pursuing a spot, and move accepted registrations into the roster approval flow. For teams using Sports Connect, an external provider integration supports Team ID mapping, connection status monitoring, last-sync display, and manual re-import. Both schedule and roster imports from Sports Connect include a conflict-preview step before any data is committed.</p>
 
               <h2 id="in-this-article">In This Article</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li>Configure registration options with labels, capacity, and waitlist settings</li>
-                <li>Review and process applications using the admin review queue</li>
-                <li>Manage the waitlist — extend offers and release participants</li>
-                <li>Import the registration schedule with conflict detection</li>
-                <li>Import the registration roster with conflict preview</li>
-                <li>Sync with Sports Connect using the external provider integration</li>
+                <li>Creating and configuring registration options (labels, capacity, waitlist toggle, active status)</li>
+                <li>How capacity enforcement works via Firestore transaction and what happens when capacity fills</li>
+                <li>Waitlist behavior: how waitlisted applications are created, stored, and promoted</li>
+                <li>Using the admin review queue with all 7 status filters</li>
+                <li>Extending waitlist offers and releasing participants who are no longer pursuing a spot</li>
+                <li>Moving accepted registrations into the roster approval flow</li>
+                <li>Configuring Sports Connect as a registration provider (Team ID, connection status, sync timing)</li>
+                <li>Registration schedule import with conflict-preview step before committing</li>
+                <li>Registration roster import with conflict-preview step and per-row classification</li>
+                <li>Audit metadata stored on all imported records</li>
+                <li>Reordering and archiving options without losing historical records</li>
+                <li>What happens to waitlisted applicants when capacity is increased manually</li>
               </ul>
 
               <h2 id="who-is-this-for">Who Is This For</h2>
-              <p><strong>Admin</strong> — full registration setup and management, including option configuration, application review, waitlist decisions, schedule and roster imports, and Sports Connect sync. No other role can access the registration pipeline.</p>
+              <p><strong>Admin — full setup and lifecycle management.</strong> This role creates and manages options, sets capacity and waitlist policy, processes the review queue, extends and records offers, approves or rejects applications, moves accepted registrations into roster approval, configures Sports Connect, and triggers re-imports. No other role can access the registration pipeline.</p>
+              <p><strong>Admin — day-to-day queue processing.</strong> Even if another admin handled initial setup, any admin can process the queue on an ongoing basis: reviewing pending applications, extending waitlist offers, recording offer acceptance, and moving accepted applicants to Enrolled status.</p>
+              <p><strong>Admin — Sports Connect sync health.</strong> If your team uses Sports Connect, an admin monitors connection status, checks last-sync timestamps, triggers manual re-imports when data appears stale, and resolves conflicts flagged during preview. Note: public applicants use the registration form directly — they are not covered here. Parents and coaches do not have access to the admin review queue.</p>
 
               <h2 id="prerequisites">Prerequisites</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li>Team exists and you have admin access.</li>
-                <li>For Sports Connect sync: a valid Sports Connect Team ID for the external mapping.</li>
+                <li>Admin access on the team (team owner or listed in <code>adminEmails</code>).</li>
+                <li>At least one registration option created and set to Active before the public form goes live — otherwise the form shows "No options available."</li>
+                <li>For Sports Connect integration: the external Team ID from your Sports Connect account dashboard. Stripe or payment configuration is handled separately from registration option setup and is not covered here.</li>
+                <li>For schedule import: your team schedule must be accessible via <code>edit-schedule.html</code>.</li>
+                <li>For roster import: your team roster must be accessible via <code>edit-roster.html</code>.</li>
               </ul>
 
               <h2 id="choose-your-path">Choose Your Path</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Set up registration options</strong> — configure labels, capacity, and waitlist settings in <code>Edit Team</code>.</li>
-                <li><strong>Review and process applications</strong> — use the admin review queue with status filters.</li>
-                <li><strong>Manage waitlist</strong> — extend offers to specific participants or release them when spots open.</li>
-                <li><strong>Import schedule from registration</strong> — use the Registration Schedule Import Preview.</li>
-                <li><strong>Import roster from registration</strong> — use the Roster Import Conflict Preview.</li>
-                <li><strong>Sync with Sports Connect</strong> — configure provider fields and trigger sync from <code>Edit Team</code>.</li>
+                <li><strong>First-time setup</strong> — create options and set capacity before opening registration to applicants.</li>
+                <li><strong>Mid-season capacity change</strong> — edit an existing option's capacity limit or toggle active status without deleting historical records.</li>
+                <li><strong>Process pending applications</strong> — open the review queue, filter by status, review form data, and approve, reject, or hold individual applications.</li>
+                <li><strong>Manage a full cohort</strong> — extend offers to waitlisted applicants, record acceptances, batch-release declined applicants to free queue space.</li>
+                <li><strong>Import schedule from Sports Connect</strong> — trigger a re-import, preview the conflict table, and commit selected rows.</li>
+                <li><strong>Import roster from Sports Connect</strong> — trigger a re-import, review Add/Update/Conflict classification per row, and commit.</li>
+                <li><strong>Check sync health</strong> — view connection status and last-sync timestamp in <code>Edit Team</code>, force a re-import if data is stale.</li>
               </ul>
 
               <h2 id="step-by-step">Step-by-Step Workflow</h2>
 
-              <h3>1. Configure registration options</h3>
-              <p>Open <code>Edit Team</code> and navigate to the Registration Options section. Add one or more options, each with a <strong>label</strong> (shown on the public form), a <strong>capacity limit</strong>, an <strong>active</strong> toggle, and a <strong>waitlist</strong> toggle. Archived or inactive options are hidden from the public form automatically — only active options are visible to registrants.</p>
+              <h3>Part A: Option Setup and Capacity</h3>
 
-              <h3>2. Set capacity and waitlist behavior</h3>
-              <p>Capacity is enforced via a Firestore transaction so concurrent registrations cannot exceed the limit. When an option is full:</p>
-              <ul class="ml-6 list-disc space-y-1">
-                <li>If <strong>waitlists are disabled</strong>, the option is blocked on the public form and no new submissions are accepted.</li>
-                <li>If <strong>waitlists are enabled</strong>, new submissions are accepted and stored with a <strong>Waitlisted</strong> status instead of completing enrollment.</li>
-              </ul>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Open registration option management.</strong> Navigate to <code>Edit Team</code> and open the Registration section (Settings → Registration). You see a list of existing options, or an empty state if this is your first time.
+                </li>
+                <li>
+                  <strong>Add a new option.</strong> Click <strong>+ Add Option</strong>. Enter a descriptive label — this text appears on the public registration form exactly as typed, so be specific (e.g., "Travel Team 14U", "Recreational Division — Spring 2026"). Set a capacity limit as a whole number (e.g., 18 players). Toggle <strong>Active</strong> — only active options appear on the public form. Inactive options are hidden from applicants but remain editable and can be reactivated at any time.
+                </li>
+                <li>
+                  <strong>Enable the waitlist (optional).</strong> Toggle <strong>Enable Waitlist</strong> per option. With waitlists <strong>on</strong>: when the capacity limit is reached, new applicants are queued automatically with Waitlisted status instead of seeing a "full" error. With waitlists <strong>off</strong>: when capacity fills, the option is blocked on the public form and no new submissions are accepted for it until capacity is manually increased or an existing applicant is released.
+                </li>
+                <li>
+                  <strong>Reorder options.</strong> Drag option rows or use the move controls to set the display order on the public form. Applicants see options in the exact order you set here.
+                </li>
+                <li>
+                  <strong>Save.</strong> Options are live immediately after saving — the public form reflects your changes in real time with no cache delay.
+                </li>
+                <li>
+                  <strong>Edit or archive an existing option.</strong> Select an option to change its label, capacity limit, or active status. Archiving an option hides it from future applicants and from the public form while preserving all historical registration records associated with it. You cannot delete an option that has associated applications — archive it instead.
+                </li>
+              </ol>
 
-              <h3>3. Review the admin registration queue</h3>
-              <p>Open the registration queue from the team admin panel. Use the status filter to narrow the view:</p>
-              <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Pending</strong> — submitted, awaiting admin review</li>
-                <li><strong>Waitlisted</strong> — capacity was full at time of submission</li>
-                <li><strong>Offer Extended</strong> — admin has offered a spot to a waitlisted participant</li>
-                <li><strong>Offer Accepted</strong> — participant accepted the offered spot</li>
-                <li><strong>Enrolled</strong> — registration complete and approved</li>
-                <li><strong>Released</strong> — removed from the waitlist</li>
-                <li><strong>Rejected</strong> — application declined</li>
-                <li><strong>All</strong> — see every registration regardless of status</li>
-              </ul>
+              <h3>Part B: How Capacity Enforcement Works</h3>
 
-              <h3>4. Extend offers and move through the roster flow</h3>
-              <p>Select a waitlisted participant and choose <strong>Extend Offer</strong> to notify them that a spot is available. Once they accept, their status moves to <strong>Offer Accepted</strong>. From there, move accepted registrations through the roster approval flow to mark them <strong>Enrolled</strong> and add them to the active roster. Use <strong>Release</strong> to remove a participant from the waitlist when a spot will not be offered.</p>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Transactional capacity check.</strong> When an applicant submits the public form selecting a specific option, the backend runs a Firestore transaction that reads the current enrollment count and compares it against the capacity limit before writing the new record. If the limit has already been reached by a concurrent submission, the transaction fails and the form returns a "capacity full" error to that applicant. This prevents race conditions where two applicants both see an open slot and both succeed — only one write can win. If the option has waitlists enabled, the transaction instead creates a waitlisted record rather than failing.
+                </li>
+                <li>
+                  <strong>Checking current fill level.</strong> In the admin review queue, the count of Enrolled and Pending applications per option is visible. Use this count relative to the capacity limit to decide when to extend waitlist offers. A full cohort (Enrolled + Pending = capacity) means new Pending applicants are contributing to the waitlist queue.
+                </li>
+              </ol>
 
-              <h3>5. Import the registration schedule</h3>
-              <p>Open <strong>Registration Schedule Import Preview</strong> from the registration tools. Each row shows the <strong>date/time</strong>, <strong>event type</strong>, <strong>opponent or title</strong>, <strong>location</strong>, and an <strong>import status</strong>. Events that likely duplicate an existing local entry are flagged as conflicts. Uncheck any conflicting rows before applying — only non-conflicting entries will be imported.</p>
+              <h3>Part C: Admin Review Queue</h3>
 
-              <h3>6. Import the registration roster</h3>
-              <p>Open <strong>Roster Import Conflict Preview</strong>. Each row is classified as one of:</p>
-              <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Add</strong> — new player not yet on the roster</li>
-                <li><strong>Update</strong> — existing player with changed fields</li>
-                <li><strong>Unchanged</strong> — existing player with no differences</li>
-                <li><strong>Conflict</strong> — data mismatch that requires manual resolution</li>
-              </ul>
-              <p>Conflict rows are automatically skipped. Review and uncheck any other rows you do not want to apply, then confirm the import.</p>
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Open the review queue.</strong> Navigate to Team Admin → Registration. The default view shows all Pending applications. The status filter bar at the top lets you switch between all seven pipeline statuses: <strong>Pending</strong> (submitted, not yet reviewed), <strong>Waitlisted</strong> (capacity was full at time of submission, auto-queued), <strong>Offer Extended</strong> (you invited a waitlisted applicant to enroll), <strong>Offer Accepted</strong> (applicant confirmed they want the spot), <strong>Enrolled</strong> (moved to roster approval flow), <strong>Released</strong> (returned to pool, no longer pursuing enrollment), <strong>Rejected</strong> (admin declined). Select <strong>All</strong> to see every registration regardless of status.
+                </li>
+                <li>
+                  <strong>Review a pending application.</strong> Click any applicant row to expand the detail view — you see submitted form data: name, contact information, selected option, and any custom fields defined for that option. Choose an action: <strong>Approve</strong> (moves status to Enrolled and triggers roster approval flow), <strong>Reject</strong> (moves to Rejected — you may optionally record an internal reason), or leave in Pending to review later.
+                </li>
+                <li>
+                  <strong>Extend a waitlist offer.</strong> Filter to Waitlisted status. Find an applicant you want to invite and click <strong>Extend Offer</strong>. Their status moves to Offer Extended. The app does not send an automatic email or notification — you communicate the offer separately via team chat or your external communication method. Use this status as your internal tracking signal that an invitation is pending their response.
+                </li>
+                <li>
+                  <strong>Record offer acceptance.</strong> When an applicant confirms they want the spot through your communication channel, return to the queue, find them in Offer Extended status, and click <strong>Mark Accepted</strong>. Their status moves to Offer Accepted.
+                </li>
+                <li>
+                  <strong>Move to roster approval.</strong> From Offer Accepted status, click <strong>Enroll</strong>. This creates or links a roster record for the player in the roster system and moves the registration to Enrolled status. Complete the player's full roster onboarding (jersey number, contact details, medical info) in <code>edit-roster.html</code>.
+                </li>
+                <li>
+                  <strong>Release a waitlisted applicant.</strong> If a waitlisted applicant withdraws interest, does not respond within your defined window, or you decide not to extend an offer, click <strong>Release</strong>. Their status moves to Released. Released applicants no longer count against capacity and are removed from active consideration. You can then extend offers to the next applicants in the Waitlisted queue.
+                </li>
+              </ol>
 
-              <h3>7. Configure Sports Connect</h3>
-              <p>In <code>Edit Team</code>, set the registration provider to <strong>Sports Connect</strong>. Enter the <strong>Team ID</strong> used for the external mapping. The connection panel shows the current connection status and the timestamp of the last sync. When data appears stale, use the manual re-import entry point to trigger a fresh pull without waiting for the next scheduled sync.</p>
+              <h3>Part D: Sports Connect Integration</h3>
+
+              <ol class="ml-6 list-decimal space-y-1">
+                <li>
+                  <strong>Configure Sports Connect as the registration provider.</strong> In <code>Edit Team</code> → Registration Provider, select <strong>Sports Connect</strong> from the provider dropdown. Enter the external <strong>Team ID</strong> from your Sports Connect account (this is how the integration maps your ALL PLAYS team to the correct Sports Connect dataset). Save. The connection status indicator updates to show: <strong>Connected</strong>, <strong>Not Connected</strong>, or <strong>Error</strong>. Last sync time and last sync result are displayed below the indicator.
+                </li>
+                <li>
+                  <strong>Trigger a manual re-import.</strong> Click <strong>Re-import from Sports Connect</strong> to pull the latest data immediately without waiting for any scheduled sync. This opens a choice between two import types: <strong>Schedule Import</strong> and <strong>Roster Import</strong>. Both types show a conflict-preview table before any data is committed to Firestore.
+                </li>
+                <li>
+                  <strong>Schedule import — preview and commit.</strong> After triggering a schedule import, a preview table appears. Each row shows: <strong>date/time</strong>, <strong>event type</strong> (game or practice), <strong>opponent or title</strong>, <strong>location</strong>, and <strong>import status</strong>. Import status values are: <strong>Add</strong> (new event not in your local schedule), <strong>Update</strong> (event exists locally with changed fields), <strong>Unchanged</strong> (event exists locally with no differences), or <strong>Conflict</strong> (event likely matches an existing local event but with ambiguous data — excluded from import by default). Deselect any rows you do not want to import. Click <strong>Commit</strong> to apply the selected, non-conflicting rows. A registration source metadata field is stored on each imported event for audit purposes.
+                </li>
+                <li>
+                  <strong>Roster import — preview and commit.</strong> After triggering a roster import, a preview table appears. Each row shows the player record and its import classification: <strong>Add</strong> (new player not found on your roster), <strong>Update</strong> (player exists on roster with changed fields), <strong>Unchanged</strong> (player exists with no differences), or <strong>Conflict</strong> (ambiguous match — excluded automatically). Conflict rows require manual resolution in <code>edit-roster.html</code> after the import. Uncheck any safe Add or Update rows you want to skip. Click <strong>Commit</strong> to apply selected rows. Source metadata is stored on all applied records for audit purposes.
+                </li>
+              </ol>
 
               <h2 id="common-questions">Common Questions</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Can registrants choose which option to sign up for?</strong> Yes — all active options appear on the public registration form.</li>
-                <li><strong>What if capacity is full and waitlists are off?</strong> The option is blocked on the form and no new submissions are accepted for it.</li>
-                <li><strong>Can I import only part of a schedule?</strong> Yes — uncheck specific rows in the Schedule Import Preview before applying. Only checked, non-conflicting rows are imported.</li>
-                <li><strong>What happens to conflict rows in the roster import?</strong> Conflict rows are automatically skipped; you must resolve them manually in the roster editor.</li>
+                <li><strong>Can I have multiple registration options active at once?</strong> Yes — parents see all active options on the public form and choose one when submitting. You can run multiple cohorts simultaneously (e.g., Travel and Recreational) with independent capacities and waitlists.</li>
+                <li><strong>Can I close registration mid-season?</strong> Yes — toggle all options to Inactive. The public form will display "No options available" until you reactivate at least one.</li>
+                <li><strong>What happens to waitlisted applicants if I increase capacity?</strong> They remain in Waitlisted status — capacity increases do not automatically promote applicants. You must manually extend offers to the next waitlisted applicants in the queue.</li>
+                <li><strong>Can I export the registration list?</strong> Not directly from the UI. The review queue shows all applicants with status. For data extraction, use your browser's developer tools or platform admin export utilities.</li>
+                <li><strong>What if Sports Connect sync returns an error?</strong> Verify the Team ID is correctly entered in <code>Edit Team</code>. Check the connection status indicator — an Error state often indicates a credential or ID mismatch. Try forcing a manual re-import. If the error persists, verify your Sports Connect account has the integration enabled on their side.</li>
+                <li><strong>Do imported schedule events overwrite existing events?</strong> No — Conflict rows are excluded automatically. The preview table always shows exactly what will change before you click Commit, and you can deselect individual rows.</li>
+                <li><strong>Can I undo a committed roster import?</strong> There is no bulk undo. Imported records can be individually edited or deleted from <code>edit-roster.html</code> after the import. Review the preview carefully before committing.</li>
+                <li><strong>Can parents see their application status?</strong> Not currently within the app. Admins communicate status changes via team chat or external channels. The admin queue is the source of truth for all application statuses.</li>
+                <li><strong>Can I reject a waitlisted applicant directly?</strong> Yes — from any non-Enrolled status (including Waitlisted), you can mark an application as Rejected with an optional internal reason. Released is used when an applicant voluntarily withdraws; Rejected is the admin-initiated decline.</li>
               </ul>
 
               <h2 id="recovery-troubleshooting">Recovery and Troubleshooting</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Registration option not appearing on the public form</strong> — confirm the option is set to <strong>active</strong> in <code>Edit Team</code>. Archived and inactive options are always hidden.</li>
-                <li><strong>Sports Connect sync appears stale</strong> — use the manual re-import entry point in <code>Edit Team</code> to force a fresh pull.</li>
-                <li><strong>Schedule import shows too many conflicts</strong> — review the preview carefully. Flagged rows indicate likely duplicates; skip them to avoid double entries. Import the remaining rows individually if needed.</li>
-                <li><strong>Waitlisted participant not receiving offers</strong> — verify you have clicked <strong>Extend Offer</strong> on their record; offers are not sent automatically when capacity opens.</li>
+                <li><strong>Registration option not appearing on the public form</strong> — check that the option is set to Active (not Inactive or Archived) in <code>Edit Team</code> → Registration. Only active options are visible to applicants.</li>
+                <li><strong>Capacity showing an incorrect fill level</strong> — refresh the admin review queue. Capacity counts are read from Firestore in real time; a stale browser tab may show an outdated count.</li>
+                <li><strong>Sports Connect sync stuck or showing stale data</strong> — verify the Team ID is correct, check the connection status indicator for an Error state, and force a manual re-import from the Registration Provider panel.</li>
+                <li><strong>Schedule import showing all rows as Conflicts</strong> — this indicates the import found likely matches for every incoming event against your existing local schedule. Review the event dates and types carefully — you may already have these events imported from a previous sync. If correct, leave Conflict rows unchecked and commit zero rows to avoid duplicates.</li>
+                <li><strong>Roster import classifying expected Updates as Add</strong> — the matching logic uses player name and jersey number to find existing roster records. If the Sports Connect name or number differs slightly from the local record (spelling variation, name change), the match fails and the row is classified as Add. Apply the Add row and then manually merge or clean up the resulting duplicate in <code>edit-roster.html</code>.</li>
+                <li><strong>Enrolled applicant not appearing in roster</strong> — Enrolling a registration triggers the roster approval flow, but the player still requires full roster onboarding. Open <code>edit-roster.html</code> and complete the player's profile to make them visible on the active roster.</li>
+                <li><strong>Offer Extended but applicant never responded</strong> — define a response window in your team's process (e.g., 72 hours). After the window passes, click Release on the Offer Extended record and extend the offer to the next Waitlisted applicant. The Released record is preserved for audit.</li>
+                <li><strong>Registration form showing "No options available"</strong> — all options are either Inactive, Archived, or capacity-full with waitlists disabled. Reactivate at least one option or increase the capacity limit on an existing full option to restore access.</li>
               </ul>
 
               <h2 id="related-workflows">Related Workflows</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><a href="workflow-roster.html" style="color:#4338ca;font-weight:600;">Build and Maintain Team Roster</a></li>
-                <li><a href="workflow-schedule.html" style="color:#4338ca;font-weight:600;">Manage the Schedule</a></li>
-                <li><a href="workflow-team-setup.html" style="color:#4338ca;font-weight:600;">Team Setup</a></li>
+                <li><a href="workflow-roster.html" style="color:#4338ca;font-weight:600;">Build and Maintain Team Roster</a> — complete player onboarding after moving a registration to Enrolled status.</li>
+                <li><a href="workflow-schedule.html" style="color:#4338ca;font-weight:600;">Manage the Schedule</a> — manage imported and manually created schedule events after a Sports Connect schedule import.</li>
+                <li><a href="workflow-team-setup.html" style="color:#4338ca;font-weight:600;">Team Setup</a> — configure admin access and registration provider settings.</li>
               </ul>
 
             </div>

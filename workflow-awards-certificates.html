@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="img/logo_small.png">
-    <title>Create and Publish Awards and Certificates - ALL PLAYS Help</title>
+    <title>Create and Publish Player Awards and Certificates - ALL PLAYS Help</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
     <script>
@@ -88,10 +88,10 @@
         <a href="help.html" class="wf-back-link">← Back to Help Center</a>
         <section class="wf-hero">
           <p class="wf-kicker">Workflow Guide</p>
-          <h1 class="wf-title">Create and Publish Awards and Certificates</h1>
-          <p class="wf-summary">Use this workflow to design certificates, generate AI player narratives, and publish awards to players and families.</p>
+          <h1 class="wf-title">Create and Publish Player Awards and Certificates</h1>
+          <p class="wf-summary">Design certificates, generate AI player narratives from real game data, and publish awards to families — individually or for the whole team at once.</p>
           <div class="wf-meta-row">
-            <span class="wf-meta-pill">5 min read</span>
+            <span class="wf-meta-pill">6 min read</span>
             <span class="wf-meta-pill">Updated from live product pages</span>
           </div>
         </section>
@@ -116,70 +116,151 @@
             <div class="help-workflow-body">
 
               <h2 id="overview">Overview</h2>
-              <p>The awards and certificates studio lets coaches and admins create batch or individual certificates for players at the end of a season, tournament, or any milestone moment. The studio includes design controls for imagery, typography, and signatures; per-player AI narrative generation powered by real game data; a review panel for previewing output before publishing; and a print and export flow for physical or digital distribution. Once published, parents can view their player's certificate directly from the parent dashboard.</p>
+              <p>The awards and certificates studio is a full design-to-publish pipeline built into team management. Coaches and admins open the studio, choose whether to generate certificates for the entire active roster at once (batch mode) or for a single player (individual mode), and then work through a multi-step process: set the certificate identity, upload a background image, configure typography, fill in signature fields, generate per-player AI narratives, review and edit those narratives, preview the final rendered output in the review panel, optionally attach a frame purchase link for families who want a physical copy, and finally publish to the parent dashboard.</p>
+              <p>The AI narrative engine draws on actual game stat data stored in Firestore — stat totals, key events, and game outcomes recorded during the season. The prompts used to generate these narratives are constrained to produce safe, age-appropriate content. If the raw AI output is too long it is automatically truncated to a readable paragraph length. Opponent team names found in the game data are automatically redacted from the narrative so that the certificate does not contain competitor references — this protects opponent privacy and keeps the certificate focused on the award recipient.</p>
+              <p>Once published, each certificate is immediately visible to the parent linked to that player in the parent dashboard. Unpublished certificates are never visible to parents at any point — you can design, preview, and iterate freely before committing to publish. Published certificates can be edited and republished at any time; the parent dashboard reflects the latest version immediately.</p>
 
               <h2 id="in-this-article">In This Article</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li>Batch certificate creation for the whole team</li>
-                <li>Individual certificate creation for a single player</li>
-                <li>Certificate design controls (image, font, signatures)</li>
-                <li>AI player narrative generation and editing</li>
-                <li>Certificate review panel and frame purchase link</li>
-                <li>Publishing certificates to the parent dashboard</li>
-                <li>Print and export for landscape-oriented output</li>
+                <li>How to open the studio and choose batch vs. individual mode</li>
+                <li>Certificate design controls: background image, font family and size, award title, signature fields</li>
+                <li>AI narrative generation per player: how it uses game data, safety constraints, truncation, and opponent redaction</li>
+                <li>Reviewing and editing narratives before publish</li>
+                <li>The certificate review panel and frame purchase link</li>
+                <li>Publishing to the parent dashboard and controlling visibility</li>
+                <li>Print and export: built-in flow vs. browser print, landscape centering</li>
+                <li>Unpublishing and editing after publish</li>
               </ul>
 
               <h2 id="who-is-this-for">Who Is This For</h2>
-              <p><strong>Coach:</strong> Use batch awards to recognize the whole team at once, or create quick individual certificates for standout moments during the season. Coaches can generate and review AI narratives before publishing.</p>
-              <p><strong>Admin:</strong> Admins manage publishing, control which certificates are visible to parents, and can generate Stripe-compatible frame purchase links for families who want a physical copy.</p>
+              <p><strong>Coaches</strong> are the primary users of the awards studio. At end of season, a coach can open the studio in batch mode and generate personalized certificates for every player on the roster in a single workflow — designing a shared layout, letting the AI draft a narrative for each player based on their tracked stat contributions, reviewing each draft in sequence, and publishing all at once. During the season, coaches can also use individual mode for quick recognition moments: a standout performance in a tournament, a player who hit a personal milestone, or a mid-season leadership award. Because the narrative and design are saved per certificate, coaches can return to the studio at any time to reprint or share.</p>
+              <p><strong>Admins</strong> manage the publishing pipeline and control parent visibility. An admin may design a standard certificate template for the whole organization, ensure the correct frame purchase link is included before publishing, and verify that each parent account is linked to the right player before the publish step. Admins can also unpublish certificates after they go live if a correction is needed, and republish once edits are complete. If the team offers physical framed certificates, the admin pastes the vendor URL into the frame purchase link field on each certificate (or once in batch) so that parents see a "Buy a frame" option alongside the digital certificate.</p>
+              <p><strong>Parents</strong> are not users of the studio itself — they only see the published output. Once a coach or admin publishes a certificate, it appears in the parent's dashboard view for their linked player. The parent can read the certificate, view the narrative, and optionally follow the frame purchase link if one was included. They cannot edit the certificate, generate new narratives, or access the design controls. If a parent does not yet see a certificate they are expecting, the certificate has not yet been published or their account is not yet linked to the correct player.</p>
 
               <h2 id="prerequisites">Prerequisites</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li>Signed in as a coach or admin on the team</li>
-                <li>Roster exists with at least one active player</li>
-                <li>For AI narrative generation, at least some game data (events or aggregated stats) should exist for the season — the AI draws on this to write personalized descriptions</li>
+                <li>You must be signed in as a coach or admin on the team where you are creating certificates. Team owners and global admins also have access.</li>
+                <li>The team must exist with at least one active player on the roster. Deactivated players are excluded from batch generation and will not appear in individual mode player selection.</li>
+                <li>For AI narrative generation, at least one completed game with tracked stat events or aggregated stats should exist for the season. The AI draws on stat totals, key game events, and game outcomes — the more game data recorded, the richer and more accurate the narrative. A player with zero tracked game appearances will still generate a narrative, but the output will be generic and should be manually edited.</li>
+                <li>If you want to include a frame purchase link, have the vendor URL ready before publishing. You can add or update this link after publishing, but parents will not see the link until it is saved and the certificate is live.</li>
+                <li>The browser must support printing (all modern browsers do) if you plan to use the built-in print and export flow.</li>
               </ul>
 
               <h2 id="choose-your-path">Choose Your Path</h2>
-              <ul class="ml-6 list-disc space-y-1">
-                <li><strong>Batch certificates for the whole team</strong> — use the certificate batch flow from the studio home screen</li>
-                <li><strong>Single player certificate</strong> — choose individual mode and select the player from your roster</li>
-                <li><strong>Publish for parent viewing</strong> — complete design review, then publish; parents see the certificate in their parent dashboard immediately</li>
-                <li><strong>Print or export</strong> — use the built-in print flow after design is finalized for correctly centered landscape output</li>
-              </ul>
+
+              <h3>1. Season-end team batch</h3>
+              <p>Use this path when you want to recognize every player on the roster with the same award type at the conclusion of the season. Open the studio, select batch mode, configure one shared design, generate AI narratives for all players, review each player's draft in sequence, and publish all at once. This is the most common end-of-season workflow.</p>
+
+              <h3>2. Individual recognition mid-season</h3>
+              <p>Use this path when a single player deserves recognition for a specific achievement — a standout game, a personal scoring record, or a special leadership moment. Open the studio, select individual mode, choose the player from your roster, write or generate a narrative specific to that moment, and publish. Because only one certificate is involved, this is a fast workflow with no waiting for batch generation.</p>
+
+              <h3>3. Tournament or playoff certificates</h3>
+              <p>Use this path when you want to issue certificates tied to a specific tournament or playoff event rather than the full season. Select batch mode (to cover all players) but customize the award title and any subtitle to reflect the event. If you want tournament-specific branding on the background image, upload a custom image for this batch. After publishing, these certificates appear alongside any other certificates for the same players — parents see all published certificates in their dashboard.</p>
+
+              <h3>4. Design first, generate AI later</h3>
+              <p>Use this path when you want to finalize the certificate layout well ahead of generating narratives — for example, when the season is still in progress and you want to prepare everything except the narrative text. Enter the design settings, save the design, and leave the narrative fields blank or with placeholder text. When the season concludes and you have full game data available, return to the studio and generate narratives at that point. This approach produces the best AI output because it captures the full season of stats.</p>
+
+              <h3>5. Reissue or update an existing certificate</h3>
+              <p>Use this path when you need to correct a published certificate — the narrative has a factual error, the coach signature changed, or the award title needs updating. Open the existing certificate in the studio, make your edits to the design or narrative, and republish. The parent dashboard updates immediately. If the correction is significant, consider unpublishing first while you work so that parents do not see an intermediate state.</p>
 
               <h2 id="step-by-step">Step-by-Step Workflow</h2>
+
               <ol class="ml-6 list-decimal space-y-1">
-                <li><strong>Open the awards and certificates studio</strong> from team management. Look for the Awards &amp; Certificates card in the team admin section.</li>
-                <li><strong>Choose a mode:</strong> select <strong>Batch</strong> to generate certificates for every player on the roster at once, or select <strong>Individual</strong> to create a certificate for a single player.</li>
-                <li><strong>Set the certificate design.</strong> Upload or choose a background image, adjust font family and size for the player name and award title, and fill in any signature fields (coach name, date, award category).</li>
-                <li><strong>Generate an AI player narrative.</strong> For each player, click <strong>Generate Narrative</strong>. The AI uses game event data for that player with safer prompts — long descriptions are automatically truncated to a readable length and opponent team names are redacted from the output to protect privacy.</li>
-                <li><strong>Review and edit the narrative.</strong> The generated text appears in an editable field. Make any corrections or personal touches before moving forward. Changes are saved per-player in the batch.</li>
-                <li><strong>Open the certificate review panel</strong> to preview the final rendered output for each player. If your team offers physical frames, paste the frame vendor URL into the <strong>Frame Purchase Link</strong> field — parents will see this as an optional purchase link alongside their certificate.</li>
-                <li><strong>Publish the certificates.</strong> Click <strong>Publish</strong> to make certificates visible to parents. Each parent sees only their own player's certificate in the parent dashboard. Unpublished certificates are never visible to parents.</li>
-                <li><strong>Print or export.</strong> From the review panel, use <strong>Print / Export</strong> to open the built-in print flow. This produces a correctly centered landscape-oriented page. Do not use browser print directly, as it may mis-center the layout.</li>
+                <li>
+                  <strong>Open the awards and certificates studio.</strong> Navigate to your team's management section. Look for the <strong>Awards &amp; Certificates</strong> card in the team admin panel — it may be grouped with other recognition or communication tools. The studio home screen shows all certificates you have previously created for this team, labeled as either Draft (not yet published) or Published. From this screen you can start a new batch, start a new individual certificate, or open an existing one to edit or republish.
+                </li>
+                <li>
+                  <strong>Choose a mode.</strong> When starting a new certificate, you will be prompted to choose between <strong>Batch</strong> and <strong>Individual</strong> mode. Batch mode generates one certificate for every active player on the roster using a single shared design — if your roster has 15 active players, you will end up with 15 separate certificates, each with its own AI narrative, all using the same background image, fonts, and signature fields. Individual mode lets you select a single player from a roster picker and creates one certificate for that player only. For large rosters, batch AI generation will take longer because narratives are generated one player at a time in sequence — keep the tab open while this runs.
+                </li>
+                <li>
+                  <strong>Set the certificate identity.</strong> Enter the <strong>Award Title</strong> — this is the headline that appears prominently on the certificate (for example, <em>Most Valuable Player</em>, <em>Season Achievement Award</em>, <em>Spirit of the Game</em>, or <em>Championship Participant</em>). Add an optional <strong>Season Label</strong> such as <em>Spring 2026 Season</em> and a <strong>Subtitle</strong> if you want a secondary line of text beneath the title. These fields are rendered directly on the certificate canvas, so make sure spelling and capitalization are exactly as you want them to appear on the finished document.
+                </li>
+                <li>
+                  <strong>Upload a background image.</strong> Click the background image upload area and select an image file from your device. Supported formats include JPEG and PNG. For best results, use a landscape-oriented image at least 1400 pixels wide — the certificate layout is landscape (wider than tall) so a portrait image will be cropped or letterboxed. If you leave this field blank, the certificate renders on a clean white background. Common choices include team photos, stadium or court images, branded graphics, and tournament logos. The image scales to fill the full certificate canvas, so avoid images with important content near the edges that could be cropped.
+                </li>
+                <li>
+                  <strong>Set typography.</strong> Choose a <strong>Font Family</strong> from the available options — the font applies to the player name and narrative text areas. Set the <strong>Player Name Font Size</strong> (the player's name is the largest element on most certificate layouts) and the <strong>Award Title Size</strong>. Larger text makes the certificate feel more formal and dramatic; smaller text accommodates longer award titles without wrapping. Preview how the text renders in the review panel (step 9) before committing to a final size.
+                </li>
+                <li>
+                  <strong>Fill in signature fields.</strong> The signature area at the bottom of the certificate can include the <strong>Coach Name</strong>, <strong>Coach Title</strong> (for example, <em>Head Coach</em> or <em>Program Director</em>), the <strong>Date</strong> of the award, and the <strong>Organization Name</strong>. All of these fields are optional — leave any blank if you do not want it to appear. If you are creating batch certificates, these signature fields are the same for all players in the batch, so make sure the coach name and date reflect the correct person and timing.
+                </li>
+                <li>
+                  <strong>Generate the AI narrative.</strong> For each player (in batch mode, you do this for each player in sequence; in individual mode, for the one selected player), click <strong>Generate Narrative</strong>. The system sends a prompt to the AI that includes the player's recorded stat totals, game outcomes from games they participated in, and notable event data from the season. The prompts are written with safety constraints that prevent the AI from generating inappropriate or harmful content — the output is designed to be suitable for players of all ages and for sharing with families. If the AI produces a narrative that is longer than a readable paragraph, it is automatically truncated to fit the certificate layout cleanly. Any opponent team names detected in the game data are redacted from the narrative before it is shown to you — the certificate will not name competitors, keeping the focus on the recipient and protecting opponent team privacy. Generation typically takes a few seconds per player.
+                </li>
+                <li>
+                  <strong>Review and edit the narrative.</strong> After generation, the narrative text appears in an editable text field. Read it carefully. The AI does a reasonable job of highlighting standout stat contributions (leading scorer, most assists, strong defensive record, etc.), but it may miss context you know from coaching — a player who stepped up in a key moment, showed exceptional improvement, or contributed in ways that don't show in the stats. Edit the narrative directly in the field: add personal touches, correct any inaccuracies, or rewrite it entirely if you prefer. Your edited version replaces the AI draft. In batch mode, you move through players one at a time; a progress indicator shows which players still have unreviewed narratives so you don't accidentally skip anyone before publishing.
+                </li>
+                <li>
+                  <strong>Preview in the review panel.</strong> Once you have set the design and filled in a narrative (AI-generated or hand-written), open the <strong>Certificate Review Panel</strong>. This panel renders a full visual preview of the certificate as it will appear to the parent — background image, typography, award title, player name, narrative text, signature fields, and any other design elements. Check for layout issues: text that runs too long and wraps awkwardly, a player name that exceeds the name field width, or signature fields that clash with the background image. If you see problems, go back and adjust font size, shorten the narrative, or choose a different background image. Do not publish until the preview looks right, because parents will see exactly this output.
+                </li>
+                <li>
+                  <strong>Add the frame purchase link (optional).</strong> If your team or organization has partnered with a frame vendor for physical framed certificates, paste the vendor URL into the <strong>Frame Purchase Link</strong> field. When this field is non-empty at publish time, parents will see a <strong>Buy a frame</strong> button alongside their certificate in the parent dashboard. The link opens in a new tab, directing them to the vendor's purchase page. You can update or remove this link at any time after publishing — just edit the certificate and republish. If you leave this field blank, no frame link appears to parents.
+                </li>
+                <li>
+                  <strong>Publish the certificate.</strong> Click <strong>Publish</strong>. In individual mode, this publishes the single certificate you have been working on. In batch mode, this publishes all reviewed certificates at once — any player whose narrative you have reviewed and whose certificate you have previewed will be published. Certificate records are written to Firestore immediately, and the parent dashboard link for each affected player updates in real time. Parents who open their dashboard within seconds of your publish action will see the certificate. Players whose certificates you have not yet reviewed in batch mode remain as drafts and are not published until you complete their review and publish again. If you change your mind, unpublish the certificate from the studio — it disappears from the parent dashboard immediately.
+                </li>
+                <li>
+                  <strong>Print or export the certificate.</strong> From the certificate review panel, click the <strong>Print / Export</strong> button. This opens the built-in print flow, which applies the correct landscape page dimensions, full-page margins, and centering rules for the certificate layout. Always use this built-in flow rather than triggering a browser print directly from the page — browser-native print may mis-center the landscape layout, clip the edges of the certificate, or apply unexpected margin scaling that distorts the output. The built-in flow produces a clean, print-ready landscape page suitable for home printing or sending to a print shop. For digital distribution, most browsers will let you save the print output as a PDF directly from the print dialog.
+                </li>
               </ol>
 
               <h2 id="common-questions">Common Questions</h2>
-              <h3>Can I edit the AI-generated text?</h3>
-              <p>Yes. The narrative text field is fully editable after generation. Edit the text before publishing and your changes will be saved. The AI text is a starting point — personalize it as much as you like.</p>
-              <h3>Do parents see unpublished certificates?</h3>
-              <p>No. Certificates are only visible in the parent dashboard after you explicitly click <strong>Publish</strong>. You can design, revise, and preview without parents seeing anything.</p>
-              <h3>Can I reprint a certificate after publishing?</h3>
-              <p>Yes. Open the certificate review panel at any time and use the <strong>Print / Export</strong> option. The design and narrative are saved on the record.</p>
-              <h3>Can I unpublish a certificate after it goes live?</h3>
-              <p>Yes. Return to the studio, open the certificate, and toggle it back to unpublished. The certificate will be removed from the parent dashboard immediately.</p>
+
+              <h3>Can I edit the certificate after publishing?</h3>
+              <p>Yes. Open the certificate in the studio at any time, make changes to the design, narrative, signature fields, or frame purchase link, and click <strong>Publish</strong> again. The parent dashboard shows the updated version immediately. There is no need to unpublish first unless you want to hide the certificate from parents while you work on edits.</p>
+
+              <h3>What if a player has no game data at all?</h3>
+              <p>The AI narrative generator will still produce output, but without stat data to draw from it will default to generic language that does not mention specific achievements. In this case, manually edit the narrative to write something meaningful about the player. The certificate will still publish and display correctly — the narrative field just needs to have some text in it before you publish.</p>
+
+              <h3>How many certificates can a batch generate?</h3>
+              <p>Batch mode generates one certificate for every <em>active</em> player on the roster at the time you start the batch. Players who have been deactivated or removed from the roster are excluded automatically. If you need to include a recently added player who does not yet appear in the batch, make sure they are added and activated on the roster before starting the batch workflow.</p>
+
+              <h3>Can parents download or save the certificate?</h3>
+              <p>Parents can use their browser's built-in print functionality from the parent dashboard view to print or save the certificate as a PDF. The platform does not currently provide a dedicated download button on the parent-facing view — encourage parents to use browser print (usually Ctrl+P or Cmd+P) and choose "Save as PDF" in the print dialog. For a higher-quality output, coaches and admins can use the built-in Print / Export flow in the studio and share the PDF directly with families.</p>
+
+              <h3>Can I have different designs for different players in one batch?</h3>
+              <p>No. Batch mode uses a single shared design for all players in the batch — the same background image, fonts, award title, and signature fields apply to every certificate. Only the player name and the AI narrative differ between players. If you need per-player design customization, create each certificate individually using individual mode, where you can configure every design element separately for each player.</p>
+
+              <h3>Can I generate a certificate without using the AI?</h3>
+              <p>Yes. You do not have to click Generate Narrative. Simply leave the narrative field blank (the certificate will render without narrative text) or type your own text directly into the narrative field. The AI generation step is entirely optional — if you prefer to write all narratives yourself, you can skip it completely for every player without any impact on publishing or print output.</p>
+
+              <h3>Are certificates stored permanently?</h3>
+              <p>Yes. All certificate records — including the full design configuration (background image, fonts, award title, signature fields), the narrative text, and the publish status — are saved to Firestore. Draft and published certificates both persist indefinitely until you explicitly delete them. You can return to the studio months later and reprint, republish, or edit any certificate.</p>
+
+              <h3>What does "opponent redaction" mean exactly?</h3>
+              <p>When the AI generates a narrative, it has access to the game stat data for that player, which may include the names of opponent teams from the game records. Opponent redaction means that the system identifies and removes any opponent team names from the AI output before showing it to you. The goal is to ensure that the finished certificate focuses entirely on the award recipient and does not name or reference competing teams — which could be politically sensitive in a youth sports context and is generally irrelevant to the award being given.</p>
 
               <h2 id="recovery-troubleshooting">Recovery and Troubleshooting</h2>
-              <p><strong>AI narrative is blank or generic:</strong> Make sure game data (stat events or aggregated stats) exists for the player's season. If no data is found, the AI has nothing to draw from. Add at least one tracked game and retry generation.</p>
-              <p><strong>Print output is not centered:</strong> Always use the <strong>Print / Export</strong> button inside the review panel rather than triggering a browser print directly. The built-in flow applies the correct landscape page margins and centering.</p>
-              <p><strong>Batch generation is slow:</strong> AI narratives are generated one player at a time in sequence. For large rosters, this may take a minute. Keep the tab open while generation runs.</p>
+
+              <h3>AI narrative shows "No data available" or is completely generic</h3>
+              <p>This means the AI found no usable stat data for that player. Check that at least one game has been tracked for your team and that the player participated in at least one tracked game. If game tracking exists but the data is not appearing, try refreshing the studio and generating again. If the issue persists, manually write the narrative — it is faster than debugging data for a single player.</p>
+
+              <h3>AI narrative mentions the wrong player name</h3>
+              <p>This is a known edge case when player data records are inconsistent. Edit the narrative manually to replace any incorrect name references. If the wrong name appears repeatedly across multiple players in a batch, check the roster for duplicate or malformed player records and correct them before regenerating.</p>
+
+              <h3>Certificate print output is clipped on the edges</h3>
+              <p>Always use the <strong>Print / Export</strong> button inside the review panel — do not use browser-native print. If you must use browser print, set the page orientation to <strong>Landscape</strong> in the print dialog, set margins to <strong>None</strong> or <strong>Minimum</strong>, and disable "Headers and footers." Even with these settings, browser print may produce slightly different output than the built-in flow.</p>
+
+              <h3>Batch generation appears stuck and has been running for a long time</h3>
+              <p>AI narratives are generated one player at a time in sequence. For a large roster (15 or more players), the full batch generation may take a few minutes. Do not close or refresh the tab — doing so will interrupt generation and you will need to restart. If generation appears frozen for more than five minutes with no progress, refresh the tab and start the batch again from the beginning.</p>
+
+              <h3>Certificate is not visible to parent after publishing</h3>
+              <p>First, confirm the certificate status in the studio shows <strong>Published</strong> and not Draft. Second, confirm the parent account is linked to the correct player — the parent must have that player's team in their linked parent team IDs. Third, confirm the player is still active on the roster. If all three conditions are met and the parent still cannot see the certificate, ask them to do a hard reload of the parent dashboard (Ctrl+Shift+R or Cmd+Shift+R).</p>
+
+              <h3>Frame purchase link is not showing on the parent dashboard</h3>
+              <p>The frame link field must be non-empty at the time of publishing (or republishing). If you added the link after the initial publish without clicking Publish again, the link was not saved to the live record. Open the certificate in the studio, confirm the link is in the Frame Purchase Link field, and click <strong>Publish</strong> again to update the live version.</p>
+
+              <h3>Design changes are not reflected in the preview</h3>
+              <p>Make sure you click <strong>Save Design</strong> after making changes before opening the review panel. Changes to typography, background image, or signature fields are not auto-saved — they require an explicit save action. If you open the review panel without saving, it will render the last saved version of the design, not your current edits.</p>
+
+              <h3>Republish did not update what the parent sees</h3>
+              <p>After an admin confirms a republish, ask the parent to do a hard reload of the parent dashboard page. The dashboard reads from Firestore in real time, but locally cached versions of the page may show stale data for a short period. A hard reload (Ctrl+Shift+R on Windows/Linux, Cmd+Shift+R on Mac) clears the browser cache and fetches the latest data.</p>
 
               <h2 id="related-workflows">Related Workflows</h2>
               <ul class="ml-6 list-disc space-y-1">
-                <li><a href="workflow-roster.html">Manage Your Roster</a> — ensure players are active before generating certificates</li>
-                <li><a href="workflow-team-setup.html">Team Setup</a> — configure team details and admin access</li>
-                <li><a href="workflow-postgame.html">Post-Game Review</a> — review game data that feeds AI narratives</li>
+                <li><a href="workflow-roster.html">Manage Your Roster</a> — ensure players are active and correctly listed before generating batch certificates</li>
+                <li><a href="workflow-postgame.html">Post-Game Review</a> — review and confirm game stat data that the AI uses for narrative generation</li>
+                <li><a href="workflow-team-setup.html">Team Setup</a> — configure team details and admin access required to use the awards studio</li>
               </ul>
 
             </div>
