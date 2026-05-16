@@ -6,6 +6,8 @@ import {
     collectFieldValues,
     decideRegistrationPlacement,
     formatFeeAmount,
+    getRegistrationPaymentNotice,
+    hasRegistrationPaymentSettings,
     getPaymentPlanChoices,
     formatFeeSnapshotLines,
     normalizeRegistrationForm,
@@ -19,6 +21,7 @@ describe('public registration flow', () => {
             name: 'Spring Soccer',
             season: 'Spring 2026',
             feeAmountCents: 12500,
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             playerFields: [{ key: 'firstName', name: 'First name', required: true }],
             guardianFields: [{ id: 'email', label: 'Email', type: 'email', required: true }],
             waiver: 'I accept the risk.',
@@ -31,11 +34,15 @@ describe('public registration flow', () => {
             programName: 'Spring Soccer',
             season: 'Spring 2026',
             feeAmountCents: 12500,
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             published: true,
             waiverText: 'I accept the risk.'
         });
         expect(form.participantFields[0]).toMatchObject({ id: 'firstName', label: 'First name', required: true });
         expect(form.guardianFields[0]).toMatchObject({ id: 'email', type: 'email' });
+        expect(form.paymentSettings).toEqual({ offlinePaymentEnabled: true, onlineCheckoutEnabled: true });
+        expect(hasRegistrationPaymentSettings(form)).toBe(true);
+        expect(getRegistrationPaymentNotice(form)).toContain('Online checkout is planned');
         expect(formatFeeAmount(form.feeAmountCents, form.currency)).toBe('$125.00');
     });
 
@@ -68,6 +75,7 @@ describe('public registration flow', () => {
         const form = normalizeRegistrationForm({
             programName: 'Clinic',
             feeAmountCents: 5000,
+            paymentSettings: { offlinePaymentEnabled: true },
             published: true,
             waiverText: 'Waiver'
         }, { teamId: 'team-1', formId: 'form-1' });
@@ -85,6 +93,7 @@ describe('public registration flow', () => {
             programName: 'Clinic',
             feeAmountCents: 5000,
             currency: 'USD',
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
             participant: { playerName: 'Sam' },
             guardian: { email: 'parent@example.com' },
             waiverAccepted: true,
@@ -286,6 +295,8 @@ describe('public registration flow', () => {
         expect(page).toContain("doc(db, 'teams', teamId, 'registrationForms', formId)");
         expect(page).toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
         expect(page).toContain('registration-options-section');
+        expect(page).toContain('registration-payment-section');
+        expect(page).toContain('getRegistrationPaymentNotice');
         expect(page).toContain('payment-plan-section');
         expect(page).toContain('getPaymentPlanChoices');
         expect(page).toContain('fee-summary-section');
@@ -306,7 +317,9 @@ describe('public registration flow', () => {
         expect(rules).toContain('function registrationFormPath(teamId, formId)');
         expect(rules).toContain('isPublishedRegistrationForm(get(formPath).data)');
         expect(rules).toContain("data.status in ['pending', 'waitlisted']");
+        expect(rules).toContain("'paymentSettings'");
         expect(rules).toContain("'selectedOption'");
+        expect(rules).toContain('isRegistrationPaymentSettingsPayloadValid');
         expect(rules).toContain("'paymentPlan'");
         expect(rules).toContain('isRegistrationPaymentPlanValid');
         expect(rules).toContain("'feeSnapshot'");

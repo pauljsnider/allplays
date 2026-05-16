@@ -47,6 +47,11 @@
                     <div id="fee-summary-lines" class="mt-3 space-y-2 text-sm"></div>
                 </section>
 
+                <section id="registration-payment-section" class="hidden rounded border border-indigo-100 bg-indigo-50 p-4">
+                    <h2 class="text-xl font-semibold text-gray-900">Payment</h2>
+                    <p id="registration-payment-notice" class="mt-1 text-sm text-gray-700"></p>
+                </section>
+
                 <section id="registration-options-section" class="hidden">
                     <h2 class="text-xl font-semibold text-gray-900">Registration option</h2>
                     <p class="mt-1 text-sm text-gray-600">Choose the option that fits this participant.</p>
@@ -98,6 +103,8 @@
             formatFeeAmount,
             formatFeeSnapshotLines,
             getActiveRegistrationOptions,
+            getRegistrationPaymentNotice,
+            hasRegistrationPaymentSettings,
             getPaymentPlanChoices,
             hasInstallmentPlan,
             normalizeRegistrationForm,
@@ -177,11 +184,28 @@
             guardianContainer.innerHTML = '';
             form.participantFields.forEach(field => renderField(participantContainer, field, 'participant'));
             form.guardianFields.forEach(field => renderField(guardianContainer, field, 'guardian'));
+            renderRegistrationPaymentSettings(form);
             renderRegistrationOptions(form);
             renderPaymentPlanChoices(form);
 
             loadingState.classList.add('hidden');
             formElement.classList.remove('hidden');
+        }
+
+        function renderRegistrationPaymentSettings(form) {
+            const section = document.getElementById('registration-payment-section');
+            const notice = document.getElementById('registration-payment-notice');
+            const paymentNotice = getRegistrationPaymentNotice(form);
+            if (!hasRegistrationPaymentSettings(form) || !paymentNotice) {
+                section.classList.add('hidden');
+                notice.textContent = '';
+                submitButton.textContent = 'Submit registration';
+                return;
+            }
+
+            notice.textContent = paymentNotice;
+            submitButton.textContent = 'Submit registration';
+            section.classList.remove('hidden');
         }
 
         function renderRegistrationOptions(form) {
@@ -355,6 +379,8 @@
                 if (result.status === 'waitlisted') {
                     confirmationMessage.querySelector('h1').textContent = 'Registration waitlisted';
                     confirmationMessage.querySelector('p').textContent = 'This option is currently full, so your registration has been added to the waitlist.';
+                } else if (hasRegistrationPaymentSettings(activeForm)) {
+                    confirmationMessage.querySelector('p').textContent = getRegistrationPaymentNotice(activeForm) || 'The program organizer will follow up with next steps.';
                 }
                 confirmationMessage.classList.remove('hidden');
             } catch (error) {

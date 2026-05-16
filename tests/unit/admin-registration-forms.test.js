@@ -5,6 +5,7 @@ import {
     fieldLabelsToDefinitions,
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
+    normalizePaymentSettings,
     normalizeInstallmentPlan,
     normalizeRegistrationDiscountRules,
     normalizeRegistrationOptions,
@@ -26,6 +27,7 @@ describe('admin registration form setup', () => {
                 { id: 'division-a', label: 'Division A', capacityLimit: '12', active: true, waitlistEnabled: true },
                 { label: 'Division B', capacityLimit: '', active: false, waitlistEnabled: false }
             ],
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, installmentCount: '3', firstDueDate: '2026-06-01', intervalDays: '30' },
             discountRules: [
                 { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: '25', earlyBirdDeadline: '2026-03-01' },
@@ -44,6 +46,7 @@ describe('admin registration form setup', () => {
             season: 'Spring 2026',
             feeAmountCents: 12550,
             currency: 'USD',
+            paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, title: 'Installment plan', installmentCount: 3, firstDueDate: '2026-06-01', intervalDays: 30 },
             waiverText: 'I accept the risk.',
             status: 'published',
@@ -63,6 +66,14 @@ describe('admin registration form setup', () => {
             { id: 'discount_2', type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: 10, earlyBirdDeadline: '', minimumQuantity: 2, active: true, sortOrder: 1 }
         ]);
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
+    it('normalizes checkout and payment settings to bounded booleans', () => {
+        expect(normalizePaymentSettings()).toEqual({ offlinePaymentEnabled: false, onlineCheckoutEnabled: false });
+        expect(normalizePaymentSettings({ offlinePaymentEnabled: true, onlineCheckoutEnabled: 'yes' })).toEqual({
+            offlinePaymentEnabled: true,
+            onlineCheckoutEnabled: false
+        });
     });
 
     it('normalizes simple installment plan settings safely', () => {
@@ -144,6 +155,9 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('registration-participant-fields');
         expect(adminPage).toContain('registration-guardian-fields');
         expect(adminPage).toContain('registration-options-list');
+        expect(adminPage).toContain('registration-offline-payment');
+        expect(adminPage).toContain('registration-online-checkout');
+        expect(adminPage).toContain('Online payment processing is not available yet');
         expect(adminPage).toContain('registration-installments-enabled');
         expect(adminPage).toContain('registration-discount-rules');
         expect(adminPage).toContain('registration-waiver');
@@ -153,6 +167,7 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('window.moveRegistrationOptionAdmin');
         expect(adminJs).toContain('window.removeRegistrationOptionAdmin');
         expect(adminJs).toContain('collectRegistrationOptionsFromEditor()');
+        expect(adminJs).toContain('offlinePaymentEnabled: document.getElementById');
         expect(adminJs).toContain("document.getElementById('registration-installment-count')");
         expect(adminJs).toContain('parseRegistrationDiscountRulesText');
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');

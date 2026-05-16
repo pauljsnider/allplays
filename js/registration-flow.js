@@ -16,9 +16,35 @@ export function normalizeRegistrationForm(form = {}, context = {}) {
         waiverText: String(form.waiverText || form.waiver || '').trim(),
         status: String(form.status || '').trim(),
         published: form.published === true || form.status === 'published',
+        paymentSettings: normalizePaymentSettings(form.paymentSettings),
         discountRules: normalizeRegistrationDiscountRules(form.discountRules || []),
         registrationOptions: normalizeRegistrationOptions(form.registrationOptions || form.options || [])
     };
+}
+
+export function normalizePaymentSettings(settings = {}) {
+    return {
+        offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
+        onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
+    };
+}
+
+export function hasRegistrationPaymentSettings(form = {}) {
+    return form.paymentSettings?.offlinePaymentEnabled === true || form.paymentSettings?.onlineCheckoutEnabled === true;
+}
+
+export function getRegistrationPaymentNotice(form = {}) {
+    const settings = form.paymentSettings || {};
+    if (settings.offlinePaymentEnabled && settings.onlineCheckoutEnabled) {
+        return 'Offline payment is accepted for this registration. Online checkout is planned, but online payment processing is not available yet.';
+    }
+    if (settings.offlinePaymentEnabled) {
+        return 'Offline payment is accepted for this registration. The organizer will share payment instructions after review.';
+    }
+    if (settings.onlineCheckoutEnabled) {
+        return 'Online checkout is planned for this registration, but online payment processing is not available yet.';
+    }
+    return '';
 }
 
 export function normalizeInstallmentPlan(plan = null) {
@@ -300,6 +326,7 @@ export function buildRegistrationRecord({ form, participant, guardian, waiverAcc
         programName: form.programName,
         feeAmountCents: form.feeAmountCents,
         currency: form.currency,
+        paymentSettings: normalizePaymentSettings(form.paymentSettings),
         feeSnapshot: registrationFeeSnapshot,
         participant,
         guardian,

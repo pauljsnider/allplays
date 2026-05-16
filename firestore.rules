@@ -317,6 +317,13 @@ service cloud.firestore {
              (data.get('options', []) is list && data.get('options', []).size() > 0);
     }
 
+    function isRegistrationPaymentSettingsPayloadValid(settings) {
+      return settings is map &&
+             settings.keys().hasOnly(['offlinePaymentEnabled', 'onlineCheckoutEnabled']) &&
+             settings.offlinePaymentEnabled is bool &&
+             settings.onlineCheckoutEnabled is bool;
+    }
+
     function isRegistrationSelectedOptionPayloadValid(option) {
       return option is map &&
              option.keys().hasOnly(['id', 'countKey', 'title', 'feeAmountCents', 'capacityLimit', 'waitlistEnabled']) &&
@@ -425,6 +432,7 @@ service cloud.firestore {
                'programName',
                'feeAmountCents',
                'currency',
+               'paymentSettings',
                'participant',
                'guardian',
                'waiverAccepted',
@@ -443,6 +451,8 @@ service cloud.firestore {
              data.waiverAccepted == true &&
              hasOnlyFlatStringValues(data.participant) &&
              hasOnlyFlatStringValues(data.guardian) &&
+             data.keys().hasAny(['paymentSettings']) &&
+             isRegistrationPaymentSettingsPayloadValid(data.paymentSettings) &&
              isRegistrationPaymentPlanValid(data.paymentPlan) &&
              data.keys().hasAny(['feeSnapshot']) &&
              isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
