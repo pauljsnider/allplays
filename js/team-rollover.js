@@ -6,8 +6,7 @@ const ROLLOVER_OMITTED_PLAYER_FIELDS = new Set([
     'sourceTeamId',
     'sourcePlayerId',
     'rolledOverAt',
-    'medicalInfo',
-    'emergencyContact'
+
 ]);
 
 export function buildRolloverPlayerCopy(sourcePlayer, sourceTeamId, rolledOverAt) {
