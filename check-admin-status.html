@@ -84,6 +84,7 @@
         <h1>Admin Entitlement Status</h1>
         <p class="loading-message">Loading admin status...</p>
         <div id="admin-status-display"></div>
+        <a href="admin.html" class="back-link">Go to Admin Dashboard</a><br>
         <a href="workflow-admin-ops.html" class="back-link">← Back to Admin Workflow</a>
     </div>
 
@@ -93,18 +94,25 @@
 
         const adminStatusDisplay = document.getElementById('admin-status-display');
 
+        function removeLoadingMessage() {
+            const loadingMessage = adminStatusDisplay.previousElementSibling;
+            if (loadingMessage?.classList?.contains('loading-message')) {
+                loadingMessage.remove();
+            }
+        }
+
         checkAuth((user) => {
             if (user) {
                 if (user.isAdmin) {
-                    adminStatusDisplay.innerHTML = '<span class="text-green-600">isAdmin: TRUE</span>';
-                    adminStatusDisplay.previousElementSibling.remove(); // Remove loading message
+                    adminStatusDisplay.innerHTML = '<span class="text-green-600">isAdmin field is TRUE</span>';
+                    removeLoadingMessage();
                 } else {
                     adminStatusDisplay.innerHTML = '<span class="text-red-600">isAdmin: FALSE</span><p class="error-message">You do not have admin entitlement.</p>';
-                    adminStatusDisplay.previousElementSibling.remove(); // Remove loading message
+                    removeLoadingMessage();
                 }
             } else {
                 adminStatusDisplay.innerHTML = '<span class="text-red-600">Not logged in</span><p class="error-message">Please log in to check your admin status.</p>';
-                adminStatusDisplay.previousElementSibling.remove(); // Remove loading message
+                removeLoadingMessage();
                 // Optional: redirect to login page if not logged in
                 // window.location.href = 'login.html';
             }

@@ -25,8 +25,11 @@ describe('admin status page', () => {
         const statusPageHtml = readRepoFile('check-admin-status.html');
 
         expect(statusPageHtml).toContain("import { checkAuth } from './js/auth.js?v=14'");
-        expect(statusPageHtml).toContain('isAdmin: TRUE');
+        expect(statusPageHtml).toContain('isAdmin field is TRUE');
+        expect(statusPageHtml).toContain('admin.html');
         expect(statusPageHtml).toContain('Not logged in');
         expect(statusPageHtml).toContain('workflow-admin-ops.html');
+        expect(statusPageHtml).toContain('function removeLoadingMessage()');
+        expect(statusPageHtml).not.toContain('previousElementSibling.remove()');
     });
 });
