@@ -301,6 +301,8 @@
 <li>How to follow score, stream, plays, stats, chat, and reactions during live action.</li>
 <li>How to move to replay and match report after the final score.</li>
 <li>What to do when live, replay, chat, or sharing is not working.</li>
+<li>Listen to live play announcements using the Play Announcer.</li>
+<li>Seek to saved highlights in replay view.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -359,12 +361,14 @@
 <p>Send a message in <strong>Chat</strong>.</p>
 <p>Set or update your display name if prompted.</p>
 <p>Use the reaction bar (fire, clap, wow, heart, hundred).</p>
+<p>Enable <strong>Play Announcer</strong> to hear live events narrated aloud using your browser's text-to-speech. Toggle in the live play-by-play panel. Mute or pause at any time. Persists your preference across the session.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Move to post-game content.</li>
 </ol>
 <p>Select <strong>Watch Replay</strong> to enter replay mode.</p>
 <p>Use replay controls: play/pause, scrubber, and speed (<code>1x</code> to <code>50x</code>).</p>
 <p>Select <strong>View Game Details</strong> or <strong>Match Report</strong> to open the full report page.</p>
+<p>If the game has saved highlights, open the <strong>Highlights</strong> section in the media hub to jump directly to key moments in the replay.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Share the game or report.</li>
 </ol>
@@ -391,6 +395,14 @@
 <li>Why is the Video tab missing?</li>
 </ul>
 <p>Some games do not have an active embedded stream. Use plays, stats, and chat instead.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Why is the replay area showing "Processing" instead of the video?</strong></li>
+</ul>
+<p>The replay is still being prepared. Playback is blocked while processing. Check back in a few minutes. The page now shows distinct states (unavailable, processing, failed, ready) instead of a blank video area.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>The Play Announcer isn't speaking</strong></li>
+</ul>
+<p>Your browser may not support the Web Speech API. Try a different browser or check your browser's speech settings.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Game link opens but game does not load.</li>
@@ -416,6 +428,9 @@
 <li>Share sheet does not open.</li>
 </ul>
 <p>Copy the page URL manually and send it in your group chat.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Replay shows blank or empty video area</strong>: The page now shows explicit state messages (unavailable, processing, failed). If you see one of these, the replay is not yet ready or does not exist for this game.</li>
+</ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><code>schedule</code>: Find upcoming games and open live/watch entry points from team schedule.</li>

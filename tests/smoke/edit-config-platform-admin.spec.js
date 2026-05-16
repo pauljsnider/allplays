@@ -153,6 +153,10 @@ export function parseAdvancedStatDefinitions(input) {
             return definition;
         });
 }
+
+export function validateStatDefinitionsForPublicLeaderboards() {
+    return { valid: true, errors: [] };
+}
 `;
 
 const STAT_CONFIG_PRESETS_STUB = `

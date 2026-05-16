@@ -30,8 +30,8 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=11';
-import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=4';
+} from './firebase.js?v=12';
+import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=5';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
@@ -1080,6 +1080,44 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
         'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function grantStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    const teamSnap = await getDoc(docRef);
+    const teamData = teamSnap.exists() ? teamSnap.data() : {};
+    const currentStreamingMode = teamData?.teamPermissions?.streaming?.mode;
+
+    const updatePayload = {
+        'teamPermissions.scorekeeping.mode': 'selected',
+        'teamPermissions.scorekeeping.memberIds': arrayUnion(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    };
+
+    // Only force streaming mode to 'selected' if it's not currently 'all_confirmed'
+    if (currentStreamingMode !== 'all_confirmed') {
+        updatePayload['teamPermissions.streaming.mode'] = 'selected';
+    }
+
+    await updateDoc(docRef, updatePayload);
+}
+
+export async function revokeStreamScoreAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for Stream & Score access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.scorekeeping.memberIds': arrayRemove(normalizedUserId),
+        'teamPermissions.streaming.memberIds': arrayRemove(normalizedUserId),
         updatedAt: Timestamp.now()
     });
 }
@@ -3362,6 +3400,13 @@ export async function getTeamFeeBatch(teamId, batchId) {
     const batchRef = doc(db, 'teams', teamId, 'feeBatches', batchId);
     const batchSnap = await getDoc(batchRef);
     return batchSnap.exists() ? { id: batchSnap.id, ...batchSnap.data() } : null;
+}
+
+export async function listTeamFeeBatches(teamId) {
+    if (!teamId) return [];
+    const batchesRef = collection(db, 'teams', teamId, 'feeBatches');
+    const snapshot = await getDocs(query(batchesRef, orderBy('createdAt', 'desc'), limit(25)));
+    return snapshot.docs.map((batchDoc) => ({ id: batchDoc.id, ...batchDoc.data() }));
 }
 
 export async function listTeamFeeRecipients(teamId, batchId) {
@@ -6076,7 +6121,8 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getRsvps(teamId, gameId)
     ]);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-    return buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    const breakdown = buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
+    return { ...breakdown, players, rsvps };
 }
 
 export async function getPublicTrackingItems(teamId) {

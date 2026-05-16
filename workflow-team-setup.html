@@ -304,6 +304,9 @@
 <li>How to preview prior roster rollover options during team creation</li>
 <li>How to verify what families and players will see</li>
 <li>How to recover from common setup and access problems</li>
+<li>Grant scoped scorekeeper and videographer access.</li>
+<li>View the team staff and permissions overview.</li>
+<li>Configure a registration provider (Sports Connect).</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -402,6 +405,31 @@
 <li>Existing admins on the new team are skipped to avoid duplicates.</li>
 <li>Fan/member carry-forward is omitted until player rollover can map parent access to copied players.</li>
 </ul>
+<h2 id="scoped-staff-permissions">Scoped Staff Permissions</h2>
+<p>Beyond full admin access, you can grant scoped helper permissions to specific confirmed members without making them team admins.</p>
+<h3>Scorekeeper Access</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open the <strong>Team</strong> page and go to <strong>Staff &amp; Permissions</strong>.</li>
+<li>In <strong>Scorekeeper Access</strong>, select members to grant scorekeeping rights.</li>
+<li>Scorekeepers can track and score scheduled games but do not receive team management access.</li>
+<li>Revoke access by removing the member from the scorekeeper list.</li>
+</ol>
+<h3>Videographer Access</h3>
+<ol class="ml-6 list-decimal space-y-1">
+<li>In <strong>Videographer Access</strong>, grant selected confirmed members live-game media capture rights.</li>
+<li>Videographers get native camera capture and scoped Firestore media update permissions — without admin status.</li>
+<li>Revoke by removing them from the videographer list.</li>
+</ol>
+<h2 id="staff-permissions-overview">Staff and Permissions Overview</h2>
+<p>The <strong>Team Staff &amp; Permissions</strong> section on the team page (visible to full team admins) shows current owner/admin staff, pending admin invites, and all scoped helper permissions with distinct empty states. Access it via the <strong>Staff</strong> entry in the team management banner.</p>
+<h2 id="registration-provider">Registration Provider Setup</h2>
+<p>Connect a registration provider (such as Sports Connect) to sync roster and schedule data.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open <strong>Edit Team</strong> and select <strong>Sports Connect</strong> (or your provider) in the registration provider field.</li>
+<li>Enter the external Team ID / mapping field.</li>
+<li>View connection status, last sync status, and last sync time.</li>
+<li>Use the manual re-import entry point to trigger a fresh sync when needed.</li>
+</ol>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Handle invite outcomes.</li>
 </ol>
@@ -450,6 +478,14 @@
 <li>Where do I verify what families will see?</li>
 </ul>
 <p>Open the team page and check identity, league, and stream links.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What can a scorekeeper do?</strong></li>
+</ul>
+<p>Scorekeepers can track and score scheduled games. They do not have access to roster management, schedule editing, or team settings.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>What can a videographer do?</strong></li>
+</ul>
+<p>Videographers can capture live game media using native camera access. They cannot access team management, roster, or schedule features.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Save fails:</li>
@@ -475,6 +511,10 @@
 <li>Need a backup invite path:</li>
 </ul>
 <p>Use <code>profile.html</code> to generate and copy a signup code/link, then share it directly.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Scorekeeper cannot access game tracking</strong>: Confirm the game is scheduled and the member's email matches their account. Re-grant access if needed.</li>
+<li><strong>Edit config access blocked</strong>: Only owners, platform admins, or admins whose auth email matches the Firestore adminEmails list can enter the editable stats config. Contact the team owner to verify your admin record.</li>
+</ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><code>choose-home-dashboard</code>: Start from the correct landing page before team operations</li>
