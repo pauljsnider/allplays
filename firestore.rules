@@ -28,6 +28,22 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function isSafeDocumentId(documentId) {
+      return documentId is string &&
+             documentId.size() > 0 &&
+             !documentId.matches('.*[/].*');
+    }
+
+    function teamPermission(teamId, permissionName) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data
+               .get('teamPermissions', {})
+               .get(permissionName, {});
+    }
+
+    function scorekeeperVisibleGameExists(teamId, gameId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
+             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted';
+    }
 
     function hasConfirmedGameRsvp(teamId, gameId) {
       let rsvpPath = /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rsvps/$(request.auth.uid);
@@ -36,32 +52,35 @@ service cloud.firestore {
     }
 
     function canScorekeepGame(teamId, gameId) {
-      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
-      let permission = team.get('teamPermissions', {}).get('scorekeeping', {});
-      let mode = permission.get('mode', '');
       return isSignedIn() &&
+             isSafeDocumentId(teamId) &&
+             isSafeDocumentId(gameId) &&
              !isTeamOwnerOrAdmin(teamId) &&
-             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
-             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
+             scorekeeperVisibleGameExists(teamId, gameId) &&
              (
-               (mode == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)) ||
-               (mode == 'selected' && request.auth.uid in permission.get('memberIds', []))
+               (teamPermission(teamId, 'scorekeeping').get('mode', '') == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)) ||
+               (teamPermission(teamId, 'scorekeeping').get('mode', '') == 'selected' &&
+                request.auth.uid in teamPermission(teamId, 'scorekeeping').get('memberIds', []))
              );
     }
 
     function canVideographGame(teamId, gameId) {
-      let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
-      let permission = team.get('teamPermissions', {}).get('videography', {});
       return isSignedIn() &&
+             isSafeDocumentId(teamId) &&
+             isSafeDocumentId(gameId) &&
              !isTeamOwnerOrAdmin(teamId) &&
-             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('status', 'scheduled') != 'cancelled' &&
-             get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data.get('liveStatus', '') != 'deleted' &&
-             request.auth.uid in permission.get('memberIds', []);
+             scorekeeperVisibleGameExists(teamId, gameId) &&
+             request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', []);
     }
 
     function keepsScorekeeperGameLifecycleVisible() {
       return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
              request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
+    }
+
+    function isScoreMetadataAttributionValid() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['scoreUpdatedBy']) ||
+             request.resource.data.scoreUpdatedBy == request.auth.uid;
     }
 
     function isScorekeepingGameUpdate(teamId, gameId) {
@@ -71,6 +90,7 @@ service cloud.firestore {
                'completedAt', 'completedBy', 'completedByName', 'updatedAt',
                'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]) &&
+             isScoreMetadataAttributionValid() &&
              keepsScorekeeperGameLifecycleVisible();
     }
 
@@ -80,7 +100,8 @@ service cloud.firestore {
                'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
                'replayVideo', 'recordedVideo', 'videoReplay', 'broadcastSession', 'updatedAt',
                'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
-             ]);
+             ]) &&
+             isScoreMetadataAttributionValid();
     }
 
     // Check if user is a parent for a specific player.
