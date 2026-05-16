@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from "./vendor/firebase-app.js";
 import { getStorage } from "./vendor/firebase-storage.js";
 import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence } from "./vendor/firebase-auth.js";
-import { resolveImageFirebaseConfig } from "./firebase-runtime-config.js?v=5";
+import { resolveImageFirebaseConfig } from "./firebase-runtime-config.js?v=6";
 
 const imgConfig = resolveImageFirebaseConfig();
 
