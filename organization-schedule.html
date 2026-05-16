@@ -35,6 +35,88 @@
             <div id="organization-access-alert" class="hidden rounded-xl border px-4 py-3 text-sm"></div>
             <div id="organization-success" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800"></div>
 
+            <section class="rounded-2xl bg-white p-6 shadow-md">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <h2 class="text-xl font-bold text-gray-900">Venue availability and blackouts</h2>
+                        <p class="mt-2 text-sm text-gray-600">Define usable venue windows and blackout dates before building generated schedules.</p>
+                    </div>
+                    <button id="refresh-venue-controls-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Refresh</button>
+                </div>
+
+                <div class="mt-5 grid gap-5 lg:grid-cols-2">
+                    <form id="venue-availability-form" class="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <h3 class="font-semibold text-gray-900">Add available window</h3>
+                        <div>
+                            <label for="availability-venue-name" class="block text-sm font-medium text-gray-700">Venue</label>
+                            <input id="availability-venue-name" type="text" required placeholder="Main Field" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label for="availability-sub-venue-name" class="block text-sm font-medium text-gray-700">Sub-venue <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="availability-sub-venue-name" type="text" placeholder="Court 1" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-3">
+                            <div>
+                                <label for="availability-day" class="block text-sm font-medium text-gray-700">Day</label>
+                                <select id="availability-day" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
+                            </div>
+                            <div>
+                                <label for="availability-start-time" class="block text-sm font-medium text-gray-700">Start</label>
+                                <input id="availability-start-time" type="time" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="availability-end-time" class="block text-sm font-medium text-gray-700">End</label>
+                                <input id="availability-end-time" type="time" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="availability-notes" class="block text-sm font-medium text-gray-700">Notes <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="availability-notes" type="text" placeholder="Lights available after 6 PM" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <button id="save-venue-availability-btn" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Add availability</button>
+                    </form>
+
+                    <form id="blackout-date-form" class="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <h3 class="font-semibold text-gray-900">Add blackout date</h3>
+                        <div>
+                            <label for="blackout-scope" class="block text-sm font-medium text-gray-700">Blackout scope</label>
+                            <select id="blackout-scope" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                <option value="organization">Organization-wide</option>
+                                <option value="venue">Venue-specific</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="blackout-venue-name" class="block text-sm font-medium text-gray-700">Venue <span class="font-normal text-gray-500">required for venue-specific</span></label>
+                            <input id="blackout-venue-name" type="text" placeholder="Main Field" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label for="blackout-sub-venue-name" class="block text-sm font-medium text-gray-700">Sub-venue <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="blackout-sub-venue-name" type="text" placeholder="Court 1" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <label for="blackout-start-date" class="block text-sm font-medium text-gray-700">Start date</label>
+                                <input id="blackout-start-date" type="date" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="blackout-end-date" class="block text-sm font-medium text-gray-700">End date</label>
+                                <input id="blackout-end-date" type="date" required class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="blackout-reason" class="block text-sm font-medium text-gray-700">Reason <span class="font-normal text-gray-500">optional</span></label>
+                            <input id="blackout-reason" type="text" placeholder="Tournament, maintenance, holiday" class="mt-1 block w-full rounded-md border border-gray-300 p-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <button id="save-blackout-date-btn" type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Add blackout</button>
+                    </form>
+                </div>
+
+                <div class="mt-6">
+                    <h3 class="font-semibold text-gray-900">Review saved scheduling controls</h3>
+                    <div id="venue-controls-list" class="mt-3 space-y-3 text-sm"></div>
+                </div>
+            </section>
+
             <div class="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
                 <section class="rounded-2xl bg-white p-6 shadow-md">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -45,6 +127,7 @@
                         <div class="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 text-sm font-semibold" role="tablist" aria-label="Organization schedule mode">
                             <button id="single-matchup-tab" type="button" class="rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm" aria-selected="true">Single Matchup</button>
                             <button id="bulk-import-tab" type="button" class="rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900" aria-selected="false">Bulk Import</button>
+                            <button id="draft-generator-tab" type="button" class="rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900" aria-selected="false">Draft Generator</button>
                         </div>
                     </div>
 
@@ -118,6 +201,50 @@
                             <button id="import-organization-csv-btn" type="button" disabled class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-300">Import Validated Games</button>
                         </div>
                     </div>
+
+                    <div id="organization-draft-generator-panel" class="hidden mt-6 space-y-5 border-t border-gray-100 pt-6">
+                        <div>
+                            <h3 class="text-lg font-bold text-gray-900">Generate Draft Schedule Slots</h3>
+                            <p class="mt-2 text-sm text-gray-600">Create editable draft slots from selected teams, saved venue availability windows, and blackout dates. Drafts are not published to team schedules.</p>
+                        </div>
+                        <div>
+                            <label for="draft-team-ids" class="block text-sm font-medium text-gray-700">Division / Teams</label>
+                            <select id="draft-team-ids" multiple size="6" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></select>
+                            <p class="mt-1 text-xs text-gray-500">Select the teams to include in this bounded draft generation pass.</p>
+                        </div>
+                        <div class="grid gap-4 md:grid-cols-3">
+                            <div>
+                                <label for="draft-season-start" class="block text-sm font-medium text-gray-700">Season Start</label>
+                                <input id="draft-season-start" type="date" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="draft-season-end" class="block text-sm font-medium text-gray-700">Season End</label>
+                                <input id="draft-season-end" type="date" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                            <div>
+                                <label for="draft-game-duration" class="block text-sm font-medium text-gray-700">Game Duration</label>
+                                <input id="draft-game-duration" type="number" min="1" value="60" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            </div>
+                        </div>
+                        <div>
+                            <label for="draft-venue-availability" class="block text-sm font-medium text-gray-700">Allowed Venues & Saved Availability</label>
+                            <textarea id="draft-venue-availability" rows="7" class="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-xs shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder='[{"name":"Main Field","availability":[{"date":"2026-08-15","startTime":"09:00","endTime":"12:00"}],"blackoutDates":["2026-08-22"]}]'></textarea>
+                        </div>
+                        <div>
+                            <label for="draft-organization-blackouts" class="block text-sm font-medium text-gray-700">Organization Blackout Dates</label>
+                            <input id="draft-organization-blackouts" type="text" placeholder="2026-08-29, 2026-09-05" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                        </div>
+                        <div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-4">
+                            <p class="text-xs text-gray-500">Review conflicts, unassigned teams, and slot counts before saving the draft.</p>
+                            <button id="generate-draft-slots-btn" type="button" class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Generate Draft Slots</button>
+                        </div>
+                        <div id="draft-generator-errors" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"></div>
+                        <div id="draft-review-summary" class="hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700"></div>
+                        <div id="draft-slot-list" class="space-y-2"></div>
+                        <div class="flex justify-end border-t border-gray-100 pt-4">
+                            <button id="save-draft-slots-btn" type="button" disabled class="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300">Save Draft</button>
+                        </div>
+                    </div>
                 </section>
 
                 <aside class="rounded-2xl bg-white p-6 shadow-md">
@@ -141,20 +268,26 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { addGame, getTeam, getTeams, getUserTeamsWithAccess } from './js/db.js?v=30';
+        import { addGame, createOrganizationBlackout, createVenueAvailability, createVenueBlackout, getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls } from './js/db.js?v=31';
         import { parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { renderHeader, renderFooter, getUrlParams } from './js/utils.js?v=10';
         import { checkAuth } from './js/auth.js?v=14';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { Timestamp } from './js/firebase.js?v=11';
         import {
+            ORGANIZATION_SCHEDULE_WEEKDAYS,
+            buildBlackoutDatePayload,
             buildOrganizationScheduleCsvTemplate,
+            buildOrganizationScheduleDraftSlots,
             buildOrganizationScheduleImportPreview,
             buildOrganizationSharedGamePayload,
+            buildVenueAvailabilityPayload,
+            formatBlackoutDateRecord,
+            formatVenueAvailabilityRecord,
             getOrganizationTeams,
             inferOrganizationScheduleCsvMapping,
             validateOrganizationMatchup
-        } from './js/organization-schedule.js?v=2';
+        } from './js/organization-schedule.js?v=3';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -163,7 +296,9 @@
         const form = document.getElementById('organization-game-form');
         const singleTab = document.getElementById('single-matchup-tab');
         const bulkTab = document.getElementById('bulk-import-tab');
+        const draftTab = document.getElementById('draft-generator-tab');
         const bulkPanel = document.getElementById('organization-bulk-import-panel');
+        const draftPanel = document.getElementById('organization-draft-generator-panel');
         const csvInput = document.getElementById('organization-schedule-csv-input');
         const csvFileMeta = document.getElementById('organization-csv-file-meta');
         const csvErrors = document.getElementById('organization-csv-errors');
@@ -176,6 +311,11 @@
         const backLink = document.getElementById('back-to-team-schedule');
         const organizationNameEl = document.getElementById('organization-context-name');
         const organizationDetailEl = document.getElementById('organization-context-detail');
+        const draftTeamSelect = document.getElementById('draft-team-ids');
+        const draftErrors = document.getElementById('draft-generator-errors');
+        const draftReviewSummary = document.getElementById('draft-review-summary');
+        const draftSlotList = document.getElementById('draft-slot-list');
+        const saveDraftButton = document.getElementById('save-draft-slots-btn');
         const ORGANIZATION_CSV_IMPORT_ROW_LIMIT = 500;
 
         let currentUser = null;
@@ -183,27 +323,123 @@
         let organizationTeams = [];
         let accessibleTeams = [];
         let organizationCsvState = { fileName: '', preview: null };
+        const availabilityForm = document.getElementById('venue-availability-form');
+        const blackoutForm = document.getElementById('blackout-date-form');
+        const availabilityDaySelect = document.getElementById('availability-day');
+        const venueControlsList = document.getElementById('venue-controls-list');
+        const saveAvailabilityButton = document.getElementById('save-venue-availability-btn');
+        const saveBlackoutButton = document.getElementById('save-blackout-date-btn');
+        const refreshVenueControlsButton = document.getElementById('refresh-venue-controls-btn');
+        let draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
 
+        function setButtonBusy(button, busyText, busy) {
+            if (!button) return;
+            if (busy) {
+                button.dataset.defaultText = button.textContent;
+                button.disabled = true;
+                button.textContent = busyText;
+            } else {
+                button.disabled = false;
+                button.textContent = button.dataset.defaultText || button.textContent;
+            }
+        }
+
+        function renderVenueControlGroup(title, records, formatter) {
+            const section = document.createElement('section');
+            section.className = 'rounded-xl border border-gray-200 bg-white p-4';
+
+            const heading = document.createElement('h4');
+            heading.className = 'font-semibold text-gray-900';
+            heading.textContent = `${title} (${records.length})`;
+            section.appendChild(heading);
+
+            if (records.length === 0) {
+                const empty = document.createElement('p');
+                empty.className = 'mt-2 text-gray-500';
+                empty.textContent = 'No records saved yet.';
+                section.appendChild(empty);
+                return section;
+            }
+
+            const list = document.createElement('ul');
+            list.className = 'mt-3 space-y-2';
+            records.forEach((record) => {
+                const item = document.createElement('li');
+                item.className = 'rounded-lg border border-gray-100 bg-gray-50 px-3 py-2';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'font-medium text-gray-900';
+                titleEl.textContent = formatter(record);
+                item.appendChild(titleEl);
+
+                if (record.notes || record.reason) {
+                    const note = document.createElement('div');
+                    note.className = 'mt-1 text-xs text-gray-600';
+                    note.textContent = record.notes || record.reason;
+                    item.appendChild(note);
+                }
+                list.appendChild(item);
+            });
+            section.appendChild(list);
+            return section;
+        }
+
+        async function refreshVenueControls() {
+            if (!anchorTeam?.id) return;
+            venueControlsList.textContent = 'Loading scheduling controls…';
+            try {
+                const controls = await listOrganizationScheduleControls(anchorTeam.id);
+                venueControlsList.replaceChildren(
+                    renderVenueControlGroup('Availability windows', controls.availability || [], formatVenueAvailabilityRecord),
+                    renderVenueControlGroup('Organization blackouts', controls.organizationBlackouts || [], formatBlackoutDateRecord),
+                    renderVenueControlGroup('Venue blackouts', controls.venueBlackouts || [], formatBlackoutDateRecord)
+                );
+            } catch (error) {
+                console.error('Unable to load venue controls:', error);
+                venueControlsList.textContent = `Unable to load scheduling controls: ${error.message}`;
+            }
+        }
 
         function showScheduleMode(mode) {
             const isBulk = mode === 'bulk';
-            form.classList.toggle('hidden', isBulk);
+            const isDraft = mode === 'draft';
+            form.classList.toggle('hidden', isDraft || isBulk);
             bulkPanel.classList.toggle('hidden', !isBulk);
-            singleTab.className = isBulk
+            draftPanel.classList.toggle('hidden', !isDraft);
+            singleTab.className = isDraft || isBulk
                 ? 'rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900'
                 : 'rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm';
             bulkTab.className = isBulk
                 ? 'rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm'
                 : 'rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900';
-            singleTab.setAttribute('aria-selected', String(!isBulk));
+            draftTab.className = isDraft
+                ? 'rounded-md bg-white px-3 py-1.5 text-indigo-700 shadow-sm'
+                : 'rounded-md px-3 py-1.5 text-gray-600 hover:text-gray-900';
+            singleTab.setAttribute('aria-selected', String(!isBulk && !isDraft));
             bulkTab.setAttribute('aria-selected', String(isBulk));
+            draftTab.setAttribute('aria-selected', String(isDraft));
         }
 
         function disableScheduleInputs() {
             form.classList.add('hidden');
             bulkPanel.classList.add('hidden');
+            draftPanel.classList.add('hidden');
             singleTab.disabled = true;
             bulkTab.disabled = true;
+            draftTab.disabled = true;
+            refreshVenueControlsButton.disabled = true;
+            availabilityForm.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = true;
+            });
+            blackoutForm.querySelectorAll('input, select, button').forEach((control) => {
+                control.disabled = true;
+            });
+        }
+
+        function canManageVenueControls() {
+            if (!currentUser || !anchorTeam?.id || organizationTeams.length < 2) return false;
+            const accessInfo = getTeamAccessInfo(currentUser, anchorTeam);
+            return accessInfo.hasAccess && accessInfo.accessLevel === 'full';
         }
 
         function downloadCsvFile(filename, text) {
@@ -298,6 +534,109 @@
             csvPreviewList.replaceChildren();
             showOrganizationCsvErrors([]);
             importCsvButton.disabled = true;
+        }
+
+        function showDraftGeneratorErrors(errors = []) {
+            if (!errors.length) {
+                draftErrors.className = 'hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800';
+                draftErrors.replaceChildren();
+                return;
+            }
+            draftErrors.className = 'rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800';
+            const list = document.createElement('ul');
+            list.className = 'list-disc space-y-1 pl-5';
+            errors.forEach((error) => {
+                const item = document.createElement('li');
+                item.textContent = error;
+                list.appendChild(item);
+            });
+            draftErrors.replaceChildren(list);
+        }
+
+        function parseDraftVenues() {
+            const text = document.getElementById('draft-venue-availability').value.trim();
+            if (!text) return [];
+            const parsed = JSON.parse(text);
+            return Array.isArray(parsed) ? parsed : [];
+        }
+
+        function getSelectedDraftTeams() {
+            const selectedIds = Array.from(draftTeamSelect.selectedOptions).map((option) => option.value);
+            return organizationTeams.filter((team) => selectedIds.includes(team.id));
+        }
+
+        function getDraftOrganizationBlackouts() {
+            return document.getElementById('draft-organization-blackouts').value
+                .split(',')
+                .map((value) => value.trim())
+                .filter(Boolean);
+        }
+
+        function resetDraftGeneratorState() {
+            draftGeneratorState = { draftSlots: [], conflicts: [], unassignedTeams: [], generatedSlotCounts: null };
+            draftReviewSummary.className = 'hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
+            draftReviewSummary.textContent = '';
+            draftSlotList.replaceChildren();
+            showDraftGeneratorErrors([]);
+            saveDraftButton.disabled = true;
+        }
+
+        function renderDraftReview() {
+            draftSlotList.replaceChildren();
+            const { draftSlots, conflicts, unassignedTeams, generatedSlotCounts } = draftGeneratorState;
+            draftReviewSummary.className = 'rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700';
+            const venueCounts = Object.entries(generatedSlotCounts?.byVenue || {})
+                .map(([venue, count]) => `${venue}: ${count}`)
+                .join(', ') || 'No venues';
+            draftReviewSummary.textContent = `${draftSlots.length} generated slot(s). ${conflicts.length} conflict(s). ${unassignedTeams.length} unassigned team(s). Counts by venue: ${venueCounts}.`;
+
+            if (conflicts.length || unassignedTeams.length) {
+                showDraftGeneratorErrors([
+                    ...conflicts.map((conflict) => conflict.message || `${conflict.type} on ${conflict.date || 'unscheduled date'}${conflict.venueName ? ` at ${conflict.venueName}` : ''}.`),
+                    ...unassignedTeams.map((team) => `${team.name} has no generated draft slot.`)
+                ]);
+            } else {
+                showDraftGeneratorErrors([]);
+            }
+
+            draftSlots.forEach((slot, index) => {
+                const card = document.createElement('div');
+                card.className = 'rounded-lg border border-gray-200 bg-white p-3 text-sm';
+
+                const grid = document.createElement('div');
+                grid.className = 'grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]';
+
+                const matchup = document.createElement('input');
+                matchup.value = `${slot.homeTeamName} vs ${slot.awayTeamName}`;
+                matchup.className = 'rounded-md border border-gray-300 p-2';
+                matchup.addEventListener('input', () => { slot.notes = matchup.value; });
+
+                const start = document.createElement('input');
+                start.type = 'datetime-local';
+                start.value = slot.startsAt.slice(0, 16);
+                start.className = 'rounded-md border border-gray-300 p-2';
+                start.addEventListener('change', () => { slot.startsAt = new Date(start.value).toISOString(); });
+
+                const venue = document.createElement('input');
+                venue.value = slot.venueName;
+                venue.className = 'rounded-md border border-gray-300 p-2';
+                venue.addEventListener('input', () => { slot.venueName = venue.value.trim(); });
+
+                const removeButton = document.createElement('button');
+                removeButton.type = 'button';
+                removeButton.className = 'rounded-md border border-red-200 bg-red-50 px-3 py-2 font-semibold text-red-700 hover:bg-red-100';
+                removeButton.textContent = 'Remove';
+                removeButton.addEventListener('click', () => {
+                    draftGeneratorState.draftSlots.splice(index, 1);
+                    renderDraftReview();
+                });
+
+                grid.append(matchup, start, venue, removeButton);
+                card.appendChild(grid);
+                draftSlotList.appendChild(card);
+            });
+
+            saveDraftButton.disabled = draftSlots.length === 0;
         }
 
         function setAlert(message, variant = 'error') {
@@ -399,13 +738,127 @@
 
             renderTeamOptions(homeTeamSelect, organizationTeams, anchorTeam.id);
             renderTeamOptions(awayTeamSelect, organizationTeams, organizationTeams.find((team) => team.id !== anchorTeam.id)?.id || organizationTeams[0]?.id);
+            availabilityDaySelect.replaceChildren(...ORGANIZATION_SCHEDULE_WEEKDAYS.map((day) => {
+                const option = document.createElement('option');
+                option.value = day.value;
+                option.textContent = day.label;
+                return option;
+            }));
+            renderTeamOptions(draftTeamSelect, organizationTeams, anchorTeam.id);
+            Array.from(draftTeamSelect.options).forEach((option) => { option.selected = true; });
             resetOrganizationCsvState();
+            resetDraftGeneratorState();
+            await refreshVenueControls();
         }
 
 
 
+        refreshVenueControlsButton.addEventListener('click', refreshVenueControls);
+
+        availabilityForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setAlert('');
+            if (!canManageVenueControls()) {
+                setAlert('Venue scheduling controls are not available for this team.');
+                return;
+            }
+            try {
+                setButtonBusy(saveAvailabilityButton, 'Saving…', true);
+                const payload = buildVenueAvailabilityPayload({
+                    venueName: document.getElementById('availability-venue-name').value,
+                    subVenueName: document.getElementById('availability-sub-venue-name').value,
+                    dayOfWeek: document.getElementById('availability-day').value,
+                    startTime: document.getElementById('availability-start-time').value,
+                    endTime: document.getElementById('availability-end-time').value,
+                    notes: document.getElementById('availability-notes').value
+                });
+                await createVenueAvailability(anchorTeam.id, payload);
+                availabilityForm.reset();
+                await refreshVenueControls();
+            } catch (error) {
+                setAlert(error.message);
+            } finally {
+                setButtonBusy(saveAvailabilityButton, 'Saving…', false);
+            }
+        });
+
+        blackoutForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            setAlert('');
+            if (!canManageVenueControls()) {
+                setAlert('Venue scheduling controls are not available for this team.');
+                return;
+            }
+            try {
+                setButtonBusy(saveBlackoutButton, 'Saving…', true);
+                const payload = buildBlackoutDatePayload({
+                    scope: document.getElementById('blackout-scope').value,
+                    venueName: document.getElementById('blackout-venue-name').value,
+                    subVenueName: document.getElementById('blackout-sub-venue-name').value,
+                    startDate: document.getElementById('blackout-start-date').value,
+                    endDate: document.getElementById('blackout-end-date').value,
+                    reason: document.getElementById('blackout-reason').value
+                });
+                if (payload.scope === 'venue') {
+                    await createVenueBlackout(anchorTeam.id, payload);
+                } else {
+                    await createOrganizationBlackout(anchorTeam.id, payload);
+                }
+                blackoutForm.reset();
+                await refreshVenueControls();
+            } catch (error) {
+                setAlert(error.message);
+            } finally {
+                setButtonBusy(saveBlackoutButton, 'Saving…', false);
+            }
+        });
+
         singleTab.addEventListener('click', () => showScheduleMode('single'));
         bulkTab.addEventListener('click', () => showScheduleMode('bulk'));
+        draftTab.addEventListener('click', () => showScheduleMode('draft'));
+
+        document.getElementById('generate-draft-slots-btn').addEventListener('click', () => {
+            try {
+                const selectedTeams = getSelectedDraftTeams();
+                if (selectedTeams.length < 2) {
+                    showDraftGeneratorErrors(['Select at least two teams for draft generation.']);
+                    return;
+                }
+                const venues = parseDraftVenues();
+                if (venues.length === 0) {
+                    showDraftGeneratorErrors(['Add at least one allowed venue with saved availability windows.']);
+                    return;
+                }
+
+                draftGeneratorState = buildOrganizationScheduleDraftSlots({
+                    selectedTeams,
+                    seasonStart: document.getElementById('draft-season-start').value,
+                    seasonEnd: document.getElementById('draft-season-end').value,
+                    venues,
+                    organizationBlackoutDates: getDraftOrganizationBlackouts(),
+                    durationMinutes: document.getElementById('draft-game-duration').value
+                });
+                renderDraftReview();
+            } catch (error) {
+                console.error('Draft generation failed:', error);
+                showDraftGeneratorErrors(['Could not generate draft slots. Check that venue availability is valid JSON.']);
+            }
+        });
+
+        saveDraftButton.addEventListener('click', () => {
+            const draft = {
+                savedAt: new Date().toISOString(),
+                savedBy: currentUser?.uid || null,
+                anchorTeamId: anchorTeam?.id || null,
+                slots: draftGeneratorState.draftSlots,
+                conflicts: draftGeneratorState.conflicts,
+                unassignedTeams: draftGeneratorState.unassignedTeams,
+                generatedSlotCounts: draftGeneratorState.generatedSlotCounts
+            };
+            localStorage.setItem(`organizationScheduleDraft:${anchorTeam?.id || 'unknown'}`, JSON.stringify(draft));
+            successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+            successAlert.textContent = `Saved ${draft.slots.length} draft schedule slot${draft.slots.length === 1 ? '' : 's'} for review. Nothing was published to team schedules.`;
+        });
 
         document.getElementById('download-organization-schedule-template').addEventListener('click', () => {
             downloadCsvFile('allplays-organization-schedule-template.csv', buildOrganizationScheduleCsvTemplate());

@@ -976,6 +976,88 @@ export async function saveTeamAvailabilityPreferences(teamId, preferences) {
     return normalized;
 }
 
+function mapSnapshotWithIds(snapshot) {
+    return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
+function sortByFields(records, fields) {
+    return [...records].sort((a, b) => {
+        for (const field of fields) {
+            const comparison = String(a?.[field] || '').localeCompare(String(b?.[field] || ''));
+            if (comparison !== 0) return comparison;
+        }
+        return 0;
+    });
+}
+
+export async function listOrganizationScheduleControls(teamId) {
+    if (!teamId) throw new Error('Missing team for organization schedule controls');
+
+    const [availabilitySnapshot, organizationBlackoutsSnapshot, venueBlackoutsSnapshot] = await Promise.all([
+        getDocs(collection(db, `teams/${teamId}/venueAvailability`)),
+        getDocs(collection(db, `teams/${teamId}/organizationBlackouts`)),
+        getDocs(collection(db, `teams/${teamId}/venueBlackouts`))
+    ]);
+
+    return {
+        availability: sortByFields(mapSnapshotWithIds(availabilitySnapshot), ['dayOfWeek', 'startTime', 'venueName']),
+        organizationBlackouts: sortByFields(mapSnapshotWithIds(organizationBlackoutsSnapshot), ['startDate', 'endDate']),
+        venueBlackouts: sortByFields(mapSnapshotWithIds(venueBlackoutsSnapshot), ['startDate', 'endDate', 'venueName'])
+    };
+}
+
+export async function createVenueAvailability(teamId, availabilityData = {}) {
+    if (!teamId) throw new Error('Missing team for venue availability');
+    const allowedFields = {
+        venueName: availabilityData.venueName,
+        subVenueName: availabilityData.subVenueName,
+        dayOfWeek: availabilityData.dayOfWeek,
+        startTime: availabilityData.startTime,
+        endTime: availabilityData.endTime,
+        notes: availabilityData.notes
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/venueAvailability`), {
+        ...allowedFields,
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
+export async function createOrganizationBlackout(teamId, blackoutData = {}) {
+    if (!teamId) throw new Error('Missing team for organization blackout');
+    const allowedFields = {
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/organizationBlackouts`), {
+        ...allowedFields,
+        scope: 'organization',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
+export async function createVenueBlackout(teamId, blackoutData = {}) {
+    if (!teamId) throw new Error('Missing team for venue blackout');
+    const allowedFields = {
+        venueName: blackoutData.venueName,
+        subVenueName: blackoutData.subVenueName,
+        startDate: blackoutData.startDate,
+        endDate: blackoutData.endDate,
+        reason: blackoutData.reason
+    };
+    const docRef = await addDoc(collection(db, `teams/${teamId}/venueBlackouts`), {
+        ...allowedFields,
+        scope: 'venue',
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+    return docRef.id;
+}
+
 export async function grantScorekeeperAccess(teamId, memberUserId) {
     const normalizedUserId = String(memberUserId || '').trim();
     if (!teamId) throw new Error('Missing team for scorekeeper access');
@@ -2965,7 +3047,7 @@ export async function redeemParentInvite(userId, code) {
         if (latestCodeData.type !== 'parent_invite') {
             throw new Error("Not a parent invite code");
         }
-        if (latestCodeData.used) {
+        if (latestCodeData.used || latestCodeData.revoked === true || latestCodeData.status === 'removed') {
             throw new Error("Invalid or used code");
         }
         if (isAccessCodeExpired(latestCodeData.expiresAt)) {
@@ -5277,7 +5359,26 @@ export async function respondToOfficiatingAssignment(teamId, gameId, slotId, sta
     await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
+function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {}) {
+    const uid = String(user?.uid || '').trim();
+    const email = String(user?.email || '').trim().toLowerCase();
+    if (!uid) return false;
+    if (team.ownerId === uid) return true;
+    if (email && Array.isArray(team.adminEmails) && team.adminEmails.map((adminEmail) => String(adminEmail || '').trim().toLowerCase()).includes(email)) return true;
+    if (userProfile?.isAdmin === true) return true;
+    if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team.id)) return true;
+    return false;
+}
+
 export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official = auth.currentUser) {
+    const [team, userProfile] = await Promise.all([
+        getTeam(teamId, { includeInactive: true }),
+        official?.uid ? getUserProfile(official.uid) : Promise.resolve(null)
+    ]);
+    if (!isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile || {}, official || {})) {
+        throw new Error('Only team owners, admins, or parents can claim open officiating slots.');
+    }
+
     const docRef = getGameDocRef(teamId, gameId);
     let notificationRecord = null;
     await runTransaction(db, async (transaction) => {
