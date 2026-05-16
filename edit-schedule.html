@@ -796,6 +796,14 @@
                     </span>
                     Live Broadcast Tracker
                 </button>
+                <button id="basketball-tracker-live-simple"
+                    class="hidden w-full px-4 py-3 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 transition font-semibold flex items-center justify-center gap-2">
+                    <span class="inline-flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
+                        LIVE
+                    </span>
+                    Live Broadcast Simple
+                </button>
                 <button id="basketball-tracker-photo"
                     class="w-full px-4 py-3 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 transition font-semibold">
                     Photo Score Sheet
@@ -909,6 +917,7 @@
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=2';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { resolvePreferredStatConfigId } from './js/live-game-state.js?v=3';
+        import { getGoalSportProfile } from './js/live-sport-config.js?v=3';
         import { cancelScheduledGame } from './js/edit-schedule-cancel-game.js?v=3';
         import { applyPracticeRecurrenceFields } from './js/edit-schedule-practice-payload.js?v=1';
         import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';
@@ -2477,6 +2486,7 @@
         let allTeamGamesCache = {};
         let pendingTrackGameId = null;
         let pendingTrackIsBasketball = false;
+        let pendingTrackSupportsSimpleLive = false;
 
         // Helper function to check if a stat config is for basketball
         function isBasketballConfig(configId) {
@@ -2498,36 +2508,57 @@
             return isBasketballConfig(game.statTrackerConfigId);
         }
 
+        function getStatConfigForGame(game) {
+            const configId = String(game?.statTrackerConfigId || '').trim();
+            if (!configId) return null;
+            return allConfigs.find(config => String(config.id || '').trim() === configId) || null;
+        }
+
+        function isGoalSportForGame(game) {
+            if (!game || isBasketballForGame(game)) return false;
+            const config = getStatConfigForGame(game);
+            const sport = game?.sport || config?.baseType || currentTeam?.sport || '';
+            return !!getGoalSportProfile({ sport });
+        }
+
         function closeBasketballTrackerModal() {
             document.getElementById('basketball-tracker-modal')?.classList.add('hidden');
             pendingTrackGameId = null;
             pendingTrackIsBasketball = false;
+            pendingTrackSupportsSimpleLive = false;
         }
 
-        function configureTrackerChoiceModal(isBasketball) {
+        function configureTrackerChoiceModal(isBasketball, supportsSimpleLive) {
             const description = document.getElementById('tracker-choice-description');
             const betaBtn = document.getElementById('basketball-tracker-beta');
+            const simpleBtn = document.getElementById('basketball-tracker-live-simple');
             const photoBtn = document.getElementById('basketball-tracker-photo');
             if (description) {
-                description.textContent = isBasketball
-                    ? 'This game uses a Basketball stat config. Which tracker do you want?'
-                    : 'Choose a tracker for this game.';
+                if (isBasketball) {
+                    description.textContent = 'This game uses a Basketball stat config. Which tracker do you want?';
+                } else if (supportsSimpleLive) {
+                    description.textContent = 'Choose full stat broadcasting or simple goal broadcasting for this game.';
+                } else {
+                    description.textContent = 'Choose a tracker for this game.';
+                }
             }
             if (betaBtn) betaBtn.classList.toggle('hidden', !isBasketball);
+            if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);
             if (photoBtn) photoBtn.classList.toggle('hidden', !isBasketball);
         }
 
-        function openTrackerChoiceModal(gameId, isBasketball) {
+        function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false) {
             pendingTrackGameId = gameId;
             pendingTrackIsBasketball = !!isBasketball;
-            configureTrackerChoiceModal(pendingTrackIsBasketball);
+            pendingTrackSupportsSimpleLive = !!supportsSimpleLive;
+            configureTrackerChoiceModal(pendingTrackIsBasketball, pendingTrackSupportsSimpleLive);
             document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
         }
 
         function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
-            openTrackerChoiceModal(gameId, isBasketballForGame(game));
+            openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));
         }
 
         function renderDbGame(game) {
@@ -3659,7 +3690,11 @@
                     calendarEventUid: getCalendarEventTrackingId(calendarEvent)
                 });
 
-                openTrackerChoiceModal(gameId, isBasketballConfig(configId));
+                const trackingGame = {
+                    statTrackerConfigId: configId || null,
+                    sport: currentTeam?.sport || ''
+                };
+                openTrackerChoiceModal(gameId, isBasketballConfig(configId), isGoalSportForGame(trackingGame));
             } catch (error) {
                 console.error('Error tracking game:', error);
                 alert('Error tracking game: ' + error.message);
@@ -4781,6 +4816,12 @@ PARSING RULES:
             } else {
                 window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}`;
             }
+        });
+        document.getElementById('basketball-tracker-live-simple')?.addEventListener('click', () => {
+            if (!pendingTrackGameId || !pendingTrackSupportsSimpleLive) return closeBasketballTrackerModal();
+            const gameId = pendingTrackGameId;
+            closeBasketballTrackerModal();
+            window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}&trackerMode=simple`;
         });
         document.getElementById('basketball-tracker-photo')?.addEventListener('click', () => {
             if (!pendingTrackGameId) return closeBasketballTrackerModal();

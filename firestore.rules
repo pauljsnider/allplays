@@ -181,10 +181,11 @@ service cloud.firestore {
     }
 
     function isFamilyMembershipRemoval(data, userId) {
-      return data.keys().hasAll(['email', 'status', 'organizerUserId']) &&
+      return data.keys().hasAll(['email', 'status', 'organizerUserId', 'accessStatus']) &&
              data.organizerUserId == userId &&
              data.email is string &&
-             data.status == 'removed';
+             data.status == 'removed' &&
+             data.accessStatus == 'revoked';
     }
 
     function isHouseholdInvitePayloadValid(data, userId) {
@@ -460,8 +461,13 @@ service cloud.firestore {
              );
     }
 
-    function isOpenOfficiatingSelfAssignmentUpdate() {
-      return isSignedIn() &&
+    function canClaimOpenOfficiatingSlot(teamId) {
+      return isTeamOwnerOrAdmin(teamId) ||
+             isParentForTeam(teamId);
+    }
+
+    function isOpenOfficiatingSelfAssignmentUpdate(teamId) {
+      return canClaimOpenOfficiatingSlot(teamId) &&
              resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -502,19 +508,34 @@ service cloud.firestore {
               get(folderPath).data.get('visibility', 'team') == 'team');
     }
 
-    function isTeamMediaPhotoCreate(teamId, data) {
+    function isAllowedTeamMediaUploadType(mimeType) {
+      return mimeType.matches('image/.*') ||
+             mimeType in [
+               'application/pdf',
+               'application/msword',
+               'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+               'application/vnd.ms-excel',
+               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+               'application/vnd.ms-powerpoint',
+               'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+               'text/plain',
+               'text/csv'
+             ];
+    }
+
+    function isTeamMediaUploadCreate(teamId, data) {
       return canAccessTeamChat(teamId) &&
              data.keys().hasAll([
                'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.keys().hasOnly([
-               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.folderId is string &&
              data.folderId.size() > 0 &&
-             data.type == 'photo' &&
+             data.type in ['photo', 'file'] &&
              data.url is string &&
              data.storagePath is string &&
              data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
@@ -523,15 +544,16 @@ service cloud.firestore {
              data.size > 0 &&
              data.size <= 10485760 &&
              data.mimeType is string &&
-             data.mimeType.matches('image/.*') &&
+             ((data.type == 'photo' && data.mimeType.matches('image/.*')) ||
+              (data.type == 'file' && isAllowedTeamMediaUploadType(data.mimeType) && !data.mimeType.matches('image/.*'))) &&
              data.deleted == false &&
              data.createdAt == request.time &&
              data.updatedAt == request.time;
     }
 
-    function isOwnTeamMediaPhotoSoftDelete(teamId) {
+    function isOwnTeamMediaUploadSoftDelete(teamId) {
       return canAccessTeamChat(teamId) &&
-             resource.data.type == 'photo' &&
+             resource.data.type in ['photo', 'file'] &&
              resource.data.uploadedBy == request.auth.uid &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'deleted', 'deletedAt', 'deletedBy', 'updatedAt'
@@ -706,7 +728,7 @@ service cloud.firestore {
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
         allow update: if isOwner(userId) &&
                       isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt']);
         allow delete: if false;
       }
 
@@ -728,7 +750,9 @@ service cloud.firestore {
                        (resource.data.generatedBy == request.auth.uid ||
                         // Allow marking as used only if setting these specific fields
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
-                         request.resource.data.usedBy == request.auth.uid));
+                         request.resource.data.usedBy == request.auth.uid) ||
+                        (resource.data.generatedBy == request.auth.uid &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
 	    }
 
@@ -924,8 +948,8 @@ service cloud.firestore {
 
       match /mediaItems/{itemId} {
         allow read: if canReadTeamMediaItem(teamId, resource.data);
-        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
-        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId);
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -995,6 +1019,18 @@ service cloud.firestore {
 
       match /calendarTokens/{tokenId} {
         // Raw calendar subscription tokens grant private feed access and must not be public.
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /venueAvailability/{availabilityId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /organizationBlackouts/{blackoutId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /venueBlackouts/{blackoutId} {
         allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -1070,7 +1106,7 @@ service cloud.firestore {
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
-        allow update: if isOpenOfficiatingSelfAssignmentUpdate();
+        allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);
 
         // Events subcollection
         match /events/{eventId} {
