@@ -261,6 +261,7 @@
         }
       }
     </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="flex flex-col min-h-screen">
     <div id="header-container"></div>
@@ -301,6 +302,9 @@
 <li>Edit summary and score sheet if you have full access.</li>
 <li>Share report and replay links.</li>
 <li>Fix common postgame issues quickly.</li>
+<li>Check replay availability state before sharing.</li>
+<li>Browse the saved highlight library for the game.</li>
+<li>Embed or share the team scoreboard widget.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -321,6 +325,8 @@
 <li>Full review: Open <code>game.html</code> to confirm summary, play-by-play, and player performance.</li>
 <li>Player follow-up: From <code>game.html</code>, open a player in <code>player.html</code>.</li>
 <li>Replay sharing: Share replay from <code>team.html</code>, <code>game.html</code>, or <code>live-game.html</code> when available.</li>
+<li>Check replay status before sharing: open <code>game.html</code> to see the replay state (unavailable, processing, failed, or ready).</li>
+<li>Browse game highlights: open the game media hub to see saved highlight clips with timestamps and player tags.</li>
 </ul>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-1">
@@ -363,6 +369,28 @@
 <li>Validate the shared experience.</li>
 </ol>
 <p>Open the shared link once to confirm report load and replay playback.</p>
+<h2 id="replay-availability">Replay Availability States</h2>
+<p>Before sharing a replay link, check the game page for the current replay state:</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Ready</strong>: Replay is available. Share the link freely.</li>
+<li><strong>Processing</strong>: Replay is being prepared. Playback is blocked. Check back in a few minutes.</li>
+<li><strong>Failed</strong>: Replay processing failed. Playback is blocked. Contact support if this persists.</li>
+<li><strong>Unavailable</strong>: No replay exists for this game. The video area shows a clear unavailable state rather than an empty player.</li>
+</ul>
+<h2 id="highlight-library">Saved Highlight Library</h2>
+<p>Coaches and videographers can save replay highlights during or after a game. Highlights are accessible from the game media hub.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li>Each highlight shows title, timestamp, duration, player tags, and play context.</li>
+<li>Click a highlight to seek the replay to that moment (when replay is available).</li>
+<li>Use highlights to quickly navigate key plays for coaching review or sharing.</li>
+</ul>
+<h2 id="scoreboard-widget">Embeddable Scoreboard Widget</h2>
+<p>Coaches and admins can share a compact, read-only team scoreboard for embedding on external websites.</p>
+<ol class="ml-6 list-decimal space-y-1">
+<li>Open the team page and locate the <strong>Scoreboard Widget</strong> option.</li>
+<li>Copy the iframe embed snippet to embed the scoreboard on an external website.</li>
+<li>Or copy the direct widget link to share as a standalone URL.</li>
+</ol>
 <h2 id="common-questions">Common Questions</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Why can’t I edit the summary or score sheet?</li>
@@ -384,6 +412,14 @@
 <li>How do I review one player after the game?</li>
 </ul>
 <p>Open that player from <code>Player Performance</code> and review <code>Game Stats</code> and <code>Game Events</code>.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Replay link I shared isn't working for others</strong></li>
+</ul>
+<p>Check the replay state on the game page first. If it shows Processing or Failed, the replay is not yet accessible. Share the link again once the state shows Ready.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Where are saved highlights?</strong></li>
+</ul>
+<p>Open the game media hub on the game page. Highlights are listed with title, timestamp, player tags, and a seek button to jump to that moment in the replay.</p>
 <h2 id="recovery-troubleshooting">Recovery &amp; Troubleshooting</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Summary is missing or outdated:</li>
@@ -409,6 +445,10 @@
 <li>Link opens the wrong place:</li>
 </ul>
 <p>Return to <code>team.html</code>, open <code>Recent Results</code>, and launch the report again.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Replay shows Processing for a long time</strong>: Processing time varies. If it shows Failed after 30+ minutes, contact support.</li>
+<li><strong>Summary Save button unresponsive after first save</strong>: This is fixed — the Save Summary button now re-enables each time the editor opens. Reload the page if you still see the issue.</li>
+</ul>
 <h2 id="related-workflows">Related Workflows</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li><code>track-game</code>: Capture live events and stats so postgame review is complete.</li>
@@ -453,25 +493,6 @@
         const allLinks = [...links];
         let mobileWrapper = null;
 
-        if (mobileToc && window.innerWidth < 1024) {
-          const wrapper = document.createElement('details');
-          wrapper.className = 'wf-panel-section wf-panel';
-          wrapper.style.marginBottom = '0.95rem';
-          wrapper.style.padding = '0.8rem 1rem';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Jump to section';
-          summary.style.cursor = 'pointer';
-          summary.style.fontWeight = '700';
-          summary.style.color = '#0f172a';
-          const list = toc.cloneNode(true);
-          list.style.marginTop = '0.6rem';
-          allLinks.push(...Array.from(list.querySelectorAll('a')));
-          wrapper.appendChild(summary);
-          wrapper.appendChild(list);
-          mobileToc.appendChild(wrapper);
-          mobileWrapper = wrapper;
-        }
-
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const setActive = (activeId) => {
           let active = sectionById.get(activeId) || headings[0];
@@ -483,17 +504,46 @@
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 
-        allLinks.forEach((a) => {
-          a.addEventListener('click', () => {
-            setActive(a.getAttribute('href').slice(1));
-            if (mobileWrapper && mobileWrapper.contains(a)) {
-              mobileWrapper.open = false;
-            }
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) {
+                mobileWrapper.open = false;
+              }
+            });
           });
-        });
+        };
+
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+
+        addLinkHandlers(links);
+        ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>

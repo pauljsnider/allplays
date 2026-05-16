@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+    buildBlackoutDatePayload,
     buildOrganizationScheduleCsvTemplate,
+    buildOrganizationScheduleDraftSlots,
     buildOrganizationScheduleImportPreview,
     buildOrganizationSharedGamePayload,
+    buildVenueAvailabilityPayload,
+    formatBlackoutDateRecord,
     formatOrganizationVenueLocation,
+    formatVenueAvailabilityRecord,
     getOrganizationTeams,
     inferOrganizationScheduleCsvMapping,
     normalizeOrganizationVenueDraft,
@@ -14,6 +19,83 @@ import {
 } from '../../js/organization-schedule.js';
 
 describe('organization schedule helpers', () => {
+
+    it('validates venue availability time windows before saving', () => {
+        expect(buildVenueAvailabilityPayload({
+            venueName: 'Main Field',
+            subVenueName: 'North',
+            dayOfWeek: 'monday',
+            startTime: '18:00',
+            endTime: '20:00',
+            notes: 'Lights available'
+        })).toEqual({
+            venueName: 'Main Field',
+            subVenueName: 'North',
+            dayOfWeek: 'monday',
+            startTime: '18:00',
+            endTime: '20:00',
+            notes: 'Lights available'
+        });
+
+        expect(() => buildVenueAvailabilityPayload({
+            venueName: 'Main Field',
+            dayOfWeek: 'monday',
+            startTime: '',
+            endTime: '20:00'
+        })).toThrow('Enter a start and end time for the availability window.');
+
+        expect(() => buildVenueAvailabilityPayload({
+            venueName: 'Main Field',
+            dayOfWeek: 'monday',
+            startTime: '20:00',
+            endTime: '18:00'
+        })).toThrow('Availability end time must be after the start time.');
+    });
+
+    it('validates blackout date ranges before saving', () => {
+        expect(buildBlackoutDatePayload({
+            scope: 'organization',
+            startDate: '2026-07-04',
+            endDate: '2026-07-05',
+            reason: 'Holiday'
+        })).toEqual({
+            scope: 'organization',
+            venueName: null,
+            subVenueName: null,
+            startDate: '2026-07-04',
+            endDate: '2026-07-05',
+            reason: 'Holiday'
+        });
+
+        expect(() => buildBlackoutDatePayload({
+            scope: 'venue',
+            startDate: '2026-07-05',
+            endDate: '2026-07-04'
+        })).toThrow('Venue or sub-venue name is required for venue-specific blackouts.');
+
+        expect(() => buildBlackoutDatePayload({
+            scope: 'organization',
+            startDate: '2026-07-05',
+            endDate: '2026-07-04'
+        })).toThrow('Blackout end date cannot be before the start date.');
+    });
+
+    it('formats venue controls for the review list', () => {
+        expect(formatVenueAvailabilityRecord({
+            venueName: 'Main Field',
+            subVenueName: 'North',
+            dayOfWeek: 'monday',
+            startTime: '18:00',
+            endTime: '20:00'
+        })).toBe('Main Field / North · Monday · 18:00–20:00');
+
+        expect(formatBlackoutDateRecord({
+            scope: 'venue',
+            venueName: 'Main Field',
+            startDate: '2026-07-04',
+            endDate: '2026-07-05'
+        })).toBe('Main Field · 2026-07-04 through 2026-07-05');
+    });
     const accessibleTeams = [
         { id: 'team-1', name: 'Alpha', ownerId: 'org-1', photoUrl: 'alpha.png' },
         { id: 'team-2', name: 'Bravo', ownerId: 'org-1', photoUrl: 'bravo.png' },
@@ -154,6 +236,67 @@ describe('organization schedule helpers', () => {
         expect(formatOrganizationVenueLocation({ name: 'Alpha Complex' })).toBe('Alpha Complex');
     });
 
+    it('generates editable draft slots only inside availability and blackout rules', () => {
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams: accessibleTeams.slice(0, 2),
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            durationMinutes: 60,
+            organizationBlackoutDates: ['2026-08-16'],
+            venues: [
+                {
+                    name: 'Main Field',
+                    availability: [
+                        { date: '2026-08-15', startTime: '09:00', endTime: '11:00' },
+                        { date: '2026-08-16', startTime: '09:00', endTime: '11:00' },
+                        { date: '2026-08-22', startTime: '09:00', endTime: '11:00' }
+                    ],
+                    blackoutDates: ['2026-08-22']
+                }
+            ]
+        });
+
+        expect(draft.draftSlots).toHaveLength(1);
+        expect(draft.draftSlots[0]).toMatchObject({
+            homeTeamId: 'team-1',
+            awayTeamId: 'team-2',
+            venueName: 'Main Field',
+            durationMinutes: 60
+        });
+        expect(draft.draftSlots[0].startsAt).toBe(new Date('2026-08-15T09:00:00').toISOString());
+        expect(draft.conflicts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'organization-blackout', date: '2026-08-16' }),
+            expect.objectContaining({ type: 'venue-blackout', date: '2026-08-22' })
+        ]));
+        expect(draft.unassignedTeams).toHaveLength(0);
+        expect(draft.generatedSlotCounts).toMatchObject({
+            total: 1,
+            byVenue: { 'Main Field': 1 },
+            byTeam: { 'team-1': 1, 'team-2': 1 }
+        });
+    });
+
+    it('reports unassigned teams and unscheduled conflicts when slots run out', () => {
+        const draft = buildOrganizationScheduleDraftSlots({
+            selectedTeams: accessibleTeams,
+            seasonStart: '2026-08-01',
+            seasonEnd: '2026-08-31',
+            durationMinutes: 60,
+            venues: [{
+                name: 'Main Field',
+                availability: [{ date: '2026-08-15', startTime: '09:00', endTime: '10:00' }],
+                blackoutDates: []
+            }]
+        });
+
+        expect(draft.draftSlots).toHaveLength(1);
+        expect(draft.unassignedTeams).toEqual([accessibleTeams[2]]);
+        expect(draft.conflicts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'unscheduled-matchup', homeTeamId: 'team-1', awayTeamId: 'team-3' }),
+            expect.objectContaining({ type: 'unscheduled-matchup', homeTeamId: 'team-2', awayTeamId: 'team-3' })
+        ]));
+    });
+
     it('exposes the organization schedule entry point from team schedule', () => {
         const source = readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 
@@ -180,6 +323,19 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('createdVia: \'organizationScheduleCsvImport\'');
     });
 
+    it('wires the organization draft generator review and save workflow', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="draft-generator-tab"');
+        expect(source).toContain('id="draft-team-ids"');
+        expect(source).toContain('id="draft-venue-availability"');
+        expect(source).toContain('id="draft-organization-blackouts"');
+        expect(source).toContain('buildOrganizationScheduleDraftSlots');
+        expect(source).toContain('renderDraftReview');
+        expect(source).toContain('draftGeneratorState.draftSlots.splice(index, 1);');
+        expect(source).toContain('localStorage.setItem(`organizationScheduleDraft:${anchorTeam?.id || \'unknown\'}`');
+    });
+
     it('caps organization schedule CSV imports before preview and import', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
@@ -191,7 +347,7 @@ describe('organization schedule helpers', () => {
     it('loads all active teams for platform admins before organization filtering', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
-        expect(source).toContain('import { addGame, getTeam, getTeams, getUserTeamsWithAccess }');
+        expect(source).toContain('getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls');
         expect(source).toContain('accessibleTeams = currentUser.isAdmin === true');
         expect(source).toContain('? await getTeams()');
         expect(source).toContain(': await getUserTeamsWithAccess(currentUser.uid, currentUser.email);');
@@ -212,7 +368,6 @@ describe('organization schedule helpers', () => {
         expect(source).toContain("const homeLink = document.createElement('a');");
         expect(source).not.toContain('successAlert.innerHTML =');
     });
-
     it('wires admin-managed organization venues and saved location selection', () => {
         const html = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -222,10 +377,33 @@ describe('organization schedule helpers', () => {
         expect(html).toContain('id="savedSubVenue"');
         expect(html).toContain("collection(db, 'teams', anchorTeam.id, 'organizationVenues')");
         expect(html).toContain('formatOrganizationVenueLocation');
+        expect(html).toContain('function canManageOrganizationVenues()');
+        expect(html).toContain('setOrganizationVenueManagementEnabled(false);');
+        expect(html).toContain('Organization venue management is available only to team admins.');
         expect(html).toContain('await addDoc(getOrganizationVenuesCollectionRef()');
         expect(html).toContain('await updateDoc(doc(db, \'teams\', anchorTeam.id, \'organizationVenues\'');
         expect(html).toContain('await deleteDoc(doc(db, \'teams\', anchorTeam.id, \'organizationVenues\'');
         expect(rules).toContain('match /organizationVenues/{venueId}');
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });
+
+    it('wires venue availability and blackout controls on the organization schedule page', () => {
+        const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+
+        expect(source).toContain('id="venue-availability-form"');
+        expect(source).toContain('id="blackout-date-form"');
+        expect(source).toContain('id="venue-controls-list"');
+        expect(source).toContain('buildVenueAvailabilityPayload');
+        expect(source).toContain('buildBlackoutDatePayload');
+        expect(source).toContain('listOrganizationScheduleControls');
+    });
+
+    it('allows team admins to manage venue schedule control collections', () => {
+        const source = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+
+        expect(source).toContain('match /venueAvailability/{availabilityId}');
+        expect(source).toContain('match /organizationBlackouts/{blackoutId}');
+        expect(source).toContain('match /venueBlackouts/{blackoutId}');
+    });
+
 });

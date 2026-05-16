@@ -181,10 +181,11 @@ service cloud.firestore {
     }
 
     function isFamilyMembershipRemoval(data, userId) {
-      return data.keys().hasAll(['email', 'status', 'organizerUserId']) &&
+      return data.keys().hasAll(['email', 'status', 'organizerUserId', 'accessStatus']) &&
              data.organizerUserId == userId &&
              data.email is string &&
-             data.status == 'removed';
+             data.status == 'removed' &&
+             data.accessStatus == 'revoked';
     }
 
     function isHouseholdInvitePayloadValid(data, userId) {
@@ -204,6 +205,25 @@ service cloud.firestore {
              data.teamId is string &&
              data.playerKey == data.teamId + "::" + data.playerId &&
              isParentForPlayer(data.teamId, data.playerId);
+    }
+
+    function isFamilyMembershipAcceptance(data) {
+      return isSignedIn() &&
+             resource.data.status == 'pending' &&
+             resource.data.email is string &&
+             request.auth.token.email is string &&
+             resource.data.email == request.auth.token.email.lower() &&
+             data.status == 'active' &&
+             data.userId == request.auth.uid &&
+             data.diff(resource.data).affectedKeys().hasOnly(['status', 'userId', 'acceptedAt', 'updatedAt']);
+    }
+
+    function isFamilyMembershipInviteMetadataUpdate(data, userId) {
+      return isOwner(userId) &&
+             resource.data.status == 'pending' &&
+             data.organizerUserId == userId &&
+             data.status == 'pending' &&
+             data.diff(resource.data).affectedKeys().hasOnly(['accessCodeId', 'accessCode', 'inviteUrl', 'updatedAt']);
     }
 
     function isTeamFeeRecipientForCurrentParent(data, teamId) {
@@ -316,6 +336,13 @@ service cloud.firestore {
              (data.get('options', []) is list && data.get('options', []).size() > 0);
     }
 
+    function isRegistrationPaymentSettingsPayloadValid(settings) {
+      return settings is map &&
+             settings.keys().hasOnly(['offlinePaymentEnabled', 'onlineCheckoutEnabled']) &&
+             settings.offlinePaymentEnabled is bool &&
+             settings.onlineCheckoutEnabled is bool;
+    }
+
     function isRegistrationSelectedOptionPayloadValid(option) {
       return option is map &&
              option.keys().hasOnly(['id', 'countKey', 'title', 'feeAmountCents', 'capacityLimit', 'waitlistEnabled']) &&
@@ -327,6 +354,96 @@ service cloud.firestore {
              option.waitlistEnabled is bool;
     }
 
+    function isRegistrationInstallmentValid(installment) {
+      return installment is map &&
+             installment.keys().hasOnly(['label', 'dueDate', 'amountCents']) &&
+             installment.label is string &&
+             installment.dueDate is string &&
+             installment.amountCents is int &&
+             installment.amountCents >= 0;
+    }
+
+    function isRegistrationScheduleValid(schedule) {
+      return schedule is list &&
+             schedule.size() >= 1 &&
+             schedule.size() <= 12 &&
+             isRegistrationInstallmentValid(schedule[0]) &&
+             (schedule.size() < 2 || isRegistrationInstallmentValid(schedule[1])) &&
+             (schedule.size() < 3 || isRegistrationInstallmentValid(schedule[2])) &&
+             (schedule.size() < 4 || isRegistrationInstallmentValid(schedule[3])) &&
+             (schedule.size() < 5 || isRegistrationInstallmentValid(schedule[4])) &&
+             (schedule.size() < 6 || isRegistrationInstallmentValid(schedule[5])) &&
+             (schedule.size() < 7 || isRegistrationInstallmentValid(schedule[6])) &&
+             (schedule.size() < 8 || isRegistrationInstallmentValid(schedule[7])) &&
+             (schedule.size() < 9 || isRegistrationInstallmentValid(schedule[8])) &&
+             (schedule.size() < 10 || isRegistrationInstallmentValid(schedule[9])) &&
+             (schedule.size() < 11 || isRegistrationInstallmentValid(schedule[10])) &&
+             (schedule.size() < 12 || isRegistrationInstallmentValid(schedule[11]));
+    }
+
+    function isRegistrationPaymentPlanValid(plan) {
+      return plan is map &&
+             plan.keys().hasOnly(['id', 'type', 'title', 'installmentCount', 'totalBalanceDueCents', 'schedule']) &&
+             plan.id in ['pay_full', 'installments'] &&
+             plan.type in ['pay_full', 'installments'] &&
+             plan.id == plan.type &&
+             plan.title is string &&
+             plan.installmentCount is int &&
+             plan.totalBalanceDueCents is int &&
+             plan.totalBalanceDueCents >= 0 &&
+             isRegistrationScheduleValid(plan.schedule) &&
+             plan.installmentCount == plan.schedule.size();
+    }
+
+    function isRegistrationDiscountApplicationValid(discount) {
+      return discount is map &&
+             discount.keys().hasOnly(['id', 'type', 'label', 'amountType', 'amountValue', 'amountCents']) &&
+             discount.id is string &&
+             discount.type in ['early_bird', 'quantity'] &&
+             discount.label is string &&
+             discount.amountType in ['fixed', 'percent'] &&
+             (discount.amountValue is int || discount.amountValue is float) &&
+             discount.amountCents is int &&
+             discount.amountCents >= 0;
+    }
+
+    function areRegistrationDiscountApplicationsValid(discounts) {
+      return discounts is list &&
+             discounts.size() <= 10 &&
+             (discounts.size() < 1 || isRegistrationDiscountApplicationValid(discounts[0])) &&
+             (discounts.size() < 2 || isRegistrationDiscountApplicationValid(discounts[1])) &&
+             (discounts.size() < 3 || isRegistrationDiscountApplicationValid(discounts[2])) &&
+             (discounts.size() < 4 || isRegistrationDiscountApplicationValid(discounts[3])) &&
+             (discounts.size() < 5 || isRegistrationDiscountApplicationValid(discounts[4])) &&
+             (discounts.size() < 6 || isRegistrationDiscountApplicationValid(discounts[5])) &&
+             (discounts.size() < 7 || isRegistrationDiscountApplicationValid(discounts[6])) &&
+             (discounts.size() < 8 || isRegistrationDiscountApplicationValid(discounts[7])) &&
+             (discounts.size() < 9 || isRegistrationDiscountApplicationValid(discounts[8])) &&
+             (discounts.size() < 10 || isRegistrationDiscountApplicationValid(discounts[9]));
+    }
+
+    function isRegistrationFeeSnapshotValid(snapshot) {
+      return snapshot is map &&
+             snapshot.keys().hasOnly([
+               'currency',
+               'quantity',
+               'originalFeeAmountCents',
+               'subtotalAmountCents',
+               'appliedDiscounts',
+               'finalAmountDueCents'
+             ]) &&
+             snapshot.currency is string &&
+             snapshot.quantity is int &&
+             snapshot.quantity >= 1 &&
+             snapshot.originalFeeAmountCents is int &&
+             snapshot.subtotalAmountCents is int &&
+             snapshot.finalAmountDueCents is int &&
+             snapshot.originalFeeAmountCents >= 0 &&
+             snapshot.subtotalAmountCents >= 0 &&
+             snapshot.finalAmountDueCents >= 0 &&
+             areRegistrationDiscountApplicationsValid(snapshot.appliedDiscounts);
+    }
+
     function isPendingRegistrationPayloadValid(teamId, formId, data) {
       return data.keys().hasOnly([
                'teamId',
@@ -334,14 +451,17 @@ service cloud.firestore {
                'programName',
                'feeAmountCents',
                'currency',
+               'paymentSettings',
                'participant',
                'guardian',
                'waiverAccepted',
                'waiverText',
+               'paymentPlan',
                'status',
                'submittedAt',
                'waitlistedAt',
                'selectedOption',
+               'feeSnapshot',
                'source'
              ]) &&
              data.teamId == teamId &&
@@ -350,6 +470,11 @@ service cloud.firestore {
              data.waiverAccepted == true &&
              hasOnlyFlatStringValues(data.participant) &&
              hasOnlyFlatStringValues(data.guardian) &&
+             data.keys().hasAny(['paymentSettings']) &&
+             isRegistrationPaymentSettingsPayloadValid(data.paymentSettings) &&
+             isRegistrationPaymentPlanValid(data.paymentPlan) &&
+             data.keys().hasAny(['feeSnapshot']) &&
+             isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
              (data.status == 'waitlisted' || !data.keys().hasAny(['waitlistedAt'])) &&
              (data.status != 'waitlisted' || data.keys().hasAny(['waitlistedAt'])) &&
@@ -460,8 +585,13 @@ service cloud.firestore {
              );
     }
 
-    function isOpenOfficiatingSelfAssignmentUpdate() {
-      return isSignedIn() &&
+    function canClaimOpenOfficiatingSlot(teamId) {
+      return isTeamOwnerOrAdmin(teamId) ||
+             isParentForTeam(teamId);
+    }
+
+    function isOpenOfficiatingSelfAssignmentUpdate(teamId) {
+      return canClaimOpenOfficiatingSlot(teamId) &&
              resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -502,19 +632,34 @@ service cloud.firestore {
               get(folderPath).data.get('visibility', 'team') == 'team');
     }
 
-    function isTeamMediaPhotoCreate(teamId, data) {
+    function isAllowedTeamMediaUploadType(mimeType) {
+      return mimeType.matches('image/.*') ||
+             mimeType in [
+               'application/pdf',
+               'application/msword',
+               'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+               'application/vnd.ms-excel',
+               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+               'application/vnd.ms-powerpoint',
+               'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+               'text/plain',
+               'text/csv'
+             ];
+    }
+
+    function isTeamMediaUploadCreate(teamId, data) {
       return canAccessTeamChat(teamId) &&
              data.keys().hasAll([
                'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.keys().hasOnly([
-               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.folderId is string &&
              data.folderId.size() > 0 &&
-             data.type == 'photo' &&
+             data.type in ['photo', 'file'] &&
              data.url is string &&
              data.storagePath is string &&
              data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
@@ -523,15 +668,16 @@ service cloud.firestore {
              data.size > 0 &&
              data.size <= 10485760 &&
              data.mimeType is string &&
-             data.mimeType.matches('image/.*') &&
+             ((data.type == 'photo' && data.mimeType.matches('image/.*')) ||
+              (data.type == 'file' && isAllowedTeamMediaUploadType(data.mimeType) && !data.mimeType.matches('image/.*'))) &&
              data.deleted == false &&
              data.createdAt == request.time &&
              data.updatedAt == request.time;
     }
 
-    function isOwnTeamMediaPhotoSoftDelete(teamId) {
+    function isOwnTeamMediaUploadSoftDelete(teamId) {
       return canAccessTeamChat(teamId) &&
-             resource.data.type == 'photo' &&
+             resource.data.type in ['photo', 'file'] &&
              resource.data.uploadedBy == request.auth.uid &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'deleted', 'deletedAt', 'deletedBy', 'updatedAt'
@@ -702,11 +848,14 @@ service cloud.firestore {
       }
 
       match /familyMemberships/{memberId} {
-        allow read: if isOwner(userId) || isGlobalAdmin();
+        allow read: if isOwner(userId) || isGlobalAdmin() ||
+                       (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
-        allow update: if isOwner(userId) &&
-                      isFamilyMembershipRemoval(request.resource.data, userId) &&
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'removedAt']);
+        allow update: if (isOwner(userId) &&
+                         isFamilyMembershipRemoval(request.resource.data, userId) &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])) ||
+                      isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
+                      isFamilyMembershipAcceptance(request.resource.data);
         allow delete: if false;
       }
 
@@ -728,7 +877,9 @@ service cloud.firestore {
                        (resource.data.generatedBy == request.auth.uid ||
                         // Allow marking as used only if setting these specific fields
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
-                         request.resource.data.usedBy == request.auth.uid));
+                         request.resource.data.usedBy == request.auth.uid) ||
+                        (resource.data.generatedBy == request.auth.uid &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
 	    }
 
@@ -840,6 +991,33 @@ service cloud.firestore {
                               );
     }
 
+    // First-party product telemetry. Clients send events through the Cloud Function,
+    // and only global admins can inspect the resulting datasets.
+    match /telemetryEvents/{eventId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetryDaily/{dateId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetryPagesDaily/{pageId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetryEventsDaily/{eventId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
+    match /telemetrySessions/{sessionId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
     // Teams - only owner or admins can modify
     match /teams/{teamId} {
       allow read: if true;  // Public teams for browsing
@@ -867,6 +1045,8 @@ service cloud.firestore {
 	        // - Public player doc: photo only
 	        allow update: if isParentForPlayer(teamId, playerId) &&
 	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
+	        allow update: if isParentForPlayer(teamId, playerId) &&
+	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents']);
 
         // Private player profile (sensitive fields)
         match /private/profile {
@@ -897,8 +1077,8 @@ service cloud.firestore {
 
       match /mediaItems/{itemId} {
         allow read: if canReadTeamMediaItem(teamId, resource.data);
-        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaPhotoCreate(teamId, request.resource.data);
-        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaPhotoSoftDelete(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId);
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -975,6 +1155,18 @@ service cloud.firestore {
         allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /venueAvailability/{availabilityId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /organizationBlackouts/{blackoutId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /venueBlackouts/{blackoutId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       match /entitlements/{entitlementId} {
         // Public fan pages may read safe team-pass state, but raw billing/provider
         // metadata stays limited to team admins.
@@ -1047,7 +1239,7 @@ service cloud.firestore {
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
-        allow update: if isOpenOfficiatingSelfAssignmentUpdate();
+        allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);
 
         // Events subcollection
         match /events/{eventId} {
@@ -1060,6 +1252,12 @@ service cloud.firestore {
         match /aggregatedStats/{statId} {
           allow read: if true;
           allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
+          allow delete: if isTeamOwnerOrAdmin(teamId);
+        }
+
+        // Manager-only player stats subcollection for private player-scoped metrics.
+        match /privatePlayerStats/{statId} {
+          allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
 

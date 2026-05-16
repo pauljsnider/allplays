@@ -38,6 +38,7 @@
             }
         }
     </script>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 
 <body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
@@ -347,16 +348,17 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats } from './js/db.js?v=29';
+        import { getTeam, getGame, getPlayers, getUnreadChatCounts, getUserProfile, updateGame, uploadStatSheetPhoto, setCompletedGamePlayerStats } from './js/db.js?v=31';
         import { generateGameInsights } from './js/post-game-insights.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=14';
-        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=11";
-        import { db } from './js/firebase.js?v=11';
+        import { checkAuth } from './js/auth.js?v=15';
+        import { collection, getDocs, query, orderBy } from "./js/firebase.js?v=12";
+        import { db } from './js/firebase.js?v=12';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
+        import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
         import { resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=1';
-        import { resolvePostGameStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=2';
+        import { resolvePostGameStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=3';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from './js/live-game-video.js?v=3';
 
         let currentUser = null;
@@ -699,6 +701,7 @@
                     status.textContent = `Error: ${error.message}`;
                 } finally {
                     removeBtn.disabled = false;
+                    uploadBtn.disabled = false; // Re-enable upload button after removal
                 }
             });
         }
@@ -726,11 +729,13 @@
             admin.classList.remove('hidden');
 
             let generatedSummary = '';
+            let isSavingSummary = false;
 
             const openEditor = (auto = false) => {
                 editor.classList.remove('hidden');
                 editBtn.classList.add('hidden');
                 summaryDiv.classList.add('hidden');
+                saveBtn.disabled = false;
                 if (auto && !game.summary) {
                     textarea.value = '';
                 }
@@ -740,6 +745,7 @@
                 editor.classList.add('hidden');
                 editBtn.classList.remove('hidden');
                 summaryDiv.classList.remove('hidden');
+                saveBtn.disabled = false;
                 textarea.value = game.summary || '';
                 status.textContent = '';
             };
@@ -814,12 +820,17 @@ Write the match report now:`;
             });
 
             saveBtn.addEventListener('click', async () => {
+                if (isSavingSummary) {
+                    return;
+                }
+
                 const summaryText = textarea.value.trim();
                 if (!summaryText && !generatedSummary) {
                     status.textContent = 'Add a summary or generate one first.';
                     return;
                 }
 
+                isSavingSummary = true;
                 saveBtn.disabled = true;
                 status.textContent = 'Saving summary…';
                 try {
@@ -830,10 +841,12 @@ Write the match report now:`;
                     setTimeout(() => {
                         summaryDiv.style.maxHeight = summaryDiv.scrollHeight + 'px';
                     }, 100);
+                    isSavingSummary = false;
                     closeEditor();
                 } catch (error) {
                     console.error('Error saving summary:', error);
                     status.textContent = `Error: ${error.message}`;
+                    isSavingSummary = false;
                     saveBtn.disabled = false;
                 }
             });
@@ -1009,8 +1022,13 @@ Write the match report now:`;
                 status.textContent = 'Saving stats…';
 
                 try {
-                    await setCompletedGamePlayerStats(teamId, gameId, player.id, payload);
-                    statsMap[player.id] = { ...(payload.stats || {}) };
+                    await setCompletedGamePlayerStats(teamId, gameId, player.id, {
+                        ...payload,
+                        statTrackerConfig: resolvedConfig
+                    });
+                    const { publicStats } = splitPlayerStatsByVisibility(resolvedConfig || {}, payload.stats || {});
+                    statsMap[player.id] = publicStats;
+                    editorStatsMap[player.id] = { ...(payload.stats || {}) };
                     didNotPlayMap[player.id] = payload.didNotPlay === true;
                     pendingDidNotPlayMap[player.id] = payload.didNotPlay === true;
                     timeMap[player.id] = payload.timeMs || 0;
@@ -1283,6 +1301,22 @@ Write the match report now:`;
                     console.error('Error fetching config:', err);
                 }
 
+                const editorStatsMap = { ...statsMap };
+                if (canEditStats) {
+                    try {
+                        const privateStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`));
+                        privateStatsSnapshot.forEach(doc => {
+                            const data = doc.data() || {};
+                            editorStatsMap[doc.id] = {
+                                ...(editorStatsMap[doc.id] || {}),
+                                ...(data.stats || {})
+                            };
+                        });
+                    } catch (err) {
+                        console.error('Error fetching private player stats:', err);
+                    }
+                }
+
                 const { statKeys, statLabels } = resolveReportStatColumns({
                     statsMap,
                     resolvedConfig
@@ -1338,7 +1372,7 @@ Write the match report now:`;
                     gameId,
                     game,
                     players,
-                    statsMap,
+                    statsMap: editorStatsMap,
                     didNotPlayMap,
                     timeMap,
                     resolvedConfig,

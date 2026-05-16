@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="img/logo_small.png">
+    <title>Live Tracker - ALL PLAYS Help</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                50: '#eef2ff',
+                100: '#e0e7ff',
+                500: '#6366f1',
+                600: '#4f46e5',
+                700: '#4338ca',
+                800: '#3730a3',
+                900: '#312e81'
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        --wf-bg: #f8fafc;
+        --wf-panel: #ffffff;
+        --wf-text: #0f172a;
+        --wf-muted: #52606f;
+        --wf-accent: #4f46e5;
+        --wf-accent-soft: #e0e7ff;
+        --wf-border: #d9e2ec;
+      }
+      body {
+        background:
+          radial-gradient(circle at 85% 0%, rgba(99,102,241,0.14) 0%, rgba(248,250,252,0) 42%),
+          radial-gradient(circle at 8% 20%, rgba(67,56,202,0.10) 0%, rgba(248,250,252,0) 48%),
+          var(--wf-bg);
+        color: var(--wf-text);
+      }
+      .wf-shell { width: min(1160px, 100%); margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+      .wf-back-link { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 700; color: #4338ca; }
+      .wf-hero { margin-top: 0.75rem; background: linear-gradient(140deg, #312e81 0%, #4338ca 46%, #4f46e5 100%); border-radius: 1.1rem; padding: 1.25rem 1.25rem 1.15rem; color: #ecfeff; box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22); }
+      .wf-kicker { font-size: 0.73rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.84; }
+      .wf-title { margin-top: 0.4rem; font-size: clamp(1.75rem, 2.8vw, 2.35rem); line-height: 1.15; font-weight: 800; }
+      .wf-summary { margin-top: 0.75rem; max-width: 60ch; color: rgba(236, 254, 255, 0.95); line-height: 1.58; }
+      .wf-meta-row { margin-top: 0.95rem; display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
+      .wf-meta-pill { display: inline-flex; align-items: center; font-size: 0.78rem; font-weight: 700; border-radius: 999px; border: 1px solid rgba(236, 254, 255, 0.36); background: rgba(236, 254, 255, 0.12); color: #ecfeff; padding: 0.24rem 0.62rem; }
+      .wf-layout { margin-top: 1rem; display: grid; gap: 1rem; }
+      .wf-panel { background: var(--wf-panel); border: 1px solid var(--wf-border); border-radius: 1rem; box-shadow: 0 7px 20px rgba(15, 23, 42, 0.08); }
+      .wf-panel-section { padding: 1rem; border-bottom: 1px solid var(--wf-border); }
+      .wf-panel-section:last-child { border-bottom: 0; }
+      .wf-panel-title { font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: #334155; margin-bottom: 0.6rem; }
+      .wf-role-chip { display: inline-flex; align-items: center; border-radius: 999px; border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3; padding: 0.22rem 0.66rem; font-size: 0.74rem; font-weight: 700; }
+      .wf-roles { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+      .wf-toc { display: grid; gap: 0.33rem; }
+      .wf-toc a { display: block; padding: 0.43rem 0.52rem; border-radius: 0.55rem; color: #334155; font-size: 0.82rem; line-height: 1.35; transition: background 120ms ease, color 120ms ease; }
+      .wf-toc a:hover { background: #eef2ff; color: #3730a3; }
+      .wf-toc a.is-active { background: #e0e7ff; color: #312e81; font-weight: 700; }
+      .wf-content { padding: 1.2rem 1.15rem; }
+      .help-workflow-body { display: grid; gap: 0.45rem; }
+      .help-workflow-body h2 { font-size: 1.4rem; font-weight: 800; color: #1f2937; margin-top: 1.25rem; padding-top: 1.05rem; border-top: 1px solid #dbe7f0; scroll-margin-top: 6rem; }
+      .help-workflow-body h2:first-of-type { margin-top: 0.15rem; padding-top: 0; border-top: 0; }
+      .help-workflow-body h3 { font-size: 1.08rem; font-weight: 700; color: #1e293b; margin-top: 0.88rem; scroll-margin-top: 6rem; }
+      .help-workflow-body p, .help-workflow-body li { color: var(--wf-muted); line-height: 1.67; }
+      .help-workflow-body ol, .help-workflow-body ul { margin-left: 1.2rem; }
+      .help-workflow-body code { background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; padding: 0.1rem 0.35rem; border-radius: 0.3rem; font-size: 0.86em; }
+      .wf-mobile-toc { margin-top: 0.95rem; }
+      @media (min-width: 1024px) {
+        .wf-layout { grid-template-columns: 270px minmax(0, 1fr); align-items: start; }
+        .wf-sidebar { position: sticky; top: 1rem; }
+      }
+      @media (max-width: 1023px) {
+        .wf-sidebar .wf-panel-section:nth-child(1) { display: none; }
+      }
+    </style>
+  <script type="module" src="/js/telemetry.js?v=1"></script>
+</head>
+<body class="flex flex-col min-h-screen">
+    <div id="header-container"></div>
+    <main class="flex-grow">
+      <div class="wf-shell">
+        <a href="help.html" class="wf-back-link">← Back to Help Center</a>
+        <section class="wf-hero">
+          <p class="wf-kicker">Workflow Guide</p>
+          <h1 class="wf-title">Track Live Games with the Live Tracker</h1>
+          <p class="wf-summary">Run the Live Tracker from tip-off to final buzzer — manage substitutions, clock, fouls, stats, and broadcasts without losing data if the page reloads.</p>
+          <div class="wf-meta-row">
+            <span class="wf-meta-pill">6 min read</span>
+            <span class="wf-meta-pill">Updated from live product pages</span>
+          </div>
+        </section>
+
+        <div class="wf-layout">
+          <aside class="wf-sidebar wf-panel">
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">On this page</h2>
+              <nav id="workflow-toc" class="wf-toc"></nav>
+            </section>
+            <section class="wf-panel-section">
+              <h2 class="wf-panel-title">Who can use this</h2>
+              <div class="wf-roles"><span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span> <span class="wf-role-chip">Scorekeeper</span></div>
+            </section>
+          </aside>
+
+          <article class="wf-panel wf-content">
+            <div id="workflow-mobile-toc" class="wf-mobile-toc"></div>
+            <div class="help-workflow-body">
+
+<h2 id="overview">Overview</h2>
+<p>The Live Tracker (<code>live-tracker.html</code>) is ALL PLAYS' basketball-optimized sideline tracker. It runs in the browser on a phone or tablet and tracks player substitutions, fouls, and live stats in real time while simultaneously broadcasting to Game Day consumers watching on <code>live-game.html</code>. Every stat tap, sub change, and foul increment is written to Firestore the moment it happens — fans and parents following along see a live feed without any manual publish step.</p>
+<p>Recent improvements have made the tracker resilient to page reloads and unexpected browser navigation. In earlier versions of the tracker, reloading the page during a game would erase the running clock, reset opponent foul counts, and lose track of which players were on court. That is no longer the case. Clock state (elapsed time and running/stopped), substitution lineups, opponent foul totals, per-player fouls, and period state are all persisted to Firestore and restored automatically when the page loads. You can reload the Live Tracker mid-game and resume exactly where you left off.</p>
+<p>Goal-sport games (soccer, hockey, lacrosse, field hockey, water polo) have an additional simpler tracker mode called <strong>Live Broadcast Simple</strong>. This mode tracks only the game clock, home score, away score, and individual goal events. It is designed for one-person sideline operation when full stat tracking is not needed but live score broadcasting still is.</p>
+<p>Baseball and Softball are now supported as fully distinct sports with built-in stat templates, diamond formation views, seven-inning defaults, and batting order support — all accessible from the same game schedule and tracking workflow.</p>
+
+<h2 id="who-is-this-for">Who Is This For</h2>
+<p>The Live Tracker is designed for three primary roles. Each role has a slightly different relationship with the tracker, and understanding those differences helps you get the most out of the tool.</p>
+<h3>Coaches</h3>
+<p>Coaches are the primary audience for the Live Tracker. During a basketball game the coach (or an assistant coach) keeps the tracker open on a phone or tablet on the sideline. The coach uses the substitution panel to swap players in and out as lineups change, monitors per-player foul counts so they can pull players who are in foul trouble, and reviews live stat summaries between quarters. The tracker's quick-tap interface is designed for use with one thumb while standing and watching the game — not for long data-entry sessions.</p>
+<h3>Admins</h3>
+<p>Team administrators often support live tracking by setting up the game record before tip-off, verifying that the stat tracker config is correctly assigned, and troubleshooting issues that arise during the game. Admins can view all Firestore data for the game, including raw events, aggregate stats, and lineup state. If a coach encounters a data issue mid-game, an admin is typically the person who resolves it.</p>
+<h3>Scorekeepers</h3>
+<p>Some teams delegate live stat tracking to a designated scorekeeper — a volunteer or assistant who is not the head coach. Scorekeepers can be granted access to the Live Tracker without giving them full team management rights. They can track stats and manage substitutions during the game but cannot modify team settings, player rosters, or game configuration outside of the tracker. This role is specifically designed to allow trusted non-admin helpers to operate the sideline tracker.</p>
+<h3>What the Live Tracker Is Not</h3>
+<p>The Live Tracker is distinct from the Standard Tracker (<code>track.html</code>), which provides a full stat grid for all sports but does not have a live broadcast substitution panel. It is also distinct from the Game Day Command Center, which is a read-side tool for monitoring game state and coordinating broadcasts. The Live Tracker is the write side — it is where stats are recorded. The Command Center is where they are displayed and managed for downstream consumers.</p>
+
+<h2 id="choosing-a-tracker-mode">Choosing a Tracker Mode</h2>
+<p>ALL PLAYS offers several tracker modes. The right choice depends on your sport, how many people are on the sideline, and whether you need live score broadcasting for fans. Here is a complete breakdown of each mode.</p>
+<h3>Live Tracker (<code>live-tracker.html</code>)</h3>
+<p>The Live Tracker is the basketball-optimized sideline tracking experience. It includes a quick substitution panel that lets you swap players in and out with two taps, a per-player foul counter with fouled-out alerts, a separate opponent foul counter, live stat buttons for each player, and real-time broadcast to <code>live-game.html</code>. Every lineup change and stat event is immediately visible to fans following the game online. Use the Live Tracker for any basketball game where you want full stat tracking plus live broadcast.</p>
+<h3>Standard Tracker (<code>track.html</code>)</h3>
+<p>The Standard Tracker works for all sports. It presents a grid of stat buttons organized by player, supports manual period and timer entry, and does not include the live broadcast substitution panel. It is suitable for sports where you do not need real-time lineup broadcasting, or where a more deliberate data entry workflow is preferred. Baseball, softball, volleyball, and football games typically use the Standard Tracker.</p>
+<h3>Live Broadcast Tracker</h3>
+<p>The Live Broadcast Tracker is the basketball tracker with full live chat integration and live-view context for Game Day consumers. It opens from the Track modal when you select "Live Broadcast Tracker" for a basketball game. It is functionally the same as the Live Tracker but is launched in a mode that also exposes the live chat sidebar for Game Day coordinators who want to communicate with fans during the game.</p>
+<h3>Live Broadcast Simple</h3>
+<p>Live Broadcast Simple is available only for goal-sport games: soccer, hockey, lacrosse, field hockey, and water polo. When you open the Track modal for one of these sports, two options appear — <strong>Live Broadcast Tracker</strong> (full stats) and <strong>Live Broadcast Simple</strong> (score, clock, and goals only). Simple is the right choice when you have one person on the sideline who needs to keep live score for fans but does not have the bandwidth to track individual player stats simultaneously. Basketball, baseball, volleyball, and football games do not show the Simple option.</p>
+<h3>Beta Tracker (<code>track-basketball.html</code>)</h3>
+<p>The Beta Tracker is an alternate basketball tracking interface focused on quick substitutions and sideline usability. It shares the same Firestore backend as the Live Tracker but presents a slightly different layout with a stronger emphasis on the substitution workflow. Teams that were using the Beta Tracker before the Live Tracker reached full feature parity may still have familiarity with this interface. New setups should default to the Live Tracker.</p>
+<h3>Stream and Score</h3>
+<p>Stream and Score is a combined workspace that opens when a volunteer has both scorekeeper permissions and streaming access for a game. Instead of navigating between two separate pages, Stream and Score gives the volunteer a single unified view with the scorekeeper tracker on one side and the stream controls on the other. It opens automatically from the game-day entry point when the system detects that the logged-in user has both permissions.</p>
+<h3>Quick Reference: When to Use Which Mode</h3>
+<ul class="ml-6 list-disc space-y-1">
+  <li><strong>Basketball, full stats, live broadcast:</strong> Live Tracker or Live Broadcast Tracker</li>
+  <li><strong>Goal sport, live score only:</strong> Live Broadcast Simple</li>
+  <li><strong>Goal sport, full stats + live broadcast:</strong> Live Broadcast Tracker</li>
+  <li><strong>Baseball or softball:</strong> Standard Tracker with baseball stat template</li>
+  <li><strong>Non-basketball, no broadcast needed:</strong> Standard Tracker</li>
+  <li><strong>Volunteer with streaming access:</strong> Stream and Score (opens automatically)</li>
+</ul>
+
+<h2 id="starting-a-live-tracker-session">Starting a Live Tracker Session</h2>
+<p>Before tip-off, spend two minutes setting up the tracker correctly. A proper setup prevents the most common mid-game issues.</p>
+<ol class="ml-6 list-decimal space-y-1">
+  <li>
+    <strong>Open from the schedule.</strong> Navigate to <code>edit-schedule.html</code> and find the game in your schedule list. Click the <strong>Track</strong> button next to the game. A modal appears with tracker mode options. For a basketball game, select <strong>Live Broadcast Tracker</strong>. For a goal-sport game, choose between Live Broadcast Tracker (full stats) and Live Broadcast Simple (score and clock only). The tracker opens in a new view.
+  </li>
+  <li>
+    <strong>Confirm game context.</strong> Before touching the clock, review the game header: opponent name, game date, and period configuration. If any of these are wrong, close the tracker, correct the game record in the schedule, and reopen. Do not start tracking a game with incorrect metadata — changing it mid-game is more complex and may confuse downstream stat records.
+  </li>
+  <li>
+    <strong>Set the initial lineup.</strong> The tracker opens with all eligible players in the bench pool. Tap players to move them to the "on court" panel until your starting five are shown as active. The initial lineup is written to <code>game.liveLineup</code> in Firestore immediately when you confirm it — this means even if the page reloads before you tap Start, the tracker knows your starters.
+  </li>
+  <li>
+    <strong>Start the clock.</strong> Once the lineup is confirmed and the referee signals the start of play, tap <strong>Start</strong>. The game clock begins ticking. From this point forward, the clock's elapsed time and running state are persisted to Firestore continuously. <strong>Important:</strong> if the page reloads at any point after you tap Start, the clock will restore its exact elapsed time and running or stopped state automatically. You do not need to manually reset or restart the clock after a reload.
+  </li>
+  <li>
+    <strong>Understand the layout.</strong> Once tracking begins, the Live Tracker shows four main areas:
+    <ul class="ml-6 list-disc space-y-1">
+      <li><strong>On Court panel:</strong> displays the five active players with their foul counts and quick-access stat buttons.</li>
+      <li><strong>Bench pool:</strong> shows all players not currently on court, available for substitution.</li>
+      <li><strong>Opponent quick stats:</strong> a compact panel showing opponent score, opponent fouls, and a foul increment button. Opponent foul totals are persisted — they are not reset on reload.</li>
+      <li><strong>Period and clock controls:</strong> Start/Stop clock, current period indicator, and the period advance button to move from Q1 through Q4 and OT.</li>
+      <li><strong>Sub queue:</strong> a staging area where you build substitution pairs before applying them. You can queue multiple subs and apply them all at once at the next dead ball.</li>
+    </ul>
+  </li>
+</ol>
+
+<h2 id="managing-substitutions">Managing Substitutions</h2>
+<p>Substitution management is one of the most frequently used features of the Live Tracker. The sub workflow is optimized for one-thumb operation on a phone — you should be able to complete a substitution in under five seconds.</p>
+<h3>Making a Quick Substitution</h3>
+<p>To substitute one player for another, tap the <strong>OUT</strong> button on the player who is coming off the court in the On Court panel. That player is highlighted as the outgoing player. Then tap the <strong>IN</strong> button on the player from the bench pool who is entering the game. The substitution pair appears in the sub queue. Tap <strong>Apply Sub</strong> to confirm. The lineup update is written immediately to <code>game.liveLineup</code> in Firestore, and the on-court panel updates to reflect the new lineup.</p>
+<p><strong>This is the key behavior change from earlier versions:</strong> previously, a substitution that was applied but then the page was reloaded would be lost — the tracker would revert to the pre-sub lineup on next load. Now, every lineup change is persisted to <code>game.liveLineup</code> the moment you tap Apply Sub. If the page reloads for any reason, the sub is preserved and the correct lineup is restored.</p>
+<h3>Queuing Multiple Substitutions</h3>
+<p>If you have multiple subs to make at the same time (for example, switching an entire unit at a timeout), you can queue them all before applying. Select each OUT/IN pair one at a time. Each pair is added to the sub queue. When all pairs are staged, tap <strong>Apply All Subs</strong>. All substitutions are applied atomically and written to Firestore together. This prevents partial-sub states where some players have been swapped but others have not.</p>
+<h3>Reviewing the Sub Queue</h3>
+<p>The sub queue displays each pending substitution as a row: the outgoing player's name on the left, an arrow, and the incoming player's name on the right. Review the queue before applying — once subs are applied, playing time tracking begins for the incoming player and stops for the outgoing player. You can remove a pending substitution from the queue by tapping the X next to it before applying.</p>
+<h3>After a Substitution</h3>
+<p>Once a substitution is applied, the subbed-in player appears in the On Court panel. Playing time tracking starts for that player from the moment the sub is applied. The subbed-out player moves back to the bench pool. Their accumulated playing time is paused until they re-enter the game.</p>
+<h3>Playing Time Tracking</h3>
+<p>The tracker silently records how long each player spends on court. When the game is finished using the Finish button, playing time for every player who appeared in the game is saved to the game record. This includes players who were subbed in but recorded no stats — they are explicitly marked as participants in the aggregate. Previously, finishing a game in some states caused playing time data to be lost. This is fixed: the Finish flow now correctly saves elapsed field time for all participants before marking the game complete.</p>
+<h3>Undoing a Substitution</h3>
+<p>If you applied a substitution by mistake — for example, you tapped the wrong player as the incoming player — there is no direct "undo sub" button in the current tracker. To correct the error, make a new substitution that reverses the incorrect one: sub the wrongly-entered player back out and sub the correct player in. This creates two additional events in the Firestore event log, but the final lineup state will be correct. If the error needs to be corrected at the event level (for example, to fix playing time calculations), contact your team admin — event-level corrections require direct Firestore access.</p>
+
+<h2 id="tracking-fouls">Tracking Fouls</h2>
+<p>Foul tracking in the Live Tracker is split into two counters: per-player fouls for your own team's roster, and a single aggregate opponent foul counter in the opponent quick stats panel. Both are persisted to Firestore and restored on page reload.</p>
+<h3>Per-Player Foul Tracking</h3>
+<p>Each player card in the On Court panel displays that player's current foul count. To increment the count, tap the foul counter on the player's card. The count increments by one per tap and is immediately written to Firestore. The foul count is visible to the player's coach and to anyone viewing the game's admin data — it is not broadcast to fans on <code>live-game.html</code>.</p>
+<h3>Fouled-Out Alerts</h3>
+<p>When a player reaches five fouls, their card in the On Court panel displays a prominent <strong>"FOULED OUT!"</strong> label in red text. This is not a warning icon or a subtle color change — it is a clear, readable alert designed to be visible at a glance during the chaos of a live game. The tracker signals that the player must come off the court per basketball rules. The alert persists until you sub the player out. You must initiate the substitution manually — the tracker does not automatically move the player to the bench. Use the sub panel to swap the fouled-out player off the court.</p>
+<h3>Opponent Foul Tracking</h3>
+<p>The opponent quick stats panel includes a dedicated opponent foul counter. This is a single number that represents the total team fouls accumulated by the opposing team. To increment it, tap the foul button in the opponent panel. The count is saved to Firestore alongside the opponent's score and other quick stats.</p>
+<p><strong>Key improvement:</strong> opponent foul counts are now persisted across page reloads. Previously, the opponent foul counter was held in JavaScript memory only and was reset to zero whenever the page was refreshed. Now, the opponent foul total is written to Firestore on each increment and is restored from Firestore when the page loads. If you take a halftime break, close the browser, and reopen the tracker for the second half, the opponent's first-half foul total is shown correctly.</p>
+<h3>Foul Persistence Across Sessions</h3>
+<p>All foul state — per-player fouls and opponent team fouls — is preserved as part of the game's persisted state. This means you can close the Live Tracker during halftime, allow the device to sleep, reopen the browser, navigate back to the game, and resume tracking with accurate foul counts. There is no need to manually re-enter foul data after a break.</p>
+
+<h2 id="tracking-stats-live">Tracking Stats Live</h2>
+<p>Stat tracking is the core function of the Live Tracker. Every stat event is immediately broadcast to <code>live-game.html</code> consumers and written to the game's event log in Firestore.</p>
+<h3>Per-Player Stat Buttons</h3>
+<p>To record a stat for a player, tap that player's name or card in the On Court panel to expand their stat buttons, then tap the relevant stat button. Available stat types for basketball include: <strong>2PT</strong> (two-point field goal), <strong>3PT</strong> (three-point field goal), <strong>FT</strong> (free throw made), <strong>REB</strong> (rebound), <strong>AST</strong> (assist), <strong>STL</strong> (steal), <strong>BLK</strong> (block), <strong>TO</strong> (turnover), and <strong>FTA</strong> (free throw attempt, for tracking attempts separately from makes). Each tap creates a new event document in the <code>games/{gameId}/events/</code> Firestore collection and updates the player's aggregate in <code>games/{gameId}/aggregatedStats/</code>.</p>
+<h3>Real-Time Broadcast to Game Day</h3>
+<p>Simultaneously with writing to the events and aggregatedStats collections, the tracker writes to <code>games/{gameId}/liveEvents/</code>. The <code>live-game.html</code> page uses a Firestore <code>onSnapshot()</code> listener on liveEvents to receive updates in real time. When you tap a stat button, fans watching the live feed typically see the update within one to two seconds, depending on network conditions. There is no separate publish or broadcast step — every stat tap is a live broadcast.</p>
+<h3>Undoing the Last Stat</h3>
+<p>If you tap the wrong stat button by mistake, use <strong>Undo Last</strong> immediately. Undo Last removes the most recently written event from Firestore and rebroadcasts corrected aggregate stats to all Game Day consumers. Both your team's stats and opponent stats can be undone. The key constraint is that Undo Last only reverses the single most recent event. If you tap 2PT for the wrong player and then tap another stat before hitting Undo, Undo will reverse the second tap, not the first. Use Undo Last immediately after the error — before any subsequent stat entries.</p>
+<p>For errors that are discovered later (after multiple subsequent taps), the stat cannot be corrected through the tracker UI. Contact your team admin. Correcting older events requires direct access to the Firestore event log, which is available to global admins and team owners.</p>
+<h3>Zero-Stat Participation Markers</h3>
+<p>A player who appears in the game (is in the starting lineup or is subbed in at any point) but records zero stats is explicitly marked as a participant in the game's aggregate record when the game is finished. This is an important change from earlier behavior, where players with no stats might not appear in a game's participant list at all — meaning their game history in their player profile would not show the game. Now, every player who was on the court at any point will appear in game history, even if their stat line is all zeros. The participation marker is written during the Finish flow.</p>
+
+<h2 id="clock-and-period-management">Clock and Period Management</h2>
+<p>The game clock and period controls are in the top section of the Live Tracker. Clock management is one of the most frequently asked-about areas because of historical behavior around reloads — all of those issues are resolved in the current version.</p>
+<h3>Starting and Stopping the Clock</h3>
+<p>The <strong>Start / Stop</strong> button controls the live clock. When the clock is running, it counts up from the period start time (or from its restored elapsed time if this is a resumed session). Tap Stop during dead balls — timeouts, fouls, out-of-bounds play stoppages. Tap Start again when play resumes. The clock's running or stopped state is persisted continuously to Firestore — you do not need to do anything special to save it.</p>
+<h3>Period Changes</h3>
+<p>To advance the game to the next period, tap the period advance control. The period indicator steps through Q1, Q2, Q3, Q4, and OT. Period changes are broadcast to <code>live-game.html</code> — fans see the updated quarter display in real time. After a period change, the clock does not automatically reset — stop the clock at the end of a period, advance the period, then start the clock again when the new period begins. If the game goes to overtime, advance past Q4 to OT.</p>
+<h3>Clock Restoration After a Reload</h3>
+<p>This is the most significant improvement in the current tracker version. In previous versions, refreshing the page during a game would reset the clock to zero and lose the running/stopped state. Coaches had to manually estimate elapsed time and re-enter it. This is no longer necessary. The clock's elapsed time in seconds and its running state are written to Firestore on a continuous basis. When the page loads, it reads these values from Firestore and immediately initializes the clock to the correct state. If the clock was running at the time of the reload, it will be running again within moments of the page restoring. If it was stopped, it will be stopped at the correct elapsed time.</p>
+<h3>Halftime and Timeout Handling</h3>
+<p>For a halftime break, stop the clock at the end of the second quarter. You can safely close the browser or put the device away. When you reopen the tracker for the second half, tap Start again to resume from the correct elapsed position. For timeouts, stop the clock when the referee signals the timeout, and start it again when play resumes. If you want to log the timeout as an event visible in the game replay, use the Log button in the Game Day Command Center — the tracker itself does not have a dedicated timeout event button.</p>
+
+<h2 id="goal-sport-live-broadcast-simple">Goal Sport Games — Live Broadcast Simple</h2>
+<p>Live Broadcast Simple is a streamlined tracking mode designed for sports where scoring happens infrequently but fans want live score updates throughout the game. It strips out the individual player stat grid and provides only what is needed to run a live broadcast: game clock, home score, away score, and individual goal events.</p>
+<h3>Supported Sports</h3>
+<p>Live Broadcast Simple is available for: <strong>soccer, hockey, lacrosse, field hockey, and water polo</strong>. These are all goal-scoring sports where the primary live stat is score. Basketball, baseball, softball, volleyball, and football do not use Simple mode — those sports have different tracking requirements that are better served by the full Live Tracker or Standard Tracker.</p>
+<h3>How to Access Live Broadcast Simple</h3>
+<p>Navigate to <code>edit-schedule.html</code> and click <strong>Track</strong> next to a goal-sport game. The Track modal shows two options: <strong>Live Broadcast Tracker</strong> (full per-player stats) and <strong>Live Broadcast Simple</strong> (score, clock, goals). Select Live Broadcast Simple. The simplified tracker opens. If you are tracking a basketball, baseball, softball, volleyball, or football game, the Simple option will not appear — only sports classified as goal sports show this option in the modal.</p>
+<h3>What Live Broadcast Simple Tracks</h3>
+<ul class="ml-6 list-disc space-y-1">
+  <li><strong>Home score:</strong> tap the + button next to the home team to add a goal. The score increments by one and is immediately broadcast to <code>live-game.html</code>.</li>
+  <li><strong>Away score:</strong> tap the + button next to the away team to add an opponent goal.</li>
+  <li><strong>Game clock:</strong> same Start/Stop clock control as the full tracker. Clock state is persisted and restored on reload.</li>
+  <li><strong>Goal events:</strong> each goal tap is recorded as a goal event with a timestamp, the scoring team, and optionally the player who scored (if your roster is configured). The goal feed is visible in the live game view.</li>
+</ul>
+<p>Individual player stats — assists, shots on goal, saves, penalties — are not tracked in Simple mode. If you need those, use the full Live Broadcast Tracker instead.</p>
+<h3>When to Use Live Broadcast Simple</h3>
+<p>Use Simple when you are operating solo on the sideline and cannot simultaneously watch the game and track individual player stats. It is also the right choice for games where parents have requested a live score feed but your team does not have a dedicated stat tracker. Simple gives fans real-time score updates with minimal cognitive load on the person running the sideline.</p>
+<h3>Broadcasting from Simple</h3>
+<p>Live score updates from Simple are broadcast to <code>live-game.html</code> in exactly the same way as the full tracker. Fans see the current score, the game clock, and the goal feed in real time. The experience for fans watching the live view is identical — they do not see which tracking mode is in use. The difference is only in how much detail the sideline tracker records.</p>
+
+<h2 id="baseball-and-softball-tracking">Baseball and Softball Tracking</h2>
+<p>Baseball and softball are now fully supported as distinct sports in ALL PLAYS. They have their own stat template, formations view, game structure defaults, and practice drill library entries.</p>
+<h3>Supported Sports and Stat Template</h3>
+<p>Both <strong>Baseball</strong> and <strong>Softball</strong> are available as team sport selections. When a game is created for a baseball or softball team, the stat tracker automatically loads the built-in baseball stat template. This template includes the following pre-configured stat types:</p>
+<ul class="ml-6 list-disc space-y-1">
+  <li><strong>AB</strong> — At-Bats: plate appearances that do not result in a walk, hit by pitch, or sacrifice.</li>
+  <li><strong>H</strong> — Hits: total base hits (singles, doubles, triples, home runs combined for speed of entry).</li>
+  <li><strong>R</strong> — Runs: runs scored by the player.</li>
+  <li><strong>RBI</strong> — Runs Batted In: credit to the batter when a plate appearance causes a run to score.</li>
+  <li><strong>BB</strong> — Walks: base on balls received.</li>
+  <li><strong>FP</strong> — Fielding Plays: a general-purpose fielding credit for putouts, assists, and other defensive plays.</li>
+</ul>
+<p>These stats are pre-configured and ready to use without any manual stat setup. Coaches do not need to create a custom stat tracker config — the baseball template is applied automatically to any game where the team sport is set to Baseball or Softball.</p>
+<h3>Formations and Diamond View</h3>
+<p>Diamond formations are available in <code>game-plan.html</code> for baseball and softball games. The formation view shows a baseball diamond with nine fielding positions. Coaches can assign players to positions (pitcher, catcher, first base, second base, shortstop, third base, left field, center field, right field) and save the formation as part of the game plan. The diamond view also supports DH (designated hitter) assignments for leagues that use the DH rule.</p>
+<h3>Seven-Inning Default</h3>
+<p>Baseball and softball games default to seven innings in the game structure configuration. This matches standard high school and youth league formats. Coaches running shorter games (for example, five-inning tournament games) can override the inning count in the game record before tracking begins. The inning structure is reflected in the period selector in the Standard Tracker — periods are labeled "INN 1" through "INN 7" (or however many innings are configured) rather than Q1 through Q4.</p>
+<h3>Batting Order</h3>
+<p>Batting order planning is supported in the game plan. Coaches can assign players to batting slots (1 through 9) in advance and save the batting order as part of the pre-game plan. The batting order is visible to any admin viewing the game plan. Players are tracked through lineup rotations — if a pinch hitter is entered, the batting slot is updated accordingly.</p>
+<h3>Run Scoring</h3>
+<p>Run scoring follows baseball scoring conventions. Runs are recorded per batter using the R stat button in the tracker. Each run tap increments the team score in the game record and is reflected in the live broadcast if the game is being tracked with a live broadcaster active. RBI credits are entered separately per plate appearance.</p>
+<h3>Starter Drills</h3>
+<p>The practice drill library includes baseball and softball starter drills. These cover common scenarios including fielding grounders, outfield fly ball practice, batting tee work, pitching mechanics, and base running drills. Starter drills appear automatically in the drill library when the team sport is set to Baseball or Softball, giving coaches a ready-made set of practice activities without needing to build a custom drill library from scratch.</p>
+
+<h2 id="what-gets-persisted">What Gets Persisted (Resilience Summary)</h2>
+<p>One of the most important reliability improvements in the Live Tracker is comprehensive state persistence. The following table summarizes what is persisted to Firestore and restored automatically versus what is not saved if the game is abandoned without a proper finish.</p>
+<h3>Data That Survives Page Reloads and Game Reopens</h3>
+<ul class="ml-6 list-disc space-y-1">
+  <li><strong>Clock elapsed time and running state</strong> — restored on reload. The clock resumes from the correct elapsed time with the correct running or stopped state.</li>
+  <li><strong>Substitution lineup (which players are on court)</strong> — written to <code>game.liveLineup</code> after each applied substitution. Restored on reload.</li>
+  <li><strong>Per-player stat aggregates</strong> — written to <code>games/{gameId}/aggregatedStats/</code> on each event. Restored on reload from Firestore.</li>
+  <li><strong>Opponent foul counts</strong> — persisted in <code>opponentStats</code> and restored during tracker hydration on load. Previously reset to zero on reload; now correctly persisted.</li>
+  <li><strong>Per-player fouls</strong> — persisted as part of each player's game state in Firestore. Restored on load.</li>
+  <li><strong>Playing time elapsed per player</strong> — saved to the game record on game finish. Not calculated from memory but from persisted sub event timestamps.</li>
+  <li><strong>Zero-stat participation markers</strong> — written explicitly during the Finish flow. Players who appeared but recorded no stats are marked as game participants.</li>
+  <li><strong>Period / quarter state</strong> — the current period is persisted and restored on reload. The tracker returns to the correct period after a reload.</li>
+  <li><strong>Stat event log</strong> — all events in <code>games/{gameId}/events/</code> are Firestore documents. They are never lost on reload.</li>
+</ul>
+<h3>Data That Is Not Preserved Without a Proper Finish</h3>
+<ul class="ml-6 list-disc space-y-1">
+  <li><strong>Wrap-Up notes</strong> — free-text notes entered in the post-game wrap-up screen are not saved until you explicitly submit the wrap-up form. If you navigate away without submitting, notes are lost.</li>
+  <li><strong>Pre-finish summary text</strong> — any auto-generated or manually edited summary text shown in the game wrap-up preview is not persisted until saved.</li>
+  <li><strong>Unsaved lineup changes (not yet Applied)</strong> — if you select an OUT/IN pair in the sub queue but do not tap Apply Sub before the page reloads, that pending sub is lost. Only applied substitutions are persisted.</li>
+</ul>
+
+<h2 id="finishing-the-game">Finishing the Game</h2>
+<p>Properly finishing the game through the Live Tracker is important. Do not simply close the browser when the game ends — use the Finish button to formally close the game record and save all end-of-game data.</p>
+<ol class="ml-6 list-decimal space-y-1">
+  <li>
+    <strong>Stop the clock.</strong> When the final buzzer sounds, tap Stop to halt the game clock. This ensures the final elapsed time is correct in the game record.
+  </li>
+  <li>
+    <strong>Tap Finish.</strong> The Finish button is in the clock control area. Tapping Finish opens the game completion confirmation screen.
+  </li>
+  <li>
+    <strong>Confirm final scores.</strong> The confirmation screen shows the current home and away scores. Verify these are correct. If a stat entry was missed (for example, the final basket was not tapped in time), update the score here before confirming. This is your last chance to correct the final score before the game record is locked.
+  </li>
+  <li>
+    <strong>Playing time is saved.</strong> The Finish flow calculates playing time for all players based on their sub-in and sub-out event timestamps. This includes players with zero stats who were explicitly on the court — they receive an accurate playing time record. Playing time is saved to the game record at this step. Previously, playing time was lost on finish in some edge cases — this is now fixed.
+  </li>
+  <li>
+    <strong>Zero-stat participants are marked.</strong> Any player who appeared on the court (starting lineup or substituted in) but recorded no individual stats is explicitly marked as a game participant in the aggregate. This ensures their player profile game history includes this game.
+  </li>
+  <li>
+    <strong>Game record is marked complete.</strong> The game's status is set to "finished" in Firestore. The <code>live-game.html</code> broadcast transitions from live to final. Stat aggregates are locked.
+  </li>
+  <li>
+    <strong>Proceed to Wrap-Up or Match Report.</strong> After finishing, you are prompted to navigate to the Game Day Wrap-Up (for AI-generated summaries and social sharing) or the match report (for a detailed stat review). The AI summary generation for the game is available from the Wrap-Up screen.
+  </li>
+</ol>
+
+<h2 id="common-questions">Common Questions</h2>
+<h3>Why did the clock reset when I reloaded?</h3>
+<p>In the current version, the clock should not reset on reload — the elapsed time and running state are persisted to Firestore continuously. If the clock did reset after a reload, the most likely cause is that the game was not fully initialized (started) before the reload occurred. The clock is persisted from the moment you tap Start. If you navigate to the tracker, configure the lineup, and then reload before tapping Start, the clock will initialize at zero on the next load because no clock state has been written yet. Confirm the game was in a Started state before the reload — if the Start button had been tapped and the clock was visibly running, the clock state should restore correctly.</p>
+<h3>Can two coaches use the Live Tracker for the same game simultaneously?</h3>
+<p>This is not recommended. The Live Tracker is designed for single-device operation. If two devices are simultaneously writing stat events, sub changes, and foul counts to the same game record, the writes can interleave in unexpected ways. Stat aggregates may count events twice. Lineup state may conflict between devices. Designate one device as the authoritative tracker for the game. If a second coach wants to watch live data, they can view the Game Day Command Center or <code>live-game.html</code> as a read-only observer without interfering with the tracking device.</p>
+<h3>What is the difference between the Live Tracker and the Standard Tracker for basketball?</h3>
+<p>The Live Tracker includes features specifically designed for basketball sideline operation: the quick substitution panel with queued sub support, the opponent foul counter, per-player foul tracking with "FOULED OUT!" alerts, and real-time broadcast of stat events to <code>live-game.html</code> as they are recorded. The Standard Tracker (<code>track.html</code>) provides a full stat grid with manual period and timer entry but does not have the live broadcast sub panel. Both trackers write to the same Firestore game record, but the Live Tracker is the right choice for any basketball game where live broadcast and sideline sub management are priorities.</p>
+<h3>Can I use the Live Tracker for non-basketball sports?</h3>
+<p>The Live Tracker is optimized for basketball. For goal sports (soccer, hockey, lacrosse, field hockey, water polo), use Live Broadcast Simple when you want a lightweight live score broadcast, or use the full Live Broadcast Tracker when you also want per-player stat tracking. Baseball and softball should use the Standard Tracker with the built-in baseball stat template, which provides sport-appropriate stat buttons (AB, H, R, RBI, BB, FP) and seven-inning game structure. Using the basketball-optimized Live Tracker for non-basketball sports would give you basketball stat buttons (2PT, 3PT, FT, etc.) that do not match the sport being played.</p>
+<h3>What does "FOULED OUT!" mean on a player card?</h3>
+<p>A player card displays "FOULED OUT!" in prominent red text when that player has accumulated five or more fouls. This follows standard basketball rules: a player with five personal fouls is disqualified from further participation. The tracker signals this prominently so the coach cannot miss it during the flow of the game. The "FOULED OUT!" label persists on the card until you use the sub panel to remove the player from the court. The tracker does not automatically substitute the player — you must initiate the sub manually. Once the fouled-out player is subbed out, their card moves to the bench pool and the alert is no longer displayed in the On Court panel.</p>
+<h3>Can I track opponent stats?</h3>
+<p>Yes, in a limited way. The opponent quick stats panel tracks opponent team fouls (with a per-tap foul counter) and allows score updates for the opposing team. This gives you a running total of opponent fouls — useful for tracking team foul bonus situations. Opponent foul counts are persisted and restored on reload. Full per-player tracking of individual opponent players is not available in the Live Tracker — that level of detail would require the opponent team to also be using ALL PLAYS, which is a separate feature (linked opponent teams).</p>
+<h3>What if I accidentally tap the wrong stat?</h3>
+<p>Use <strong>Undo Last</strong> immediately after the incorrect tap. Undo Last removes the most recent event from Firestore, recalculates the aggregate stats, and rebroadcasts the corrected numbers to all Game Day consumers. The undo only reverses the single most recent event. If you tap another stat before using Undo, the Undo will reverse that second tap, not the original error. For errors discovered after multiple subsequent stat entries, the stat cannot be corrected through the tracker UI — the event log in Firestore must be edited manually by a global admin or team owner.</p>
+<h3>How does Live Broadcast Simple differ from the full Live Tracker?</h3>
+<p>Live Broadcast Simple tracks only three things: game clock, home score, and away score (plus optional goal-scorer identity on each goal). There is no individual player stat grid, no substitution panel, no per-player foul tracking, and no opponent foul counter. It is designed for one-person sideline operation when the goal is purely to give fans a live score feed without the overhead of full stat entry. The full Live Tracker (or full Live Broadcast Tracker) includes all of that — per-player stats, substitution management, foul tracking, and live broadcast — but requires more attention and is harder to operate solo while coaching.</p>
+
+<h2 id="recovery-and-troubleshooting">Recovery and Troubleshooting</h2>
+<p>Most Live Tracker issues fall into one of the categories below. Work through the relevant item before escalating to your admin.</p>
+<h3>Clock shows wrong time after reload</h3>
+<p>Verify that the game was in a Started state before the reload. The clock is persisted only after you tap Start — if the game was set up but not yet started, the clock initializes at zero on the next load. If the clock was running and still reset after a reload, confirm you are loading the current version of the tracker (not a cached older version). Force-refresh the page with <code>Ctrl+Shift+R</code> (or <code>Cmd+Shift+R</code> on Mac) to bypass cache and load the latest code. If the issue persists, report it to your admin with the game ID and approximate time of the reload.</p>
+<h3>Opponent fouls reset to zero</h3>
+<p>Opponent foul persistence was fixed in the May 2026 update. If opponent fouls are still resetting, confirm you are running the current version of the tracker (check for a cache-busted URL with a <code>?v=</code> parameter in the script tags). Force-refresh the page. If the reset is still occurring after a force-refresh, this is a bug — report it to your admin with the game ID so the Firestore data can be inspected directly.</p>
+<h3>Substitution not showing after reload</h3>
+<p>Confirm that you tapped <strong>Apply Sub</strong> (or <strong>Apply All Subs</strong>) before the page reloaded. Substitutions in the sub queue that have not been Applied are staging area selections only — they are not written to Firestore until you tap Apply. If a substitution was in the queue but not applied, it will not appear after a reload. Re-enter the substitution from scratch using the OUT/IN buttons.</p>
+<h3>Stat undo not reverting on the fan scoreboard</h3>
+<p>When you tap Undo Last, the tracker rebroadcasts corrected aggregate stats to <code>live-game.html</code>. Fans may see a brief delay of five to thirty seconds before the corrected stats appear, depending on their network connection and how quickly the Firestore snapshot listener fires. If the scoreboard visible to fans still shows incorrect stats after thirty seconds, ask a fan to reload their <code>live-game.html</code> page. A fresh load will pull the current aggregate from Firestore directly.</p>
+<h3>Fouled-out player still showing active</h3>
+<p>The "FOULED OUT!" label is a visual alert, not an automatic bench action. You must manually use the substitution panel to sub out the fouled-out player. Tap the OUT button on the fouled-out player in the On Court panel, tap IN on their replacement from the bench pool, and tap Apply Sub. The fouled-out player will move to the bench and their alert will be removed from the On Court panel.</p>
+<h3>Playing time missing from player profile after game finish</h3>
+<p>Playing time is saved during the Finish flow — specifically when you tap the Finish button and confirm the final score. If you abandoned the game without using the Finish button (for example, by simply closing the browser), the playing time calculation step was not completed and time data was not saved to the game record. To recover: open the game record as an admin and check if the game status was set to "finished". If the status is still "live" or "in-progress", the game can be re-opened, the final score confirmed, and the Finish button tapped to complete the flow. If the game status is stuck, contact a global admin for a manual Firestore update.</p>
+<h3>Baseball stat template not appearing</h3>
+<p>Confirm that the team's sport setting is set to <strong>Baseball</strong> or <strong>Softball</strong> in the team settings. Navigate to the team's Edit Team page (accessible from the admin dashboard) and check the Sport field. If the sport is set to a different value, the baseball stat template will not be loaded. Update the sport setting, save the team record, and reopen the game's stat config. The baseball template should now appear automatically. If the game's stat tracker config was manually customized, it may override the default template — in that case, the game's <code>statTrackerConfigId</code> may need to be updated by an admin.</p>
+<h3>Live Broadcast Simple not showing in Track modal</h3>
+<p>Live Broadcast Simple only appears for goal-sport games. Verify that the game's sport type is one of the supported goal sports: soccer, hockey, lacrosse, field hockey, or water polo. Basketball, baseball, softball, volleyball, and football do not show the Simple option. If the sport is correct but Simple is still not appearing, check that the game record's sport field is saved correctly — if it was recently changed, try reloading the schedule page before opening the Track modal again.</p>
+<h3>Zero-stat player not appearing in game history</h3>
+<p>Zero-stat participation marking was introduced in the May 2026 update. Games tracked and finished after that update will have explicit participation markers for all players who appeared on the court, regardless of stats recorded. Games that were finished before that update may not have these markers — the player's game history for those older games may not show the game even if they played. This is a known limitation for historical data. If accurate historical participation records are critical, contact your admin — a migration script can be run against older game records to back-fill participation markers.</p>
+<h3>Live broadcast not updating for fans</h3>
+<p>Check that the game is in an active live state — the tracker must have been started (Start button tapped) and not yet finished. Game Day consumers watching <code>live-game.html</code> receive real-time updates only while the tracker is actively running. If the game is in a pre-game state (not yet started) or a post-game state (finished), the live event feed is not active. If the game is started but fans are still not seeing updates, confirm that the tracker device has a working internet connection — all stat events require a Firestore write to propagate. A brief network interruption will cause stat events to queue locally and sync when connectivity is restored, but fans will see a gap in the live feed during the interruption.</p>
+<h3>Can't find the Live Tracker option for a game</h3>
+<p>The Live Tracker is accessible through the Track modal from the schedule. If the Track button is not appearing for a game, confirm that you are logged in with Coach, Admin, or Scorekeeper access for that team. Parent accounts do not have access to the tracker. If you have the correct role and still do not see the Track button, verify that the game's status is not marked as "cancelled" — cancelled games do not show the Track option. If the game is upcoming or in progress, the Track button should be visible.</p>
+
+<h2 id="related-workflows">Related Workflows</h2>
+<p>The Live Tracker is one step in a larger game-day workflow. These related guides cover the steps before and after live tracking.</p>
+<ul class="ml-6 list-disc space-y-1">
+  <li>
+    <strong><a href="workflow-track-game.html" style="color: #4338ca; text-decoration: underline;">workflow-track-game.html</a></strong> — Tracker mode selection and the game finish flow. Covers how to choose between tracker types, configure stat columns, and properly complete a game record after the final buzzer.
+  </li>
+  <li>
+    <strong><a href="workflow-game-day.html" style="color: #4338ca; text-decoration: underline;">workflow-game-day.html</a></strong> — Game Day Command Center, lineup setup, and broadcast configuration. Covers the read-side of a live game: monitoring the live feed, managing the Game Day volunteer access list, and setting up the broadcast for fans before tip-off.
+  </li>
+  <li>
+    <strong><a href="workflow-postgame.html" style="color: #4338ca; text-decoration: underline;">workflow-postgame.html</a></strong> — Game report, replay, and AI summary after finish. Covers the wrap-up flow, how to generate an AI-powered game summary, how to review the play-by-play replay, and how to share the final stat sheet with parents and players.
+  </li>
+  <li>
+    <strong><a href="workflow-schedule.html" style="color: #4338ca; text-decoration: underline;">workflow-schedule.html</a></strong> — Creating the game event before tracking. Covers how to add a game to the schedule, set up the opponent, configure the stat tracker, and assign Game Day volunteers before the game begins.
+  </li>
+</ul>
+
+            </div>
+          </article>
+        </div>
+      </div>
+    </main>
+    <div id="footer-container"></div>
+    <script type="module">
+      import { checkAuth } from './js/auth.js?v=14';
+      import { renderHeader, renderFooter } from './js/utils.js?v=8';
+      renderHeader(document.getElementById('header-container'), null);
+      renderFooter(document.getElementById('footer-container'));
+      checkAuth((user) => {
+        renderHeader(document.getElementById('header-container'), user);
+      });
+    </script>
+    <script>
+      (function() {
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const toc = document.getElementById('workflow-toc');
+        const mobileToc = document.getElementById('workflow-mobile-toc');
+        if (!toc || !headings.length) return;
+        const links = headings.map((h) => {
+          const a = document.createElement('a');
+          a.href = '#' + h.id;
+          a.textContent = h.textContent || h.id;
+          toc.appendChild(a);
+          return a;
+        });
+        const allLinks = [...links];
+        let mobileWrapper = null;
+        const sectionById = new Map(headings.map((h) => [h.id, h]));
+        const setActive = (activeId) => {
+          let active = sectionById.get(activeId) || headings[0];
+          if (!sectionById.has(activeId)) {
+            for (const h of headings) {
+              if (h.getBoundingClientRect().top <= 140) active = h;
+            }
+          }
+          allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
+        };
+        const addLinkHandlers = (tocLinks) => {
+          tocLinks.forEach((a) => {
+            a.addEventListener('click', () => {
+              setActive(a.getAttribute('href').slice(1));
+              if (mobileWrapper && mobileWrapper.contains(a)) { mobileWrapper.open = false; }
+            });
+          });
+        };
+        const ensureMobileToc = () => {
+          if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;
+          const wrapper = document.createElement('details');
+          wrapper.className = 'wf-panel-section wf-panel';
+          wrapper.style.marginBottom = '0.95rem';
+          wrapper.style.padding = '0.8rem 1rem';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Jump to section';
+          summary.style.cursor = 'pointer';
+          summary.style.fontWeight = '700';
+          summary.style.color = '#0f172a';
+          const list = toc.cloneNode(true);
+          list.style.marginTop = '0.6rem';
+          const mobileLinks = Array.from(list.querySelectorAll('a'));
+          allLinks.push(...mobileLinks);
+          addLinkHandlers(mobileLinks);
+          wrapper.appendChild(summary);
+          wrapper.appendChild(list);
+          mobileToc.appendChild(wrapper);
+          mobileWrapper = wrapper;
+          setActive(window.location.hash.slice(1) || null);
+        };
+        addLinkHandlers(links);
+        ensureMobileToc();
+        window.addEventListener('scroll', () => setActive(null), { passive: true });
+        window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
+        window.addEventListener('resize', ensureMobileToc, { passive: true });
+        setActive(window.location.hash.slice(1) || null);
+      })();
+    </script>
+</body>
+</html>

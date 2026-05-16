@@ -8,6 +8,7 @@
     <title>Officials - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
+    <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="bg-gray-50 text-gray-900">
     <div id="header-container"></div>
@@ -42,7 +43,7 @@
 
     <script type="module">
         import { checkAuth } from './js/auth.js?v=14';
-        import { getGames, claimOpenOfficiatingSlot, respondToOfficiatingAssignment } from './js/db.js?v=31';
+        import { getGames, getTeam, getUserProfile, claimOpenOfficiatingSlot, respondToOfficiatingAssignment } from './js/db.js?v=32';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, escapeHtml } from './js/utils.js?v=10';
         import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from './js/officiating-utils.js?v=3';
 
@@ -51,6 +52,9 @@
         const params = getUrlParams();
         const teamId = params.teamId;
         let currentUser = null;
+        let currentTeam = null;
+        let currentUserProfile = null;
+        let canClaimOpenSlots = false;
         let games = [];
 
         function toDate(value) {
@@ -97,8 +101,26 @@
             `).join('');
         }
 
+        function normalizeEmail(email) {
+            return String(email || '').trim().toLowerCase();
+        }
+
+        function isEligibleOpenSlotParticipant(user, userProfile, team) {
+            if (!user?.uid || !team) return false;
+            if (team.ownerId === user.uid) return true;
+            if (normalizeEmail(user.email) && Array.isArray(team.adminEmails) && team.adminEmails.map(normalizeEmail).includes(normalizeEmail(user.email))) return true;
+            if (userProfile?.isAdmin === true) return true;
+            if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team.id)) return true;
+            return false;
+        }
+
         function renderOpenSlots() {
             const container = document.getElementById('open-slots');
+            if (!canClaimOpenSlots) {
+                container.innerHTML = '<div class="p-4 text-sm text-gray-500">Open self-assignment slots are only available to team owners, admins, or parents.</div>';
+                return;
+            }
+
             const openSlots = [];
             games.filter(isUpcoming).forEach((game) => {
                 getOpenOfficiatingSlots(game).forEach((slot) => openSlots.push({ game, slot }));
@@ -118,6 +140,10 @@
         }
 
         async function refresh() {
+            if (!teamId) {
+                document.getElementById('officials-status').textContent = 'Missing teamId.';
+                return;
+            }
             games = await getGames(teamId);
             renderAssignedGames();
             renderOpenSlots();
@@ -145,7 +171,7 @@
             }
         });
 
-        checkAuth((user) => {
+        checkAuth(async (user) => {
             if (!user) {
                 window.location.href = 'login.html';
                 return;
@@ -156,7 +182,16 @@
             }
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            refresh();
+            try {
+                [currentTeam, currentUserProfile] = await Promise.all([
+                    getTeam(teamId, { includeInactive: true }),
+                    getUserProfile(user.uid)
+                ]);
+                canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);
+                await refresh();
+            } catch (error) {
+                document.getElementById('officials-status').textContent = error.message || 'Could not load officiating access.';
+            }
         }, { skipEmailVerificationCheck: true });
     </script>
 </body>

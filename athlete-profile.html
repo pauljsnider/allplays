@@ -7,6 +7,7 @@
     <title>Athlete Profile - ALL PLAYS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="css/styles.css">
+    <script type="module" src="/js/telemetry.js?v=1"></script>
 </head>
 <body class="bg-gradient-to-br from-slate-50 via-white to-blue-50 text-slate-900">
     <div id="header-container"></div>
@@ -25,8 +26,8 @@
 
     <script type="module">
         import { renderHeader, renderFooter, getUrlParams, escapeHtml, shareOrCopy } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=14';
-        import { getAthleteProfile } from './js/db.js?v=29';
+        import { checkAuth } from './js/auth.js?v=15';
+        import { getAthleteProfile } from './js/db.js?v=31';
         import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=2';
 
         const params = getUrlParams();
