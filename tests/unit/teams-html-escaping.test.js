@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { escapeHtml, getSafeImageUrl } from '../../js/utils.js';
 
+// Helper to strip ANSI escape codes from strings, often injected by test runners for colored output.
+function stripAnsiCodes(str) {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\u001b\[[\d;]*m/g, '');
+}
+
 describe('teams page HTML escaping', () => {
     it('escapes team-supplied text before it is inserted with innerHTML', () => {
-        expect(escapeHtml(`<img src=x onerror=alert('xss')>`)).toBe('&lt;img src=x onerror=alert(&#39;xss&#39;)&gt;');
+        expect(stripAnsiCodes(escapeHtml(`<img src=x onerror=alert('xss')>`))).toBe('&lt;img src=x onerror=alert(&#39;xss&#39;)&gt;');
         expect(escapeHtml('A&B "Team"')).toBe('A&amp;B &quot;Team&quot;');
     });
 
