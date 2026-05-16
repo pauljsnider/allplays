@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildBalanceAdjustmentUpdate,
     buildCancelRecipientUpdate,
+    buildTeamFeeBatchManageUrl,
     buildManualPaymentUpdate,
     buildTeamFeeRecipientRecords,
     formatFeeCurrency,
@@ -10,6 +11,8 @@ import {
     isTeamFeeAdmin,
     normalizeTeamFeeDraft,
     parseTeamFeeAmountToCents,
+    renderCreatedTeamFeeBatchSuccess,
+    renderTeamFeeBatchList,
     summarizeFeeRecipients,
     toFeeCents,
     toSignedFeeCents
@@ -106,6 +109,23 @@ describe('team fees admin helpers', () => {
                 installments: []
             })
         ]);
+    });
+
+    it('renders reachable management links for created and existing fee batches', () => {
+        expect(buildTeamFeeBatchManageUrl('team 1', 'batch/1')).toBe('team-fees.html#teamId=team%201&batchId=batch%2F1');
+
+        const success = renderCreatedTeamFeeBatchSuccess('team-1', 'batch-1');
+        expect(success).toContain('Batch ID: batch-1');
+        expect(success).toContain('href="team-fees.html#teamId=team-1&amp;batchId=batch-1"');
+        expect(success).toContain('Manage this fee');
+
+        const list = renderTeamFeeBatchList([
+            { id: 'batch-1', title: 'Season dues', amountCents: 12500, recipientCount: 3, dueDate: '2026-06-01', status: 'open' }
+        ], 'team-1');
+        expect(list).toContain('Existing fee batches');
+        expect(list).toContain('Season dues');
+        expect(list).toContain('$125.00');
+        expect(list).toContain('href="team-fees.html#teamId=team-1&amp;batchId=batch-1"');
     });
 
     it('enforces positive amounts, required fields, recipients, and admin checks', () => {

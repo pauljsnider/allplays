@@ -2,11 +2,18 @@ import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=3';
 
+export const LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
+export const LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
+
 function defaultFormatClock(ms) {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60).toString().padStart(2, '0');
   const sec = (s % 60).toString().padStart(2, '0');
   return `${m}:${sec}`;
+}
+
+export function buildLiveTrackerFinishBatchLimitError(eventWriteCount, maxPrimaryBatchWrites = LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES) {
+  return new Error(`Game has ${eventWriteCount} live log entries. Finish requires chunked event persistence before it can safely exceed Firestore's ${maxPrimaryBatchWrites}-write batch limit.`);
 }
 
 export function addFinishPlanWritesToBatch({
@@ -18,18 +25,31 @@ export function addFinishPlanWritesToBatch({
   createCollectionRef,
   createDocRef
 } = {}) {
-  finishPlan.eventWrites.forEach(({ data }) => {
+  (finishPlan?.eventWrites || []).forEach(({ data }) => {
     const eventRef = createDocRef(createCollectionRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
     batch.set(eventRef, data);
   });
 
-  finishPlan.aggregatedStatsWrites.forEach(({ playerId, data }) => {
-    const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
-    batch.set(statsRef, data);
-  });
-
   const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
   batch.update(gameRef, finishPlan.gameUpdate);
+}
+
+export function addAggregatedStatsWritesToBatch({
+  aggregatedStatsWrites = [],
+  batch,
+  db,
+  currentTeamId,
+  currentGameId,
+  createDocRef
+} = {}) {
+  aggregatedStatsWrites.forEach(({ playerId, data, privateData }) => {
+    const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+    batch.set(statsRef, data);
+    if (privateData) {
+      const privateStatsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, playerId);
+      batch.set(privateStatsRef, privateData);
+    }
+  });
 }
 
 export async function commitFinishPlan({
@@ -39,19 +59,56 @@ export async function commitFinishPlan({
   currentGameId,
   createBatch,
   createCollectionRef,
-  createDocRef
+  createDocRef,
+  maxPrimaryBatchWrites = LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES,
+  maxAggregatedStatsBatchWrites = LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES,
+  beforePrimaryCommit = null
 } = {}) {
-  const batch = createBatch(db);
+  const eventWrites = finishPlan?.eventWrites || [];
+  const aggregatedStatsWrites = finishPlan?.aggregatedStatsWrites || [];
+  const primaryBatchWriteCount = eventWrites.length + 1;
+
+  if (primaryBatchWriteCount > maxPrimaryBatchWrites) {
+    throw buildLiveTrackerFinishBatchLimitError(eventWrites.length, maxPrimaryBatchWrites);
+  }
+
+  if (typeof beforePrimaryCommit === 'function') {
+    await beforePrimaryCommit({ finishPlan });
+  }
+
+  const aggregatedStatsBatchSizes = [];
+  for (let i = 0; i < aggregatedStatsWrites.length; i += maxAggregatedStatsBatchWrites) {
+    const statsBatch = createBatch(db);
+    const statsChunk = aggregatedStatsWrites.slice(i, i + maxAggregatedStatsBatchWrites);
+    addAggregatedStatsWritesToBatch({
+      aggregatedStatsWrites: statsChunk,
+      batch: statsBatch,
+      db,
+      currentTeamId,
+      currentGameId,
+      createDocRef
+    });
+    aggregatedStatsBatchSizes.push(statsChunk.length);
+    await statsBatch.commit();
+  }
+
+  const primaryBatch = createBatch(db);
   addFinishPlanWritesToBatch({
     finishPlan,
-    batch,
+    batch: primaryBatch,
     db,
     currentTeamId,
     currentGameId,
     createCollectionRef,
     createDocRef
   });
-  await batch.commit();
+  await primaryBatch.commit();
+
+  return {
+    primaryBatchWriteCount,
+    aggregatedStatsBatchSizes,
+    aggregatedStatsWriteCount: aggregatedStatsWrites.length
+  };
 }
 
 export async function runSaveAndCompleteWorkflow({
@@ -127,6 +184,7 @@ export async function runSaveAndCompleteWorkflow({
     opponentName: currentGame?.opponent || 'Unknown Opponent',
     recipientEmail,
     columns: currentConfig?.columns || [],
+    statTrackerConfig: currentConfig || {},
     roster,
     statsByPlayerId: state.stats,
     opponentEntries: state.opp,
@@ -159,22 +217,16 @@ export async function runSaveAndCompleteWorkflow({
   }
 
   try {
-    const batch = createBatch(db);
-
-    addFinishPlanWritesToBatch({
+    await commitFinishPlan({
       finishPlan,
-      batch,
       db,
       currentTeamId,
       currentGameId,
+      createBatch,
       createCollectionRef,
-      createDocRef
+      createDocRef,
+      beforePrimaryCommit: beforeFinalizationCommit
     });
-
-    if (typeof beforeFinalizationCommit === 'function') {
-      await beforeFinalizationCommit({ finishPlan });
-    }
-    await batch.commit();
     await endLiveBroadcast();
     onFinishStateChange(true);
 

@@ -28,6 +28,14 @@ const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
+const {
+  hashRsvpToken,
+  createRawRsvpToken,
+  normalizeRsvpTokenCreateInput,
+  buildScopedRsvpDocId,
+  validateRsvpTokenRedemption,
+  buildRsvpTokenAuditPayload
+} = require('./rsvp-token-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -75,6 +83,206 @@ async function getUserForEligibility(uid) {
   const userSnap = await firestore.doc(`users/${uid}`).get();
   return userSnap.exists ? userSnap.data() || {} : {};
 }
+
+function hasTeamAdminAccess({ team, uid, email }) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
+  return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
+}
+
+async function logRsvpTokenRedemptionAttempt({ teamId, payload }) {
+  const auditPayload = {
+    ...payload,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+  const collectionPath = teamId ? `teams/${teamId}/rsvpTokenAudit` : 'rsvpTokenAudit';
+  await firestore.collection(collectionPath).add(auditPayload);
+}
+
+exports.createScopedRsvpToken = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before creating RSVP tokens.');
+  }
+
+  let input;
+  try {
+    input = normalizeRsvpTokenCreateInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid RSVP token request.');
+  }
+
+  const [teamSnap, gameSnap] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    firestore.doc(`teams/${input.teamId}/games/${input.gameId}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (!gameSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Event not found.');
+  }
+
+  const team = teamSnap.data() || {};
+  const user = await getUserForEligibility(context.auth.uid);
+  const email = context.auth.token?.email || user.email || '';
+  if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can create RSVP tokens.');
+  }
+
+  const token = createRawRsvpToken();
+  const tokenHash = hashRsvpToken(token);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const expiresAt = admin.firestore.Timestamp.fromMillis(input.expiresAtMs);
+  const tokenRef = firestore.doc(`teams/${input.teamId}/rsvpTokens/${tokenHash}`);
+  const rsvpDocId = buildScopedRsvpDocId(input);
+  await tokenRef.set({
+    tokenHash,
+    teamId: input.teamId,
+    gameId: input.gameId,
+    playerId: input.playerId,
+    guardianEmailHash: buildRsvpTokenAuditPayload({ guardianEmail: input.guardianEmail }).guardianEmailHash,
+    response: input.response,
+    rsvpDocId,
+    createdBy: context.auth.uid,
+    createdByEmail: email || null,
+    createdAt: now,
+    expiresAt,
+    revoked: false,
+    usedAt: null
+  });
+
+  return {
+    token,
+    tokenHash,
+    teamId: input.teamId,
+    gameId: input.gameId,
+    playerId: input.playerId,
+    guardianEmail: input.guardianEmail,
+    response: input.response,
+    expiresAt: expiresAt.toDate().toISOString()
+  };
+});
+
+exports.redeemScopedRsvpToken = functions.https.onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'Method not allowed' });
+    return;
+  }
+
+  let body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (typeof req.body === 'string' && req.body.trim()) {
+    try {
+      body = JSON.parse(req.body);
+    } catch (error) {
+      res.status(400).json({ ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+  }
+  const teamId = String(body.teamId || req.query.teamId || '').trim();
+  const token = String(body.token || req.query.token || '').trim();
+  const tokenHash = hashRsvpToken(token);
+  if (!teamId || !tokenHash) {
+    await logRsvpTokenRedemptionAttempt({
+      teamId: teamId || null,
+      payload: buildRsvpTokenAuditPayload({ status: 'rejected', reason: 'missing_token', teamId, tokenHash })
+    });
+    res.status(400).json({ ok: false, error: 'Missing RSVP token' });
+    return;
+  }
+
+  if (teamId.includes('/')) {
+    res.status(400).json({ ok: false, error: 'Invalid teamId' });
+    return;
+  }
+
+  const tokenRef = firestore.doc(`teams/${teamId}/rsvpTokens/${tokenHash}`);
+  const auditRef = firestore.collection(`teams/${teamId}/rsvpTokenAudit`).doc();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const tokenSnap = await transaction.get(tokenRef);
+      if (!tokenSnap.exists) {
+        transaction.set(auditRef, {
+          ...buildRsvpTokenAuditPayload({ status: 'rejected', reason: 'invalid', teamId, tokenHash }),
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { ok: false, status: 403, error: 'Invalid RSVP token' };
+      }
+
+      const tokenData = tokenSnap.data() || {};
+      const validation = validateRsvpTokenRedemption({ tokenData, requestBody: body });
+      if (!validation.ok || tokenData.teamId !== teamId) {
+        const reason = tokenData.teamId !== teamId ? 'mismatched_team' : validation.reason;
+        transaction.set(auditRef, {
+          ...buildRsvpTokenAuditPayload({
+            status: 'rejected',
+            reason,
+            tokenHash,
+            teamId,
+            gameId: tokenData.gameId,
+            playerId: tokenData.playerId,
+            response: tokenData.response
+          }),
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return { ok: false, status: 403, error: 'RSVP token cannot be used' };
+      }
+
+      const rsvpDocId = tokenData.rsvpDocId || buildScopedRsvpDocId(tokenData);
+      const rsvpRef = firestore.doc(`teams/${teamId}/games/${tokenData.gameId}/rsvps/${rsvpDocId}`);
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      transaction.set(rsvpRef, {
+        userId: null,
+        displayName: 'Email RSVP',
+        playerIds: [tokenData.playerId],
+        response: tokenData.response,
+        respondedAt: now,
+        note: null,
+        submittedVia: 'scoped_rsvp_token',
+        guardianEmailHash: tokenData.guardianEmailHash || buildRsvpTokenAuditPayload({ guardianEmail: tokenData.guardianEmail }).guardianEmailHash,
+        tokenHash
+      }, { merge: true });
+      transaction.update(tokenRef, {
+        usedAt: now,
+        usedForRsvpDocId: rsvpDocId,
+        usedFromIp: req.headers['x-forwarded-for'] || req.ip || null,
+        updatedAt: now
+      });
+      transaction.set(auditRef, {
+        ...buildRsvpTokenAuditPayload({
+          status: 'accepted',
+          tokenHash,
+          teamId,
+          gameId: tokenData.gameId,
+          playerId: tokenData.playerId,
+          response: tokenData.response
+        }),
+        rsvpDocId,
+        createdAt: now
+      });
+
+      return { ok: true, gameId: tokenData.gameId, playerId: tokenData.playerId, response: tokenData.response };
+    });
+
+    if (!result.ok) {
+      res.status(result.status || 403).json({ ok: false, error: result.error });
+      return;
+    }
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Failed to redeem scoped RSVP token:', error);
+    res.status(500).json({ ok: false, error: 'RSVP token redemption failed' });
+  }
+});
 
 exports.createStripeTeamPassCheckout = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -506,8 +714,11 @@ function normalizeTelemetryObject(value, depth = 0) {
 
     if (rawValue === null || rawValue === undefined) {
       normalized[cleanKey] = null;
-    } else if (typeof rawValue === 'boolean' || typeof rawValue === 'number') {
+    } else if (typeof rawValue === 'boolean') {
       normalized[cleanKey] = rawValue;
+    } else if (typeof rawValue === 'number') {
+      const sanitizedNumber = normalizeTelemetryString(rawValue, 240);
+      normalized[cleanKey] = sanitizedNumber === String(rawValue) ? rawValue : sanitizedNumber;
     } else if (Array.isArray(rawValue)) {
       normalized[cleanKey] = rawValue
         .slice(0, 10)
