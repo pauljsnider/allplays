@@ -71,7 +71,7 @@ describe('edit schedule notification wiring', () => {
         const source = readEditSchedule();
 
         expect(source).toContain('buildAvailabilityReminderRecipients(players, rsvps)');
-        expect(source).toContain('buildAvailabilityReminderEmailPreview(players, rsvps)');
+        expect(source).toContain('buildAvailabilityReminderEmailPreview(players, rsvps, notRespondedIds)');
         expect(source).toContain('RSVP email recipient preview');
         expect(source).toContain('No eligible parent or guardian email');
         expect(source).toContain('eligible parent/guardian');
