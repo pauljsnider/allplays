@@ -66,6 +66,9 @@ describe('isPrivateIpAddress', () => {
   it('should return true for IPv6 site-local addresses (fec0::/10)', () => {
     expect(isPrivateIpAddress('fec0::1')).toBe(true);
     expect(isPrivateIpAddress('fec0:0:0:1::1')).toBe(true);
+    expect(isPrivateIpAddress('fec1::1')).toBe(true);
+    expect(isPrivateIpAddress('fecf::1')).toBe(true);
+    expect(isPrivateIpAddress('feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')).toBe(true);
   });
 
   // Invalid IP addresses

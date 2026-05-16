@@ -22,7 +22,8 @@ function isPrivateIpAddress(ip) {
   if (normalized === '::1' || normalized === '::') return true;
   if (normalized.startsWith('fe80:')) return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // Unique local address (ULA)
-  if (normalized.startsWith('fec0:')) return true; // Site-local (deprecated, but still private)
+  const siteLocalPrefix = normalized.slice(0, 3);
+  if (siteLocalPrefix >= 'fec' && siteLocalPrefix <= 'fef') return true; // Site-local (deprecated, but still private)
   return false;
 }
 

@@ -2,6 +2,7 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const dns = require('node:dns').promises;
+const net = require('node:net');
 const { isPrivateIpAddress } = require('./utils/ip-address-validation');
 const {
   normalizeTeamPassCheckoutInput,
