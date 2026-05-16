@@ -10,7 +10,7 @@ import {
 } from './db.js?v=30';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=10';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=14';
+import { checkAuth } from './auth.js?v=15';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,

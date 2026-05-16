@@ -1,4 +1,5 @@
 import { buildConfiguredStatFields } from './game-report-stats.js?v=1';
+import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
 function normalizeStatKey(key) {
     return String(key || '').trim().toLowerCase();
@@ -23,7 +24,18 @@ export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {}
             .map((key) => ({ fieldName: key, label: key.toUpperCase() }));
     }
 
-    if (!fields.some((field) => field.fieldName === 'fouls')) {
+    const existingFieldNames = new Set(fields.map((field) => field.fieldName));
+    const privatePlayerFields = normalizeStatTrackerConfig(resolvedConfig || {}).statDefinitions
+        .filter((definition) => definition.scope === 'player' && definition.visibility === 'private' && definition.type === 'base')
+        .map((definition) => ({ fieldName: definition.id, label: definition.label || definition.acronym || definition.id.toUpperCase() }))
+        .filter((field) => field.fieldName && !existingFieldNames.has(field.fieldName));
+
+    privatePlayerFields.forEach((field) => {
+        fields.push(field);
+        existingFieldNames.add(field.fieldName);
+    });
+
+    if (!existingFieldNames.has('fouls')) {
         fields.push({ fieldName: 'fouls', label: 'FOULS' });
     }
 

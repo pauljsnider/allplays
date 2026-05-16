@@ -176,6 +176,30 @@ export function normalizeStatTrackerConfig(config = {}) {
   };
 }
 
+export function getPrivatePlayerStatIds(config = {}) {
+  const normalizedConfig = normalizeStatTrackerConfig(config);
+  return new Set(normalizedConfig.statDefinitions
+    .filter((definition) => definition.scope === 'player' && definition.visibility === 'private')
+    .map((definition) => definition.id));
+}
+
+export function splitPlayerStatsByVisibility(config = {}, stats = {}) {
+  const privateStatIds = getPrivatePlayerStatIds(config);
+  const publicStats = {};
+  const privateStats = {};
+
+  Object.entries(stats || {}).forEach(([key, value]) => {
+    const normalizedKey = slugifyStatId(key);
+    if (privateStatIds.has(normalizedKey)) {
+      privateStats[normalizedKey] = value;
+    } else {
+      publicStats[normalizedKey || key] = value;
+    }
+  });
+
+  return { publicStats, privateStats };
+}
+
 export function selectAnalyticsConfig(configs = [], preferredSport = '') {
   const normalizedSport = String(preferredSport || '').trim().toLowerCase();
   const safeConfigs = (Array.isArray(configs) ? configs : []).map((config) => normalizeStatTrackerConfig(config));

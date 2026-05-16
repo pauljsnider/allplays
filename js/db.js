@@ -84,7 +84,7 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=1';
-import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=1';
+import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
 import { isPublicTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
@@ -2600,26 +2600,46 @@ export async function logStatEvent(teamId, gameId, eventData) {
     await addDoc(getGameSubcollectionRef(teamId, gameId, 'events'), eventData);
 }
 
-export async function updatePlayerStats(teamId, gameId, playerId, statKey, change, playerName, playerNumber) {
-    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
+export async function updatePlayerStats(teamId, gameId, playerId, statKey, change, playerName, playerNumber, options = {}) {
+    const normalizedStatKey = String(statKey || '').trim().toLowerCase();
+    const split = splitPlayerStatsByVisibility(options.statTrackerConfig || {}, { [normalizedStatKey]: change });
+    const subcollectionName = Object.prototype.hasOwnProperty.call(split.privateStats, normalizedStatKey) ? 'privatePlayerStats' : 'aggregatedStats';
+    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/${subcollectionName}`, playerId);
     await setDoc(docRef, {
         playerName,
         playerNumber,
         stats: {
-            [statKey]: increment(change)
+            [normalizedStatKey]: increment(change)
         }
     }, { merge: true });
 }
 
 export async function setCompletedGamePlayerStats(teamId, gameId, playerId, statsPayload = {}) {
-    const docRef = doc(db, `${getGameDocRef(teamId, gameId).path}/aggregatedStats`, playerId);
-    await setDoc(docRef, {
+    const { publicStats, privateStats } = splitPlayerStatsByVisibility(
+        statsPayload.statTrackerConfig || {},
+        statsPayload.stats || {}
+    );
+    const basePayload = {
         playerName: statsPayload.playerName || '',
         playerNumber: statsPayload.playerNumber || '',
-        stats: statsPayload.stats || {},
         timeMs: Number.isFinite(Number(statsPayload.timeMs)) ? Number(statsPayload.timeMs) : 0,
         didNotPlay: statsPayload.didNotPlay === true
+    };
+    const gameRef = getGameDocRef(teamId, gameId);
+    const publicDocRef = doc(db, `${gameRef.path}/aggregatedStats`, playerId);
+    const privateDocRef = doc(db, `${gameRef.path}/privatePlayerStats`, playerId);
+
+    await setDoc(publicDocRef, {
+        ...basePayload,
+        stats: publicStats
     }, { merge: true });
+
+    if (Object.keys(privateStats).length > 0) {
+        await setDoc(privateDocRef, {
+            ...basePayload,
+            stats: privateStats
+        }, { merge: true });
+    }
 }
 
 // Calendar Functions

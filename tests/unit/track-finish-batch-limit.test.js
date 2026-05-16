@@ -118,6 +118,47 @@ describe('standard tracker finish batch limits', () => {
         });
     });
 
+    it('writes private player stats to manager-only docs when finishing a standard tracker game', async () => {
+        const harness = createFirestoreHarness();
+
+        await commitStandardTrackerFinishData({
+            db: harness.db,
+            writeBatch: harness.writeBatch,
+            doc: harness.doc,
+            collection: harness.collection,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            currentUserUid: 'coach-1',
+            gameLog: [],
+            players: [{ id: 'p1', name: 'Ava', number: '3' }],
+            playerStatsByPlayerId: { p1: { pts: 8, effort: 4 } },
+            columns: ['PTS', 'EFFORT'],
+            statTrackerConfig: {
+                columns: ['PTS', 'EFFORT'],
+                statDefinitions: [
+                    { label: 'PTS', acronym: 'PTS' },
+                    { label: 'Coach Effort', acronym: 'EFFORT', id: 'effort', visibility: 'private', scope: 'player' }
+                ]
+            },
+            finalHome: 8,
+            finalAway: 6,
+            summary: 'Finished cleanly.',
+            opponentStats: {}
+        });
+
+        const statsBatch = harness.batches[1];
+        expect(statsBatch.operations).toEqual([
+            expect.objectContaining({
+                ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p1' },
+                data: expect.objectContaining({ stats: { pts: 8 } })
+            }),
+            expect.objectContaining({
+                ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p1' },
+                data: expect.objectContaining({ stats: { effort: 4 } })
+            })
+        ]);
+    });
+
     it('rejects 500 game logs plus final update before any batch commit', async () => {
         const harness = createFirestoreHarness();
 
@@ -181,7 +222,7 @@ describe('standard tracker finish batch limits', () => {
     it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {
         const source = readFileSync(new URL('../../track.html', import.meta.url), 'utf8');
 
-        expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=1';");
+        expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=2';");
         expect(source).toContain('await commitStandardTrackerFinishData({');
 
         const helperAwaitIndex = source.indexOf('await commitStandardTrackerFinishData({');
