@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { buildFinishCompletionPlan, prepareFinishPlanForSave } from '../../js/live-tracker-finish.js';
+import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 describe('live tracker finish completion plan', () => {
   it('honors a coach-entered final score when it differs from the live score log totals', () => {
@@ -84,6 +85,9 @@ describe('live tracker finish completion plan', () => {
         data: {
           playerName: 'Alex',
           playerNumber: '4',
+          participated: true,
+          participationStatus: 'appeared',
+          participationSource: 'live-tracker-finish',
           stats: { pts: 2, ast: 1, fouls: 0 },
           timeMs: 123000
         }
@@ -93,6 +97,9 @@ describe('live tracker finish completion plan', () => {
         data: {
           playerName: 'Jamie',
           playerNumber: '7',
+          participated: true,
+          participationStatus: 'appeared',
+          participationSource: 'live-tracker-finish',
           stats: { pts: 3, ast: 0, fouls: 2 },
           timeMs: 118000
         }
@@ -100,6 +107,82 @@ describe('live tracker finish completion plan', () => {
     ]);
     expect(plan.navigation).toEqual([
       { type: 'redirect', href: 'game.html#teamId=team-1&gameId=game-9', delayMs: 0 }
+    ]);
+  });
+
+  it('marks standard live-tracker zero-stat aggregate writes as profile appearances', () => {
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 0,
+      requestedAway: 0,
+      liveHome: 0,
+      liveAway: 0,
+      scoreLogIsComplete: true,
+      log: [],
+      columns: ['PTS', 'REB', 'AST'],
+      roster: [
+        { id: 'p-zero', name: 'Zero Stat', num: '12' }
+      ],
+      statsByPlayerId: {
+        'p-zero': { pts: 0, reb: 0, ast: 0, fouls: 0, time: 0 }
+      },
+      opponentEntries: []
+    });
+
+    expect(plan.aggregatedStatsWrites).toEqual([
+      {
+        playerId: 'p-zero',
+        data: {
+          playerName: 'Zero Stat',
+          playerNumber: '12',
+          participated: true,
+          participationStatus: 'appeared',
+          participationSource: 'live-tracker-finish',
+          stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+          timeMs: 0
+        }
+      }
+    ]);
+    expect(hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data)).toBe(true);
+  });
+
+  it('keeps standard finish aggregate readback visible in player profile history', () => {
+    const standardFinishAggregateDoc = {
+      playerName: 'Zero Stat',
+      playerNumber: '12',
+      participated: true,
+      participationStatus: 'appeared',
+      participationSource: 'live-tracker-finish',
+      stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+      timeMs: 0
+    };
+
+    expect(hasPlayerProfileParticipation(standardFinishAggregateDoc)).toBe(true);
+  });
+
+  it('splits private player stats into manager-only finish writes', () => {
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 8,
+      requestedAway: 4,
+      liveHome: 8,
+      liveAway: 4,
+      columns: ['PTS', 'EFFORT'],
+      statTrackerConfig: {
+        columns: ['PTS', 'EFFORT'],
+        statDefinitions: [
+          { label: 'PTS', acronym: 'PTS' },
+          { label: 'Coach Effort', acronym: 'EFFORT', id: 'effort', visibility: 'private', scope: 'player' }
+        ]
+      },
+      roster: [{ id: 'p1', name: 'Alex', num: '4' }],
+      statsByPlayerId: { p1: { pts: 8, effort: 5, fouls: 1 } }
+    });
+
+    expect(plan.aggregatedStatsWrites).toEqual([
+      {
+        playerId: 'p1',
+        data: expect.objectContaining({ stats: { pts: 8, fouls: 1 } }),
+        privateData: expect.objectContaining({ stats: { effort: 5 } })
+      }
     ]);
   });
 

@@ -247,6 +247,7 @@ export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
 export async function uploadTeamMediaPhoto() {}
+export async function uploadTeamMediaFile() {}
 export async function deleteTeamMediaItem() {}
 export async function reorderTeamMediaFolders() {}
 export async function reorderTeamMediaItems() {}
@@ -270,6 +271,7 @@ export async function updateTeamMediaFolder() {}
 export async function deleteTeamMediaFolder() {}
 export async function createTeamMediaLink() {}
 export async function uploadTeamMediaPhoto() {}
+export async function uploadTeamMediaFile() {}
 export async function deleteTeamMediaItem() {}
 export async function reorderTeamMediaFolders() {}
 export async function reorderTeamMediaItems() {}
@@ -300,10 +302,16 @@ export function getTeamMediaUploaderName() {
 export function isSafeTeamMediaPhoto() {
     return false;
 }
+export function isTeamMediaDocument() {
+    return false;
+}
 export function isSafeTeamMediaUrl() {
     return true;
 }
 export function isSupportedTeamMediaImage() {
+    return true;
+}
+export function isSupportedTeamMediaDocument() {
     return true;
 }
 export function sortByMediaOrder(items = []) {
@@ -333,10 +341,16 @@ export function getTeamMediaUploaderName() {
 export function isSafeTeamMediaPhoto() {
     return false;
 }
+export function isTeamMediaDocument() {
+    return false;
+}
 export function isSafeTeamMediaUrl() {
     return true;
 }
 export function isSupportedTeamMediaImage() {
+    return true;
+}
+export function isSupportedTeamMediaDocument() {
     return true;
 }
 export function sortByMediaOrder(items = []) {

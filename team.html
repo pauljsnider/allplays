@@ -316,13 +316,13 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=21';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=22';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=10';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
-        import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=1';
+        import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=2';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=15';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=12";
@@ -334,7 +334,7 @@
         import { readTeamPremiumEntitlement, renderPremiumGateState } from './js/premium-entitlements.js?v=1';
         import { renderTeamPassCard } from './js/team-pass.js?v=2';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
-        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=1';
+        import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -384,6 +384,7 @@
         window.closeScheduleDayModal = closeScheduleDayModal;
         window.saveAvailabilityPreferences = saveAvailabilityPreferences;
         window.toggleScorekeeperGrant = toggleScorekeeperGrant;
+        window.toggleStreamScoreGrant = toggleStreamScoreGrant;
 
         function canManageTeamAvailability() {
             return !!currentUser && (
@@ -501,12 +502,22 @@
             }
         }
 
-        function getSelectedScorekeeperIds(team) {
-            const scorekeeping = team?.teamPermissions?.scorekeeping || {};
-            if (scorekeeping.mode !== 'selected') return new Set();
-            return new Set((Array.isArray(scorekeeping.memberIds) ? scorekeeping.memberIds : [])
+        function getSelectedPermissionIds(team, kind) {
+            const permission = team?.teamPermissions?.[kind] || {};
+            if (permission.mode !== 'selected') return new Set();
+            return new Set((Array.isArray(permission.memberIds) ? permission.memberIds : [])
                 .map((id) => String(id || '').trim())
                 .filter(Boolean));
+        }
+
+        function getSelectedScorekeeperIds(team) {
+            return getSelectedPermissionIds(team, 'scorekeeping');
+        }
+
+        function getSelectedStreamScoreIds(team) {
+            const scorekeeperIds = getSelectedPermissionIds(team, 'scorekeeping');
+            const streamingIds = getSelectedPermissionIds(team, 'streaming');
+            return new Set(Array.from(scorekeeperIds).filter((id) => streamingIds.has(id)));
         }
 
         function renderScorekeeperGrantControls(team, players = []) {
@@ -519,6 +530,7 @@
             }
 
             const selectedScorekeeperIds = getSelectedScorekeeperIds(team);
+            const selectedStreamScoreIds = getSelectedStreamScoreIds(team);
             const grantTargets = buildScorekeeperGrantTargets(players, currentTeamMemberUsers, currentTeamId);
 
             section.classList.remove('hidden');
@@ -526,26 +538,35 @@
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 p-6">
                     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
                         <div>
-                            <h2 class="text-xl font-bold text-gray-900">Scorekeeper access</h2>
-                            <p class="text-sm text-gray-500 mt-1">Grant an existing team member scorekeeping access without making them a team admin.</p>
+                            <h2 class="text-xl font-bold text-gray-900">Game-day helper access</h2>
+                            <p class="text-sm text-gray-500 mt-1">Grant an existing team member scorekeeping or Stream &amp; Score duty without making them a team admin.</p>
                         </div>
                     </div>
                     ${grantTargets.length ? `
                         <div class="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
                             ${grantTargets.map((target) => {
-                                const granted = selectedScorekeeperIds.has(target.userId);
+                                const scorekeeperGranted = selectedScorekeeperIds.has(target.userId);
+                                const streamScoreGranted = selectedStreamScoreIds.has(target.userId);
                                 const detail = target.playerNames.length
                                     ? `Linked to ${target.playerNames.join(', ')}.`
                                     : 'Linked team member account.';
+                                const dutyText = streamScoreGranted
+                                    ? `Can stream and score games. ${detail}`
+                                    : (scorekeeperGranted ? `Can score games. ${detail}` : `No game-day helper grant. ${detail}`);
                                 return `
-                                    <div class="flex items-center justify-between gap-3 p-3">
+                                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3">
                                         <div class="min-w-0">
                                             <div class="font-semibold text-gray-900 truncate">${escapeHtml(target.name || 'Team member')}</div>
-                                            <div class="text-xs text-gray-500">${escapeHtml(granted ? `Can score games. ${detail}` : `No scorekeeper grant. ${detail}`)}</div>
+                                            <div class="text-xs text-gray-500">${escapeHtml(dutyText)}</div>
                                         </div>
-                                        <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${granted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="shrink-0 px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${granted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
-                                            ${granted ? 'Revoke' : 'Grant'}
-                                        </button>
+                                        <div class="flex flex-wrap gap-2 shrink-0">
+                                            <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${scorekeeperGranted ? 'true' : 'false'}" onclick="toggleScorekeeperGrant(this)" class="px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${scorekeeperGranted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-primary-200 text-primary-700 bg-primary-50 hover:bg-primary-100'}">
+                                                ${scorekeeperGranted ? 'Revoke scorekeeper' : 'Grant scorekeeper'}
+                                            </button>
+                                            <button type="button" data-member-user-id="${escapeAttr(target.userId)}" data-granted="${streamScoreGranted ? 'true' : 'false'}" onclick="toggleStreamScoreGrant(this)" class="px-3 py-1.5 text-sm font-semibold rounded-lg border transition ${streamScoreGranted ? 'border-red-200 text-red-700 bg-red-50 hover:bg-red-100' : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}">
+                                                ${streamScoreGranted ? 'Revoke Stream & Score' : 'Assign Stream & Score'}
+                                            </button>
+                                        </div>
                                     </div>
                                 `;
                             }).join('')}
@@ -592,6 +613,52 @@
             } catch (err) {
                 button.disabled = false;
                 if (status) status.textContent = `Unable to update scorekeeper access: ${err?.message || err}`;
+            }
+        }
+
+        async function toggleStreamScoreGrant(button) {
+            if (!button || button.disabled || !currentTeamId) return;
+            const memberUserId = String(button.dataset.memberUserId || '').trim();
+            if (!memberUserId) return;
+            const wasGranted = button.dataset.granted === 'true';
+            const status = document.getElementById('team-scorekeeper-status');
+            try {
+                button.disabled = true;
+                if (status) status.textContent = wasGranted ? 'Revoking Stream & Score duty...' : 'Assigning Stream & Score duty...';
+                if (wasGranted) {
+                    await revokeStreamScoreAccess(currentTeamId, memberUserId);
+                } else {
+                    await grantStreamScoreAccess(currentTeamId, memberUserId);
+                }
+                const nextScorekeeperIds = getSelectedScorekeeperIds(currentTeam);
+                const nextStreamingIds = getSelectedPermissionIds(currentTeam, 'streaming');
+                if (wasGranted) {
+                    nextScorekeeperIds.delete(memberUserId);
+                    nextStreamingIds.delete(memberUserId);
+                } else {
+                    nextScorekeeperIds.add(memberUserId);
+                    nextStreamingIds.add(memberUserId);
+                }
+                currentTeam = {
+                    ...currentTeam,
+                    teamPermissions: {
+                        ...(currentTeam?.teamPermissions || {}),
+                        scorekeeping: {
+                            mode: 'selected',
+                            memberIds: Array.from(nextScorekeeperIds)
+                        },
+                        streaming: {
+                            mode: 'selected',
+                            memberIds: Array.from(nextStreamingIds)
+                        }
+                    }
+                };
+                renderScorekeeperGrantControls(currentTeam, currentPlayers);
+                const nextStatus = document.getElementById('team-scorekeeper-status');
+                if (nextStatus) nextStatus.textContent = wasGranted ? 'Stream & Score duty revoked.' : 'Stream & Score duty assigned.';
+            } catch (err) {
+                button.disabled = false;
+                if (status) status.textContent = `Unable to update Stream & Score duty: ${err?.message || err}`;
             }
         }
 

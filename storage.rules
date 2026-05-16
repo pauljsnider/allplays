@@ -30,6 +30,21 @@ service firebase.storage {
       return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
     }
 
+    function isAllowedTeamMediaUploadType(contentType) {
+      return contentType.matches('image/.*') ||
+        contentType in [
+          'application/pdf',
+          'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'text/plain',
+          'text/csv'
+        ];
+    }
+
     match /team-media/{teamId}/{folderId}/{userId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
@@ -37,7 +52,7 @@ service firebase.storage {
         request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 10 * 1024 * 1024 &&
-        request.resource.contentType.matches('image/.*');
+        isAllowedTeamMediaUploadType(request.resource.contentType);
       allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
       allow update: if false;
     }

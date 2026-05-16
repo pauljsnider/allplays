@@ -528,7 +528,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } from './js/db.js?v=29';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } from './js/db.js?v=31';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=15';
@@ -578,11 +578,14 @@
                 .filter((record) => record.provider && record.sourceId && record.externalTeamId && record.externalTeamName);
         }
 
-        function buildTeamEditUrl(teamId, created = false) {
+        function buildTeamEditUrl(teamId, created = false, options = {}) {
             const params = new URLSearchParams();
             params.set('teamId', teamId);
             if (created) {
                 params.set('created', '1');
+            }
+            if (options.rosterRolloverFailed) {
+                params.set('rosterRolloverFailed', '1');
             }
             return `edit-team.html?${params.toString()}`;
         }
@@ -1762,7 +1765,7 @@
                         } catch (rolloverError) {
                             console.error('Roster rollover failed:', rolloverError);
                             alert(`Team created, but roster rollover failed. No selected players were copied. Open this team and try manually from the roster.\n\nError: ${rolloverError.message}`);
-                            window.location.href = buildTeamEditUrl(newTeamId, true);
+                            window.location.href = buildTeamEditUrl(newTeamId, true, { rosterRolloverFailed: true });
                             return;
                         }
                     }

@@ -218,7 +218,15 @@ async function installModuleMocks(page) {
             return null;
         }
 
+        export async function getTeamStatsForGame() {
+            return {};
+        }
+
         export async function setCompletedGamePlayerStats() {
+            return null;
+        }
+
+        export async function setCompletedGameTeamStats() {
             return null;
         }
     `;
