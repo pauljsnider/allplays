@@ -63,6 +63,14 @@ export function hasStreamTeamAccess(user, team, game = null, rsvp = null) {
         return true;
       }
     }
+    // Check for legacy streamAccessMode config when no game is present
+    const mode = String(team.streamAccessMode || '').trim().toLowerCase(); // Initialize mode here for config checks
+    if (mode === 'selected_volunteers' || mode === 'selected') {
+        const normalizedEmail = getNormalizedUserEmail(user);
+        const streamVolunteerEmails = normalizeStreamVolunteerEmailList(team.streamVolunteerEmails);
+        return Boolean(normalizedEmail && streamVolunteerEmails.includes(normalizedEmail));
+    }
+
     // For all other cases when no game is present, and it's not the specific config access path above,
     // we should NOT grant stream access.
     return false;
