@@ -175,11 +175,11 @@ export function getActiveRegistrationOptions(form = {}, registrationOptionCounts
 }
 
 export function requiresRegistrationOption(form = {}) {
-    return getActiveRegistrationOptions(form).length > 0;
+    return getActiveRegistrationOptions(form, form.registrationOptionCounts || {}).length > 0;
 }
 
 export function getRegistrationOptionById(form = {}, optionId = '') {
-    return getActiveRegistrationOptions(form).find(option => option.id === optionId) || null;
+    return getActiveRegistrationOptions(form, form.registrationOptionCounts || {}).find(option => option.id === optionId) || null;
 }
 
 export function normalizeFieldType(type) {

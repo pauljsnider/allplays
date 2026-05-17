@@ -227,7 +227,7 @@
                     selectedOptionId: option.id,
                     counts: form.registrationOptionCounts || {}
                 });
-                if (placement.status !== 'blocked') {
+                if (placement.status === 'pending') {
                     initialCheckedOptionId = option.id;
                     break;
                 }
@@ -237,7 +237,7 @@
             }
 
             options.forEach((option) => {
-                const optionCounts = form.registrationOptionCounts[option.countKey] || form.registrationOptionCounts[option.id] || {};
+                const optionCounts = (form.registrationOptionCounts || {})[option.countKey] || (form.registrationOptionCounts || {})[option.id] || {};
                 const enrolledCount = Number(optionCounts.enrolled || 0);
                 const hasCapacity = !option.capacityLimit || enrolledCount < option.capacityLimit;
                 const isFullAndNoWaitlist = !hasCapacity && !option.waitlistEnabled;
