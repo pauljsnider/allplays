@@ -52,17 +52,23 @@ export function hasStreamTeamAccess(user, team, game = null, rsvp = null) {
 
   if (hasFullTeamAccess(user, team)) return true; // Full access short-circuits
 
-  // For team-level stream configuration access (no specific game context required),
-  // check if the user is a selected stream volunteer for the team.
-  const isSelectedTeamStreamVolunteer = (String(team.streamAccessMode || '').trim().toLowerCase() === 'selected_volunteers' || String(team.streamAccessMode || '').trim().toLowerCase() === 'selected') &&
-                                        Boolean(getNormalizedUserEmail(user) && normalizeStreamVolunteerEmailList(team.streamVolunteerEmails).includes(getNormalizedUserEmail(user)));
-
-  if (!game && isSelectedTeamStreamVolunteer) {
-      return true; // Grant team-level stream access if no game and is a selected volunteer
+  // Case 1: No game context provided. This is where the config access check happens.
+  if (!game) {
+    if (team.teamPermissions?.streaming) {
+      const permissions = normalizeTeamPermissions(team.teamPermissions);
+      const streaming = permissions.streaming;
+      // If stream access mode is 'selected' and the user's UID is in the memberIds,
+      // grant access *for config purposes*.
+      if (streaming.mode === 'selected' && normalizeMemberIdList(streaming.memberIds).includes(String(user.uid || '').trim())) {
+        return true;
+      }
+    }
+    // For all other cases when no game is present, and it's not the specific config access path above,
+    // we should NOT grant stream access.
+    return false;
   }
 
-  // If a game is provided, or if we need further checks, proceed with game-specific logic.
-  // If no game is present here, and it's not a selected volunteer, then no stream access.
+  // Case 2: A game context is provided. Proceed with game-specific stream access logic.
   if (!isScheduledGame(game)) return false;
 
   if (team.teamPermissions?.streaming) {
