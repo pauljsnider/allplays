@@ -11,10 +11,6 @@ export function hasPlayerProfileParticipation(statData = {}) {
         return true;
     }
 
-    if (statData.participationStatus === 'unused') {
-        return false;
-    }
-
     const timeMs = Number(statData.timeMs || 0);
     if (timeMs > 0) {
         return true;
