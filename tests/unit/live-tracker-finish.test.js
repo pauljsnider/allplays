@@ -100,7 +100,7 @@ describe('live tracker finish completion plan', () => {
           participated: true,
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
-          stats: { pts: 3, ast: 0, fouls: 2 },
+          stats: { pts: 3, ast: 0 },
           timeMs: 118000
         }
       }
@@ -137,7 +137,7 @@ describe('live tracker finish completion plan', () => {
           participated: true,
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
-          stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+          stats: { pts: 0, reb: 0, ast: 0 },
           timeMs: 0
         }
       }
@@ -180,8 +180,20 @@ describe('live tracker finish completion plan', () => {
     expect(plan.aggregatedStatsWrites).toEqual([
       {
         playerId: 'p1',
-        data: expect.objectContaining({ stats: { pts: 8, fouls: 1 } }),
-        privateData: expect.objectContaining({ stats: { effort: 5 } })
+        data: {
+          participated: true,
+          participationSource: 'live-tracker-finish',
+          participationStatus: 'appeared',
+          playerName: 'Alex',
+          playerNumber: '4',
+          stats: { pts: 8 },
+          timeMs: 0
+        },
+        privateData: {
+          participated: true,
+          participationSource: 'live-tracker-finish',
+          stats: { effort: 5 }
+        }
       }
     ]);
   });
