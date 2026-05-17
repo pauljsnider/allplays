@@ -48,8 +48,22 @@ function hasConfirmedRsvp(rsvp) {
  * Stream access never implies full team management access.
  */
 export function hasStreamTeamAccess(user, team, game = null, rsvp = null) {
-  if (!user || !team || !isScheduledGame(game)) return false;
-  if (hasFullTeamAccess(user, team)) return true;
+  if (!user || !team) return false; // Basic checks first
+
+  if (hasFullTeamAccess(user, team)) return true; // Full access short-circuits
+
+  // For team-level stream configuration access (no specific game context required),
+  // check if the user is a selected stream volunteer for the team.
+  const isSelectedTeamStreamVolunteer = (String(team.streamAccessMode || '').trim().toLowerCase() === 'selected_volunteers' || String(team.streamAccessMode || '').trim().toLowerCase() === 'selected') &&
+                                        Boolean(getNormalizedUserEmail(user) && normalizeStreamVolunteerEmailList(team.streamVolunteerEmails).includes(getNormalizedUserEmail(user)));
+
+  if (!game && isSelectedTeamStreamVolunteer) {
+      return true; // Grant team-level stream access if no game and is a selected volunteer
+  }
+
+  // If a game is provided, or if we need further checks, proceed with game-specific logic.
+  // If no game is present here, and it's not a selected volunteer, then no stream access.
+  if (!isScheduledGame(game)) return false;
 
   if (team.teamPermissions?.streaming) {
     const permissions = normalizeTeamPermissions(team.teamPermissions);
