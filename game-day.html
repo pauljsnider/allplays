@@ -2226,7 +2226,10 @@ Respond ONLY with valid JSON.`;
             state.rotationActual = subResult.rotationActual;
 
             try {
-                await updateGame(state.teamId, state.gameId, { rotationActual: state.rotationActual });
+                await updateGame(state.teamId, state.gameId, {
+                rotationActual: state.rotationActual,
+                rotationPlan: state.rotationPlan // Persist the updated plan for consistency
+            });
                 await logCoachEvent(`Sub: ${subResult.outPlayer.name} → ${subResult.inPlayer.name}`, 'substitution');
             } catch (err) {
                 console.error('applySub error', err);
