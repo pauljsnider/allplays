@@ -1,5 +1,5 @@
 import { canTrustScoreLogForFinalization, reconcileFinalScoreFromLog } from './live-tracker-integrity.js';
-import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
+import { splitPlayerStatsByVisibility, getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
 
 export function buildScoreReconciliationNote(requestedHome, requestedAway, finalHome, finalAway) {
   return `Score reconciled from ${requestedHome}-${requestedAway} to ${finalHome}-${finalAway} based on scoring events`;
@@ -51,6 +51,8 @@ export function buildFinishCompletionPlan({
   currentUserUid = null,
   buildEmailBody = () => ''
 } = {}) {
+  const privateStatIds = getPrivatePlayerStatIds(statTrackerConfig);
+
   let finalHome = Number.isFinite(Number(requestedHome)) ? Number(requestedHome) : 0;
   let finalAway = Number.isFinite(Number(requestedAway)) ? Number(requestedAway) : 0;
   let scoreReconciliation = {
@@ -113,9 +115,7 @@ export function buildFinishCompletionPlan({
       const key = col.toLowerCase();
       statsObj[key] = safeStatsByPlayerId[player.id]?.[key] || 0;
     });
-
-
-    const playerTimeMs = safeStatsByPlayerId[player.id]?.time || 0;
+    statsObj.fouls = safeStatsByPlayerId[player.id]?.fouls || 0;
     const actuallyParticipated = !!safeStatsByPlayerId[player.id];
 
     const baseData = {
@@ -138,7 +138,8 @@ export function buildFinishCompletionPlan({
     };
     if (Object.keys(privateStats).length > 0) {
       write.privateData = {
-        ...baseData,
+        participated: baseData.participated,
+        participationSource: baseData.participationSource,
         stats: privateStats
       };
     }
