@@ -1,0 +1,51 @@
+
+/* src/app/team-fees/team-fees.component.css */
+.team-fee-item {
+  border: 1px solid #ccc;
+  padding: 15px;
+  margin-bottom: 10px;
+  border-radius: 5px;
+}
+
+.team-fee-item h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.team-fee-item p {
+  margin-bottom: 5px;
+}
+
+.paid {
+  color: green;
+  font-weight: bold;
+}
+
+.unpaid {
+  color: red;
+  font-weight: bold;
+}
+
+.error-message {
+  color: #a00;
+  background-color: #ffe0e0;
+  border: 1px solid #a00;
+  padding: 10px;
+  margin-bottom: 15px;
+  border-radius: 5px;
+}
+
+button {
+  background-color: #4CAF50; /* Green */
+  color: white;
+  padding: 10px 15px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+}
