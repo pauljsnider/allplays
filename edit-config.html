@@ -381,7 +381,7 @@
             }
             currentTeamId = teamId;
 
-            const accessDecision = getEditConfigAccessDecision(currentUser, await getTeam(teamId), teamId);
+            const accessDecision = getEditConfigAccessDecision(currentUser, await getTeam(teamId), teamId, 'stat_settings');
             if (!accessDecision.allowed) {
                 alert('Team not found or access denied.');
                 window.location.href = accessDecision.exitUrl || 'dashboard.html';
