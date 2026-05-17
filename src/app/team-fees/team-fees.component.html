@@ -1,0 +1,22 @@
+
+<!-- src/app/team-fees/team-fees.component.html -->
+<h2>Team Fees</h2>
+
+<div *ngIf="paymentErrorMessage" class="error-message">{{ paymentErrorMessage }}</div>
+
+<div *ngIf="teamFees.length > 0; else noFees">
+  <div *ngFor="let fee of teamFees" class="team-fee-item">
+    <h3>{{ fee.name }}</h3>
+    <p>Amount: {{ fee.amount | currency }}</p>
+    <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid">{{ fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
+
+    <button *ngIf="!fee.isPaid" (click)="handlePayFee(fee.teamId, fee.id)" [disabled]="isLoadingPayment">
+      <span *ngIf="!isLoadingPayment">Pay Team Fee</span>
+      <span *ngIf="isLoadingPayment">Initiating Payment...</span>
+    </button>
+  </div>
+</div>
+
+<ng-template #noFees>
+  <p>No team fees to display.</p>
+</ng-template>
