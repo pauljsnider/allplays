@@ -12,7 +12,7 @@ const AUTH_STUB = `
 export function checkAuth(callback) {
     callback({
         uid: 'user-1',
-        email: 'coach@example.com',
+        email: 'paul@paulsnider.net',
         isAdmin: false,
         parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
     });
@@ -230,6 +230,11 @@ export async function uploadChatImage() {}
 export async function deleteUploadedChatAttachments() {}
 export async function toggleChatReaction() {}
 `;
+
+const CHAT_DB_REMINDER_STUB = CHAT_DB_STUB
+    .replace("text: 'Hello team'", "text: 'Schedule reminder: Upcoming team event\\nvs. Wildcats is coming up Sat, May 9, 6:00 PM.\\nLocation: Main Gym'")
+    .replace("senderId: 'coach-2'", "senderId: 'scheduled-reminder'")
+    .replace("senderName: 'Coach Lee'", "senderName: 'ALL PLAYS'");
 
 const MEDIA_DB_STUB = `
 ${PERMISSION_ERROR}
@@ -691,6 +696,20 @@ test('team chat falls back to the team-wide channel when conversation listing is
     await expect(page.locator('#messages-container')).toContainText('Hello team');
     await expect(page.locator('#messages-container')).not.toContainText('Loading messages');
     await expect(page.locator('#send-error')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('team chat renders scheduled reminder fallback messages', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await routeCommonPageStubs(page);
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CHAT_DB_REMINDER_STUB }));
+
+    await page.goto(`${baseURL}/team-chat.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#messages-container')).toContainText('Schedule reminder: Upcoming team event');
+    await expect(page.locator('#messages-container')).toContainText('vs. Wildcats is coming up');
+    await expect(page.locator('#messages-container')).toContainText('Location: Main Gym');
+    await expect(page.locator('#messages-container')).toContainText('ALL PLAYS');
     expect(pageErrors).toEqual([]);
 });
 

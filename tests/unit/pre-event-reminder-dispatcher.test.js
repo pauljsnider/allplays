@@ -21,6 +21,15 @@ describe('pre-event reminder dispatcher function', () => {
         expect(functionsSource).toContain("'scheduleNotifications.pushSuccessCount'");
     });
 
+    it('posts due pre-event reminders into team chat as an in-app fallback', () => {
+        expect(functionsSource).toContain('async function postPreEventReminderChatMessage');
+        expect(functionsSource).toContain('teams/${teamId}/chatMessages/${messageId}');
+        expect(functionsSource).toContain('Schedule reminder: Upcoming team event');
+        expect(functionsSource).toContain("type: 'pre-event-reminder'");
+        expect(functionsSource).toContain("'scheduleNotifications.chatMessageId'");
+        expect(functionsSource).toContain('chatMessageCreated');
+    });
+
     it('skips cancelled, deleted, disabled, sent, sending, and past events', () => {
         expect(functionsSource).toContain('notifications.enabled === false');
         expect(functionsSource).toContain('notifications.reminderSent === true');

@@ -1409,8 +1409,63 @@ function buildPreEventReminderPayload({ teamId, gameId, event }) {
   return {
     title: 'Upcoming team event',
     body: bodyParts.join(' '),
-    link
+    link,
+    chatText: [
+      'Schedule reminder: Upcoming team event',
+      ...bodyParts
+    ].join('\n')
   };
+}
+
+function getPreEventReminderChatMessageId(gameId, event) {
+  const dueAt = getReminderDueAt(event);
+  const rawId = [
+    String(gameId || 'event'),
+    dueAt ? dueAt.toISOString() : 'due'
+  ].join('-');
+  const normalizedId = rawId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+  return `pre-event-reminder-${normalizedId}`;
+}
+
+async function postPreEventReminderChatMessage({ teamId, gameId, event, payload }) {
+  const messageId = getPreEventReminderChatMessageId(gameId, event);
+  const messageRef = firestore.doc(`teams/${teamId}/chatMessages/${messageId}`);
+  const existing = await messageRef.get();
+  if (existing.exists) {
+    return { messageId, created: false };
+  }
+
+  await messageRef.set({
+    text: payload.chatText || payload.body,
+    senderId: 'scheduled-reminder',
+    senderName: 'ALL PLAYS',
+    senderEmail: null,
+    senderPhotoUrl: null,
+    attachments: [],
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    editedAt: null,
+    deleted: false,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: {
+      type: 'pre-event-reminder',
+      teamId,
+      gameId,
+      link: payload.link
+    },
+    targetType: 'full_team',
+    recipientIds: [],
+    targetRole: null,
+    conversationId: null
+  });
+
+  return { messageId, created: true };
 }
 
 async function markReminderSending(eventRef, claimId, now) {
@@ -1440,6 +1495,8 @@ async function markReminderSent(eventRef, claimId, sendResult) {
     'scheduleNotifications.claimId': claimId,
     'scheduleNotifications.pushSuccessCount': Number(sendResult?.successCount || 0),
     'scheduleNotifications.pushFailureCount': Number(sendResult?.failureCount || 0),
+    'scheduleNotifications.chatMessageId': sendResult?.chatMessageId || null,
+    'scheduleNotifications.chatMessageCreated': sendResult?.chatMessageCreated === true,
     'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0)
   });
 }
@@ -1475,6 +1532,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
 
     try {
       const payload = buildPreEventReminderPayload({ teamId, gameId, event: claimedEvent });
+      const chatResult = await postPreEventReminderChatMessage({ teamId, gameId, event: claimedEvent, payload });
       const sendResult = await sendCategoryNotification({
         teamId,
         gameId,
@@ -1490,9 +1548,18 @@ async function dispatchDuePreEventReminders(now = new Date()) {
       });
       await markReminderSent(eventRef, claimId, {
         ...sendResult,
+        chatMessageId: chatResult.messageId,
+        chatMessageCreated: chatResult.created,
         rsvpEmailCount: emailResult.sentCount
       });
-      results.push({ teamId, gameId, sent: Number(sendResult?.successCount || 0), rsvpEmailCount: emailResult.sentCount });
+      results.push({
+        teamId,
+        gameId,
+        sent: Number(sendResult?.successCount || 0),
+        chatMessageId: chatResult.messageId,
+        chatMessageCreated: chatResult.created,
+        rsvpEmailCount: emailResult.sentCount
+      });
     } catch (error) {
       await markReminderPendingAfterFailure(eventRef, claimId, error);
       console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
