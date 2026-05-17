@@ -42,6 +42,8 @@ describe('team chat conversations', () => {
 
         expect(isUserInConversation({ id: 'group-1', type: 'group', participantIds: ['user:u1'] }, user)).toBe(true);
         expect(isUserInConversation({ id: 'group-2', type: 'group', participantIds: ['email:parent@example.com'] }, user)).toBe(true);
+        const mixedCaseUser = { uid: 'u2', email: 'Parent@Example.com' };
+        expect(isUserInConversation({ id: 'group-4', type: 'group', participantIds: ['email:parent@example.com'] }, mixedCaseUser)).toBe(true);
         expect(isUserInConversation({ id: 'group-3', type: 'group', participantIds: [] }, user)).toBe(false);
         expect(isUserInConversation({ id: 'group-3', type: 'group', participantIds: [] }, user, { canModerate: true })).toBe(true);
         expect(isUserInConversation({ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team' }, user)).toBe(true);
