@@ -113,7 +113,7 @@ export function buildFinishCompletionPlan({
       const key = col.toLowerCase();
       statsObj[key] = safeStatsByPlayerId[player.id]?.[key] || 0;
     });
-    statsObj.fouls = safeStatsByPlayerId[player.id]?.fouls || 0;
+
 
     const playerTimeMs = safeStatsByPlayerId[player.id]?.time || 0;
     const actuallyParticipated = !!safeStatsByPlayerId[player.id];
