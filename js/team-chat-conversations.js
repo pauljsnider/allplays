@@ -54,7 +54,7 @@ export function isUserInConversation(conversation, user = {}, { canModerate = fa
     const participantRoles = Array.isArray(conversation.participantRoles) ? conversation.participantRoles : [];
     return participantIds.includes(user?.uid) ||
         (user?.uid && participantIds.includes(`user:${user.uid}`)) ||
-        (user?.email && participantIds.includes(`email:${user.email}`)) ||
+
         (user?.email && participantIds.includes(`email:${String(user.email).toLowerCase()}`)) ||
         participantRoles.includes('team');
 }
