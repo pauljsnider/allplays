@@ -1,10 +1,13 @@
+import { Capacitor, registerPlugin } from './vendor/capacitor-core.js';
 import { initializeApp } from './vendor/firebase-app.js';
 import {
     getAuth,
+    GoogleAuthProvider,
     indexedDBLocalPersistence,
     initializeAuth,
     onAuthStateChanged,
     sendPasswordResetEmail,
+    signInWithCredential,
     signInWithEmailAndPassword,
     signOut
 } from './vendor/firebase-auth.js';
@@ -49,6 +52,7 @@ const els = {
     email: document.getElementById('email'),
     password: document.getElementById('password'),
     loginButton: document.getElementById('login-button'),
+    googleButton: document.getElementById('google-button'),
     resetButton: document.getElementById('reset-button'),
     logoutButton: document.getElementById('logout-button'),
     authMessage: document.getElementById('auth-message'),
@@ -66,14 +70,17 @@ const els = {
 };
 
 const FIRESTORE_TIMEOUT_MS = 10000;
+const FirebaseAuthentication = registerPlugin('FirebaseAuthentication');
 
 function getPlatformLabel() {
-    const capacitor = window.Capacitor;
-    if (capacitor?.getPlatform) {
-        const platform = capacitor.getPlatform();
-        return platform === 'ios' || platform === 'android' ? platform.toUpperCase() : 'Web';
-    }
-    return 'Web';
+    const platform = Capacitor.getPlatform();
+    return platform === 'ios' || platform === 'android' ? platform.toUpperCase() : 'Web';
+}
+
+function getNativeFirebaseAuthPlugin() {
+    return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('FirebaseAuthentication')
+        ? FirebaseAuthentication
+        : null;
 }
 
 function setMessage(message, tone = 'neutral') {
@@ -83,6 +90,7 @@ function setMessage(message, tone = 'neutral') {
 
 function setBusy(isBusy) {
     els.loginButton.disabled = isBusy;
+    els.googleButton.disabled = isBusy;
     els.resetButton.disabled = isBusy;
 }
 
@@ -126,6 +134,15 @@ function describeAuthError(error) {
     }
     if (code === 'auth/network-request-failed') {
         return 'Network request failed. Check the device connection.';
+    }
+    if (code === 'auth/account-exists-with-different-credential') {
+        return 'An account already exists for that email with a different sign-in method.';
+    }
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        return 'Google sign-in was cancelled.';
+    }
+    if (code === 'auth/unauthorized-domain') {
+        return 'Firebase has not authorized this app origin for Google sign-in.';
     }
     return error?.message || 'Authentication failed.';
 }
@@ -358,6 +375,34 @@ async function signIn(event) {
     }
 }
 
+async function signInWithGoogle() {
+    const nativeAuth = getNativeFirebaseAuthPlugin();
+    if (!nativeAuth?.signInWithGoogle) {
+        setMessage('Google sign-in is only available in the native app build.', 'error');
+        return;
+    }
+
+    setMessage('');
+    setBusy(true);
+
+    try {
+        const result = await nativeAuth.signInWithGoogle({ skipNativeAuth: true });
+        const idToken = result?.credential?.idToken;
+        if (!idToken) {
+            throw new Error('Google sign-in did not return an ID token.');
+        }
+
+        const credential = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(auth, credential);
+        setMessage('Signed in with Google.', 'success');
+    } catch (error) {
+        console.error('[mobile-lite] Google sign-in failed:', error);
+        setMessage(describeAuthError(error), 'error');
+    } finally {
+        setBusy(false);
+    }
+}
+
 async function sendReset() {
     const email = getAuthEmail();
     if (!email) {
@@ -389,7 +434,14 @@ async function sendReset() {
 async function logOut() {
     setMessage('');
     els.profileState.textContent = 'Signing out';
-    await signOut(auth);
+    const nativeAuth = getNativeFirebaseAuthPlugin();
+    const [, webSignOut] = await Promise.allSettled([
+        nativeAuth?.signOut?.(),
+        signOut(auth)
+    ]);
+    if (webSignOut.status === 'rejected') {
+        throw webSignOut.reason;
+    }
 }
 
 async function start() {
@@ -398,6 +450,7 @@ async function start() {
     els.firebaseState.textContent = 'Initializing';
 
     els.loginForm.addEventListener('submit', signIn);
+    els.googleButton.addEventListener('click', signInWithGoogle);
     els.resetButton.addEventListener('click', sendReset);
     els.logoutButton.addEventListener('click', () => {
         logOut().catch((error) => {
