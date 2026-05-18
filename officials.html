@@ -144,10 +144,14 @@
                 document.getElementById('officials-status').textContent = 'Missing teamId.';
                 return;
             }
-            games = await getGames(teamId);
-            renderAssignedGames();
-            renderOpenSlots();
-            document.getElementById('officials-status').textContent = 'Assignments loaded.';
+            try {
+                games = await getGames(teamId);
+                renderAssignedGames();
+                renderOpenSlots();
+                document.getElementById('officials-status').textContent = 'Assignments loaded.';
+            } catch (error) {
+                document.getElementById('officials-status').textContent = error.message || 'Error loading assignments. Please try again.';
+            }
         }
 
         document.addEventListener('click', async (event) => {
