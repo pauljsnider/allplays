@@ -50,7 +50,11 @@ export function buildMirroredGamePayload({
     seasonLabel: sourceGame.seasonLabel || null,
     countsTowardSeasonRecord: sourceGame.countsTowardSeasonRecord !== false,
     arrivalTime: sourceGame.arrivalTime || null,
-    notes: sourceGame.notes ? '[SHARED SOURCE NOTES] ' + sourceGame.notes : null,
+        notes: sourceGame.notes
+      ? sourceGame.notes.startsWith('[SHARED SOURCE NOTES] ')
+        ? sourceGame.notes
+        : '[SHARED SOURCE NOTES] ' + sourceGame.notes
+      : null,
     assignments: cloneAssignments(sourceGame.assignments),
     tournament: clonePlainValue(sourceGame.tournament) || null,
     cancelledAt: sourceGame.cancelledAt || null,
