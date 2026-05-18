@@ -84,7 +84,7 @@ function renderShell({ team }) {
                 </div>
             </section>
 
-            <form id="tracking-item-form" class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <form id="tracking-item-form" class="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm hidden">
                 <input id="tracking-item-id" type="hidden">
                 <h2 id="tracking-item-form-title" class="mb-4 text-xl font-bold text-gray-900">Create item</h2>
                 <div class="space-y-4">
@@ -116,6 +116,9 @@ function renderShell({ team }) {
                     </div>
                 </div>
             </form>
+            <div id="add-item-button-container" class="mt-4 lg:col-start-2">
+                <button id="add-new-tracking-item-button" type="button" class="w-full rounded bg-primary-600 px-4 py-3 font-semibold text-white hover:bg-primary-700">Add new item</button>
+            </div>
         </div>
     `;
 }
@@ -247,10 +250,28 @@ async function initTrackingItemsAdminPage() {
         let items = [];
         container.innerHTML = renderShell({ team });
 
+        const trackingItemForm = document.getElementById('tracking-item-form');
+        const addNewItemButton = document.getElementById('add-new-tracking-item-button');
+
+        const showFormAndHideButton = () => {
+            trackingItemForm.classList.remove('hidden');
+            addNewItemButton.classList.add('hidden');
+        };
+
+        const hideFormAndShowButton = () => {
+            trackingItemForm.classList.add('hidden');
+            addNewItemButton.classList.remove('hidden');
+        };
+
+        addNewItemButton.addEventListener('click', () => {
+            showFormAndHideButton();
+            resetForm();
+        });
+
         const includeArchivedInput = document.getElementById('show-archived-tracking-items');
         const refreshList = () => renderList(items, {
             includeArchived: includeArchivedInput.checked,
-            onEdit: populateForm,
+            onEdit: (item) => { showFormAndHideButton(); populateForm(item); },
             onArchive: async (item) => {
                 if (!confirm(`Archive "${item.name || 'this item'}"?`)) return;
                 await updateDoc(doc(db, `teams/${teamId}/trackingItems`, item.id), {
@@ -263,6 +284,7 @@ async function initTrackingItemsAdminPage() {
                 showMessage('Tracking item archived.');
                 await loadItems();
                 resetForm();
+                hideFormAndShowButton();
             }
         });
 
@@ -273,7 +295,7 @@ async function initTrackingItemsAdminPage() {
         }
 
         includeArchivedInput.addEventListener('change', refreshList);
-        document.getElementById('tracking-item-cancel').addEventListener('click', resetForm);
+        document.getElementById('tracking-item-cancel').addEventListener('click', () => { resetForm(); hideFormAndShowButton(); });
         document.getElementById('tracking-item-form').addEventListener('submit', async (event) => {
             event.preventDefault();
             const itemId = document.getElementById('tracking-item-id').value;
@@ -313,6 +335,7 @@ async function initTrackingItemsAdminPage() {
                 }
                 await loadItems();
                 resetForm();
+                hideFormAndShowButton();
             } catch (error) {
                 console.error('[tracking-items] save failed:', error);
                 showMessage('Unable to save tracking item.', 'error');
