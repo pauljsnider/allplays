@@ -93,7 +93,7 @@
             const gameId = game.gameId || game.id;
             if (!state.teamId || !gameId) return '';
             if (isCompleted(game)) {
-                return `game.html#teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
+                return `game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
             }
             return `live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}`;
         }
