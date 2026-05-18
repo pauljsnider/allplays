@@ -89,7 +89,7 @@ describe('live tracker finish completion plan', () => {
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
           stats: { pts: 2, ast: 1, fouls: 0 },
-          timeMs: 123000
+          timeMs: 0
         }
       },
       {
@@ -100,8 +100,8 @@ describe('live tracker finish completion plan', () => {
           participated: true,
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
-          stats: { pts: 3, ast: 0 },
-          timeMs: 118000
+          stats: { pts: 3, ast: 0, fouls: 2 },
+          timeMs: 0
         }
       }
     ]);
@@ -137,7 +137,7 @@ describe('live tracker finish completion plan', () => {
           participated: true,
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
-          stats: { pts: 0, reb: 0, ast: 0 },
+          stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
           timeMs: 0
         }
       }
@@ -186,7 +186,7 @@ describe('live tracker finish completion plan', () => {
           participationStatus: 'appeared',
           playerName: 'Alex',
           playerNumber: '4',
-          stats: { pts: 8 },
+          stats: { pts: 8, fouls: 1 },
           timeMs: 0
         },
         privateData: {
