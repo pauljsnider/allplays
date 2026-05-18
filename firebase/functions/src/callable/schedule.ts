@@ -18,14 +18,26 @@ export const publishOrganizationSchedule = functions.https.onCall(
       );
     }
 
-    // TODO: Implement robust authorization check here.
-    // Example: Verify user has 'admin' role or is a 'teamOwner' for the target team.
-    // const userDoc = await admin.firestore().collection('users').doc(context.auth.uid).get();
-    // if (!userDoc.exists || !userDoc.data()?.isAdmin) {
-    //   throw new functions.https.HttpsError(
-    //     'permission-denied',
-    //     'User is not authorized to publish schedules.'
-    //   ); // Placeholder
+    // Authorization check - verify user can publish schedules to target team
+    const draftRef = firestore.collection('organizationScheduleDrafts').doc(draftScheduleId);
+    const draftSnapshot = await draftRef.get();
+    if (!draftSnapshot.exists) {
+      throw new functions.https.HttpsError('not-found', 'Draft schedule not found.');
+    }
+    const targetTeamId = draftSnapshot.data()?.targetTeamId;
+    if (!targetTeamId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Draft missing targetTeamId.');
+    }
+
+    // TODO: Implement actual authorization: Verify context.auth.uid has permission
+    // to publish schedules to the extracted targetTeamId. This might involve checking
+    // user roles (e.g., 'admin') or team membership/ownership in a 'users' or 'teams' collection.
+    // This is critical for preventing privilege escalation.
+    // Example:
+    // const userDoc = await firestore.collection('users').doc(context.auth.uid).get();
+    // const userData = userDoc.data();
+    // if (!userData?.roles?.includes('admin') && !userData?.teamMemberships?.[targetTeamId]?.isOwner) {
+    //   throw new functions.https.HttpsError('permission-denied', 'User is not authorized to publish schedules for this team.');
     // }
 
     const { draftScheduleId } = data; // Expecting { draftScheduleId: string }
@@ -34,7 +46,7 @@ export const publishOrganizationSchedule = functions.https.onCall(
     if (!draftScheduleId || typeof draftScheduleId !== 'string') {
       throw new functions.https.HttpsError(
         'invalid-argument',
-        'Missing or invalid 'draftScheduleId' parameter.'
+        'Missing or invalid \'draftScheduleId\' parameter.'
       );
     }
 
@@ -66,7 +78,7 @@ export const publishOrganizationSchedule = functions.https.onCall(
       if (!targetTeamId || typeof targetTeamId !== 'string') {
         throw new functions.https.HttpsError(
           'failed-precondition',
-          'Draft schedule data is missing a valid 'targetTeamId' for publishing.'
+        'Draft schedule data is missing a valid \'targetTeamId\' for publishing.'
         );
       }
 
@@ -93,10 +105,17 @@ export const publishOrganizationSchedule = functions.https.onCall(
       };
 
       // --- 6. Persist Transformed Team Schedule ---
-      const teamScheduleCollectionRef = firestore
-        .collection('teams')
-        .doc(targetTeamId)
-        .collection('schedules');
+      // Validate target team exists before creating schedule
+      const teamDocRef = firestore.collection('teams').doc(targetTeamId);
+      const teamDoc = await teamDocRef.get();
+      if (!teamDoc.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          `Target team with ID ${targetTeamId} does not exist.`
+        );
+      }
+
+      const teamScheduleCollectionRef = teamDocRef.collection('schedules');
 
       const newScheduleDocRef = await teamScheduleCollectionRef.add(teamScheduleData);
 
