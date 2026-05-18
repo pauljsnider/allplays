@@ -1048,7 +1048,15 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     }
 
     const eventsSnap = await firestore.collection(`teams/${teamId}/games`).orderBy('date').get();
-    const events = eventsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    const enrichedEvents = await Promise.all(eventsSnap.docs.map(async (docSnap) => {
+      const game = { id: docSnap.id, ...(docSnap.data() || {}) };
+      const rsvpsSnap = await firestore.collection(`teams/${teamId}/games/${game.id}/rsvps`).get();
+      game.rsvps = rsvpsSnap.docs.map((rsvpDoc) => ({ id: rsvpDoc.id, ...(rsvpDoc.data() || {}) }));
+      // Assuming officiating details are directly on the game document
+      game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
+      return game;
+    }));
+    const events = enrichedEvents;
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
