@@ -47,6 +47,7 @@ import {
     runTransaction
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
+import { getFunctions, httpsCallable } from "./vendor/firebase-functions.js";
 import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=7";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
@@ -55,6 +56,7 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app);
 
 export {
     collection,
@@ -104,3 +106,5 @@ export {
 };
 
 export { ref, uploadBytes, getDownloadURL, deleteObject };
+
+export { getFunctions, httpsCallable };
