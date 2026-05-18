@@ -766,6 +766,26 @@ export async function deleteTeamMediaItem(teamId, item) {
     }
 }
 
+export async function updateTeamMediaItem(teamId, itemId, updates) {
+    const cleanTeamId = String(teamId || '').trim();
+    const cleanItemId = String(itemId || '').trim();
+    if (!cleanTeamId || !cleanItemId) throw new Error('Media item is required.');
+    
+    // Sanitize title if it's being updated
+    if (Object.prototype.hasOwnProperty.call(updates, 'title')) {
+        updates.title = String(updates.title || '').trim();
+        if (updates.title === '') {
+            throw new Error('Media item title cannot be empty.');
+        }
+    }
+
+    const mediaItemRef = doc(db, `teams/${cleanTeamId}/mediaItems`, cleanItemId);
+    await updateDoc(mediaItemRef, {
+        ...updates,
+        updatedAt: serverTimestamp(),
+    });
+}
+
 export async function reorderTeamMediaFolders(teamId, folderIds = []) {
     const updates = buildReorderUpdates(folderIds);
     if (!teamId || updates.length === 0) return;
