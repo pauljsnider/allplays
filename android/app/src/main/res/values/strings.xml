@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ALL PLAYS Lite</string>
+    <string name="title_activity_main">ALL PLAYS Lite</string>
+    <string name="package_name">ai.allplays.lite</string>
+    <string name="custom_url_scheme">ai.allplays.lite</string>
+</resources>

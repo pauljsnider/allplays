@@ -1,0 +1,8 @@
+{
+  "appId": "ai.allplays.lite",
+  "appName": "ALL PLAYS Lite",
+  "webDir": "mobile-lite",
+  "server": {
+    "cleartext": false
+  }
+}

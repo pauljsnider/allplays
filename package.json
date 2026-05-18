@@ -9,13 +9,25 @@
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
     "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
-    "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays"
+    "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays",
+    "mobile:serve": "python3 -m http.server 8100 --directory mobile-lite",
+    "mobile:sync": "npx cap sync",
+    "mobile:build:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
+    "mobile:build:android": "cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ./gradlew :app:assembleDebug",
+    "mobile:open:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap open ios",
+    "mobile:open:android": "npx cap open android",
+    "mobile:run:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap run ios",
+    "mobile:run:android": "JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.4",
     "@playwright/test": "^1.59.1",
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
     "html-to-image": "^1.11.13"
   }
 }
