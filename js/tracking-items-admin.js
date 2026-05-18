@@ -253,6 +253,12 @@ async function initTrackingItemsAdminPage() {
         const trackingItemForm = document.getElementById('tracking-item-form');
         const addNewItemButton = document.getElementById('add-new-tracking-item-button');
 
+        if (!trackingItemForm || !addNewItemButton) {
+            console.error('[tracking-items] Required form elements not found');
+            container.innerHTML = '<div class="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">Unable to initialize form.</div>';
+            return;
+        }
+
         const showFormAndHideButton = () => {
             trackingItemForm.classList.remove('hidden');
             addNewItemButton.classList.add('hidden');
