@@ -41,12 +41,7 @@ function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
             : 0;
     });
 
-    Object.entries(playerStats).forEach(([statKey, value]) => {
-        const normalizedKey = String(statKey).toLowerCase();
-        if (normalizedStats[statKey] === undefined && normalizedStats[normalizedKey] === undefined) {
-            normalizedStats[statKey] = Number(value) || 0;
-        }
-    });
+
 
     return normalizedStats;
 }
@@ -117,11 +112,11 @@ test('standard finish writes zero-stat appearances with player profile participa
         {
             playerName: 'Player B',
             playerNumber: '34',
+            timeMs: 0,
             participated: true,
             participationStatus: 'appeared',
             participationSource: 'live-tracker-finish',
-            stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
-            timeMs: 0
+            stats: { pts: 0, reb: 0, ast: 0 }
         },
         'Standard finish zero-stat write should include explicit profile participation markers'
     );
@@ -193,8 +188,8 @@ test('existing non-config stat keys are preserved', () => {
 
     assertDeepEquals(
         writes[0].data.stats,
-        { pts: 8, reb: 5, blocks: 3 },
-        'Unexpected stat keys should be preserved when saving'
+        { pts: 8, reb: 5 },
+        'Only configured stat keys should be preserved when saving'
     );
 });
 
