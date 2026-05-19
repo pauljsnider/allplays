@@ -6460,3 +6460,60 @@ export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
     });
     return Array.from(statusesById.values());
 }
+
+// ===== ASSIGNMENT CLAIMS (snack sign-up) =====
+
+/**
+ * Claim an open assignment slot on behalf of the signed-in parent.
+ * Fails if the slot is already claimed by someone else.
+ */
+export async function claimAssignmentSlot(teamId, gameId, role, { name } = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to claim a slot.');
+    const trimmedRole = (role || '').toString().trim();
+    if (!trimmedRole) throw new Error('Role is required.');
+    const trimmedName = (name || '').toString().trim();
+    if (!trimmedName) throw new Error('Name is required.');
+
+    const claimRef = doc(db, `teams/${teamId}/games/${gameId}/assignmentClaims`, trimmedRole);
+
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(claimRef);
+        if (snap.exists()) throw new Error('This slot has already been claimed.');
+        tx.set(claimRef, {
+            claimedByUserId: user.uid,
+            claimedByName: trimmedName.slice(0, 100),
+            claimedAt: Timestamp.now()
+        });
+    });
+}
+
+/**
+ * Release a claim on an assignment slot.
+ * Parents may only release their own claim; admins may release any claim
+ * (enforced by Firestore rules).
+ */
+export async function releaseAssignmentClaim(teamId, gameId, role) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to release a claim.');
+    const trimmedRole = (role || '').toString().trim();
+    if (!trimmedRole) throw new Error('Role is required.');
+
+    const claimRef = doc(db, `teams/${teamId}/games/${gameId}/assignmentClaims`, trimmedRole);
+    const snap = await getDoc(claimRef);
+    if (!snap.exists()) return;
+    await deleteDoc(claimRef);
+}
+
+/**
+ * Load all assignment claims for a game/event.
+ * Returns a plain object keyed by role name.
+ */
+export async function getAssignmentClaims(teamId, gameId) {
+    const snap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/assignmentClaims`));
+    const claims = {};
+    snap.forEach((docSnap) => {
+        claims[docSnap.id] = { id: docSnap.id, ...docSnap.data() };
+    });
+    return claims;
+}

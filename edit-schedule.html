@@ -2822,15 +2822,32 @@
         });
 
         // ===== ASSIGNMENT ROWS =====
-        function addAssignmentRow(role = '', value = '') {
+        function addAssignmentRow(role = '', value = '', claimable = false) {
             const container = document.getElementById('assignment-rows');
             const row = document.createElement('div');
-            row.className = 'flex gap-2 items-center';
+            row.className = 'flex gap-2 items-start';
+            const isClaimable = claimable === true;
             row.innerHTML = `
-                <input type="text" placeholder="Role (e.g. Snack)" value="${role}" class="assignment-role flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                <input type="text" placeholder="Assigned to" value="${value}" class="assignment-value flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
-                <button type="button" class="text-red-400 hover:text-red-600 text-lg font-bold" onclick="this.parentElement.remove()">&times;</button>
+                <div class="flex-1 space-y-1">
+                    <input type="text" placeholder="Role (e.g. Snack)" value="${role}" class="assignment-role w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                    <input type="text" placeholder="Assigned to" value="${value}" class="assignment-value w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm${isClaimable ? ' hidden' : ''}">
+                    <label class="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                        <input type="checkbox" class="assignment-claimable rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"${isClaimable ? ' checked' : ''}>
+                        Let parents sign up
+                    </label>
+                </div>
+                <button type="button" class="mt-2 text-red-400 hover:text-red-600 text-lg font-bold leading-none" onclick="this.parentElement.remove()">&times;</button>
             `;
+            const checkbox = row.querySelector('.assignment-claimable');
+            const valueInput = row.querySelector('.assignment-value');
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    valueInput.value = '';
+                    valueInput.classList.add('hidden');
+                } else {
+                    valueInput.classList.remove('hidden');
+                }
+            });
             container.appendChild(row);
         }
 
@@ -2955,12 +2972,13 @@
         document.getElementById('add-officiating-slot-btn').addEventListener('click', () => addOfficiatingSlotRow());
 
         function getAssignmentsFromForm() {
-            const rows = document.querySelectorAll('#assignment-rows .flex');
+            const rows = document.querySelectorAll('#assignment-rows > div');
             const assignments = [];
             rows.forEach(row => {
                 const role = row.querySelector('.assignment-role').value.trim();
-                const value = row.querySelector('.assignment-value').value.trim();
-                if (role) assignments.push({ role, value });
+                const claimable = row.querySelector('.assignment-claimable')?.checked === true;
+                const value = claimable ? '' : row.querySelector('.assignment-value').value.trim();
+                if (role) assignments.push({ role, value, claimable });
             });
             return assignments;
         }
@@ -2969,7 +2987,7 @@
             const container = document.getElementById('assignment-rows');
             container.innerHTML = '';
             if (assignments && assignments.length > 0) {
-                assignments.forEach(a => addAssignmentRow(a.role, a.value));
+                assignments.forEach(a => addAssignmentRow(a.role, a.value, a.claimable));
             }
         }
 
