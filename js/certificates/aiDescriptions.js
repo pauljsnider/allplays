@@ -3,6 +3,7 @@ import { getApp } from '../vendor/firebase-app.js';
 
 export const CERTIFICATE_DESCRIPTION_CHAR_LIMIT = 350;
 const PROMPT_FIELD_LIMIT = 240;
+const PROMPT_CUSTOM_HIGHLIGHT_LIMIT = 180;
 const PROMPT_SUMMARY_LIMIT = 360;
 const PROMPT_CONTEXT_LIMIT = 1800;
 
@@ -100,7 +101,8 @@ function summarizeGames(games = []) {
 export function buildCertificateDescriptionPrompt({ team = {}, player = {}, seasonLabel = '', tone = 'celebratory and specific', games = [], stats = {} } = {}) {
     const safePlayer = {
         name: sanitizePromptValue(player.name || player.playerName || 'Player', 120) || 'Player',
-        number: sanitizePromptValue(player.number || player.playerNumber || '', 24)
+        number: sanitizePromptValue(player.number || player.playerNumber || '', 24),
+        customDescriptionHint: sanitizePromptValue(player.customDescriptionHint || '', PROMPT_CUSTOM_HIGHLIGHT_LIMIT)
     };
     const safeTeam = sanitizePromptValue(team.name || 'Team', 160) || 'Team';
     const sport = sanitizePromptValue(team.sport || 'team sport', 80) || 'team sport';
@@ -117,6 +119,7 @@ export function buildCertificateDescriptionPrompt({ team = {}, player = {}, seas
         `Sport: ${sport}.`,
         `Season: ${safeSeason}.`,
         `Player: ${safePlayer.name}${safePlayer.number ? `, jersey #${safePlayer.number}` : ''}.`,
+        ...(safePlayer.customDescriptionHint ? [`Custom highlight: ${safePlayer.customDescriptionHint}.`] : []),
         `Recent stat totals: ${summarizeStats(stats)}.`,
         `Recent game context:\n${summarizeGames(games) || 'No completed game summaries available.'}`,
         'Use stat totals only as private context to infer strengths and playing style. Do not mention exact stat numbers, totals, scores, dates, opponent names, or opposing team names.',
@@ -179,7 +182,8 @@ export async function generateDescriptionsForDrafts({ drafts = [], team = {}, sh
             const player = {
                 id: draft.playerId,
                 name: draft.recipientName,
-                number: draft.playerNumber
+                number: draft.playerNumber,
+                customDescriptionHint: draft.customDescriptionHint
             };
             const stats = totalsByPlayer[draft.playerId] || {};
             const hasStats = Object.keys(stats).some((key) => Number(stats[key] || 0) !== 0);
