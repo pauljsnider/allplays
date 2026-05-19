@@ -38,13 +38,11 @@ export function shouldRetryChatLastReadOnViewReturn({
     isPageVisible,
     isWindowFocused,
     hasMessages,
-    hasLoadedSnapshot,
-    isAwaitingPostResumeSnapshot
+    hasLoadedSnapshot
 }) {
     return Boolean(
         hasMessages &&
         hasLoadedSnapshot &&
-        !isAwaitingPostResumeSnapshot &&
         shouldUpdateChatLastRead({
             hasCurrentUser,
             hasTeamId,
