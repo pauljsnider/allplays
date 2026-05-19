@@ -6476,19 +6476,22 @@ export async function claimAssignmentSlot(teamId, gameId, role, { name } = {}) {
     if (!trimmedName) throw new Error('Name is required.');
 
     const claimRef = doc(db, `teams/${teamId}/games/${gameId}/assignmentClaims`, trimmedRole);
-    const snap = await getDoc(claimRef);
-    if (snap.exists()) throw new Error('This slot has already been claimed.');
 
-    await setDoc(claimRef, {
-        claimedByUserId: user.uid,
-        claimedByName: trimmedName.slice(0, 100),
-        claimedAt: Timestamp.now()
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(claimRef);
+        if (snap.exists()) throw new Error('This slot has already been claimed.');
+        tx.set(claimRef, {
+            claimedByUserId: user.uid,
+            claimedByName: trimmedName.slice(0, 100),
+            claimedAt: Timestamp.now()
+        });
     });
 }
 
 /**
- * Release the signed-in parent's claim on an assignment slot.
- * Admins may release any claim.
+ * Release a claim on an assignment slot.
+ * Parents may only release their own claim; admins may release any claim
+ * (enforced by Firestore rules).
  */
 export async function releaseAssignmentClaim(teamId, gameId, role) {
     const user = auth.currentUser;
@@ -6499,8 +6502,6 @@ export async function releaseAssignmentClaim(teamId, gameId, role) {
     const claimRef = doc(db, `teams/${teamId}/games/${gameId}/assignmentClaims`, trimmedRole);
     const snap = await getDoc(claimRef);
     if (!snap.exists()) return;
-    const claim = snap.data() || {};
-    if (claim.claimedByUserId !== user.uid) throw new Error('You can only release your own claim.');
     await deleteDoc(claimRef);
 }
 

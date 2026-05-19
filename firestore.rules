@@ -1406,7 +1406,6 @@ service cloud.firestore {
                              isRideshareSeatCountUpdateValid(teamId, gameId, offerId, resource.data.status, 'declined');
           }
         }
-      }
 
         // Claimable assignment claims (snack sign-up, etc.)
         match /assignmentClaims/{role} {
