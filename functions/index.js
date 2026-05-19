@@ -1006,7 +1006,7 @@ exports.fetchCalendarIcs = functions
       const rawUrl = req.query.url;
       const normalizedUrl = await normalizeTargetUrl(rawUrl);
 
-      const response = await fetchWithTimeout(normalizedUrl);
+      const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
       if (!response.ok) {
         res.status(502).json({
           ok: false,
