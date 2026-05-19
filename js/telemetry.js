@@ -375,7 +375,7 @@ export async function getAuthToken() {
     }
 }
 
-export function flush(keepalive = false) {
+export async function flush(keepalive = false) {
     if (flushTimer) {
         window.clearTimeout(flushTimer);
         flushTimer = null;
@@ -383,9 +383,11 @@ export function flush(keepalive = false) {
     if (!enabled || !endpoint || queue.length === 0) return;
 
     const events = queue.splice(0, MAX_BATCH_SIZE);
-    sendEvents(events, keepalive).catch(() => {
+    try {
+        await sendEvents(events, keepalive);
+    } catch (error) {
         queue = events.concat(queue).slice(0, MAX_QUEUE_SIZE);
-    });
+    }
 
     if (!keepalive && queue.length > 0) {
         scheduleFlush(queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS);
