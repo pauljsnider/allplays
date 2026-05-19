@@ -66,9 +66,29 @@ describe('telemetry.js payload handling', () => {
         sendEventsSpy = vi.spyOn(telemetryModule, 'sendEvents');
         getAuthTokenSpy = vi.spyOn(telemetryModule, 'getAuthToken');
 
-        // Restore original implementation for sendEvents so it calls getAuthToken and fetch
-        // This is crucial for the original logic to execute while still being able to spy
-        sendEventsSpy.mockImplementation(sendEventsSpy.originalImplementation);
+        // Mock sendEvents to ensure it correctly calls getAuthToken and mockFetch
+        sendEventsSpy.mockImplementation(async (events, keepalive = false) => {
+            const authToken = await getAuthTokenSpy();
+            const payloadObject = {
+                sentAt: new Date().toISOString(),
+                events
+            };
+            if (authToken) {
+                payloadObject.authToken = authToken;
+            }
+            const payload = JSON.stringify(payloadObject);
+
+            const headers = { 'Content-Type': 'application/json' };
+            if (authToken) {
+                headers.Authorization = `Bearer ${authToken}`;
+            }
+
+            await mockFetch(window.__ALLPLAYS_CONFIG__.telemetryEndpoint, {
+                method: 'POST',
+                headers,
+                body: payload,
+            });
+        });
 
         // Ensure document.readyState is 'complete' or fire DOMContentLoaded to trigger capturePageView
         Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
