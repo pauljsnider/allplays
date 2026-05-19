@@ -72,6 +72,7 @@ describe('telemetry.js payload handling', () => {
         Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
         window.document.dispatchEvent(new Event('DOMContentLoaded'));
         await vi.runAllTimers(); // Process any pending timers from initialization
+        sendEventsSpy.mockClear();
     });
 
     afterEach(() => {
