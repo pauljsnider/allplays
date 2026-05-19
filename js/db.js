@@ -3183,64 +3183,7 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
         existingUser = await getUserByEmail(coParentEmail);
     }
 
-    return {
-        id: docRef.id,
-        code,
-        teamName: team?.name || null,
-        playerName: player?.name || playerName || null,
-        existingUser: !!existingUser
-    };
-}
 
-export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId, coParentEmail, playerName) {
-    const currentUser = auth.currentUser;
-    if (!currentUser || currentUser.uid !== primaryParentUid) {
-        throw new Error('You must be signed in as the primary parent to invite a co-parent');
-    }
-
-    // Get team and player info for the invite
-    const [team, player] = await Promise.all([
-        getTeam(teamId),
-        getPlayers(teamId).then(ps => ps.find(p => p.id === playerId))
-    ]);
-
-    if (!team || !player) {
-        throw new Error('Team or player not found');
-    }
-
-    const code = generateAccessCode();
-    const accessCodeData = {
-        code,
-        type: 'coparent_invite', // New type for co-parent invites
-        teamId,
-        playerId,
-        playerName: player?.name || playerName || null,
-        teamName: team?.name || null,
-        email: coParentEmail || null,
-        generatedBy: primaryParentUid,
-        createdAt: Timestamp.now(),
-        // 7 days from now
-        expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        used: false,
-        usedBy: null,
-        usedAt: null
-    };
-    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
-
-    // Check if user with this email already exists
-    let existingUser = null;
-    if (coParentEmail) {
-        existingUser = await getUserByEmail(coParentEmail);
-    }
-
-    return {
-        id: docRef.id,
-        code,
-        teamName: team?.name || null,
-        playerName: player?.name || playerName || null,
-        existingUser: !!existingUser
-    };
-}
 
 export async function redeemParentInvite(userId, code) {
     console.log('[redeemParentInvite] start', { userId, code });
