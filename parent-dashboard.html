@@ -282,8 +282,11 @@
             createParentMembershipRequest,
             listMyParentMembershipRequests,
             listParentTeamFeeRecipients,
-            listCertificatesForPlayer
-        } from './js/db.js?v=50';
+            listCertificatesForPlayer,
+            claimAssignmentSlot,
+            releaseAssignmentClaim,
+            getAssignmentClaims
+        } from './js/db.js?v=51';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -313,6 +316,7 @@
         import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';
         import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';
         import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';
+        import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=4';
@@ -333,6 +337,7 @@
         let activeDayModal = null;
         const practicePacketSessionMap = new Map();
         const rideshareOffersByEvent = new Map();
+        const assignmentClaimsByEvent = new Map();
         const teamChildrenByTeamId = new Map();
         const selectedRideChildByOffer = new Map();
         const requestablePlayersByTeam = new Map();
@@ -570,6 +575,72 @@
             return event?.isDbGame || event?.type === 'practice';
         }
 
+        function getEventClaimsKey(teamId, eventId) {
+            return `${teamId}::${eventId}`;
+        }
+
+        function getEventAssignmentClaims(teamId, eventId) {
+            return assignmentClaimsByEvent.get(getEventClaimsKey(teamId, eventId)) || {};
+        }
+
+        async function refreshAssignmentClaimsForEvent(teamId, gameId) {
+            const key = getEventClaimsKey(teamId, gameId);
+            try {
+                const claims = await getAssignmentClaims(teamId, gameId);
+                assignmentClaimsByEvent.set(key, claims);
+            } catch (err) {
+                console.warn('Unable to load assignment claims for event:', teamId, gameId, err);
+                assignmentClaimsByEvent.set(key, {});
+            }
+        }
+
+        function renderAssignments(event) {
+            const assignments = Array.isArray(event.assignments) ? event.assignments : [];
+            if (assignments.length === 0) return '';
+            const claims = getEventAssignmentClaims(event.teamId, event.id);
+            const merged = mergeAssignmentsWithClaims(assignments, claims);
+            const badges = merged.map((a) => {
+                if (!a.claimable) {
+                    return `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`;
+                }
+                const myOwn = a.claim && a.claim.claimedByUserId === currentUserId;
+                const claimedByOther = a.claim && !myOwn;
+                if (myOwn) {
+                    return `<span class="inline-block bg-green-50 border border-green-200 rounded px-1.5 py-0.5 mr-1 mb-1 text-green-800"><b>${escapeHtml(a.role)}:</b> You &mdash; <button class="underline text-green-700 hover:text-green-900" onclick="handleReleaseAssignmentClaim('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(a.role)}')">Release</button></span>`;
+                }
+                if (claimedByOther) {
+                    return `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.claim.claimedByName || 'Taken')}</span>`;
+                }
+                return `<span class="inline-block bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> <button class="underline text-amber-800 hover:text-amber-900 font-semibold" onclick="handleClaimAssignmentSlot('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(a.role)}')">Sign up</button></span>`;
+            }).join('');
+            return `<div class="mt-1 text-xs text-gray-600">${badges}</div>`;
+        }
+
+        async function handleClaimAssignmentSlot(teamId, gameId, role) {
+            try {
+                const name = currentUser?.displayName || currentUser?.email || 'Parent';
+                await claimAssignmentSlot(teamId, gameId, role, { name });
+                await refreshAssignmentClaimsForEvent(teamId, gameId);
+                renderScheduleFromControls();
+                rerenderActiveDayModal();
+            } catch (err) {
+                console.error('Failed to claim assignment slot:', err);
+                alert(`Could not sign up: ${err?.message || err}`);
+            }
+        }
+
+        async function handleReleaseAssignmentClaim(teamId, gameId, role) {
+            try {
+                await releaseAssignmentClaim(teamId, gameId, role);
+                await refreshAssignmentClaimsForEvent(teamId, gameId);
+                renderScheduleFromControls();
+                rerenderActiveDayModal();
+            } catch (err) {
+                console.error('Failed to release assignment claim:', err);
+                alert(`Could not release: ${err?.message || err}`);
+            }
+        }
+
         function resolveChildChoices(teamId) {
             const children = teamChildrenByTeamId.get(teamId) || [];
             return children.filter((child) => child?.playerId).map((child) => ({
@@ -743,6 +814,18 @@
             await Promise.all(uniqueEvents.map(async ({ teamId, gameId, legacyGameId }) => {
                 await refreshRideshareForEvent(teamId, gameId, legacyGameId);
             }));
+        }
+
+        async function hydrateAssignmentClaimsForSchedule(events = []) {
+            const uniqueEvents = Array.from(new Map(
+                (events || [])
+                    .filter((ev) => ev?.isDbGame && !ev?.isCancelled && ev?.teamId && ev?.id)
+                    .filter((ev) => Array.isArray(ev.assignments) && ev.assignments.some((a) => a.claimable))
+                    .map((ev) => [getEventClaimsKey(ev.teamId, ev.id), { teamId: ev.teamId, gameId: ev.id }])
+            ).values());
+            await Promise.all(uniqueEvents.map(({ teamId, gameId }) =>
+                refreshAssignmentClaimsForEvent(teamId, gameId)
+            ));
         }
 
         function toggleRideOfferForm(eventKey) {
@@ -979,7 +1062,10 @@
             if (runId !== parentDashboardHydrationRun) return;
 
             allScheduleEvents = combinedSchedule;
-            await hydrateRideshareOffersForSchedule(allScheduleEvents);
+            await Promise.all([
+                hydrateRideshareOffersForSchedule(allScheduleEvents),
+                hydrateAssignmentClaimsForSchedule(allScheduleEvents)
+            ]);
             if (runId !== parentDashboardHydrationRun) return;
 
             // Fetch my RSVPs for tracked DB events (games + practices).
@@ -1567,7 +1653,7 @@
                             ${ev.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(ev.kitColor)}</div>` : ''}
                             ${ev.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = ev.arrivalTime?.toDate ? ev.arrivalTime.toDate() : new Date(ev.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
                             ${ev.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(ev.notes)}</div>` : ''}
-                            ${ev.assignments && ev.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${ev.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                            ${renderAssignments(ev)}
                             ${ev.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${formatRsvpSummary(ev.rsvpSummary)}</div>` : ''}
                             ${ev.childNames?.length ? `<div class="text-xs text-gray-500 mt-1">For ${escapeHtml(ev.childNames.join(', '))}</div>` : ''}
                             ${homePacketReady ? `
@@ -2060,7 +2146,7 @@
                         ${game.kitColor ? `<div class="text-xs text-purple-700 mt-1">Kit: ${escapeHtml(game.kitColor)}</div>` : ''}
                         ${game.arrivalTime ? `<div class="text-xs text-amber-700 mt-1">Arrive: ${(() => { const at = game.arrivalTime?.toDate ? game.arrivalTime.toDate() : new Date(game.arrivalTime); return at.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }); })()}</div>` : ''}
                         ${game.notes ? `<div class="text-xs text-gray-500 mt-1 italic">${escapeHtml(game.notes)}</div>` : ''}
-                        ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
+                        ${renderAssignments(game)}
                         ${attendanceRecorded ? `
                             <div class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                                 <div class="text-[11px] font-bold uppercase tracking-wide text-amber-800">Practice Attendance</div>
