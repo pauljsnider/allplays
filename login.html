@@ -106,6 +106,7 @@
         renderFooter(document.getElementById('footer-container'));
 
         let isLogin = true;
+        let isActivationCodeInitiallyHidden = false; // Tracks if the activation code field was hidden due to a URL parameter
 
         const createLoginAuthStateManager = loginPageModule.createLoginAuthStateManager || function createFallbackLoginAuthStateManager() {
             return {
@@ -224,6 +225,7 @@
                     hideActivationCode: true,
                     showInviteBanner: true
                 });
+                isActivationCodeInitiallyHidden = true; // Set flag if invite code was in URL
             } else {
                 showSignupMode();
             }
@@ -264,7 +266,10 @@
             } else {
                 confirmPasswordField.classList.remove('hidden');
                 confirmPasswordInput.setAttribute('required', 'required');
-                activationCodeField.classList.remove('hidden');
+                // Only show activation code field if it wasn't initially hidden due to a URL param
+                if (!isActivationCodeInitiallyHidden) {
+                    activationCodeField.classList.remove('hidden');
+                }
                 activationCodeInput.setAttribute('required', 'required');
                 forgotPasswordLink.classList.add('hidden');
             }
