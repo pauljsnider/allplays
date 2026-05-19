@@ -267,10 +267,13 @@
                 confirmPasswordField.classList.remove('hidden');
                 confirmPasswordInput.setAttribute('required', 'required');
                 // Only show activation code field if it wasn't initially hidden due to a URL param
+                // Only show activation code field if it wasn't initially hidden due to a URL param
                 if (!isActivationCodeInitiallyHidden) {
                     activationCodeField.classList.remove('hidden');
+                    activationCodeInput.setAttribute('required', 'required');
+                } else {
+                    activationCodeInput.removeAttribute('required');
                 }
-                activationCodeInput.setAttribute('required', 'required');
                 forgotPasswordLink.classList.add('hidden');
             }
         });
