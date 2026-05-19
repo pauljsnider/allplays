@@ -182,7 +182,8 @@ export async function generateDescriptionsForDrafts({ drafts = [], team = {}, sh
             const player = {
                 id: draft.playerId,
                 name: draft.recipientName,
-                number: draft.playerNumber
+                number: draft.playerNumber,
+                customDescriptionHint: draft.customDescriptionHint
             };
             const stats = totalsByPlayer[draft.playerId] || {};
             const hasStats = Object.keys(stats).some((key) => Number(stats[key] || 0) !== 0);
