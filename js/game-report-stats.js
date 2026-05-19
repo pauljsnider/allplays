@@ -42,7 +42,6 @@ export function resolveReportStatColumns({ statsMap = {}, resolvedConfig = null 
 
   if (statKeys.length === 0) {
     // If no explicit columns are configured, always start with a base set of common defaults
-    const defaultBaseKeys = new Set(['pts', 'rebs', 'ast', 'fouls']);
     let discoveredKeys = new Set();
     const metadataKeys = new Set(['name', 'number', 'notes', 'photoUrl', '_playerId']); // Re-introduce metadataKeys here
 
@@ -54,8 +53,13 @@ export function resolveReportStatColumns({ statsMap = {}, resolvedConfig = null 
       });
     });
 
-    // Merge default base keys with any discovered keys
-    statKeys = Array.from(new Set([...defaultBaseKeys, ...discoveredKeys])).sort();
+    if (discoveredKeys.size > 0) {
+      statKeys = Array.from(discoveredKeys).sort();
+    } else {
+      // If no explicit columns are configured AND no stats are discovered, use a base set of common defaults
+      const defaultBaseKeys = new Set(['pts', 'rebs', 'ast', 'fouls']);
+      statKeys = Array.from(defaultBaseKeys).sort();
+    }
     
     statKeys.forEach((key) => {
       statLabels[key] = key.toUpperCase();
