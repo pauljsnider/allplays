@@ -57,7 +57,7 @@ export function computeEffectiveRsvpSummary({
     if (!Array.isArray(rsvps) || !(activeRosterIds instanceof Set) || activeRosterIds.size === 0) {
         summary.total = activeRosterIds instanceof Set ? activeRosterIds.size : 0;
         summary.notResponded = summary.total;
-        summary.notRespondedPlayerIds = Array.from(activeRosterIds);
+        summary.notRespondedPlayerIds = activeRosterIds instanceof Set ? Array.from(activeRosterIds) : [];
         return summary;
     }
 
@@ -76,7 +76,12 @@ export function computeEffectiveRsvpSummary({
     });
 
     summary.total = activeRosterIds.size;
-    const respondedPlayerIds = new Set(latestByPlayer.keys());
+    const respondedPlayerIds = new Set();
+    latestByPlayer.forEach((entry) => {
+        if (entry.responseKey !== 'not_responded') {
+            respondedPlayerIds.add(entry.playerId);
+        }
+    });
     summary.notRespondedPlayerIds = Array.from(activeRosterIds).filter(
         (playerId) => !respondedPlayerIds.has(playerId)
     );
