@@ -84,11 +84,20 @@ describe('track live state helpers', () => {
     expect(payload.opponentTeamId).toBe('');
     expect(payload.opponentTeamName).toBe('');
     expect(payload.opponentTeamPhoto).toBe('');
-    expect(payload.liveResetAt).toEqual(expect.any(Number));
+    expect(payload.liveResetAt?._methodName).toBe('serverTimestamp');
     expect(payload.liveLineup).toEqual({ onCourt: ['p1'], bench: ['p2'] });
 
     input.onCourt.push('p3');
     expect(payload.liveLineup.onCourt).toEqual(['p1']);
+  });
+
+  it('preserves an explicit reset boundary when provided', () => {
+    const payload = buildTrackLiveResetUpdate({
+      currentGame: {},
+      liveResetAt: 1700000000000
+    });
+
+    expect(payload.liveResetAt).toBe(1700000000000);
   });
 
   it('includes default football game state for football resets only', () => {

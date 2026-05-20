@@ -3,7 +3,7 @@ import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collect
 import { db } from './firebase.js?v=13';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
 import { checkAuth } from './auth.js?v=15';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './firebase.js?v=13';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=13';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
@@ -2939,7 +2939,7 @@ async function init() {
             opponentStats: {},
             liveStatus: 'scheduled',
             liveHasData: false,
-            liveResetAt: resetAt,
+            liveResetAt: serverTimestamp(),
             liveClockMs: 0,
             liveClockRunning: false,
             liveClockPeriod: 'Q1',
