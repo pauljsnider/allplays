@@ -12,7 +12,7 @@ function hasRulesCompatibleConfigWriteAccess(user, team) {
     );
 }
 
-export function getEditConfigAccessDecision(user, team, teamId) {
+export function getEditConfigAccessDecision(user, team, teamId, configType = 'stat_settings') {
     if (!team) {
         return {
             allowed: false,
@@ -27,8 +27,26 @@ export function getEditConfigAccessDecision(user, team, teamId) {
     };
     const accessInfo = getTeamAccessInfo(user, normalizedTeam);
 
+    let allowed = false;
+
+    if (accessInfo.accessLevel === 'full') {
+        // Full access users can edit any config type, subject to rules-compatible write access
+        allowed = hasRulesCompatibleConfigWriteAccess(user, normalizedTeam);
+    } else if (configType === 'stream_settings' && accessInfo.accessLevel === 'stream') {
+        // Stream users can edit stream settings (no additional write access rules needed)
+        allowed = true;
+    } else if (configType === 'child_profile' && accessInfo.accessLevel === 'parent') {
+        // Parent users can edit child profiles (no additional write access rules needed)
+        allowed = true;
+    } else {
+        // For 'stat_settings' (or any other configType not explicitly handled),
+        // only full access is allowed, subject to rules-compatible write access.
+        // This covers the default 'stat_settings' if no specific rules apply earlier.
+        allowed = accessInfo.accessLevel === 'full' && hasRulesCompatibleConfigWriteAccess(user, normalizedTeam);
+    }
+
     return {
-        allowed: accessInfo.accessLevel === 'full' && hasRulesCompatibleConfigWriteAccess(user, normalizedTeam),
+        allowed: allowed,
         exitUrl: accessInfo.exitUrl,
         team: normalizedTeam
     };

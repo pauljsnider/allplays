@@ -252,7 +252,11 @@
                         <div id="draft-generator-errors" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"></div>
                         <div id="draft-review-summary" class="hidden rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700"></div>
                         <div id="draft-slot-list" class="space-y-2"></div>
-                        <div class="flex justify-end border-t border-gray-100 pt-4">
+                        <div class="flex justify-end border-t border-gray-100 pt-4 gap-3">
+                            <button id="publish-draft-schedule-btn" type="button" disabled
+                                class="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-300">
+                                Publish to Team Schedule
+                            </button>
                             <button id="save-draft-slots-btn" type="button" disabled class="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-gray-300">Save Draft</button>
                         </div>
                     </div>
@@ -321,6 +325,7 @@
         import { checkAuth } from './js/auth.js?v=15';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { addDoc, collection, db, deleteDoc, doc, getDocs, Timestamp, updateDoc } from './js/firebase.js?v=13';
+        import { functions, httpsCallable } from './js/firebase.js?v=13';
         import {
             ORGANIZATION_SCHEDULE_WEEKDAYS,
             buildBlackoutDatePayload,
@@ -836,6 +841,7 @@
             });
 
             saveDraftButton.disabled = draftSlots.length === 0;
+            publishDraftScheduleBtn.disabled = draftSlots.length === 0; // Enable/disable publish button
         }
 
         function setAlert(message, variant = 'error') {
@@ -1279,6 +1285,42 @@
         });
 
         setOrganizationVenueManagementEnabled(false);
+
+        const publishDraftScheduleBtn = document.getElementById('publish-draft-schedule-btn');
+
+        async function onPublishDraftSchedule() {
+            setAlert('');
+            successAlert.className = 'hidden rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+            successAlert.textContent = '';
+
+            if (!anchorTeam?.id) {
+                setAlert('Organization context missing. Cannot publish schedule.');
+                return;
+            }
+
+            try {
+                setButtonBusy(publishDraftScheduleBtn, 'Publishing…', true);
+
+                const publishCallable = httpsCallable(functions, 'publishOrganizationScheduleDraft');
+                const result = await publishCallable({
+                    organizationId: anchorTeam.id,
+                    scheduleId: anchorTeam.id // Placeholder for now, can be refined later
+                });
+
+                console.log('Publish function result:', result.data);
+
+                successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
+                successAlert.textContent = `Organization schedule draft publishing request logged successfully. Message: ${result.data.message}`;
+
+            } catch (error) {
+                console.error('Error publishing organization schedule draft:', error);
+                setAlert(`Error publishing schedule: ${error.message}`);
+            } finally {
+                setButtonBusy(publishDraftScheduleBtn, 'Publishing…', false);
+            }
+        }
+
+        publishDraftScheduleBtn.addEventListener('click', onPublishDraftSchedule);
 
         checkAuth((user) => {
             if (!user) {

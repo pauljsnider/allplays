@@ -110,7 +110,7 @@
             normalizeRegistrationForm,
             requiresRegistrationOption,
             validateRegistrationSubmission
-        } from './js/registration-flow.js?v=3';
+        } from './js/registration-flow.js?v=4';
 
         renderHeader(document.getElementById('header-container'), null);
         renderFooter(document.getElementById('footer-container'));
@@ -125,12 +125,20 @@
         const confirmationMessage = document.getElementById('confirmation-message');
         const formElement = document.getElementById('registration-form');
         const submitButton = document.getElementById('submit-registration');
+        const spinner = document.createElement('span');
+                spinner.className = 'inline-block h-4 w-4 mr-2 animate-spin rounded-full border-2 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite] hidden';
+        spinner.setAttribute('role', 'status');
+        spinner.setAttribute('aria-hidden', 'true');
+        submitButton.prepend(spinner); // Add spinner to the button
 
         function showError(message) {
             loadingState.classList.add('hidden');
             formElement.classList.add('hidden');
             errorMessage.textContent = message;
             errorMessage.classList.remove('hidden');
+            submitButton.disabled = false; // Re-enable button on error
+            spinner.classList.add('hidden'); // Hide spinner on error
+            submitButton.classList.remove('opacity-60', 'cursor-not-allowed'); // Remove disabled styling
         }
 
         function renderField(container, field, groupName) {
@@ -211,7 +219,7 @@
         function renderRegistrationOptions(form) {
             const section = document.getElementById('registration-options-section');
             const container = document.getElementById('registration-options');
-            const options = getActiveRegistrationOptions(form);
+            const options = getActiveRegistrationOptions(form, form.registrationOptionCounts || {});
             container.innerHTML = '';
 
             if (options.length === 0) {
@@ -219,16 +227,48 @@
                 return;
             }
 
-            options.forEach((option, index) => {
+            // Determine initial checked option, prioritizing one with capacity
+            let initialCheckedOptionId = '';
+            for (const option of options) {
+                const placement = decideRegistrationPlacement({
+                    form: form,
+                    selectedOptionId: option.id,
+                    counts: form.registrationOptionCounts || {}
+                });
+                if (placement.status === 'pending') {
+                    initialCheckedOptionId = option.id;
+                    break;
+                }
+            }
+            if (!initialCheckedOptionId && options.length > 0) {
+                initialCheckedOptionId = options[0].id; // Fallback to first option if none have capacity
+            }
+
+            options.forEach((option) => {
+                const optionCounts = (form.registrationOptionCounts || {})[option.countKey] || (form.registrationOptionCounts || {})[option.id] || {};
+                const enrolledCount = Number(optionCounts.enrolled || 0);
+                const hasCapacity = !option.capacityLimit || enrolledCount < option.capacityLimit;
+                const isFullAndNoWaitlist = !hasCapacity && !option.waitlistEnabled;
+
+                if (isFullAndNoWaitlist) return; // Should already be filtered, but double-check
+
                 const label = document.createElement('label');
-                label.className = 'flex gap-3 rounded border border-gray-200 p-3 text-sm text-gray-700 hover:border-indigo-300';
+                // Dynamically adjust classes based on option status
+                label.className = `flex gap-3 rounded border p-3 text-sm ${hasCapacity ? 'border-gray-200 text-gray-700 hover:border-indigo-300' : 'border-orange-200 bg-orange-50 text-orange-800'}`;
+
                 const input = document.createElement('input');
                 input.type = 'radio';
                 input.name = 'registrationOptionId';
                 input.value = option.id;
                 input.required = true;
-                input.className = 'mt-1 h-4 w-4 border-gray-300 text-indigo-600 focus:ring-indigo-500';
-                if (index === 0) input.checked = true;
+                // Disable if full and waitlist not enabled (should be filtered out, but defensive)
+                input.disabled = isFullAndNoWaitlist;
+                input.className = `mt-1 h-4 w-4 ${hasCapacity ? 'border-gray-300 text-indigo-600 focus:ring-indigo-500' : 'border-orange-300'}`;
+
+                // Set checked state based on initialCheckedOptionId
+                if (option.id === initialCheckedOptionId) {
+                    input.checked = true;
+                }
 
                 const copy = document.createElement('span');
                 const title = document.createElement('span');
@@ -241,6 +281,20 @@
                     description.className = 'mt-1 block text-gray-600';
                     description.textContent = option.description;
                     copy.appendChild(description);
+                }
+
+                // Add status indicator
+                if (!hasCapacity && option.waitlistEnabled) {
+                    const statusIndicator = document.createElement('span');
+                    statusIndicator.className = 'mt-1 block text-xs font-medium text-orange-600';
+                    statusIndicator.textContent = '(Full - Waitlist Available)';
+                    copy.appendChild(statusIndicator);
+                } else if (!hasCapacity && !option.waitlistEnabled) {
+                    // This case should ideally not be reached due to getActiveRegistrationOptions filtering
+                    const statusIndicator = document.createElement('span');
+                    statusIndicator.className = 'mt-1 block text-xs font-medium text-red-600';
+                    statusIndicator.textContent = '(Full)';
+                    copy.appendChild(statusIndicator);
                 }
 
                 label.append(input, copy);
@@ -352,6 +406,8 @@
 
             errorMessage.classList.add('hidden');
             submitButton.disabled = true;
+            spinner.classList.remove('hidden'); // Show spinner
+            submitButton.classList.add('opacity-60', 'cursor-not-allowed'); // Apply disabled styling
 
             const submission = {
                 participant: readGroupValues('participant', activeForm.participantFields),
@@ -367,6 +423,8 @@
                 errorMessage.textContent = validationErrors.join(' ');
                 errorMessage.classList.remove('hidden');
                 submitButton.disabled = false;
+                spinner.classList.add('hidden');
+                submitButton.classList.remove('opacity-60', 'cursor-not-allowed');
                 return;
             }
 
@@ -390,6 +448,8 @@
                     : 'Registration could not be submitted. Please try again.';
                 errorMessage.classList.remove('hidden');
                 submitButton.disabled = false;
+                spinner.classList.add('hidden');
+                submitButton.classList.remove('opacity-60', 'cursor-not-allowed');
             }
         });
 

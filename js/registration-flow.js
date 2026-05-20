@@ -1,4 +1,5 @@
 export function normalizeRegistrationForm(form = {}, context = {}) {
+    const registrationOptionCounts = form.registrationOptionCounts || {};
     const programName = String(form.programName || form.title || form.name || '').trim();
     const feeAmountCents = Number.isFinite(Number(form.feeAmountCents)) ? Number(form.feeAmountCents) : 0;
 
@@ -18,7 +19,8 @@ export function normalizeRegistrationForm(form = {}, context = {}) {
         published: form.published === true || form.status === 'published',
         paymentSettings: normalizePaymentSettings(form.paymentSettings),
         discountRules: normalizeRegistrationDiscountRules(form.discountRules || []),
-        registrationOptions: normalizeRegistrationOptions(form.registrationOptions || form.options || [])
+        registrationOptions: normalizeRegistrationOptions(form.registrationOptions || form.options || [], registrationOptionCounts),
+        registrationOptionCounts
     };
 }
 
@@ -122,7 +124,7 @@ export function normalizeFields(fields = []) {
         .filter(field => field.id && field.label);
 }
 
-export function normalizeRegistrationOptions(options = []) {
+export function normalizeRegistrationOptions(options = [], registrationOptionCounts = {}) {
     if (!Array.isArray(options)) return [];
 
     return options
@@ -150,16 +152,34 @@ export function buildRegistrationOptionCountKey(optionId = '') {
     return key || 'option';
 }
 
-export function getActiveRegistrationOptions(form = {}) {
-    return (form.registrationOptions || []).filter(option => option.active !== false);
+export function getActiveRegistrationOptions(form = {}, registrationOptionCounts = {}) {
+    return (form.registrationOptions || []).filter(option => {
+        if (!option.active) return false; // Must be active
+
+        const counts = registrationOptionCounts[option.countKey] || registrationOptionCounts[option.id] || {};
+        const enrolledCount = Number(counts.enrolled || 0);
+
+        // If no capacity limit, or if capacity limit not reached, option is available
+        if (!option.capacityLimit || enrolledCount < option.capacityLimit) {
+            return true;
+        }
+
+        // If capacity limit reached, but waitlist is enabled, option is available (for waitlist)
+        if (option.waitlistEnabled) {
+            return true;
+        }
+
+        // Otherwise, option is full and not waitlisted, so it's not active for new registrations
+        return false;
+    });
 }
 
 export function requiresRegistrationOption(form = {}) {
-    return getActiveRegistrationOptions(form).length > 0;
+    return getActiveRegistrationOptions(form, form.registrationOptionCounts || {}).length > 0;
 }
 
 export function getRegistrationOptionById(form = {}, optionId = '') {
-    return getActiveRegistrationOptions(form).find(option => option.id === optionId) || null;
+    return getActiveRegistrationOptions(form, form.registrationOptionCounts || {}).find(option => option.id === optionId) || null;
 }
 
 export function normalizeFieldType(type) {

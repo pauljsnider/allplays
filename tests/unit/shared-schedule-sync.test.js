@@ -93,6 +93,39 @@ describe('shared schedule sync helpers', () => {
     expect(payload.tournament).not.toBe(tournament);
     expect(payload.tournament.slotAssignments).not.toBe(tournament.slotAssignments);
     expect(payload.tournament.resolved).not.toBe(tournament.resolved);
+    expect(payload.notes).toBe('[SHARED SOURCE NOTES] Championship');
+  });
+
+  it('builds a mirrored opponent-team fixture with no notes if sourceGame.notes is null', () => {
+    const payload = buildMirroredGamePayload({
+      sourceTeamId: 'team-alpha',
+      sourceTeam: { name: 'Alpha FC' },
+      sourceGameId: 'game-123',
+      sourceGame: {
+        type: 'game',
+        date: '2026-03-12T18:00:00Z',
+        opponentTeamId: 'team-bravo',
+        notes: null
+      },
+      sharedScheduleId: 'shared_team-alpha_game-123'
+    });
+    expect(payload.notes).toBeNull();
+  });
+
+  it('builds a mirrored opponent-team fixture with no notes if sourceGame.notes is an empty string', () => {
+    const payload = buildMirroredGamePayload({
+      sourceTeamId: 'team-alpha',
+      sourceTeam: { name: 'Alpha FC' },
+      sourceGameId: 'game-123',
+      sourceGame: {
+        type: 'game',
+        date: '2026-03-12T18:00:00Z',
+        opponentTeamId: 'team-bravo',
+        notes: ''
+      },
+      sharedScheduleId: 'shared_team-alpha_game-123'
+    });
+    expect(payload.notes).toBeNull();
   });
 
 

@@ -106,6 +106,27 @@ function getEventDescription(event) {
   const formattedArrival = formatIcsDate(arrival);
   if (formattedArrival) parts.push(`Arrival: ${formattedArrival}`);
   if (event.notes) parts.push(String(event.notes));
+
+  if (Array.isArray(event.rsvps) && event.rsvps.length > 0) {
+    parts.push(''); // Add a blank line for separation
+    parts.push('RSVPs:');
+    event.rsvps.forEach(rsvp => {
+      const displayName = rsvp.displayName || 'Unknown';
+      const response = rsvp.response || 'No Response';
+      parts.push(`  - ${displayName}: ${response}`);
+    });
+  }
+
+  if (Array.isArray(event.officiating) && event.officiating.length > 0) {
+    parts.push(''); // Add a blank line for separation
+    parts.push('Officiating:');
+    event.officiating.forEach(official => {
+      const name = official.name || 'Unknown';
+      const role = official.role || 'Official';
+      parts.push(`  - ${name}: ${role}`);
+    });
+  }
+
   return parts.join('\n');
 }
 
