@@ -1,3 +1,4 @@
+import { serverTimestamp } from './vendor/firebase-firestore.js';
 import { getDefaultLivePeriod, isFootballSport } from './live-sport-config.js';
 
 export function summarizePersistedTrackingState({
@@ -29,7 +30,7 @@ export function buildTrackLiveResetUpdate({
   currentConfig = null,
   period,
   liveLineup = { onCourt: [], bench: [] },
-  liveResetAt = Date.now()
+  liveResetAt = serverTimestamp()
 } = {}) {
   const onCourt = Array.isArray(liveLineup?.onCourt) ? [...liveLineup.onCourt] : [];
   const bench = Array.isArray(liveLineup?.bench) ? [...liveLineup.bench] : [];
