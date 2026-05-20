@@ -1,10 +1,8 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
-const dns = require('node:dns').promises;
-const net = require('node:net');
 const crypto = require('node:crypto');
-const { isPrivateIpAddress } = require('./utils/ip-address-validation');
+const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -538,92 +536,6 @@ function normalizeIcsText(text) {
 }
 
 
-function isBlockedHostname(host) {
-  const blockedHosts = new Set([
-    'localhost',
-    '127.0.0.1',
-    '0.0.0.0',
-    '::1',
-    'metadata',
-    'metadata.google.internal',
-    '169.254.169.254'
-  ]);
-  return blockedHosts.has(host) || host.endsWith('.local');
-}
-
-async function assertPublicHost(host) {
-  if (isBlockedHostname(host)) {
-    throw new Error('Blocked host');
-  }
-
-  if (net.isIP(host) && isPrivateIpAddress(host)) {
-    throw new Error('Blocked host address');
-  }
-
-  let resolved;
-  try {
-    resolved = await dns.lookup(host, { all: true, verbatim: true });
-  } catch (error) {
-    throw new Error('Could not resolve host');
-  }
-
-  if (!resolved.length) {
-    throw new Error('Could not resolve host');
-  }
-
-  for (const entry of resolved) {
-    if (isPrivateIpAddress(entry.address)) {
-      throw new Error('Blocked host address');
-    }
-  }
-}
-
-async function normalizeTargetUrl(rawUrl) {
-  if (!rawUrl || typeof rawUrl !== 'string') {
-    throw new Error('Missing url');
-  }
-
-  let cleaned = rawUrl.trim();
-  if (cleaned.startsWith('webcal://')) {
-    cleaned = cleaned.replace(/^webcal:\/\//i, 'https://');
-  } else if (cleaned.startsWith('http://')) {
-    cleaned = cleaned.replace(/^http:\/\//i, 'https://');
-  }
-
-  const parsed = new URL(cleaned);
-  if (parsed.protocol !== 'https:') {
-    throw new Error('Only https calendar URLs are allowed');
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  await assertPublicHost(host);
-
-  return parsed.toString();
-}
-
-async function fetchWithTimeout(url, timeoutMs = 12000) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'allplays-calendar-fetch/1.0',
-        'Accept': 'text/calendar,text/plain,*/*'
-      }
-    });
-    return response;
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw new Error('Calendar request timed out');
-    }
-    throw new Error(`Calendar fetch failed: ${error?.message || 'Unknown network error'}`);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
 
 function getAllowedOrigins() {
   const configuredOrigins = functions.config()?.calendar?.allowed_origins;
@@ -1094,7 +1006,7 @@ exports.fetchCalendarIcs = functions
       const rawUrl = req.query.url;
       const normalizedUrl = await normalizeTargetUrl(rawUrl);
 
-      const response = await fetchWithTimeout(normalizedUrl);
+      const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
       if (!response.ok) {
         res.status(502).json({
           ok: false,
@@ -1417,8 +1329,67 @@ function buildPreEventReminderPayload({ teamId, gameId, event }) {
   return {
     title: 'Upcoming team event',
     body: bodyParts.join(' '),
-    link
+    link,
+    chatText: [
+      'Schedule reminder: Upcoming team event',
+      ...bodyParts
+    ].join('\n')
   };
+}
+
+function getPreEventReminderChatMessageId(gameId, event) {
+  const dueAt = getReminderDueAt(event);
+  const rawId = [
+    String(gameId || 'event'),
+    dueAt ? dueAt.toISOString() : 'due'
+  ].join('-');
+  const normalizedId = rawId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+  return `pre-event-reminder-${normalizedId}`;
+}
+
+async function postPreEventReminderChatMessage({ teamId, gameId, event, payload }) {
+  const messageId = getPreEventReminderChatMessageId(gameId, event);
+  const messageRef = firestore.doc(`teams/${teamId}/chatMessages/${messageId}`);
+  const existing = await messageRef.get();
+  if (existing.exists) {
+    return { messageId, created: false };
+  }
+
+  await messageRef.set({
+    text: payload.chatText || payload.body,
+    senderId: 'scheduled-reminder',
+    senderName: 'ALL PLAYS',
+    senderEmail: null,
+    senderPhotoUrl: null,
+    attachments: [],
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    editedAt: null,
+    deleted: false,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: {
+      type: 'pre-event-reminder',
+      teamId,
+      gameId,
+      link: payload.link
+    },
+    targetType: 'full_team',
+    recipientIds: [],
+    targetRole: null,
+    conversationId: null
+  });
+
+  return { messageId, created: true };
+}
+
+function isPreEventReminderChatMessage(data) {
+  return data?.aiMeta?.type === 'pre-event-reminder' || data?.senderId === 'scheduled-reminder';
 }
 
 async function markReminderSending(eventRef, claimId, now) {
@@ -1448,6 +1419,11 @@ async function markReminderSent(eventRef, claimId, sendResult) {
     'scheduleNotifications.claimId': claimId,
     'scheduleNotifications.pushSuccessCount': Number(sendResult?.successCount || 0),
     'scheduleNotifications.pushFailureCount': Number(sendResult?.failureCount || 0),
+    'scheduleNotifications.chatMessageId': sendResult?.chatMessageId || null,
+    'scheduleNotifications.chatMessageCreated': sendResult?.chatMessageCreated === true,
+    'scheduleNotifications.chatMessageError': sendResult?.chatMessageError
+      ? sendResult.chatMessageError
+      : admin.firestore.FieldValue.delete(),
     'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0)
   });
 }
@@ -1483,6 +1459,15 @@ async function dispatchDuePreEventReminders(now = new Date()) {
 
     try {
       const payload = buildPreEventReminderPayload({ teamId, gameId, event: claimedEvent });
+      let chatResult = { messageId: null, created: false };
+      let chatMessageError = null;
+      try {
+        chatResult = await postPreEventReminderChatMessage({ teamId, gameId, event: claimedEvent, payload });
+      } catch (chatError) {
+        chatMessageError = chatError;
+        console.error('Failed to write pre-event reminder chat fallback', { teamId, gameId, error: chatError });
+      }
+
       const sendResult = await sendCategoryNotification({
         teamId,
         gameId,
@@ -1498,9 +1483,19 @@ async function dispatchDuePreEventReminders(now = new Date()) {
       });
       await markReminderSent(eventRef, claimId, {
         ...sendResult,
+        chatMessageId: chatResult.messageId,
+        chatMessageCreated: chatResult.created,
+        chatMessageError: chatMessageError?.message || null,
         rsvpEmailCount: emailResult.sentCount
       });
-      results.push({ teamId, gameId, sent: Number(sendResult?.successCount || 0), rsvpEmailCount: emailResult.sentCount });
+      results.push({
+        teamId,
+        gameId,
+        sent: Number(sendResult?.successCount || 0),
+        chatMessageId: chatResult.messageId,
+        chatMessageCreated: chatResult.created,
+        rsvpEmailCount: emailResult.sentCount
+      });
     } catch (error) {
       await markReminderPendingAfterFailure(eventRef, claimId, error);
       console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
@@ -1520,6 +1515,7 @@ exports.notifyTeamChatMessageCreated = functions.firestore
     const text = String(data.text || '').trim();
     const imageUrl = String(data.imageUrl || '').trim();
     if (!text && !imageUrl) return null;
+    if (isPreEventReminderChatMessage(data)) return null;
 
     const teamId = context.params.teamId;
     const actorUid = data.senderId || null;

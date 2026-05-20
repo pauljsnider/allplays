@@ -21,6 +21,35 @@ describe('pre-event reminder dispatcher function', () => {
         expect(functionsSource).toContain("'scheduleNotifications.pushSuccessCount'");
     });
 
+    it('posts due pre-event reminders into team chat as an in-app fallback', () => {
+        expect(functionsSource).toContain('async function postPreEventReminderChatMessage');
+        expect(functionsSource).toContain('teams/${teamId}/chatMessages/${messageId}');
+        expect(functionsSource).toContain('Schedule reminder: Upcoming team event');
+        expect(functionsSource).toContain("type: 'pre-event-reminder'");
+        expect(functionsSource).toContain("'scheduleNotifications.chatMessageId'");
+        expect(functionsSource).toContain('chatMessageCreated');
+    });
+
+    it('keeps reminder delivery independent from chat fallback write failures', () => {
+        const dispatchBody = functionsSource.slice(functionsSource.indexOf('async function dispatchDuePreEventReminders'));
+        const chatWriteIndex = dispatchBody.indexOf('postPreEventReminderChatMessage');
+        const chatErrorIndex = dispatchBody.indexOf("console.error('Failed to write pre-event reminder chat fallback'");
+        const pushSendIndex = dispatchBody.indexOf('sendCategoryNotification({');
+        const emailSendIndex = dispatchBody.indexOf('createPublicRsvpEmailDeliveries({');
+
+        expect(chatWriteIndex).toBeGreaterThan(-1);
+        expect(chatErrorIndex).toBeGreaterThan(chatWriteIndex);
+        expect(pushSendIndex).toBeGreaterThan(chatErrorIndex);
+        expect(emailSendIndex).toBeGreaterThan(pushSendIndex);
+        expect(functionsSource).toContain("'scheduleNotifications.chatMessageError'");
+    });
+
+    it('does not route reminder fallback chat docs through live-chat push preferences', () => {
+        expect(functionsSource).toContain('function isPreEventReminderChatMessage');
+        expect(functionsSource).toContain("data?.aiMeta?.type === 'pre-event-reminder'");
+        expect(functionsSource).toContain('if (isPreEventReminderChatMessage(data)) return null;');
+    });
+
     it('skips cancelled, deleted, disabled, sent, sending, and past events', () => {
         expect(functionsSource).toContain('notifications.enabled === false');
         expect(functionsSource).toContain('notifications.reminderSent === true');

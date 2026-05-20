@@ -3148,17 +3148,45 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
         throw new Error('You must be signed in as the primary parent to invite a co-parent');
     }
 
+    const normalizedEmail = String(coParentEmail || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        throw new Error('Please enter a valid email address.');
+    }
+
     // Get team and player info for the invite
-    const [team, player] = await Promise.all([
-        getTeam(teamId),
-        getPlayers(teamId).then(ps => ps.find(p => p.id === playerId))
-    ]);
+    let team;
+    let player;
+    try {
+        [team, player] = await Promise.all([
+            getTeam(teamId),
+            getPlayers(teamId).then(ps => ps.find(p => p.id === playerId))
+        ]);
+    } catch (error) {
+        throw new Error(`Failed to fetch team or player data: ${error?.message || 'Unknown error'}`);
+    }
 
     if (!team || !player) {
         throw new Error('Team or player not found');
     }
 
-    const code = generateAccessCode();
+    let code = '';
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const candidateCode = generateAccessCode();
+        const existingCodeQuery = query(
+            collection(db, "accessCodes"),
+            where("code", "==", candidateCode),
+            limit(1)
+        );
+        const existingCodes = await getDocs(existingCodeQuery);
+        if (existingCodes.empty) {
+            code = candidateCode;
+            break;
+        }
+    }
+    if (!code) {
+        throw new Error('Could not generate a unique invite code. Please try again.');
+    }
+
     const accessCodeData = {
         code,
         type: 'coparent_invite', // New type for co-parent invites
@@ -3166,7 +3194,7 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
         playerId,
         playerName: player?.name || playerName || null,
         teamName: team?.name || null,
-        email: coParentEmail || null,
+        email: normalizedEmail,
         generatedBy: primaryParentUid,
         createdAt: Timestamp.now(),
         // 7 days from now
@@ -3179,10 +3207,20 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
 
     // Check if user with this email already exists
     let existingUser = null;
-    if (coParentEmail) {
-        existingUser = await getUserByEmail(coParentEmail);
+    try {
+        existingUser = await getUserByEmail(normalizedEmail);
+    } catch (error) {
+        console.warn(`Could not check for existing co-parent user: ${error?.message || 'Unknown error'}`);
     }
 
+    return {
+        id: docRef.id,
+        code,
+        teamName: team?.name || null,
+        playerName: player?.name || playerName || null,
+        existingUser: !!existingUser
+    };
+}
 
 
 export async function redeemParentInvite(userId, code) {
@@ -6513,4 +6551,61 @@ export async function getPlayerTrackingStatuses(teamId, playerIds = []) {
         });
     });
     return Array.from(statusesById.values());
+}
+
+// ===== ASSIGNMENT CLAIMS (snack sign-up) =====
+
+/**
+ * Claim an open assignment slot on behalf of the signed-in parent.
+ * Fails if the slot is already claimed by someone else.
+ */
+export async function claimAssignmentSlot(teamId, gameId, role, { name } = {}) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to claim a slot.');
+    const trimmedRole = (role || '').toString().trim();
+    if (!trimmedRole) throw new Error('Role is required.');
+    const trimmedName = (name || '').toString().trim();
+    if (!trimmedName) throw new Error('Name is required.');
+
+    const claimRef = doc(db, `teams/${teamId}/games/${gameId}/assignmentClaims`, trimmedRole);
+
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(claimRef);
+        if (snap.exists()) throw new Error('This slot has already been claimed.');
+        tx.set(claimRef, {
+            claimedByUserId: user.uid,
+            claimedByName: trimmedName.slice(0, 100),
+            claimedAt: Timestamp.now()
+        });
+    });
+}
+
+/**
+ * Release a claim on an assignment slot.
+ * Parents may only release their own claim; admins may release any claim
+ * (enforced by Firestore rules).
+ */
+export async function releaseAssignmentClaim(teamId, gameId, role) {
+    const user = auth.currentUser;
+    if (!user?.uid) throw new Error('You must be signed in to release a claim.');
+    const trimmedRole = (role || '').toString().trim();
+    if (!trimmedRole) throw new Error('Role is required.');
+
+    const claimRef = doc(db, `teams/${teamId}/games/${gameId}/assignmentClaims`, trimmedRole);
+    const snap = await getDoc(claimRef);
+    if (!snap.exists()) return;
+    await deleteDoc(claimRef);
+}
+
+/**
+ * Load all assignment claims for a game/event.
+ * Returns a plain object keyed by role name.
+ */
+export async function getAssignmentClaims(teamId, gameId) {
+    const snap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/assignmentClaims`));
+    const claims = {};
+    snap.forEach((docSnap) => {
+        claims[docSnap.id] = { id: docSnap.id, ...docSnap.data() };
+    });
+    return claims;
 }
