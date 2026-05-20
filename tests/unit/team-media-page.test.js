@@ -31,7 +31,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('Upload files');
         expect(pageHtml).toContain('Save video link');
         expect(pageJs).toContain("import { checkAuth } from './auth.js?v=14';");
-        expect(pageJs).toContain("from './db.js?v=16'");
+        expect(pageJs).toMatch(/from '\.\/db\.js\?v=\d+';/);
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
         expect(pageJs).toContain('uploadTeamMediaPhoto');
@@ -49,6 +49,6 @@ describe('team media entry point', () => {
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
         expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
-        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId);');
+        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
     });
 });
