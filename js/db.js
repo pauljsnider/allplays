@@ -3151,6 +3151,98 @@ export async function inviteAdmin(teamId, adminEmail) {
     };
 }
 
+/**
+ * Invite a co-parent to a specific athlete.
+ * This generates a special invite code that links a new parent/guardian
+ * to an existing athlete profile.
+ * @param {string} primaryParentUid - The user ID of the primary parent sending the invite
+ * @param {string} teamId - The team ID of the athlete
+ * @param {string} playerId - The player ID of the athlete
+ * @param {string} coParentEmail - The email of the co-parent to invite
+ * @param {string} playerName - The name of the athlete (for context)
+ * @returns {Promise<{id: string, code: string, teamName: string, playerName: string, existingUser: boolean}>}
+ */
+export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId, coParentEmail, playerName) {
+    const currentUser = auth.currentUser;
+    if (!currentUser || currentUser.uid !== primaryParentUid) {
+        throw new Error('You must be signed in as the primary parent to invite a co-parent');
+    }
+
+    const normalizedEmail = String(coParentEmail || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+        throw new Error('Please enter a valid email address.');
+    }
+
+    // Get team and player info for the invite
+    let team;
+    let player;
+    try {
+        [team, player] = await Promise.all([
+            getTeam(teamId),
+            getPlayers(teamId).then(ps => ps.find(p => p.id === playerId))
+        ]);
+    } catch (error) {
+        throw new Error(`Failed to fetch team or player data: ${error?.message || 'Unknown error'}`);
+    }
+
+    if (!team || !player) {
+        throw new Error('Team or player not found');
+    }
+
+    let code = '';
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        const candidateCode = generateAccessCode();
+        const existingCodeQuery = query(
+            collection(db, "accessCodes"),
+            where("code", "==", candidateCode),
+            limit(1)
+        );
+        const existingCodes = await getDocs(existingCodeQuery);
+        if (existingCodes.empty) {
+            code = candidateCode;
+            break;
+        }
+    }
+    if (!code) {
+        throw new Error('Could not generate a unique invite code. Please try again.');
+    }
+
+    const accessCodeData = {
+        code,
+        type: 'coparent_invite', // New type for co-parent invites
+        teamId,
+        playerId,
+        playerName: player?.name || playerName || null,
+        teamName: team?.name || null,
+        email: normalizedEmail,
+        generatedBy: primaryParentUid,
+        createdAt: Timestamp.now(),
+        // 7 days from now
+        expiresAt: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        used: false,
+        usedBy: null,
+        usedAt: null
+    };
+    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
+
+    // Check if user with this email already exists
+    let existingUser = null;
+    try {
+        existingUser = await getUserByEmail(normalizedEmail);
+    } catch (error) {
+        console.warn(`Could not check for existing co-parent user: ${error?.message || 'Unknown error'}`);
+    }
+
+    return {
+        id: docRef.id,
+        code,
+        teamName: team?.name || null,
+        playerName: player?.name || playerName || null,
+        existingUser: !!existingUser
+    };
+}
+
+
 export async function redeemParentInvite(userId, code) {
     console.log('[redeemParentInvite] start', { userId, code });
 
@@ -3162,7 +3254,7 @@ export async function redeemParentInvite(userId, code) {
     const snapshot = await getDocs(q);
     if (snapshot.empty) throw new Error("Invalid or used code");
 
-    const parentInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'parent_invite');
+    const parentInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'parent_invite' || (d.data() || {}).type === 'coparent_invite');
     if (parentInviteDocs.length === 0) throw new Error("Invalid or used code");
 
     // Duplicates can exist; prefer a currently redeemable parent invite doc.

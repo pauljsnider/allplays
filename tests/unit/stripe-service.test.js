@@ -1,0 +1,55 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { initiateStripeCheckout } from '../../js/stripe-service.js';
+
+const mockInnerCallable = vi.fn();
+
+vi.mock('../../js/firebase.js', () => {
+    return {
+        getFunctions: vi.fn(() => ({})),
+        httpsCallable: vi.fn(() => mockInnerCallable)
+    };
+});
+
+describe('Stripe Service', () => {
+    let httpsCallable;
+
+    beforeEach(async () => {
+        const firebaseMocks = await import('../../js/firebase.js');
+        httpsCallable = firebaseMocks.httpsCallable;
+        httpsCallable.mockClear();
+        mockInnerCallable.mockReset();
+    });
+
+    it('initiates registration checkout and returns a URL', async () => {
+        mockInnerCallable.mockResolvedValueOnce({
+            data: { checkoutUrl: 'https://checkout.stripe.com/mock-session-123' }
+        });
+        const params = {
+            teamId: 'team-1',
+            formId: 'form-1',
+            registrationId: 'reg-123',
+            amount: 10000,
+            currency: 'usd'
+        };
+
+        const checkoutUrl = await initiateStripeCheckout(params);
+
+        expect(checkoutUrl).toBe('https://checkout.stripe.com/mock-session-123');
+        expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeRegistrationCheckout');
+        expect(mockInnerCallable).toHaveBeenCalledWith(params);
+    });
+
+    it('throws when the callable fails', async () => {
+        mockInnerCallable.mockRejectedValueOnce(new Error('Payment processing failed.'));
+
+        await expect(initiateStripeCheckout({ registrationId: 'reg-456' })).rejects.toThrow('Payment processing failed.');
+        expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeRegistrationCheckout');
+    });
+
+    it('throws when checkoutUrl is missing from the response', async () => {
+        mockInnerCallable.mockResolvedValueOnce({ data: {} });
+
+        await expect(initiateStripeCheckout({ registrationId: 'reg-789' })).rejects.toThrow('Failed to get Stripe checkout URL.');
+        expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeRegistrationCheckout');
+    });
+});

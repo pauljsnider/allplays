@@ -8,6 +8,7 @@ import {
     formatFeeAmount,
     getRegistrationPaymentNotice,
     hasRegistrationPaymentSettings,
+    hasOnlineRegistrationCheckout,
     getPaymentPlanChoices,
     formatFeeSnapshotLines,
     normalizeRegistrationForm,
@@ -42,7 +43,8 @@ describe('public registration flow', () => {
         expect(form.guardianFields[0]).toMatchObject({ id: 'email', type: 'email' });
         expect(form.paymentSettings).toEqual({ offlinePaymentEnabled: true, onlineCheckoutEnabled: true });
         expect(hasRegistrationPaymentSettings(form)).toBe(true);
-        expect(getRegistrationPaymentNotice(form)).toContain('Online checkout is planned');
+        expect(hasOnlineRegistrationCheckout(form)).toBe(true);
+        expect(getRegistrationPaymentNotice(form)).toContain('Online checkout is available');
         expect(formatFeeAmount(form.feeAmountCents, form.currency)).toBe('$125.00');
     });
 
@@ -297,10 +299,18 @@ describe('public registration flow', () => {
         expect(page).toContain('registration-options-section');
         expect(page).toContain('registration-payment-section');
         expect(page).toContain('getRegistrationPaymentNotice');
+        expect(page).toContain('hasOnlineRegistrationCheckout');
         expect(page).toContain('payment-plan-section');
         expect(page).toContain('getPaymentPlanChoices');
         expect(page).toContain('fee-summary-section');
         expect(page).toContain('calculateRegistrationFeeSnapshot');
+        expect(page).toContain('const amountCents = Math.max(0, Number(feeSnapshot?.finalAmountDueCents || 0));');
+        expect(page).toContain('? await submitRegistrationWithCapacity(submission)');
+        expect(page).toContain(': await submitRegistrationWithoutCapacity(submission);');
+        expect(page).toContain('registrationId: result.registrationId');
+        expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
+        expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
+        expect(page).toContain("paymentLoadingState.classList.add('hidden');");
         expect(page).toContain('runTransaction(db, async (transaction)');
         expect(page).toContain('decideRegistrationPlacement');
         expect(page).toContain('registrationCapacityUpdateId: registrationRef.id');
@@ -310,6 +320,7 @@ describe('public registration flow', () => {
         expect(page).toContain('confirmation-message');
         expect(page).toContain('labelText.textContent = field.label');
         expect(page).toContain("requiredMark.textContent = ' *'");
+        expect(page.indexOf("const errorMessage = document.getElementById('error-message');")).toBeLessThan(page.indexOf('// Handle return from Stripe checkout'));
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
@@ -334,5 +345,17 @@ describe('public registration flow', () => {
         expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
         expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');
         expect(rules).toContain('data.keys().size() <= 20');
+    });
+
+    it('wires registration Stripe checkout to deployed functions', () => {
+        const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
+
+        expect(functionsSource).toContain('exports.createStripeRegistrationCheckout');
+        expect(functionsSource).toContain("product: 'registration'");
+        expect(functionsSource).toContain('getRegistrationCheckoutAmountCents(registration)');
+        expect(functionsSource).toContain("form.paymentSettings?.onlineCheckoutEnabled !== true");
+        expect(functionsSource).toContain("checkoutStatus: 'open'");
+        expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
+        expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');
     });
 });

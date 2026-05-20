@@ -35,16 +35,17 @@ export function hasRegistrationPaymentSettings(form = {}) {
     return form.paymentSettings?.offlinePaymentEnabled === true || form.paymentSettings?.onlineCheckoutEnabled === true;
 }
 
+export function hasOnlineRegistrationCheckout(form = {}) {
+    return form.paymentSettings?.onlineCheckoutEnabled === true;
+}
+
 export function getRegistrationPaymentNotice(form = {}) {
     const settings = form.paymentSettings || {};
-    if (settings.offlinePaymentEnabled && settings.onlineCheckoutEnabled) {
-        return 'Offline payment is accepted for this registration. Online checkout is planned, but online payment processing is not available yet.';
+    if (settings.onlineCheckoutEnabled) {
+        return 'Online checkout is available for this registration. Payment is collected through Stripe before submission is complete.';
     }
     if (settings.offlinePaymentEnabled) {
         return 'Offline payment is accepted for this registration. The organizer will share payment instructions after review.';
-    }
-    if (settings.onlineCheckoutEnabled) {
-        return 'Online checkout is planned for this registration, but online payment processing is not available yet.';
     }
     return '';
 }
