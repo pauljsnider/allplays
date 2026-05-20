@@ -14,8 +14,9 @@ import {
     reorderTeamMediaItems,
     moveTeamMediaItems,
     bulkDeleteTeamMediaItems,
-    setTeamMediaAlbumCover
-} from './db.js?v=16';
+    setTeamMediaAlbumCover,
+    updateTeamMediaItem // Add this new import
+} from './db.js?v=17';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -215,6 +216,7 @@ function renderAlbumDetail() {
             const isPhoto = isSafeTeamMediaPhoto(item);
             const isFile = isTeamMediaDocument(item);
             const canDeleteItem = canDeleteTeamMediaItem(state.user, state.team, item);
+            const canRenameItem = state.canManage || (state.user && state.user.uid === item.uploadedBy);
             const title = item.title || item.fileName || (isPhoto ? 'Untitled photo' : isFile ? 'Untitled file' : 'Untitled video');
             const uploadedBy = getTeamMediaUploaderName(item);
             const uploadedAt = formatMediaDate(item.uploadedAt || item.createdAt);
@@ -227,7 +229,13 @@ function renderAlbumDetail() {
                     <div class="flex items-start gap-3">
                         ${state.canManage ? `<input type="checkbox" data-select-item="${escapeHtml(item.id)}" ${state.selectedIds.has(item.id) ? 'checked' : ''} class="mt-1 h-4 w-4 rounded border-gray-300">` : ''}
                         <div class="min-w-0 flex-1">
-                            <a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-indigo-700 hover:text-indigo-900">${escapeHtml(title)}</a>
+                            <div class="flex items-center gap-2">
+                                <a href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer" class="font-semibold text-indigo-700 hover:text-indigo-900 ${canRenameItem ? 'group-hover:hidden' : ''}" data-item-title-display="${escapeHtml(item.id)}">${escapeHtml(title)}</a>
+                                ${canRenameItem ? `<button type="button" data-item-rename="${escapeHtml(item.id)}" class="inline-flex items-center justify-center rounded-full text-gray-400 hover:text-indigo-700 p-1 -my-1 -mr-1"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg></button>` : ''}
+                            </div>
+                            <div class="hidden" data-item-title-edit="${escapeHtml(item.id)}">
+                                <input type="text" value="${escapeHtml(title)}" class="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 text-sm py-1 px-2" data-item-title-input="${escapeHtml(item.id)}">
+                            </div>
                             <div class="text-xs text-gray-500">${escapeHtml(metadata || 'Media item')}</div>
                             ${!isPhoto && !isFile ? `<div class="break-all text-xs text-gray-500">${escapeHtml(itemUrl)}</div>` : ''}
                         </div>
@@ -281,7 +289,7 @@ function getMediaPermissionMessage() {
     return 'Team media permissions are not enabled for this Firebase project yet. Deploy the latest Firestore rules before adding albums or media.';
 }
 
-async function loadLibrary() {
+export async function loadLibrary() {
     try {
         state.folders = await getTeamMediaFolders(state.teamId, { includePrivate: state.canManage });
         if (!state.canManage) {
@@ -321,9 +329,11 @@ async function persistAndReload(action, successMessage) {
         await action();
         await loadLibrary();
         showAlert(successMessage, 'success');
+        return true;
     } catch (error) {
         console.error('Team media action failed:', error);
         showAlert(isPermissionDenied(error) ? getMediaPermissionMessage() : (error.message || 'Unable to save media changes. Refresh and try again.'), 'error');
+        return false;
     } finally {
         state.actionInFlight = false;
     }
@@ -436,6 +446,72 @@ els.albumDetail.addEventListener('click', async (event) => {
         } finally {
             state.actionInFlight = false;
         }
+        return;
+    }
+
+    const renameButton = event.target.closest('[data-item-rename]');
+    if (renameButton) {
+        const itemId = renameButton.dataset.itemRename;
+        const item = state.items.find((candidate) => candidate.id === itemId);
+        if (!item) return;
+        const canRenameItem = state.canManage || (state.user && state.user.uid === item.uploadedBy);
+        if (!canRenameItem) return;
+
+        const displayEl = els.albumDetail.querySelector(`[data-item-title-display="${itemId}"]`);
+        const editContainerEl = els.albumDetail.querySelector(`[data-item-title-edit="${itemId}"]`);
+        const inputEl = els.albumDetail.querySelector(`[data-item-title-input="${itemId}"]`);
+
+        if (!displayEl || !editContainerEl || !inputEl) return;
+
+        const originalTitle = item.title || item.fileName || '';
+        let isRenaming = false;
+        const closeEditor = (nextTitle = originalTitle) => {
+            inputEl.onblur = null;
+            inputEl.onkeydown = null;
+            inputEl.value = nextTitle;
+            displayEl.classList.remove('hidden');
+            editContainerEl.classList.add('hidden');
+        };
+
+        displayEl.classList.add('hidden');
+        editContainerEl.classList.remove('hidden');
+        inputEl.value = originalTitle;
+        inputEl.focus();
+
+        const saveTitle = async () => {
+            if (isRenaming) return;
+            const newTitle = String(inputEl.value || '').trim();
+
+            if (newTitle === originalTitle || newTitle === '') {
+                closeEditor(originalTitle);
+                return;
+            }
+
+            isRenaming = true;
+            const renamed = await persistAndReload(async () => {
+                await updateTeamMediaItem(state.teamId, itemId, { title: newTitle });
+            }, 'Media item renamed.');
+            isRenaming = false;
+
+            if (renamed) {
+                displayEl.textContent = newTitle;
+                closeEditor(newTitle);
+            } else {
+                closeEditor(originalTitle);
+            }
+        };
+
+        inputEl.onblur = saveTitle;
+        inputEl.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                inputEl.blur(); // Trigger blur to save
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeEditor(originalTitle);
+            }
+        };
         return;
     }
 
@@ -584,3 +660,8 @@ checkAuth(async (user) => {
         els.foldersList.innerHTML = '<div class="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700">Unable to load team media.</div>';
     }
 });
+
+// Initial load
+// The loadLibrary function is called once after authentication
+// is confirmed in the checkAuth callback, which is the entry point.
+// No need to call it here.
