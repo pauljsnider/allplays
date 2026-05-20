@@ -363,7 +363,6 @@
         let canModerate = false;
         let unsubscribeChat = null;
         let initialSnapshotLoaded = false;
-        let awaitingPostResumeSnapshot = false;
         let pendingScrollToBottom = false;
         let aiInFlight = false;
         let aiThinkingStartedAt = null;
@@ -567,7 +566,6 @@
                     scrollToBottom();
                 }
 
-                awaitingPostResumeSnapshot = false;
                 maybeUpdateChatLastRead();
                 pendingScrollToBottom = false;
             });
@@ -599,15 +597,13 @@
                 isPageVisible,
                 isWindowFocused,
                 hasMessages: messages.length > 0,
-                hasLoadedSnapshot: initialSnapshotLoaded,
-                isAwaitingPostResumeSnapshot: awaitingPostResumeSnapshot
+                hasLoadedSnapshot: initialSnapshotLoaded
             })) {
                 maybeUpdateChatLastRead();
             }
         }
 
         function handleChatViewReturn() {
-            awaitingPostResumeSnapshot = initialSnapshotLoaded;
             retryChatLastReadOnViewReturn();
         }
 
