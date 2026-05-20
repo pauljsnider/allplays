@@ -78,6 +78,102 @@ function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
 }
 
+function normalizeFirestoreId(value, label) {
+  const id = String(value || '').trim();
+  if (!id || id.includes('/')) {
+    throw new Error(`${label} is required.`);
+  }
+  return id;
+}
+
+function normalizeRegistrationCheckoutInput(data = {}) {
+  const amountCents = Math.round(Number(data.amount ?? data.amountCents ?? 0));
+  const currency = String(data.currency || 'usd').trim().toLowerCase();
+  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+    throw new Error('A positive checkout amount is required.');
+  }
+  if (!/^[a-z]{3}$/.test(currency)) {
+    throw new Error('A valid checkout currency is required.');
+  }
+  return {
+    teamId: normalizeFirestoreId(data.teamId, 'teamId'),
+    formId: normalizeFirestoreId(data.formId, 'formId'),
+    registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
+    amountCents,
+    currency
+  };
+}
+
+function buildRegistrationRef({ teamId, formId, registrationId }) {
+  return firestore.doc(`teams/${teamId}/registrationForms/${formId}/registrations/${registrationId}`);
+}
+
+function buildRegistrationCheckoutUrls(appUrl, input) {
+  const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
+  const params = new URLSearchParams({
+    teamId: input.teamId,
+    formId: input.formId,
+    registrationId: input.registrationId
+  });
+  return {
+    successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
+    cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
+  };
+}
+
+function getRegistrationCheckoutAmountCents(registration = {}) {
+  return Math.max(0, Math.round(Number(registration.feeSnapshot?.finalAmountDueCents ?? registration.feeAmountCents ?? 0)));
+}
+
+function getRegistrationCustomerEmail(registration = {}) {
+  const guardian = registration.guardian || {};
+  return ['email', 'guardianEmail', 'parentEmail']
+    .map((key) => String(guardian[key] || '').trim())
+    .find(Boolean) || undefined;
+}
+
+function canReuseRegistrationCheckoutSession(registration = {}, amountCents) {
+  return Boolean(
+    registration.checkoutUrl
+    && registration.stripeCheckoutSessionId
+    && registration.checkoutStatus === 'open'
+    && Number(registration.checkoutAmountCents || 0) === amountCents
+  );
+}
+
+function buildRegistrationCheckoutMetadata({ input, registration }) {
+  return {
+    product: 'registration',
+    teamId: input.teamId,
+    formId: input.formId,
+    registrationId: input.registrationId,
+    selectedOptionId: String(registration.selectedOption?.id || ''),
+    paymentPlanId: String(registration.paymentPlan?.id || '')
+  };
+}
+
+function shouldProcessRegistrationCheckoutEvent(event) {
+  const session = event?.data?.object || {};
+  return session.metadata?.product === 'registration'
+    && ['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_failed'].includes(event?.type);
+}
+
+function shouldMarkRegistrationPaidFromEvent(event) {
+  const session = event?.data?.object || {};
+  return event?.type === 'checkout.session.completed'
+    && session.metadata?.product === 'registration'
+    && session.payment_status === 'paid';
+}
+
+function buildRegistrationRefFromStripeSession(session = {}) {
+  const metadata = session.metadata || {};
+  return buildRegistrationRef({
+    teamId: normalizeFirestoreId(metadata.teamId, 'teamId'),
+    formId: normalizeFirestoreId(metadata.formId, 'formId'),
+    registrationId: normalizeFirestoreId(metadata.registrationId, 'registrationId')
+  });
+}
+
 async function getUserForEligibility(uid) {
   const userSnap = await firestore.doc(`users/${uid}`).get();
   return userSnap.exists ? userSnap.data() || {} : {};
@@ -412,6 +508,91 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   return { checkoutUrl: session.url, sessionId: session.id };
 });
 
+exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) => {
+  let input;
+  try {
+    input = normalizeRegistrationCheckoutInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout request.');
+  }
+
+  const [formSnap, registrationSnap] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}/registrationForms/${input.formId}`).get(),
+    buildRegistrationRef(input).get()
+  ]);
+  if (!formSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Registration form not found.');
+  }
+  if (!registrationSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Registration not found.');
+  }
+
+  const form = formSnap.data() || {};
+  const registration = registrationSnap.data() || {};
+  if (form.published !== true && form.status !== 'published') {
+    throw new functions.https.HttpsError('failed-precondition', 'This registration form is not accepting submissions.');
+  }
+  if (form.paymentSettings?.onlineCheckoutEnabled !== true) {
+    throw new functions.https.HttpsError('failed-precondition', 'Online checkout is not enabled for this registration.');
+  }
+  if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
+  }
+  if (registration.status === 'waitlisted') {
+    throw new functions.https.HttpsError('failed-precondition', 'Waitlisted registrations cannot be paid online yet.');
+  }
+  if (registration.paymentStatus === 'paid') {
+    throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
+  }
+
+  const expectedAmountCents = getRegistrationCheckoutAmountCents(registration);
+  if (input.amountCents !== expectedAmountCents) {
+    throw new functions.https.HttpsError('failed-precondition', 'Checkout amount does not match the registration fee.');
+  }
+  if (canReuseRegistrationCheckoutSession(registration, input.amountCents)) {
+    return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
+  }
+
+  const stripe = createStripeClient();
+  const { appUrl } = getStripeConfig();
+  const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, input);
+  const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [{
+      price_data: {
+        currency: input.currency,
+        unit_amount: input.amountCents,
+        product_data: {
+          name: title
+        }
+      },
+      quantity: 1
+    }],
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    customer_email: getRegistrationCustomerEmail(registration),
+    client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
+    metadata: buildRegistrationCheckoutMetadata({ input, registration })
+  });
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  await buildRegistrationRef(input).set({
+    checkoutUrl: session.url,
+    paymentLink: session.url,
+    checkoutStatus: 'open',
+    paymentProvider: 'stripe',
+    paymentStatus: 'checkout_open',
+    stripeCheckoutSessionId: session.id,
+    stripePaymentStatus: session.payment_status || 'unpaid',
+    checkoutAmountCents: input.amountCents,
+    checkoutCreatedAt: now,
+    updatedAt: now
+  }, { merge: true });
+
+  return { checkoutUrl: session.url, sessionId: session.id };
+});
+
 exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
@@ -439,6 +620,63 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     console.warn('Rejected Stripe webhook with invalid signature:', error?.message || error);
     res.status(400).send('Invalid Stripe signature');
     return;
+  }
+
+  if (shouldProcessRegistrationCheckoutEvent(event)) {
+    try {
+      const session = event.data.object;
+      const receivedAt = admin.firestore.FieldValue.serverTimestamp();
+      const eventRef = firestore.doc(`stripeEvents/${event.id}`);
+      const registrationRef = buildRegistrationRefFromStripeSession(session);
+
+      await firestore.runTransaction(async (transaction) => {
+        const eventSnap = await transaction.get(eventRef);
+        if (eventSnap.exists) return;
+
+        const registrationSnap = await transaction.get(registrationRef);
+        if (!registrationSnap.exists) {
+          throw new Error('Registration not found for Stripe webhook.');
+        }
+
+        if (shouldMarkRegistrationPaidFromEvent(event)) {
+          transaction.set(registrationRef, {
+            checkoutStatus: 'complete',
+            paymentStatus: 'paid',
+            paidAt: receivedAt,
+            stripeCheckoutSessionId: session.id || null,
+            stripePaymentIntentId: session.payment_intent || null,
+            stripePaymentStatus: session.payment_status || 'paid',
+            stripeEventId: event.id,
+            updatedAt: receivedAt
+          }, { merge: true });
+        } else {
+          transaction.set(registrationRef, {
+            checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
+            paymentStatus: event.type === 'checkout.session.expired' ? 'checkout_expired' : 'payment_failed',
+            stripeCheckoutSessionId: session.id || null,
+            stripePaymentStatus: session.payment_status || 'unpaid',
+            stripeEventId: event.id,
+            updatedAt: receivedAt
+          }, { merge: true });
+        }
+
+        transaction.set(eventRef, {
+          provider: 'stripe',
+          product: 'registration',
+          type: event.type,
+          checkoutSessionId: session.id || null,
+          registrationPath: registrationRef.path,
+          receivedAt
+        });
+      });
+
+      res.status(200).json({ received: true, registrationUpdated: shouldMarkRegistrationPaidFromEvent(event) });
+      return;
+    } catch (error) {
+      console.error('Failed to process Stripe registration webhook:', error);
+      res.status(500).send('Webhook processing failed');
+      return;
+    }
   }
 
   if (shouldMarkTeamFeePaidFromEvent(event) || shouldRecordTeamFeeCheckoutNotPaidFromEvent(event)) {
