@@ -3057,6 +3057,83 @@ export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail 
 // Parent Role Functions
 // ============================================
 
+async function autoAcceptParentInviteForExistingUser(codeRef, existingUser, accessCodeData, team, player) {
+    if (!existingUser?.id) {
+        return false;
+    }
+
+    const userId = existingUser.id;
+    const now = Timestamp.now();
+    const userRef = doc(db, "users", userId);
+    const playerRef = doc(db, `teams/${accessCodeData.teamId}/players`, accessCodeData.playerId);
+
+    await runTransaction(db, async (transaction) => {
+        const [latestCodeSnapshot, playerSnapshot] = await Promise.all([
+            transaction.get(codeRef),
+            transaction.get(playerRef)
+        ]);
+
+        if (!latestCodeSnapshot.exists()) {
+            throw new Error('Parent invite could not be found for auto-linking');
+        }
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.type !== 'parent_invite') {
+            throw new Error('Not a parent invite code');
+        }
+        if (latestCodeData.used || latestCodeData.revoked === true || latestCodeData.status === 'removed') {
+            throw new Error('Parent invite is no longer available');
+        }
+        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+            throw new Error('Parent invite has expired');
+        }
+        if (!playerSnapshot.exists()) {
+            throw new Error('Player not found');
+        }
+
+        transaction.set(userRef, {
+            parentOf: arrayUnion({
+                teamId: accessCodeData.teamId,
+                playerId: accessCodeData.playerId,
+                teamName: team?.name || accessCodeData.teamName || null,
+                playerName: player?.name || accessCodeData.playerName || null,
+                playerNumber: player?.number ?? accessCodeData.playerNum ?? null,
+                playerPhotoUrl: player?.photoUrl || null,
+                relation: accessCodeData.relation || null
+            }),
+            parentTeamIds: arrayUnion(accessCodeData.teamId),
+            parentPlayerKeys: arrayUnion(`${accessCodeData.teamId}::${accessCodeData.playerId}`),
+            roles: arrayUnion('parent')
+        }, { merge: true });
+
+        const existingParents = Array.isArray((playerSnapshot.data() || {}).parents) ? playerSnapshot.data().parents : [];
+        const alreadyLinked = existingParents.some(parent => parent?.userId === userId);
+        if (!alreadyLinked) {
+            transaction.update(playerRef, {
+                parents: arrayUnion({
+                    userId,
+                    email: accessCodeData.email || existingUser.email || 'linked',
+                    relation: accessCodeData.relation || null,
+                    addedAt: now,
+                    status: 'active',
+                    source: 'parent_invite'
+                })
+            });
+        }
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: now,
+            status: 'accepted',
+            autoAccepted: true,
+            autoAcceptedAt: now
+        });
+    });
+
+    return true;
+}
+
 export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -3070,6 +3147,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     ]);
     const player = players.find(p => p.id === playerId);
 
+    const normalizedParentEmail = String(parentEmail || '').trim().toLowerCase();
     const code = generateAccessCode();
     const accessCodeData = {
         code,
@@ -3080,7 +3158,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         playerName: player?.name || null,
         teamName: team?.name || null,
         relation,
-        email: parentEmail || null,
+        email: normalizedParentEmail || null,
         generatedBy: currentUser.uid,
         createdAt: Timestamp.now(),
         // 7 days from now
@@ -3093,8 +3171,12 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
 
     // Check if user with this email already exists
     let existingUser = null;
-    if (parentEmail) {
-        existingUser = await getUserByEmail(parentEmail);
+    let autoLinked = false;
+    if (normalizedParentEmail) {
+        existingUser = await getUserByEmail(normalizedParentEmail);
+        if (existingUser) {
+            autoLinked = await autoAcceptParentInviteForExistingUser(docRef, existingUser, accessCodeData, team, player);
+        }
     }
 
     return {
@@ -3102,7 +3184,8 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         code,
         teamName: team?.name || null,
         playerName: player?.name || null,
-        existingUser: !!existingUser
+        existingUser: !!existingUser,
+        autoLinked
     };
 }
 
