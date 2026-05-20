@@ -74,8 +74,7 @@ describe('team chat last-read lifecycle retry policy', () => {
             isPageVisible: true,
             isWindowFocused: true,
             hasMessages: false,
-            hasLoadedSnapshot: true,
-            isAwaitingPostResumeSnapshot: false
+            hasLoadedSnapshot: true
         })).toBe(false);
     });
 

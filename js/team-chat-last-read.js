@@ -29,7 +29,6 @@ export function shouldUpdateChatLastRead({
  * @param {boolean} params.isWindowFocused
  * @param {boolean} params.hasMessages
  * @param {boolean} params.hasLoadedSnapshot
- * @param {boolean} params.isAwaitingPostResumeSnapshot
  * @returns {boolean}
  */
 export function shouldRetryChatLastReadOnViewReturn({
