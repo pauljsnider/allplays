@@ -75,6 +75,14 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page.locator('#help-grid')).toContainText('Plan Schedule and Launch Game Flows');
     await expect(page.locator('#help-grid')).not.toContainText('Operate Platform Admin Controls');
 
+    await page.locator('#help-search').fill('team operations');
+    const teamOperationsResults = filterManifest(manifest, { role: 'Coach', query: 'team operations' });
+    await expect(page.locator('#help-grid article')).toHaveCount(teamOperationsResults.length);
+    await expect(page.locator('#help-summary')).toHaveText(`${teamOperationsResults.length} of ${manifest.length} workflows`);
+    await expect(page.locator('#help-grid')).toContainText('Team Operations');
+    const teamOperationsCard = page.locator('#help-grid article', { hasText: 'Team Operations' });
+    await expect(teamOperationsCard.getByRole('link', { name: /Open workflow/i })).toHaveAttribute('href', 'help-team-operations.html');
+
     await page.locator('#help-search').fill('foundation');
     const foundationResults = filterManifest(manifest, { role: 'Coach', query: 'foundation' });
     await expect(page.locator('#help-grid article')).toHaveCount(foundationResults.length);
@@ -118,6 +126,7 @@ test('help manifest and page-reference files resolve successfully', async ({ pag
 
     expect(workflowFiles).toContain('workflow-schedule.html');
     expect(workflowFiles).toContain('workflow-track-game.html');
+    expect(workflowFiles).toContain('help-team-operations.html');
 
     await page.goto(buildUrl(baseURL, '/help-page-reference.html'), { waitUntil: 'domcontentloaded' });
     const referenceFiles = await readPageReferenceFiles(page);
