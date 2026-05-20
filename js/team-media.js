@@ -329,9 +329,11 @@ async function persistAndReload(action, successMessage) {
         await action();
         await loadLibrary();
         showAlert(successMessage, 'success');
+        return true;
     } catch (error) {
         console.error('Team media action failed:', error);
         showAlert(isPermissionDenied(error) ? getMediaPermissionMessage() : (error.message || 'Unable to save media changes. Refresh and try again.'), 'error');
+        return false;
     } finally {
         state.actionInFlight = false;
     }
@@ -447,6 +449,72 @@ els.albumDetail.addEventListener('click', async (event) => {
         return;
     }
 
+    const renameButton = event.target.closest('[data-item-rename]');
+    if (renameButton) {
+        const itemId = renameButton.dataset.itemRename;
+        const item = state.items.find((candidate) => candidate.id === itemId);
+        if (!item) return;
+        const canRenameItem = state.canManage || (state.user && state.user.uid === item.uploadedBy);
+        if (!canRenameItem) return;
+
+        const displayEl = els.albumDetail.querySelector(`[data-item-title-display="${itemId}"]`);
+        const editContainerEl = els.albumDetail.querySelector(`[data-item-title-edit="${itemId}"]`);
+        const inputEl = els.albumDetail.querySelector(`[data-item-title-input="${itemId}"]`);
+
+        if (!displayEl || !editContainerEl || !inputEl) return;
+
+        const originalTitle = item.title || item.fileName || '';
+        let isRenaming = false;
+        const closeEditor = (nextTitle = originalTitle) => {
+            inputEl.onblur = null;
+            inputEl.onkeydown = null;
+            inputEl.value = nextTitle;
+            displayEl.classList.remove('hidden');
+            editContainerEl.classList.add('hidden');
+        };
+
+        displayEl.classList.add('hidden');
+        editContainerEl.classList.remove('hidden');
+        inputEl.value = originalTitle;
+        inputEl.focus();
+
+        const saveTitle = async () => {
+            if (isRenaming) return;
+            const newTitle = String(inputEl.value || '').trim();
+
+            if (newTitle === originalTitle || newTitle === '') {
+                closeEditor(originalTitle);
+                return;
+            }
+
+            isRenaming = true;
+            const renamed = await persistAndReload(async () => {
+                await updateTeamMediaItem(state.teamId, itemId, { title: newTitle });
+            }, 'Media item renamed.');
+            isRenaming = false;
+
+            if (renamed) {
+                displayEl.textContent = newTitle;
+                closeEditor(newTitle);
+            } else {
+                closeEditor(originalTitle);
+            }
+        };
+
+        inputEl.onblur = saveTitle;
+        inputEl.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                inputEl.blur(); // Trigger blur to save
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                closeEditor(originalTitle);
+            }
+        };
+        return;
+    }
+
     if (!state.canManage) return;
     const coverButton = event.target.closest('[data-set-cover]');
     if (coverButton) {
@@ -460,65 +528,6 @@ els.albumDetail.addEventListener('click', async (event) => {
         const items = getItemsForFolder(itemButton.dataset.folderId);
         const reordered = moveInArray(items, itemButton.dataset.itemId, itemButton.dataset.itemMove);
         persistAndReload(() => reorderTeamMediaItems(state.teamId, reordered.map((item) => item.id)), 'Item order saved.');
-    }
-
-    const renameButton = event.target.closest('[data-item-rename]');
-    if (renameButton) {
-        const itemId = renameButton.dataset.itemRename;
-        const item = state.items.find((candidate) => candidate.id === itemId);
-        const canRenameItem = state.canManage || (state.user && state.user.uid === item.uploadedBy);
-        if (!canRenameItem) return;
-
-        const displayEl = els.albumDetail.querySelector(`[data-item-title-display="${itemId}"]`);
-        const editContainerEl = els.albumDetail.querySelector(`[data-item-title-edit="${itemId}"]`);
-        const inputEl = els.albumDetail.querySelector(`[data-item-title-input="${itemId}"]`);
-
-        if (!displayEl || !editContainerEl || !inputEl) return;
-
-        // Switch to edit mode
-        displayEl.classList.add('hidden');
-        editContainerEl.classList.remove('hidden');
-        inputEl.value = item.title || item.fileName || '';
-        inputEl.focus();
-
-        const saveTitle = async () => {
-            const newTitle = String(inputEl.value || '').trim();
-            const originalTitle = item.title || item.fileName || '';
-
-            if (newTitle === originalTitle || newTitle === '') {
-                // No change or empty title, revert to display mode without saving
-                displayEl.classList.remove('hidden');
-                editContainerEl.classList.add('hidden');
-                return;
-            }
-
-            // Save changes
-            await persistAndReload(async () => {
-                await updateTeamMediaItem(state.teamId, itemId, { title: newTitle });
-            }, 'Media item renamed.');
-
-            // Revert to display mode after reload
-            displayEl.textContent = newTitle;
-            displayEl.classList.remove('hidden');
-            editContainerEl.classList.add('hidden');
-        };
-
-        // Add event listeners for saving/cancelling edit
-        inputEl.onblur = saveTitle;
-        inputEl.onkeydown = (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                inputEl.blur(); // Trigger blur to save
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                inputEl.value = originalTitle;
-                displayEl.classList.remove('hidden');
-                editContainerEl.classList.add('hidden');
-                inputEl.onblur = null;
-                inputEl.onkeydown = null;
-            }
-        };
     }
 });
 
@@ -656,4 +665,3 @@ checkAuth(async (user) => {
 // The loadLibrary function is called once after authentication
 // is confirmed in the checkAuth callback, which is the entry point.
 // No need to call it here.
-

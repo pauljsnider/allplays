@@ -711,8 +711,8 @@ service cloud.firestore {
              request.resource.data.updatedAt == request.time;
     }
 
-    function isTeamMediaTitleUpdate(teamId, data) {
-      return isSignedIn() &&
+    function isTeamMediaTitleUpdate(teamId) {
+      return canAccessTeamChat(teamId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'updatedAt']) &&
              request.resource.data.title is string &&
              request.resource.data.title.size() > 0 &&
@@ -1110,7 +1110,7 @@ service cloud.firestore {
       match /mediaItems/{itemId} {
         allow read: if canReadTeamMediaItem(teamId, resource.data);
         allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
-        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId, request.resource.data);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);
         allow delete: if isTeamOwnerOrAdmin(teamId);
       }
 

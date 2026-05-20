@@ -254,6 +254,7 @@ export async function reorderTeamMediaItems() {}
 export async function moveTeamMediaItems() {}
 export async function bulkDeleteTeamMediaItems() {}
 export async function setTeamMediaAlbumCover() {}
+export async function updateTeamMediaItem() {}
 `;
 
 const MEDIA_DB_WITH_FOLDER_STUB = `
@@ -278,6 +279,7 @@ export async function reorderTeamMediaItems() {}
 export async function moveTeamMediaItems() {}
 export async function bulkDeleteTeamMediaItems() {}
 export async function setTeamMediaAlbumCover() {}
+export async function updateTeamMediaItem() {}
 `;
 
 const MEDIA_UTILS_STUB = `
