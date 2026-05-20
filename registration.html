@@ -83,7 +83,11 @@
                     </label>
                 </section>
 
-                <button id="submit-registration" type="submit" class="w-full rounded bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+                <button id="pay-registration" type="button" class="hidden w-full rounded bg-green-600 px-4 py-3 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60">
+            Pay Registration via Stripe
+        </button>
+        <div id="payment-loading-state" class="hidden mt-4 text-center text-gray-600">Redirecting to Stripe...</div>
+        <button id="submit-registration" type="submit" class="w-full rounded bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
                     Submit registration
                 </button>
             </form>
@@ -95,6 +99,7 @@
     <script type="module">
         import { db, doc, getDoc, collection, addDoc, serverTimestamp, runTransaction } from './js/firebase.js?v=12';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
+        import { initiateStripeCheckout } from './js/stripe-service.js';
         import {
             buildPendingRegistrationRecord,
             calculateRegistrationFeeSnapshot,
@@ -105,6 +110,7 @@
             getActiveRegistrationOptions,
             getRegistrationPaymentNotice,
             hasRegistrationPaymentSettings,
+            hasOnlineRegistrationCheckout,
             getPaymentPlanChoices,
             hasInstallmentPlan,
             normalizeRegistrationForm,
@@ -121,10 +127,33 @@
         let activeForm = null;
 
         const loadingState = document.getElementById('loading-state');
+        const payRegistrationButton = document.getElementById('pay-registration');
+        const paymentLoadingState = document.getElementById('payment-loading-state');
         const errorMessage = document.getElementById('error-message');
         const confirmationMessage = document.getElementById('confirmation-message');
         const formElement = document.getElementById('registration-form');
         const submitButton = document.getElementById('submit-registration');
+
+        // Handle return from Stripe checkout
+        let shouldLoadRegistrationForm = true;
+        const urlParams = new URLSearchParams(window.location.search);
+        const stripeStatus = urlParams.get('status');
+        if (stripeStatus) {
+            if (stripeStatus === 'success') {
+                shouldLoadRegistrationForm = false;
+                formElement.classList.add('hidden');
+                loadingState.classList.add('hidden');
+                confirmationMessage.querySelector('h1').textContent = 'Payment successful!';
+                confirmationMessage.querySelector('p').textContent = 'Your registration payment was received. The program organizer will follow up with next steps.';
+                confirmationMessage.classList.remove('hidden');
+            } else if (stripeStatus === 'cancelled') {
+                errorMessage.textContent = 'Stripe payment was cancelled. You can try again.';
+                errorMessage.classList.remove('hidden');
+            }
+            urlParams.delete('status');
+            const cleanQuery = urlParams.toString();
+            window.history.replaceState({}, document.title, cleanQuery ? `${window.location.pathname}?${cleanQuery}` : window.location.pathname);
+        }
         const spinner = document.createElement('span');
                 spinner.className = 'inline-block h-4 w-4 mr-2 animate-spin rounded-full border-2 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite] hidden';
         spinner.setAttribute('role', 'status');
@@ -139,6 +168,12 @@
             submitButton.disabled = false; // Re-enable button on error
             spinner.classList.add('hidden'); // Hide spinner on error
             submitButton.classList.remove('opacity-60', 'cursor-not-allowed'); // Remove disabled styling
+        }
+
+        function showFormError(message) {
+            loadingState.classList.add('hidden');
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
         }
 
         function renderField(container, field, groupName) {
@@ -204,15 +239,26 @@
             const section = document.getElementById('registration-payment-section');
             const notice = document.getElementById('registration-payment-notice');
             const paymentNotice = getRegistrationPaymentNotice(form);
+            const onlineCheckoutEnabled = hasOnlineRegistrationCheckout(form);
             if (!hasRegistrationPaymentSettings(form) || !paymentNotice) {
                 section.classList.add('hidden');
                 notice.textContent = '';
+                submitButton.classList.remove('hidden');
+                payRegistrationButton.classList.add('hidden');
                 submitButton.textContent = 'Submit registration';
                 return;
             }
 
             notice.textContent = paymentNotice;
-            submitButton.textContent = 'Submit registration';
+            if (onlineCheckoutEnabled) {
+                submitButton.classList.add('hidden');
+                payRegistrationButton.classList.remove('hidden');
+                payRegistrationButton.textContent = 'Pay registration with Stripe';
+            } else {
+                submitButton.classList.remove('hidden');
+                payRegistrationButton.classList.add('hidden');
+                submitButton.textContent = 'Submit registration';
+            }
             section.classList.remove('hidden');
         }
 
@@ -404,6 +450,11 @@
             event.preventDefault();
             if (!activeForm) return;
 
+            // If online checkout is required, the payment button handles the flow.
+            if (hasOnlineRegistrationCheckout(activeForm)) {
+                return;
+            }
+
             errorMessage.classList.add('hidden');
             submitButton.disabled = true;
             spinner.classList.remove('hidden'); // Show spinner
@@ -454,12 +505,12 @@
         });
 
         async function submitRegistrationWithoutCapacity(submission) {
-            await addDoc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'), buildPendingRegistrationRecord({
+            const registrationRef = await addDoc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'), buildPendingRegistrationRecord({
                 form: activeForm,
                 ...submission,
                 now: serverTimestamp()
             }));
-            return { status: 'pending' };
+            return { status: 'pending', registrationId: registrationRef.id };
         }
 
         async function submitRegistrationWithCapacity(submission) {
@@ -508,11 +559,107 @@
                     now: serverTimestamp()
                 }));
 
-                return { status: placement.status };
+                return { status: placement.status, registrationId: registrationRef.id };
             });
         }
 
-        loadRegistrationForm();
+        // ... existing formElement.addEventListener ...
+
+        payRegistrationButton.addEventListener('click', async (event) => {
+            event.preventDefault(); // Prevent any default form submission
+            if (!activeForm || !hasOnlineRegistrationCheckout(activeForm)) {
+                showFormError('Payment is not configured for this registration.');
+                return;
+            }
+
+            errorMessage.classList.add('hidden');
+            payRegistrationButton.disabled = true;
+            paymentLoadingState.classList.remove('hidden');
+
+            const submission = { // Re-use submission object for validation
+                participant: readGroupValues('participant', activeForm.participantFields),
+                guardian: readGroupValues('guardian', activeForm.guardianFields),
+                waiverAccepted: document.getElementById('waiver-accepted').checked,
+                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
+                selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
+                feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
+            };
+            const validationErrors = validateRegistrationSubmission(activeForm, submission);
+
+            if (validationErrors.length > 0) {
+                errorMessage.textContent = validationErrors.join(' ');
+                errorMessage.classList.remove('hidden');
+                payRegistrationButton.disabled = false;
+                paymentLoadingState.classList.add('hidden');
+                return;
+            }
+
+            try {
+                const feeSnapshot = submission.feeSnapshot;
+                const amountCents = Math.max(0, Number(feeSnapshot?.finalAmountDueCents || 0));
+                if (!feeSnapshot || amountCents <= 0) {
+                    showFormError('No payment amount specified for this registration.');
+                    return;
+                }
+
+                const result = requiresRegistrationOption(activeForm)
+                    ? await submitRegistrationWithCapacity(submission)
+                    : await submitRegistrationWithoutCapacity(submission);
+
+                if (result.status === 'waitlisted') {
+                    formElement.classList.add('hidden');
+                    confirmationMessage.querySelector('h1').textContent = 'Registration waitlisted';
+                    confirmationMessage.querySelector('p').textContent = 'This option is currently full, so your registration has been added to the waitlist.';
+                    confirmationMessage.classList.remove('hidden');
+                    return;
+                }
+
+                if (!result.registrationId) {
+                    throw new Error('Registration could not be prepared for checkout.');
+                }
+
+                const returnParams = new URLSearchParams({
+                    teamId,
+                    formId,
+                    registrationId: result.registrationId
+                });
+                const successUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=success`;
+                const cancelUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=cancelled`;
+
+                const checkoutUrl = await initiateStripeCheckout({
+                    teamId,
+                    formId,
+                    registrationId: result.registrationId,
+                    amount: amountCents,
+                    currency: String(feeSnapshot.currency || activeForm.currency || 'USD').toLowerCase(),
+                    successUrl,
+                    cancelUrl,
+                    metadata: {
+                        teamId,
+                        formId,
+                        selectedOptionId: submission.selectedOptionId,
+                        paymentPlanId: submission.selectedPaymentPlanId,
+                        quantity: submission.feeSnapshot.quantity
+                    }
+                });
+
+                if (checkoutUrl) {
+                    window.location.href = checkoutUrl;
+                } else {
+                    showFormError('Failed to get Stripe checkout URL.');
+                }
+            } catch (error) {
+                console.error('Stripe payment initiation error:', error);
+                showFormError('Failed to initiate payment. Please try again later.');
+            } finally {
+                payRegistrationButton.disabled = false;
+                paymentLoadingState.classList.add('hidden');
+            }
+        });
+
+        if (shouldLoadRegistrationForm) {
+            loadRegistrationForm();
+        }
     </script>
 </body>
 </html>
