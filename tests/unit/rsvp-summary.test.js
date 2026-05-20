@@ -41,6 +41,7 @@ describe('effective RSVP summary', () => {
             maybe: 0,
             notGoing: 1,
             notResponded: 0,
+            notRespondedPlayerIds: [],
             total: 2
         });
     });
@@ -77,6 +78,7 @@ describe('effective RSVP summary', () => {
             maybe: 2,
             notGoing: 0,
             notResponded: 0,
+            notRespondedPlayerIds: [],
             total: 2
         });
     });

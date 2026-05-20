@@ -1415,6 +1415,22 @@ service cloud.firestore {
                              isRideshareSeatCountUpdateValid(teamId, gameId, offerId, resource.data.status, 'declined');
           }
         }
+
+        // Claimable assignment claims (snack sign-up, etc.)
+        match /assignmentClaims/{role} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
+          // Parent creates their own claim; document must not already exist (create only, no update).
+          allow create: if isSignedIn() &&
+                           isParentForTeam(teamId) &&
+                           request.resource.data.claimedByUserId == request.auth.uid &&
+                           request.resource.data.claimedByName is string &&
+                           request.resource.data.claimedByName.size() > 0 &&
+                           request.resource.data.claimedByName.size() <= 100;
+          // Owner releases their own claim; admins may release any claim.
+          allow delete: if isSignedIn() &&
+                           (resource.data.claimedByUserId == request.auth.uid ||
+                            isTeamOwnerOrAdmin(teamId));
+        }
       }
 
       // Tournament brackets subcollection

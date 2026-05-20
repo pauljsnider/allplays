@@ -1,10 +1,8 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const Stripe = require('stripe');
-const dns = require('node:dns').promises;
-const net = require('node:net');
 const crypto = require('node:crypto');
-const { isPrivateIpAddress } = require('./utils/ip-address-validation');
+const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -538,92 +536,6 @@ function normalizeIcsText(text) {
 }
 
 
-function isBlockedHostname(host) {
-  const blockedHosts = new Set([
-    'localhost',
-    '127.0.0.1',
-    '0.0.0.0',
-    '::1',
-    'metadata',
-    'metadata.google.internal',
-    '169.254.169.254'
-  ]);
-  return blockedHosts.has(host) || host.endsWith('.local');
-}
-
-async function assertPublicHost(host) {
-  if (isBlockedHostname(host)) {
-    throw new Error('Blocked host');
-  }
-
-  if (net.isIP(host) && isPrivateIpAddress(host)) {
-    throw new Error('Blocked host address');
-  }
-
-  let resolved;
-  try {
-    resolved = await dns.lookup(host, { all: true, verbatim: true });
-  } catch (error) {
-    throw new Error('Could not resolve host');
-  }
-
-  if (!resolved.length) {
-    throw new Error('Could not resolve host');
-  }
-
-  for (const entry of resolved) {
-    if (isPrivateIpAddress(entry.address)) {
-      throw new Error('Blocked host address');
-    }
-  }
-}
-
-async function normalizeTargetUrl(rawUrl) {
-  if (!rawUrl || typeof rawUrl !== 'string') {
-    throw new Error('Missing url');
-  }
-
-  let cleaned = rawUrl.trim();
-  if (cleaned.startsWith('webcal://')) {
-    cleaned = cleaned.replace(/^webcal:\/\//i, 'https://');
-  } else if (cleaned.startsWith('http://')) {
-    cleaned = cleaned.replace(/^http:\/\//i, 'https://');
-  }
-
-  const parsed = new URL(cleaned);
-  if (parsed.protocol !== 'https:') {
-    throw new Error('Only https calendar URLs are allowed');
-  }
-
-  const host = parsed.hostname.toLowerCase();
-  await assertPublicHost(host);
-
-  return parsed.toString();
-}
-
-async function fetchWithTimeout(url, timeoutMs = 12000) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'allplays-calendar-fetch/1.0',
-        'Accept': 'text/calendar,text/plain,*/*'
-      }
-    });
-    return response;
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw new Error('Calendar request timed out');
-    }
-    throw new Error(`Calendar fetch failed: ${error?.message || 'Unknown network error'}`);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
 
 function getAllowedOrigins() {
   const configuredOrigins = functions.config()?.calendar?.allowed_origins;
@@ -1048,7 +960,15 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     }
 
     const eventsSnap = await firestore.collection(`teams/${teamId}/games`).orderBy('date').get();
-    const events = eventsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    const enrichedEvents = await Promise.all(eventsSnap.docs.map(async (docSnap) => {
+      const game = { id: docSnap.id, ...(docSnap.data() || {}) };
+      const rsvpsSnap = await firestore.collection(`teams/${teamId}/games/${game.id}/rsvps`).get();
+      game.rsvps = rsvpsSnap.docs.map((rsvpDoc) => ({ id: rsvpDoc.id, ...(rsvpDoc.data() || {}) }));
+      // Assuming officiating details are directly on the game document
+      game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
+      return game;
+    }));
+    const events = enrichedEvents;
     const icsText = buildTeamCalendarIcs({ teamId, team, events });
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
@@ -1086,7 +1006,7 @@ exports.fetchCalendarIcs = functions
       const rawUrl = req.query.url;
       const normalizedUrl = await normalizeTargetUrl(rawUrl);
 
-      const response = await fetchWithTimeout(normalizedUrl);
+      const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
       if (!response.ok) {
         res.status(502).json({
           ok: false,
